@@ -1,0 +1,12 @@
+{
+  "version": 1,
+  "request_id": "b92051df-f706-4c21-aa07-56021d555c51",
+  "device_id": "Leno",
+  "status": "success",
+  "data": {
+    "path": "agent/tether-core/src/lib.rs",
+    "content": "#![forbid(unsafe_code)]\n\nmod budget;\nmod envelope;\nmod error;\nmod handles;\nmod ownership;\nmod policy;\nmod provider;\nmod router;\n\npub use budget::{BudgetedItems, BudgetedText, ContinuationCursor, ResponseBudget};\npub use envelope::{\n    Actor, ActorKind, InvocationEnvelope, ResponseMode, ResultEnvelope, ResultStatus, Timing,\n    VerificationStatus,\n};\npub use error::{CapabilityError, ErrorCode};\npub use handles::HandleRegistry;\npub use ownership::ResourceOrigin;\npub use policy::{\n    ApprovalScope, LocalPolicyBroker, LocalPolicyConfig, PolicyBroker, PolicyDecision,\n    SideEffectClass, authorize_path,\n};\npub use provider::{CapabilityProvider, ProviderResult};\npub use router::CapabilityRouter;\n\npub const CRATE_NAME: &str = \"tether-core\";\n",
+    "truncated": false
+  },
+  "completed_at": "2026-09-17T16:30:10.274556+00:00"
+}
