@@ -1,0 +1,9 @@
+{
+  "version": 1,
+  "request_id": "31ea6e53-827b-418e-b6d8-423f690fd977",
+  "device_id": "Leno",
+  "op": "files.read",
+  "args": {
+    "path": "docs/superpowers/plans/2026-09-17-tetherplane-implementation-roadmap.md"
+  }
+}
