@@ -1,0 +1,15 @@
+{
+  "version": 1,
+  "request_id": "f5fbab2b-4e06-4b61-887e-ac81ce629f26",
+  "device_id": "Leno",
+  "status": "success",
+  "data": {
+    "kind": "git_log",
+    "cwd": ".",
+    "exit_code": 0,
+    "stdout": "3bc0fb1 (HEAD -> emergency/mvp-control-plane, origin/emergency/mvp-control-plane) fix(emergency): suppress relay console windows\n912f553 test(emergency): harden relay branch sync\n6a8cf1d feat(emergency): add private relay worker\n5eec116 (origin/feature/task-4-policy, feature/task-4-policy) feat(policy): enforce local capability policy\n6c4d561 (origin/feature/task-3-router, feature/task-3-router) feat(core): add capability router\n",
+    "stderr": "",
+    "truncated": false
+  },
+  "completed_at": "2026-09-17T14:25:39.529993+00:00"
+}
