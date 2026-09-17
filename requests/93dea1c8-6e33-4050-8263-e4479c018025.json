@@ -1,0 +1,9 @@
+{
+  "version": 1,
+  "request_id": "93dea1c8-6e33-4050-8263-e4479c018025",
+  "device_id": "Leno",
+  "op": "files.read",
+  "args": {
+    "path": ".tetherplane-acceptance.txt"
+  }
+}
