@@ -1,0 +1,9 @@
+{
+  "version": 1,
+  "request_id": "4dd96db4-82a6-48ac-a57c-559e26fc2a9c",
+  "device_id": "Leno",
+  "op": "files.read",
+  "args": {
+    "path": "docs/TETHERPLANE_SOURCE_OF_TRUTH.md"
+  }
+}
