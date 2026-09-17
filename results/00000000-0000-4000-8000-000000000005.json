@@ -1,0 +1,14 @@
+{
+  "version": 1,
+  "request_id": "00000000-0000-4000-8000-000000000005",
+  "device_id": "Leno",
+  "status": "success",
+  "data": {
+    "device_id": "Leno",
+    "hostname": "Leno",
+    "repo_root": "<repo>",
+    "policy": "repo_scoped_fixed_processes",
+    "pid": 9200
+  },
+  "completed_at": "2026-09-17T14:57:50.570304+00:00"
+}
