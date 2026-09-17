@@ -1,0 +1,15 @@
+{
+  "version": 1,
+  "request_id": "8b16d238-18bd-47f2-ba07-45e9068a1a67",
+  "device_id": "Leno",
+  "status": "success",
+  "data": {
+    "kind": "cargo_test",
+    "cwd": ".",
+    "exit_code": 101,
+    "stdout": "",
+    "stderr": "   Compiling tether-core v0.1.0 (<repo>\\agent\\tether-core)\nerror[E0432]: unresolved import `tether_core::HandleRegistry`\n --> agent\\tether-core\\tests\\handles.rs:1:30\n  |\n1 | use tether_core::{ErrorCode, HandleRegistry};\n  |                              ^^^^^^^^^^^^^^ no `HandleRegistry` in the root\n\nerror[E0432]: unresolved import `tether_core::ResponseBudget`\n --> agent\\tether-core\\tests\\budget.rs:1:19\n  |\n1 | use tether_core::{ResponseBudget, ResponseMode};\n  |                   ^^^^^^^^^^^^^^ no `ResponseBudget` in the root\n  |\nhelp: a similar name exists in the module\n  |\n1 - use tether_core::{ResponseBudget, ResponseMode};\n1 + use tether_core::{ResponseMode, ResponseMode};\n  |\n\nFor more information about this error, try `rustc --explain E0432`.\nerror: could not compile `tether-core` (test \"handles\") due to 1 previous error\nwarning: build failed, waiting for other jobs to finish...\nerror: could not compile `tether-core` (test \"budget\") due to 1 previous error\n",
+    "truncated": false
+  },
+  "completed_at": "2026-09-17T14:55:27.495359+00:00"
+}
