@@ -1,0 +1,9 @@
+{
+  "version": 1,
+  "request_id": "754c7f4f-3801-4dc8-9d83-5c68970fefc6",
+  "device_id": "Leno",
+  "op": "files.delete",
+  "args": {
+    "path": ".tetherplane-acceptance.txt"
+  }
+}
