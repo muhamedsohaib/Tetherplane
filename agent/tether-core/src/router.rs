@@ -3,12 +3,13 @@ use std::{collections::HashMap, sync::Arc, time::Instant};
 use serde_json::json;
 
 use crate::{
-    CapabilityError, CapabilityProvider, ErrorCode, InvocationEnvelope, ProviderResult,
-    ResultEnvelope, ResultStatus, Timing, VerificationStatus,
+    CapabilityError, CapabilityProvider, ErrorCode, InvocationEnvelope, PolicyBroker,
+    PolicyDecision, ProviderResult, ResultEnvelope, ResultStatus, Timing, VerificationStatus,
 };
 
 pub struct CapabilityRouter {
     providers: HashMap<&'static str, Arc<dyn CapabilityProvider>>,
+    policy: Option<Arc<dyn PolicyBroker>>,
 }
 
 impl CapabilityRouter {
@@ -16,9 +17,17 @@ impl CapabilityRouter {
     pub fn new() -> Self {
         Self {
             providers: HashMap::new(),
+            policy: None,
         }
     }
 
+    #[must_use]
+    pub fn with_policy(policy: Arc<dyn PolicyBroker>) -> Self {
+        Self {
+            providers: HashMap::new(),
+            policy: Some(policy),
+        }
+    }
     /// Registers one provider for its canonical namespace.
     ///
     /// # Errors
@@ -57,6 +66,38 @@ impl CapabilityRouter {
             );
         };
 
+        if let Some(policy) = &self.policy {
+            match policy.evaluate(&invocation) {
+                PolicyDecision::Allow => {}
+                PolicyDecision::Deny { reason } => {
+                    return error_envelope(
+                        &invocation,
+                        CapabilityError {
+                            code: ErrorCode::PermissionDenied,
+                            message: reason,
+                            recovery_hint: None,
+                            details: json!({}),
+                        },
+                        started,
+                    );
+                }
+                PolicyDecision::RequireApproval {
+                    reason,
+                    approval_scope,
+                } => {
+                    return error_envelope(
+                        &invocation,
+                        CapabilityError {
+                            code: ErrorCode::ApprovalRequired,
+                            message: reason,
+                            recovery_hint: None,
+                            details: json!({ "capability": approval_scope.capability }),
+                        },
+                        started,
+                    );
+                }
+            }
+        }
         let Some(provider) = self.providers.get(namespace) else {
             return error_envelope(
                 &invocation,
@@ -103,6 +144,7 @@ fn success_envelope(
         },
     }
 }
+
 fn error_envelope(
     invocation: &InvocationEnvelope,
     error: CapabilityError,
