@@ -1,0 +1,10 @@
+{
+  "version": 1,
+  "request_id": "e49ff90f-3fdc-4a0d-901f-8f882103f350",
+  "device_id": "Leno",
+  "op": "files.write",
+  "args": {
+    "path": ".tetherplane-acceptance.txt",
+    "content": "Tetherplane non-RDC acceptance proof — 2026-09-17\n"
+  }
+}
