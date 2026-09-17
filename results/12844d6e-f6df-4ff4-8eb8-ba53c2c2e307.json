@@ -1,0 +1,12 @@
+{
+  "version": 1,
+  "request_id": "12844d6e-f6df-4ff4-8eb8-ba53c2c2e307",
+  "device_id": "Leno",
+  "status": "success",
+  "data": {
+    "path": "agent/tether-core/tests/handles.rs",
+    "content": "use tether_core::{ErrorCode, HandleRegistry};\n\n#[test]\nfn handles_are_typed_opaque_and_unique() {\n    let registry = HandleRegistry::new();\n\n    let first = registry.insert(\"proc\", String::from(\"alpha\"));\n    let second = registry.insert(\"proc\", String::from(\"beta\"));\n\n    assert!(first.starts_with(\"proc_\"));\n    assert!(second.starts_with(\"proc_\"));\n    assert_ne!(first, second);\n    assert!(!first.contains(\"alpha\"));\n    assert!(!second.contains(\"beta\"));\n    assert_eq!(registry.with(&first, Clone::clone).unwrap(), \"alpha\");\n}\n\n#[test]\nfn missing_handle_returns_invalid_arguments() {\n    let registry = HandleRegistry::<String>::new();\n\n    let error = registry.with(\"proc_missing\", Clone::clone).unwrap_err();\n\n    assert_eq!(error.code, ErrorCode::InvalidArguments);\n}\n\n#[test]\nfn removing_a_handle_returns_the_value_and_invalidates_it() {\n    let registry = HandleRegistry::new();\n    let handle = registry.insert(\"search\", 42_u32);\n\n    assert_eq!(registry.remove(&handle), Some(42));\n    let error = registry.with(&handle, |value| *value).unwrap_err();\n    assert_eq!(error.code, ErrorCode::InvalidArguments);\n}\n",
+    "truncated": false
+  },
+  "completed_at": "2026-09-17T14:59:15.956303+00:00"
+}
