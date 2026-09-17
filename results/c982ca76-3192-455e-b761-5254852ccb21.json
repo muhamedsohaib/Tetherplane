@@ -1,0 +1,15 @@
+{
+  "version": 1,
+  "request_id": "c982ca76-3192-455e-b761-5254852ccb21",
+  "device_id": "Leno",
+  "status": "success",
+  "data": {
+    "kind": "git_rev_parse",
+    "cwd": ".",
+    "exit_code": 0,
+    "stdout": "<repo>\n",
+    "stderr": "",
+    "truncated": false
+  },
+  "completed_at": "2026-09-17T14:15:12.983906+00:00"
+}
