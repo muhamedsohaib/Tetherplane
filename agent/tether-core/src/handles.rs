@@ -28,11 +28,7 @@ impl<T> HandleRegistry<T> {
         handle
     }
 
-    pub fn with<R>(
-        &self,
-        handle: &str,
-        f: impl FnOnce(&T) -> R,
-    ) -> Result<R, CapabilityError> {
+    pub fn with<R>(&self, handle: &str, f: impl FnOnce(&T) -> R) -> Result<R, CapabilityError> {
         let values = self
             .values
             .read()
