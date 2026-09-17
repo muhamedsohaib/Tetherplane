@@ -1,0 +1,15 @@
+{
+  "version": 1,
+  "request_id": "250c734f-0202-4d40-ad67-ad4b8d263497",
+  "device_id": "Leno",
+  "status": "success",
+  "data": {
+    "kind": "git_status",
+    "cwd": ".",
+    "exit_code": 0,
+    "stdout": "## emergency/mvp-control-plane...origin/emergency/mvp-control-plane\n",
+    "stderr": "",
+    "truncated": false
+  },
+  "completed_at": "2026-09-17T14:25:23.019395+00:00"
+}
