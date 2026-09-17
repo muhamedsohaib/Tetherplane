@@ -1,0 +1,11 @@
+{
+  "version": 1,
+  "request_id": "12b6fb8d-4e90-484d-a599-0d9b54b777f4",
+  "device_id": "Leno",
+  "status": "success",
+  "data": {
+    "path": "agent/tether-core/src/handles.rs",
+    "bytes": 1539
+  },
+  "completed_at": "2026-09-17T14:56:07.005966+00:00"
+}
