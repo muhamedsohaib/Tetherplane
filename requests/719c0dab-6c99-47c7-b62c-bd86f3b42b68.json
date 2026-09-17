@@ -1,0 +1,11 @@
+{
+  "version": 1,
+  "request_id": "719c0dab-6c99-47c7-b62c-bd86f3b42b68",
+  "device_id": "Leno",
+  "op": "process.run",
+  "args": {
+    "kind": "hostname",
+    "cwd": ".",
+    "timeout_seconds": 5
+  }
+}
