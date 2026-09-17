@@ -1,0 +1,7 @@
+{
+  "version": 1,
+  "request_id": "d13c9d3f-8e7e-4534-b2b5-11edb38d463c",
+  "device_id": "Leno",
+  "op": "device.status",
+  "args": {}
+}
