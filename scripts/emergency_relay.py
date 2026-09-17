@@ -221,18 +221,19 @@ def _run_git(mailbox: Path, *args: str, check: bool = True) -> subprocess.Comple
     )
 
 
-def ensure_mailbox(mailbox: Path, relay_url: str) -> None:
+def ensure_mailbox(mailbox: Path, relay_url: str, relay_branch: str) -> None:
     if (mailbox / ".git").is_dir():
         return
     mailbox.parent.mkdir(parents=True, exist_ok=True)
-    subprocess.run(["git", "clone", relay_url, str(mailbox)], check=True)
+    subprocess.run(["git", "clone", "--branch", relay_branch, "--single-branch", relay_url, str(mailbox)], check=True)
 
 
-def sync_mailbox(mailbox: Path) -> None:
-    _run_git(mailbox, "pull", "--rebase", "--autostash", "origin", "main")
+def sync_mailbox(mailbox: Path, relay_branch: str) -> None:
+    _run_git(mailbox, "clean", "-fd", "--", "requests", "results")
+    _run_git(mailbox, "pull", "--rebase", "--autostash", "origin", relay_branch)
 
 
-def publish_result(mailbox: Path, result_file: Path, request_id: str) -> None:
+def publish_result(mailbox: Path, result_file: Path, request_id: str, relay_branch: str) -> None:
     remote_results = mailbox / "results"
     remote_results.mkdir(parents=True, exist_ok=True)
     target = remote_results / f"{request_id}.json"
@@ -243,8 +244,8 @@ def publish_result(mailbox: Path, result_file: Path, request_id: str) -> None:
         raise RuntimeError(commit.stderr.strip() or commit.stdout.strip())
     pushed = _run_git(mailbox, "push", "origin", "main", check=False)
     if pushed.returncode != 0:
-        sync_mailbox(mailbox)
-        retry = _run_git(mailbox, "push", "origin", "main", check=False)
+        sync_mailbox(mailbox, relay_branch)
+        retry = _run_git(mailbox, "push", "origin", relay_branch, check=False)
         if retry.returncode != 0:
             raise RuntimeError(retry.stderr.strip() or retry.stdout.strip())
 
@@ -262,8 +263,8 @@ def append_audit(audit_path: Path, request: dict, result: dict) -> None:
         handle.write(json.dumps(entry, separators=(",", ":")) + "\n")
 
 
-def process_once(mailbox: Path, state_dir: Path, repo_root: Path) -> int:
-    sync_mailbox(mailbox)
+def process_once(mailbox: Path, state_dir: Path, repo_root: Path, relay_branch: str) -> int:
+    sync_mailbox(mailbox, relay_branch)
     requests_dir = mailbox / "requests"
     requests_dir.mkdir(exist_ok=True)
     cache_dir = state_dir / "results"
@@ -280,7 +281,7 @@ def process_once(mailbox: Path, state_dir: Path, repo_root: Path) -> int:
             result = execute_request(request, repo_root)
             cache_file.write_text(json.dumps(result, indent=2) + "\n", encoding="utf-8")
             append_audit(state_dir / "audit.jsonl", request, result)
-        publish_result(mailbox, cache_file, request_id)
+        publish_result(mailbox, cache_file, request_id, relay_branch)
         handled += 1
     return handled
 
@@ -291,16 +292,17 @@ def main() -> int:
     parser.add_argument("--mailbox", required=True)
     parser.add_argument("--state-dir", required=True)
     parser.add_argument("--relay-url", required=True)
+    parser.add_argument("--relay-branch", default="main")
     parser.add_argument("--poll-seconds", type=float, default=3.0)
     parser.add_argument("--once", action="store_true")
     args = parser.parse_args()
     repo_root = Path(args.repo_root).resolve()
     mailbox = Path(args.mailbox).resolve()
     state_dir = Path(args.state_dir).resolve()
-    ensure_mailbox(mailbox, args.relay_url)
+    ensure_mailbox(mailbox, args.relay_url, args.relay_branch)
     while True:
         try:
-            process_once(mailbox, state_dir, repo_root)
+            process_once(mailbox, state_dir, repo_root, args.relay_branch)
         except Exception as exc:
             state_dir.mkdir(parents=True, exist_ok=True)
             with (state_dir / "worker-errors.log").open("a", encoding="utf-8") as handle:
