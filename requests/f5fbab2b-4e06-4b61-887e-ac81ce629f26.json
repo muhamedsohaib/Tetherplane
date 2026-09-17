@@ -1,0 +1,11 @@
+{
+  "version": 1,
+  "request_id": "f5fbab2b-4e06-4b61-887e-ac81ce629f26",
+  "device_id": "Leno",
+  "op": "process.run",
+  "args": {
+    "kind": "git_log",
+    "cwd": ".",
+    "timeout_seconds": 10
+  }
+}
