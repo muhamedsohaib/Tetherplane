@@ -1,0 +1,7 @@
+{
+  "version": 1,
+  "request_id": "4ca82a04-7055-489e-aeb0-46c498766d5c",
+  "device_id": "Leno",
+  "op": "files.read",
+  "args": {"path": "agent/tether-core/src/handles.rs"}
+}
