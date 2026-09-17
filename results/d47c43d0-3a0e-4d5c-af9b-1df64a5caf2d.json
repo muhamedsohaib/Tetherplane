@@ -1,0 +1,12 @@
+{
+  "version": 1,
+  "request_id": "d47c43d0-3a0e-4d5c-af9b-1df64a5caf2d",
+  "device_id": "Leno",
+  "status": "success",
+  "data": {
+    "path": "agent/tether-core/tests/budget.rs",
+    "content": "use tether_core::{ResponseBudget, ResponseMode};\n\n#[test]\nfn compact_budget_truncates_large_utf8_output_on_a_character_boundary() {\n    let budget = ResponseBudget {\n        mode: ResponseMode::Compact,\n        max_bytes: 1_025,\n        max_items: 32,\n    };\n    let input = \"\ud83d\ude00\".repeat(30_000);\n\n    let result = budget.apply_text(&input, 0).unwrap();\n\n    assert!(result.content.len() <= budget.max_bytes);\n    let continuation = result.continuation.expect(\"large output must continue\");\n    assert!(input.is_char_boundary(continuation.offset));\n    assert_eq!(result.content, input[..continuation.offset]);\n}\n\n#[test]\nfn debug_budget_is_larger_but_still_bounded() {\n    let compact = ResponseBudget::for_mode(ResponseMode::Compact);\n    let debug = ResponseBudget::for_mode(ResponseMode::Debug);\n    assert!(debug.max_bytes > compact.max_bytes);\n\n    let input = \"x\".repeat(debug.max_bytes + 4_096);\n    let result = debug.apply_text(&input, 0).unwrap();\n\n    assert_eq!(result.content.len(), debug.max_bytes);\n    assert_eq!(result.continuation.unwrap().offset, debug.max_bytes);\n}\n\n#[test]\nfn item_budget_returns_only_the_bounded_slice_and_a_cursor() {\n    let budget = ResponseBudget {\n        mode: ResponseMode::Normal,\n        max_bytes: 1024,\n        max_items: 3,\n    };\n    let items = vec![1, 2, 3, 4, 5];\n\n    let result = budget.apply_items(&items, 0).unwrap();\n\n    assert_eq!(result.items, vec![1, 2, 3]);\n    assert_eq!(result.continuation.unwrap().offset, 3);\n}\n\n#[test]\nfn continuation_offsets_must_land_on_utf8_boundaries() {\n    let budget = ResponseBudget {\n        mode: ResponseMode::Compact,\n        max_bytes: 5,\n        max_items: 1,\n    };\n    let input = \"\u00e9\u00e9\u00e9\u00e9\";\n\n    let result = budget.apply_text(input, 0).unwrap();\n\n    assert_eq!(result.content, \"\u00e9\u00e9\");\n    assert_eq!(result.continuation.unwrap().offset, 4);\n}\n",
+    "truncated": false
+  },
+  "completed_at": "2026-09-17T14:59:33.796054+00:00"
+}
