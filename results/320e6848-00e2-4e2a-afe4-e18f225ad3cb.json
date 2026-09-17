@@ -1,0 +1,12 @@
+{
+  "version": 1,
+  "request_id": "320e6848-00e2-4e2a-afe4-e18f225ad3cb",
+  "device_id": "Leno",
+  "status": "success",
+  "data": {
+    "path": "agent/tether-core/src/handles.rs",
+    "content": "use std::collections::HashMap;\nuse std::sync::RwLock;\n\nuse serde_json::Value;\nuse uuid::Uuid;\n\nuse crate::{CapabilityError, ErrorCode};\n\npub struct HandleRegistry<T> {\n    values: RwLock<HashMap<String, T>>,\n}\n\nimpl<T> HandleRegistry<T> {\n    #[must_use]\n    pub fn new() -> Self {\n        Self {\n            values: RwLock::new(HashMap::new()),\n        }\n    }\n\n    pub fn insert(&self, kind: &'static str, value: T) -> String {\n        let handle = format!(\"{kind}_{}\", Uuid::new_v4().simple());\n        let mut values = self\n            .values\n            .write()\n            .unwrap_or_else(std::sync::PoisonError::into_inner);\n        values.insert(handle.clone(), value);\n        handle\n    }\n\n    pub fn with<R>(\n        &self,\n        handle: &str,\n        f: impl FnOnce(&T) -> R,\n    ) -> Result<R, CapabilityError> {\n        let values = self\n            .values\n            .read()\n            .unwrap_or_else(std::sync::PoisonError::into_inner);\n        let value = values.get(handle).ok_or_else(|| CapabilityError {\n            code: ErrorCode::InvalidArguments,\n            message: \"unknown or expired handle\".to_owned(),\n            recovery_hint: None,\n            details: Value::Null,\n        })?;\n        Ok(f(value))\n    }\n\n    pub fn remove(&self, handle: &str) -> Option<T> {\n        self.values\n            .write()\n            .unwrap_or_else(std::sync::PoisonError::into_inner)\n            .remove(handle)\n    }\n}\n\nimpl<T> Default for HandleRegistry<T> {\n    fn default() -> Self {\n        Self::new()\n    }\n}\n",
+    "truncated": false
+  },
+  "completed_at": "2026-09-17T14:59:03.281751+00:00"
+}
