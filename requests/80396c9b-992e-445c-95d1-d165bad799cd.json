@@ -1,0 +1,12 @@
+{
+  "version": 1,
+  "request_id": "80396c9b-992e-445c-95d1-d165bad799cd",
+  "device_id": "Leno",
+  "op": "files.patch",
+  "args": {
+    "path": "agent/tether-core/src/lib.rs",
+    "old": "pub use envelope::{\n    Actor, ActorKind, InvocationEnvelope, ResponseMode, ResultEnvelope, ResultStatus, Timing,\n    VerificationStatus,\n};\npub use error::{CapabilityError, ErrorCode};\n",
+    "new": "pub use budget::{BudgetedItems, BudgetedText, ContinuationCursor, ResponseBudget};\npub use envelope::{\n    Actor, ActorKind, InvocationEnvelope, ResponseMode, ResultEnvelope, ResultStatus, Timing,\n    VerificationStatus,\n};\npub use error::{CapabilityError, ErrorCode};\npub use handles::HandleRegistry;\n",
+    "expected_replacements": 1
+  }
+}
