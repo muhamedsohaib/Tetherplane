@@ -1,0 +1,15 @@
+{
+  "version": 1,
+  "request_id": "7f3995a6-50ce-485e-94e1-681471a15c2a",
+  "device_id": "Leno",
+  "status": "success",
+  "data": {
+    "kind": "cargo_check",
+    "cwd": ".",
+    "exit_code": 0,
+    "stdout": "",
+    "stderr": "    Checking tether-filesystem-provider v0.1.0 (<repo>\\agent\\providers\\filesystem)\n    Checking tether-process-provider v0.1.0 (<repo>\\agent\\providers\\process)\n   Compiling syn v3.0.6\n    Checking tether-search-provider v0.1.0 (<repo>\\agent\\providers\\search)\n    Checking tetherd v0.1.0 (<repo>\\agent\\tetherd)\n   Compiling serde_derive v1.0.229\n   Compiling async-trait v0.1.92\n    Checking serde v1.0.229\n    Checking tether-core v0.1.0 (<repo>\\agent\\tether-core)\n    Finished `dev` profile [unoptimized + debuginfo] target(s) in 7.21s\n",
+    "truncated": false
+  },
+  "completed_at": "2026-09-17T14:26:46.019275+00:00"
+}
