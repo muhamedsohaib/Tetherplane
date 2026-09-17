@@ -1,0 +1,12 @@
+{
+  "version": 1,
+  "request_id": "d65541f3-c036-4d11-90f5-dfff685c891f",
+  "device_id": "Leno",
+  "op": "files.patch",
+  "args": {
+    "path": "agent/tether-core/src/lib.rs",
+    "old": "mod envelope;\nmod error;\nmod ownership;\nmod policy;\nmod provider;\nmod router;\n",
+    "new": "mod budget;\nmod envelope;\nmod error;\nmod handles;\nmod ownership;\nmod policy;\nmod provider;\nmod router;\n",
+    "expected_replacements": 1
+  }
+}
