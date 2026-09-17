@@ -1,0 +1,11 @@
+{
+  "version": 1,
+  "request_id": "e49ff90f-3fdc-4a0d-901f-8f882103f350",
+  "device_id": "Leno",
+  "status": "success",
+  "data": {
+    "path": ".tetherplane-acceptance.txt",
+    "bytes": 52
+  },
+  "completed_at": "2026-09-17T14:14:24.725411+00:00"
+}
