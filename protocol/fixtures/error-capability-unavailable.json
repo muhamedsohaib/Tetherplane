@@ -1,0 +1,6 @@
+{
+  "code": "capability_unavailable",
+  "message": "Browser provider is not installed.",
+  "recovery_hint": "Install or enable a browser provider for this device.",
+  "details": { "capability": "browser.observe" }
+}

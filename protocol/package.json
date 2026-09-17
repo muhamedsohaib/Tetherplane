@@ -4,8 +4,12 @@
   "private": true,
   "type": "module",
   "scripts": {
-    "build": "tsc -p tsconfig.json",
+    "build": "node scripts/generate-types.mjs && tsc -p tsconfig.json",
     "test": "node --test",
     "typecheck": "tsc --noEmit -p tsconfig.json"
+  },
+  "devDependencies": {
+    "ajv": "8.17.1",
+    "json-schema-to-typescript": "15.0.4"
   }
 }

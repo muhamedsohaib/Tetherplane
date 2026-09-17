@@ -1,0 +1,33 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "$id": "https://tetherplane.dev/schemas/error.schema.json",
+  "title": "CapabilityError",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["code", "message", "recovery_hint", "details"],
+  "properties": {
+    "code": {
+      "type": "string",
+      "enum": [
+        "invalid_arguments",
+        "capability_unavailable",
+        "permission_denied",
+        "approval_required",
+        "foreground_lease_required",
+        "human_activity_conflict",
+        "stale_reference",
+        "resource_conflict",
+        "precondition_failed",
+        "action_unverified",
+        "timeout",
+        "disconnected",
+        "process_finished",
+        "output_truncated",
+        "provider_failure"
+      ]
+    },
+    "message": { "type": "string", "minLength": 1 },
+    "recovery_hint": { "type": ["string", "null"] },
+    "details": { "type": "object" }
+  }
+}
