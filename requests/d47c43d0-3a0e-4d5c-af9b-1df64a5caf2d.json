@@ -1,0 +1,9 @@
+{
+  "version": 1,
+  "request_id": "d47c43d0-3a0e-4d5c-af9b-1df64a5caf2d",
+  "device_id": "Leno",
+  "op": "files.read",
+  "args": {
+    "path": "agent/tether-core/tests/budget.rs"
+  }
+}
