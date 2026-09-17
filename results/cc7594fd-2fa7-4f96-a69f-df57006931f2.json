@@ -1,0 +1,15 @@
+{
+  "version": 1,
+  "request_id": "cc7594fd-2fa7-4f96-a69f-df57006931f2",
+  "device_id": "Leno",
+  "status": "success",
+  "data": {
+    "kind": "git_status",
+    "cwd": ".",
+    "exit_code": 0,
+    "stdout": "## emergency/mvp-control-plane...origin/emergency/mvp-control-plane\n M agent/tether-core/src/lib.rs\n?? agent/tether-core/src/budget.rs\n?? agent/tether-core/src/handles.rs\n?? agent/tether-core/tests/budget.rs\n?? agent/tether-core/tests/handles.rs\n",
+    "stderr": "",
+    "truncated": false
+  },
+  "completed_at": "2026-09-17T16:18:37.335562+00:00"
+}
