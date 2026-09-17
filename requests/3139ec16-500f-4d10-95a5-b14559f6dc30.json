@@ -1,0 +1,9 @@
+{
+  "version": 1,
+  "request_id": "3139ec16-500f-4d10-95a5-b14559f6dc30",
+  "device_id": "Leno",
+  "op": "files.read",
+  "args": {
+    "path": "docs/superpowers/plans/2026-09-17-tetherplane-local-core-plan.md"
+  }
+}
