@@ -1,0 +1,11 @@
+{
+  "version": 1,
+  "request_id": "f6fc542e-6ac1-42bf-ad6f-573694790e94",
+  "device_id": "Leno",
+  "status": "error",
+  "error": {
+    "code": "provider_failure",
+    "message": "[WinError 2] The system cannot find the file specified"
+  },
+  "completed_at": "2026-09-17T14:26:53.088155+00:00"
+}
