@@ -1,0 +1,12 @@
+{
+  "version": 1,
+  "request_id": "4dd96db4-82a6-48ac-a57c-559e26fc2a9c",
+  "device_id": "Leno",
+  "status": "success",
+  "data": {
+    "path": "docs/TETHERPLANE_SOURCE_OF_TRUTH.md",
+    "content": "# Tetherplane Source of Truth\n\nCanonical repository:\nhttps://github.com/muhamedsohaib/Tetherplane\n\nCanonical persistent local repository:\nC:\\Users\\Sohaib\\source\\Tetherplane\n\nCanonical execution machine:\nLeno\n\nAuthority order:\n\n1. docs/superpowers/specs/2026-09-17-tetherplane-design.md\n2. docs/superpowers/plans/2026-09-17-tetherplane-implementation-roadmap.md\n3. docs/superpowers/plans/2026-09-17-tetherplane-local-core-plan.md\n4. Current repository implementation and tests\n5. Current GitHub branch/commit state\n\nHistorical proposals, chat summaries, screenshots and external research are\nnon-canonical unless incorporated into one of the documents above.\n\nFor current implementation status, inspect Git directly.\nDo not infer current branch/task completion from Project memory or old chats.",
+    "truncated": false
+  },
+  "completed_at": "2026-09-17T14:52:16.457856+00:00"
+}
