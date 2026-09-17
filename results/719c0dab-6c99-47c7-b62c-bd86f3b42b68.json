@@ -1,0 +1,15 @@
+{
+  "version": 1,
+  "request_id": "719c0dab-6c99-47c7-b62c-bd86f3b42b68",
+  "device_id": "Leno",
+  "status": "success",
+  "data": {
+    "kind": "hostname",
+    "cwd": ".",
+    "exit_code": 0,
+    "stdout": "Leno\n",
+    "stderr": "",
+    "truncated": false
+  },
+  "completed_at": "2026-09-17T14:25:07.772705+00:00"
+}
