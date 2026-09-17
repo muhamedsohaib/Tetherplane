@@ -41,6 +41,12 @@ impl ResponseBudget {
         }
     }
 
+    /// Applies the byte budget starting at `start_byte`.
+    ///
+    /// # Errors
+    ///
+    /// Returns a capability error when `start_byte` is beyond the input or is not a
+    /// UTF-8 character boundary.
     pub fn apply_text(
         &self,
         input: &str,
@@ -69,6 +75,11 @@ impl ResponseBudget {
         })
     }
 
+    /// Applies the item budget starting at `start_item`.
+    ///
+    /// # Errors
+    ///
+    /// Returns a capability error when `start_item` is beyond the end of `items`.
     pub fn apply_items<T: Clone>(
         &self,
         items: &[T],

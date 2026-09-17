@@ -28,6 +28,11 @@ impl<T> HandleRegistry<T> {
         handle
     }
 
+    /// Accesses the value for `handle` through the provided function.
+    ///
+    /// # Errors
+    ///
+    /// Returns a capability error when the handle is unknown or has expired.
     pub fn with<R>(&self, handle: &str, f: impl FnOnce(&T) -> R) -> Result<R, CapabilityError> {
         let values = self
             .values
