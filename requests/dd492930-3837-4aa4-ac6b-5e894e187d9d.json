@@ -1,0 +1,9 @@
+{
+  "version": 1,
+  "request_id": "dd492930-3837-4aa4-ac6b-5e894e187d9d",
+  "device_id": "Leno",
+  "op": "files.read",
+  "args": {
+    "path": "docs/superpowers/specs/2026-09-17-tetherplane-design.md"
+  }
+}
