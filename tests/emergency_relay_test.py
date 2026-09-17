@@ -2,6 +2,7 @@ import json
 import sys
 import tempfile
 import unittest
+from unittest.mock import patch
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -71,6 +72,13 @@ class EmergencyRelayTests(unittest.TestCase):
         self.assertEqual(result["status"], "success")
         self.assertEqual(result["data"]["exit_code"], 0)
         self.assertTrue(result["data"]["stdout"].strip())
+
+    def test_subprocess_runner_hides_console_on_windows(self):
+        with patch.object(relay.subprocess, "run") as run:
+            run.return_value = relay.subprocess.CompletedProcess(["git"], 0, "", "")
+            relay._run_hidden(["git", "--version"], capture_output=True, text=True)
+            expected = getattr(relay.subprocess, "CREATE_NO_WINDOW", 0) if relay.os.name == "nt" else 0
+            self.assertEqual(run.call_args.kwargs["creationflags"], expected)
 
     def test_malformed_request_is_rejected(self):
         result = relay.execute_request({"version": 1}, self.repo)

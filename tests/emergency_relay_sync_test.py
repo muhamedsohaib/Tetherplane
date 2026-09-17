@@ -65,5 +65,19 @@ class RelaySyncTests(unittest.TestCase):
             self.assertEqual((worker / "requests" / "r.json").read_text(encoding="utf-8"), "remote\n")
 
 
+    def test_publish_result_configures_identity_and_pushes_requested_branch(self):
+        with tempfile.TemporaryDirectory() as temp:
+            root = Path(temp)
+            remote, _seed = self._fixture(root)
+            worker = root / "worker"
+            relay.ensure_mailbox(worker, str(remote), "relay/emergency-leno")
+            result_file = root / "result.json"
+            result_file.write_text("{}\n", encoding="utf-8")
+            relay.publish_result(worker, result_file, "11111111-1111-4111-8111-111111111111", "relay/emergency-leno")
+            verify = root / "verify"
+            git(root, "clone", "--branch", "relay/emergency-leno", str(remote), str(verify))
+            self.assertEqual((verify / "results" / "11111111-1111-4111-8111-111111111111.json").read_text(encoding="utf-8"), "{}\n")
+
+
 if __name__ == "__main__":
     unittest.main()

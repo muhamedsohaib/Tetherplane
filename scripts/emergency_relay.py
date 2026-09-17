@@ -38,6 +38,11 @@ def utc_now() -> str:
     return datetime.now(timezone.utc).isoformat()
 
 
+def _run_hidden(*args, **kwargs):
+    kwargs.setdefault("creationflags", getattr(subprocess, "CREATE_NO_WINDOW", 0) if os.name == "nt" else 0)
+    return subprocess.run(*args, **kwargs)
+
+
 def resolve_repo_path(repo_root: Path, candidate: str) -> Path:
     if not isinstance(candidate, str) or not candidate:
         raise RequestError("invalid_arguments", "path must be a non-empty string")
@@ -127,7 +132,7 @@ def _run_process(args: dict, repo_root: Path) -> dict:
         raise RequestError("invalid_arguments", "timeout_seconds must be positive")
     timeout = min(float(timeout), MAX_TIMEOUT)
     try:
-        completed = subprocess.run(
+        completed = _run_hidden(
             argv,
             cwd=cwd,
             capture_output=True,
@@ -215,17 +220,18 @@ def execute_request(request: dict, repo_root: Path) -> dict:
 
 
 def _run_git(mailbox: Path, *args: str, check: bool = True) -> subprocess.CompletedProcess:
-    return subprocess.run(
+    return _run_hidden(
         ["git", *args], cwd=mailbox, capture_output=True, text=True,
         encoding="utf-8", errors="replace", check=check,
     )
 
 
 def ensure_mailbox(mailbox: Path, relay_url: str, relay_branch: str) -> None:
-    if (mailbox / ".git").is_dir():
-        return
-    mailbox.parent.mkdir(parents=True, exist_ok=True)
-    subprocess.run(["git", "clone", "--branch", relay_branch, "--single-branch", relay_url, str(mailbox)], check=True)
+    if not (mailbox / ".git").is_dir():
+        mailbox.parent.mkdir(parents=True, exist_ok=True)
+        _run_hidden(["git", "clone", "--branch", relay_branch, "--single-branch", relay_url, str(mailbox)], check=True)
+    _run_git(mailbox, "config", "user.name", "Tetherplane Leno Relay")
+    _run_git(mailbox, "config", "user.email", "tetherplane-relay@localhost")
 
 
 def sync_mailbox(mailbox: Path, relay_branch: str) -> None:
@@ -242,7 +248,7 @@ def publish_result(mailbox: Path, result_file: Path, request_id: str, relay_bran
     commit = _run_git(mailbox, "commit", "-m", f"relay: result {request_id}", check=False)
     if commit.returncode != 0 and "nothing to commit" not in (commit.stdout + commit.stderr).lower():
         raise RuntimeError(commit.stderr.strip() or commit.stdout.strip())
-    pushed = _run_git(mailbox, "push", "origin", "main", check=False)
+    pushed = _run_git(mailbox, "push", "origin", relay_branch, check=False)
     if pushed.returncode != 0:
         sync_mailbox(mailbox, relay_branch)
         retry = _run_git(mailbox, "push", "origin", relay_branch, check=False)
