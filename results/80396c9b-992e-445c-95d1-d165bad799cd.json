@@ -1,0 +1,11 @@
+{
+  "version": 1,
+  "request_id": "80396c9b-992e-445c-95d1-d165bad799cd",
+  "device_id": "Leno",
+  "status": "success",
+  "data": {
+    "path": "agent/tether-core/src/lib.rs",
+    "replacements": 1
+  },
+  "completed_at": "2026-09-17T14:56:42.634495+00:00"
+}
