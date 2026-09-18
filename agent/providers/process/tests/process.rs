@@ -1,15 +1,11 @@
 use serde_json::{Value, json};
-use tether_core::{
-    Actor, ActorKind, CapabilityProvider, InvocationEnvelope, ResponseMode,
-};
+use tether_core::{Actor, ActorKind, CapabilityProvider, InvocationEnvelope, ResponseMode};
 use tether_process_provider::ProcessProvider;
 
 fn invocation(arguments: Value) -> InvocationEnvelope {
     InvocationEnvelope {
         protocol_version: "1.0".into(),
-        request_id: "00000000-0000-4000-8000-000000000008"
-            .parse()
-            .unwrap(),
+        request_id: "00000000-0000-4000-8000-000000000008".parse().unwrap(),
         device_id: Some("Leno".into()),
         capability: "process.run".into(),
         arguments,
