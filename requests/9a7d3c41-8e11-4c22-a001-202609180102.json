@@ -1,0 +1,9 @@
+{
+  "version": 1,
+  "request_id": "9a7d3c41-8e11-4c22-a001-202609180102",
+  "device_id": "Leno",
+  "op": "files.read",
+  "args": {
+    "path": "tests/test_emergency_relay.py"
+  }
+}
