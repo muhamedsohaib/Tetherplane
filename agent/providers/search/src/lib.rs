@@ -92,7 +92,7 @@ impl SearchProvider {
         let worker_name = format!("tether-{handle}");
 
         let spawned = thread::Builder::new().name(worker_name).spawn(move || {
-            run_search(worker_session, spec);
+            run_search(&worker_session, spec);
         });
 
         if let Err(error) = spawned {
@@ -261,10 +261,10 @@ impl TextMatcher {
     }
 }
 
-fn run_search(session: Arc<SearchSession>, spec: SearchWorkerSpec) {
+fn run_search(session: &SearchSession, spec: SearchWorkerSpec) {
     match spec {
-        SearchWorkerSpec::Filename(spec) => run_filename_search(&session, &spec),
-        SearchWorkerSpec::Content(spec) => run_content_search(&session, &spec),
+        SearchWorkerSpec::Filename(spec) => run_filename_search(session, &spec),
+        SearchWorkerSpec::Content(spec) => run_content_search(session, &spec),
     }
 }
 
