@@ -1,0 +1,12 @@
+{
+  "version": 1,
+  "request_id": "cafe0000-0000-4000-8000-202609180902",
+  "device_id": "Leno",
+  "op": "files.patch",
+  "args": {
+    "path": "agent/tether-core/src/policy.rs",
+    "old": "fn classify_capability(capability: &str) -> SideEffectClass {\n",
+    "new": "fn authorize_filesystem_arguments(\n    invocation: &InvocationEnvelope,\n    allowed_directories: &[PathBuf],\n) -> Result<(), CapabilityError> {\n    for key in [\"path\", \"source\", \"destination\"] {\n        if let Some(path) = invocation\n            .arguments\n            .get(key)\n            .and_then(serde_json::Value::as_str)\n        {\n            authorize_path(Path::new(path), allowed_directories)?;\n        }\n    }\n\n    if let Some(paths) = invocation\n        .arguments\n        .get(\"paths\")\n        .and_then(serde_json::Value::as_array)\n    {\n        for path in paths.iter().filter_map(serde_json::Value::as_str) {\n            authorize_path(Path::new(path), allowed_directories)?;\n        }\n    }\n\n    Ok(())\n}\n\nfn classify_capability(capability: &str) -> SideEffectClass {\n",
+    "expected_replacements": 1
+  }
+}
