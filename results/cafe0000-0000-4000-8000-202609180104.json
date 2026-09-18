@@ -1,0 +1,15 @@
+{
+  "version": 1,
+  "request_id": "cafe0000-0000-4000-8000-202609180104",
+  "device_id": "Leno",
+  "status": "success",
+  "data": {
+    "kind": "cargo_test",
+    "cwd": ".",
+    "exit_code": 101,
+    "stdout": "",
+    "stderr": "   Compiling tether-filesystem-provider v0.1.0 (<repo>\\agent\\providers\\filesystem)\nerror[E0432]: unresolved import `super::FilesystemProvider`\n --> agent\\providers\\filesystem\\src\\filesystem_tests.rs:9:5\n  |\n9 | use super::FilesystemProvider;\n  |     ^^^^^^^------------------\n  |            |\n  |            no `FilesystemProvider` in the root\n\nFor more information about this error, try `rustc --explain E0432`.\nerror: could not compile `tether-filesystem-provider` (lib test) due to 1 previous error\n",
+    "truncated": false
+  },
+  "completed_at": "2026-09-18T08:02:56.292815+00:00"
+}
