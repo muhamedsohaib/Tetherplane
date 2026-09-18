@@ -263,12 +263,12 @@ impl TextMatcher {
 
 fn run_search(session: Arc<SearchSession>, spec: SearchWorkerSpec) {
     match spec {
-        SearchWorkerSpec::Filename(spec) => run_filename_search(session, spec),
-        SearchWorkerSpec::Content(spec) => run_content_search(session, spec),
+        SearchWorkerSpec::Filename(spec) => run_filename_search(&session, &spec),
+        SearchWorkerSpec::Content(spec) => run_content_search(&session, &spec),
     }
 }
 
-fn run_filename_search(session: Arc<SearchSession>, spec: FilenameSearchSpec) {
+fn run_filename_search(session: &SearchSession, spec: &FilenameSearchSpec) {
     let mut builder = WalkBuilder::new(&spec.root);
     builder.hidden(!spec.include_hidden);
 
@@ -314,10 +314,10 @@ fn run_filename_search(session: Arc<SearchSession>, spec: FilenameSearchSpec) {
         }
     }
 
-    finish_session(&session);
+    finish_session(session);
 }
 
-fn run_content_search(session: Arc<SearchSession>, spec: ContentSearchSpec) {
+fn run_content_search(session: &SearchSession, spec: &ContentSearchSpec) {
     let mut builder = WalkBuilder::new(&spec.root);
     builder.hidden(!spec.include_hidden);
 
@@ -396,7 +396,7 @@ fn run_content_search(session: Arc<SearchSession>, spec: ContentSearchSpec) {
         }
     }
 
-    finish_session(&session);
+    finish_session(session);
 }
 
 fn finish_session(session: &SearchSession) {
