@@ -1,0 +1,9 @@
+{
+  "version": 1,
+  "request_id": "fa222222-2222-4222-8222-202609180003",
+  "device_id": "Leno",
+  "op": "files.delete",
+  "args": {
+    "path": "agent/providers/search/src/search_tests.rs"
+  }
+}
