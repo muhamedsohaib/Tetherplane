@@ -105,7 +105,7 @@ fn interactive_command() -> (&'static str, Vec<&'static str>) {
 
 #[cfg(windows)]
 fn interactive_command() -> (&'static str, Vec<&'static str>) {
-    ("cmd.exe", vec!["/Q"])
+    ("cmd.exe", vec!["/Q", "/K", "echo tether-ready"])
 }
 
 #[cfg(unix)]
