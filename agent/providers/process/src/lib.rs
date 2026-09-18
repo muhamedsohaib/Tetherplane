@@ -304,7 +304,6 @@ fn budget_output(
     })
 }
 
-
 fn invalid_arguments(message: &str) -> CapabilityError {
     CapabilityError {
         code: ErrorCode::InvalidArguments,
