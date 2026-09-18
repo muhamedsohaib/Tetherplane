@@ -34,7 +34,7 @@ impl ProcessSession {
     pub(crate) fn spawn(program: &str, args: &[String]) -> Result<Arc<Self>, CapabilityError> {
         let mut command = Command::new(&program);
         command
-            .args(&args)
+            .args(args)
             .stdin(Stdio::piped())
             .stdout(Stdio::piped())
             .stderr(Stdio::piped());
