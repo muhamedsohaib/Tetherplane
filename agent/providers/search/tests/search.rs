@@ -282,16 +282,7 @@ async fn content_search_respects_file_glob_filters() {
     fs::write(temp.path().join("skip.md"), "needle\n").unwrap();
     let provider = SearchProvider::new();
 
-    let handle = start_content(
-        &provider,
-        temp.path(),
-        "needle",
-        false,
-        true,
-        &["*.txt"],
-        0,
-    )
-    .await;
+    let handle = start_content(&provider, temp.path(), "needle", false, true, &["*.txt"], 0).await;
     let matches = collect_matches(&provider, &handle).await;
     let paths: Vec<_> = matches
         .iter()
