@@ -1,0 +1,15 @@
+{
+  "version": 1,
+  "request_id": "f6666666-6666-4666-8666-202609180001",
+  "device_id": "Leno",
+  "status": "success",
+  "data": {
+    "kind": "cargo_test",
+    "cwd": ".",
+    "exit_code": 101,
+    "stdout": "",
+    "stderr": "   Compiling tether-search-provider v0.1.0 (<repo>\\agent\\providers\\search)\nerror[E0599]: no method named `mark_cancelled` found for struct `Arc<SearchSession>` in the current scope\n   --> agent\\providers\\search\\src\\lib.rs:285:21\n    |\n285 |             session.mark_cancelled();\n    |                     ^^^^^^^^^^^^^^\n    |\nhelp: there is a method `is_cancelled` with a similar name\n    |\n285 -             session.mark_cancelled();\n285 +             session.is_cancelled();\n    |\n\nerror[E0599]: no method named `mark_cancelled` found for struct `Arc<SearchSession>` in the current scope\n   --> agent\\providers\\search\\src\\lib.rs:334:21\n    |\n334 |             session.mark_cancelled();\n    |                     ^^^^^^^^^^^^^^\n    |\nhelp: there is a method `is_cancelled` with a similar name\n    |\n334 -             session.mark_cancelled();\n334 +             session.is_cancelled();\n    |\n\nerror[E0599]: no method named `mark_cancelled` found for struct `Arc<SearchSession>` in the current scope\n   --> agent\\providers\\search\\src\\lib.rs:372:25\n    |\n372 |                 session.mark_cancelled();\n    |                         ^^^^^^^^^^^^^^\n    |\nhelp: there is a method `is_cancelled` with a similar name\n    |\n372 -                 session.mark_cancelled();\n372 +                 session.is_cancelled();\n    |\n\nFor more information about this error, try `rustc --explain E0599`.\nerror: could not compile `tether-search-provider` (lib) due to 3 previous errors\nwarning: build failed, waiting for other jobs to finish...\nerror: could not compile `tether-search-provider` (lib test) due to 3 previous errors\n",
+    "truncated": false
+  },
+  "completed_at": "2026-09-18T09:23:28.799753+00:00"
+}
