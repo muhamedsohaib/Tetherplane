@@ -1,0 +1,12 @@
+{
+  "version": 1,
+  "request_id": "fa444444-4444-4444-8444-202609180002",
+  "device_id": "Leno",
+  "op": "files.patch",
+  "args": {
+    "path": "agent/providers/search/src/lib.rs",
+    "old": "#![forbid(unsafe_code)]\n\n",
+    "new": "#![forbid(unsafe_code)]\n\n#[cfg(test)]\nmod search_tests;\n\n",
+    "expected_replacements": 1
+  }
+}
