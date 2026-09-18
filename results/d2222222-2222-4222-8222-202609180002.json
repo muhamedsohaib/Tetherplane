@@ -1,0 +1,15 @@
+{
+  "version": 1,
+  "request_id": "d2222222-2222-4222-8222-202609180002",
+  "device_id": "Leno",
+  "status": "success",
+  "data": {
+    "kind": "cargo_check",
+    "cwd": ".",
+    "exit_code": 0,
+    "stdout": "",
+    "stderr": "    Checking tether-filesystem-provider v0.1.0 (<repo>\\agent\\providers\\filesystem)\n    Finished `dev` profile [unoptimized + debuginfo] target(s) in 0.24s\n",
+    "truncated": false
+  },
+  "completed_at": "2026-09-18T08:57:42.520573+00:00"
+}
