@@ -30,7 +30,7 @@ impl ProcessChild {
                 status.map(|status| {
                     status
                         .code()
-                        .unwrap_or_else(|| if status.success() { 0 } else { 1 })
+                        .unwrap_or_else(|| i32::from(!status.success()))
                 })
             }),
             Self::Pty(child) => child.try_wait().map(|status| {
