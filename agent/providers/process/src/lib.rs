@@ -138,7 +138,6 @@ impl ProcessProvider {
             "stderr_truncated_before": stderr.truncated_before,
         }))
     }
-
 }
 
 impl Default for ProcessProvider {
