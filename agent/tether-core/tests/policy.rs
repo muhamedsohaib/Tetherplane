@@ -240,3 +240,69 @@ fn mixed_windows_path_separators_remain_in_scope() {
 
     assert_eq!(resolved, fs::canonicalize(file).unwrap());
 }
+
+#[test]
+fn filesystem_read_many_denies_when_any_path_is_outside_allowed_root() {
+    let temp = TempDir::new().unwrap();
+    let allowed = temp.path().join("allowed");
+    fs::create_dir(&allowed).unwrap();
+    let inside = allowed.join("inside.txt");
+    fs::write(&inside, "inside").unwrap();
+    let outside = temp.path().join("outside.txt");
+    fs::write(&outside, "outside").unwrap();
+    let broker = broker_for(&allowed);
+
+    let decision = broker.evaluate(&invocation(
+        "filesystem.read_many",
+        json!({ "paths": [inside, outside] }),
+    ));
+
+    assert!(matches!(decision, PolicyDecision::Deny { .. }));
+}
+
+#[test]
+fn filesystem_move_denies_source_or_destination_outside_allowed_root() {
+    let temp = TempDir::new().unwrap();
+    let allowed = temp.path().join("allowed");
+    fs::create_dir(&allowed).unwrap();
+    let inside = allowed.join("inside.txt");
+    fs::write(&inside, "inside").unwrap();
+    let outside = temp.path().join("outside.txt");
+    fs::write(&outside, "outside").unwrap();
+    let broker = broker_for(&allowed);
+
+    let outside_source = broker.evaluate(&invocation(
+        "filesystem.move",
+        json!({ "source": outside, "destination": allowed.join("moved.txt") }),
+    ));
+    assert!(matches!(outside_source, PolicyDecision::Deny { .. }));
+
+    let outside = temp.path().join("outside-destination.txt");
+    let outside_destination = broker.evaluate(&invocation(
+        "filesystem.move",
+        json!({ "source": inside, "destination": outside }),
+    ));
+    assert!(matches!(outside_destination, PolicyDecision::Deny { .. }));
+}
+
+#[test]
+fn filesystem_move_replace_requires_approval() {
+    let temp = TempDir::new().unwrap();
+    let allowed = temp.path().join("allowed");
+    fs::create_dir(&allowed).unwrap();
+    let source = allowed.join("source.txt");
+    let destination = allowed.join("destination.txt");
+    fs::write(&source, "source").unwrap();
+    fs::write(&destination, "destination").unwrap();
+    let broker = broker_for(&allowed);
+
+    let decision = broker.evaluate(&invocation(
+        "filesystem.move",
+        json!({ "source": source, "destination": destination, "replace": true }),
+    ));
+
+    assert!(matches!(
+        decision,
+        PolicyDecision::RequireApproval { .. }
+    ));
+}
