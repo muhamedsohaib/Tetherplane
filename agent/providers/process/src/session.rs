@@ -167,16 +167,33 @@ impl ProcessSession {
         self.stdout.next_cursor() > cursors.stdout || self.stderr.next_cursor() > cursors.stderr
     }
 
-    pub(crate) fn read_incremental(&self) -> (OutputSlice, OutputSlice) {
+    pub(crate) fn incremental_snapshot(&self) -> (OutputSlice, OutputSlice) {
+        let cursors = self
+            .read_cursors
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner);
+        (
+            self.stdout.read_from(cursors.stdout),
+            self.stderr.read_from(cursors.stderr),
+        )
+    }
+
+    pub(crate) fn advance_read_cursors(&self, stdout_cursor: u64, stderr_cursor: u64) {
         let mut cursors = self
             .read_cursors
             .lock()
             .unwrap_or_else(std::sync::PoisonError::into_inner);
-        let stdout = self.stdout.read_from(cursors.stdout);
-        let stderr = self.stderr.read_from(cursors.stderr);
-        cursors.stdout = stdout.next_cursor;
-        cursors.stderr = stderr.next_cursor;
-        (stdout, stderr)
+        cursors.stdout = cursors.stdout.max(stdout_cursor);
+        cursors.stderr = cursors.stderr.max(stderr_cursor);
+    }
+
+    pub(crate) fn explicit_snapshot(&self, offset: i64) -> (OutputSlice, OutputSlice) {
+        let stdout_cursor = self.stdout.cursor_for_offset(offset);
+        let stderr_cursor = self.stderr.cursor_for_offset(offset);
+        (
+            self.stdout.read_from(stdout_cursor),
+            self.stderr.read_from(stderr_cursor),
+        )
     }
 
     #[allow(dead_code)]

@@ -61,6 +61,18 @@ impl BoundedOutput {
             .next_cursor
     }
 
+    pub(crate) fn cursor_for_offset(&self, offset: i64) -> u64 {
+        let state = self
+            .inner
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner);
+        if offset >= 0 {
+            u64::try_from(offset).unwrap_or(u64::MAX)
+        } else {
+            state.next_cursor.saturating_sub(offset.unsigned_abs())
+        }
+    }
+
     pub(crate) fn read_from(&self, cursor: u64) -> OutputSlice {
         let state = self
             .inner

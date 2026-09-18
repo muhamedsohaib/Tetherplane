@@ -13,6 +13,7 @@ use tether_core::{
     ProviderResult, ResponseBudget, VerificationStatus,
 };
 
+use output::OutputSlice;
 use session::ProcessSession;
 
 const DEFAULT_INITIAL_WAIT_MS: u64 = 250;
@@ -94,9 +95,14 @@ impl ProcessProvider {
         }))
     }
 
-    async fn read(&self, arguments: &Value) -> Result<Value, CapabilityError> {
+    async fn read(
+        &self,
+        arguments: &Value,
+        response_mode: tether_core::ResponseMode,
+    ) -> Result<Value, CapabilityError> {
         let handle = string_argument(arguments, "handle")?;
         let wait_ms = u64_argument(arguments, "wait_ms", DEFAULT_READ_WAIT_MS)?;
+        let offset = optional_i64_argument(arguments, "offset")?;
         if wait_ms > MAX_READ_WAIT_MS {
             return Err(invalid_arguments(
                 "wait_ms exceeds the maximum supported wait",
@@ -109,7 +115,11 @@ impl ProcessProvider {
             .unwrap_or_else(Instant::now);
 
         let mut status = session.status()?;
-        while !session.has_unseen_output() && status.running && Instant::now() < deadline {
+        while offset.is_none()
+            && !session.has_unseen_output()
+            && status.running
+            && Instant::now() < deadline
+        {
             tokio::time::sleep(Duration::from_millis(5)).await;
             status = session.status()?;
         }
@@ -123,19 +133,33 @@ impl ProcessProvider {
             }
         }
 
-        let (stdout, stderr) = session.read_incremental();
+        let explicit = offset.is_some();
+        let (stdout, stderr) = match offset {
+            Some(offset) => session.explicit_snapshot(offset),
+            None => session.incremental_snapshot(),
+        };
+        let budget = ResponseBudget::for_mode(response_mode);
+        let stdout = budget_output(stdout, &budget)?;
+        let stderr = budget_output(stderr, &budget)?;
+
+        if !explicit {
+            session.advance_read_cursors(stdout.cursor, stderr.cursor);
+        }
+
         Ok(json!({
             "handle": handle,
             "running": status.running,
             "exit_code": status.exit_code,
-            "stdout": stdout.text,
-            "stderr": stderr.text,
-            "stdout_cursor": stdout.next_cursor,
-            "stderr_cursor": stderr.next_cursor,
+            "stdout": stdout.content,
+            "stderr": stderr.content,
+            "stdout_cursor": stdout.cursor,
+            "stderr_cursor": stderr.cursor,
             "stdout_start_cursor": stdout.start_cursor,
             "stderr_start_cursor": stderr.start_cursor,
             "stdout_truncated_before": stdout.truncated_before,
             "stderr_truncated_before": stderr.truncated_before,
+            "stdout_continuation": stdout.continuation,
+            "stderr_continuation": stderr.continuation,
         }))
     }
 }
@@ -166,7 +190,10 @@ impl CapabilityProvider for ProcessProvider {
                 self.run(&invocation.arguments, invocation.response_mode.clone())
                     .await?
             }
-            "read" => self.read(&invocation.arguments).await?,
+            "read" => {
+                self.read(&invocation.arguments, invocation.response_mode.clone())
+                    .await?
+            }
             _ => {
                 return Err(CapabilityError {
                     code: ErrorCode::CapabilityUnavailable,
@@ -225,6 +252,58 @@ fn u64_argument(arguments: &Value, key: &str, default: u64) -> Result<u64, Capab
         .as_u64()
         .ok_or_else(|| invalid_arguments(&format!("{key} must be a non-negative integer")))
 }
+
+fn optional_i64_argument(arguments: &Value, key: &str) -> Result<Option<i64>, CapabilityError> {
+    let Some(value) = arguments.get(key) else {
+        return Ok(None);
+    };
+    if value.is_null() {
+        return Ok(None);
+    }
+    value
+        .as_i64()
+        .map(Some)
+        .ok_or_else(|| invalid_arguments(&format!("{key} must be an integer")))
+}
+
+struct DeliveredOutput {
+    content: String,
+    start_cursor: u64,
+    cursor: u64,
+    continuation: Option<u64>,
+    truncated_before: bool,
+}
+
+fn budget_output(
+    slice: OutputSlice,
+    budget: &ResponseBudget,
+) -> Result<DeliveredOutput, CapabilityError> {
+    let budgeted = budget.apply_text(&slice.text, 0)?;
+    let delivered_bytes = budgeted
+        .continuation
+        .as_ref()
+        .map_or(slice.text.len(), |cursor| cursor.offset);
+    let delivered_bytes = u64::try_from(delivered_bytes).unwrap_or(u64::MAX);
+    let cursor = slice
+        .start_cursor
+        .saturating_add(delivered_bytes)
+        .min(slice.next_cursor);
+    let continuation = budgeted.continuation.map(|relative| {
+        slice
+            .start_cursor
+            .saturating_add(u64::try_from(relative.offset).unwrap_or(u64::MAX))
+            .min(slice.next_cursor)
+    });
+
+    Ok(DeliveredOutput {
+        content: budgeted.content,
+        start_cursor: slice.start_cursor,
+        cursor,
+        continuation,
+        truncated_before: slice.truncated_before,
+    })
+}
+
 
 fn invalid_arguments(message: &str) -> CapabilityError {
     CapabilityError {
