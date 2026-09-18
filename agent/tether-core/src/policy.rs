@@ -99,6 +99,19 @@ impl PolicyBroker for LocalPolicyBroker {
             };
         }
 
+        if invocation.capability == "search.start"
+            && let Some(root) = invocation
+                .arguments
+                .get("root")
+                .and_then(serde_json::Value::as_str)
+            && let Err(error) =
+                authorize_path(Path::new(root), &self.config.allowed_directories)
+        {
+            return PolicyDecision::Deny {
+                reason: error.message,
+            };
+        }
+
         if invocation.capability == "filesystem.move"
             && invocation
                 .arguments

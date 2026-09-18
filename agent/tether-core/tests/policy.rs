@@ -303,3 +303,24 @@ fn filesystem_move_replace_requires_approval() {
 
     assert!(matches!(decision, PolicyDecision::RequireApproval { .. }));
 }
+
+#[test]
+fn search_start_outside_allowed_directory_is_denied() {
+    let temp = TempDir::new().unwrap();
+    let allowed = temp.path().join("allowed");
+    let outside = temp.path().join("outside");
+    fs::create_dir(&allowed).unwrap();
+    fs::create_dir(&outside).unwrap();
+    let broker = broker_for(&allowed);
+
+    let decision = broker.evaluate(&invocation(
+        "search.start",
+        json!({
+            "root": outside,
+            "scope": "filename",
+            "query": "needle",
+        }),
+    ));
+
+    assert!(matches!(decision, PolicyDecision::Deny { .. }));
+}
