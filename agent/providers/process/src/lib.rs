@@ -21,6 +21,7 @@ const MAX_INITIAL_WAIT_MS: u64 = 10_000;
 const OUTPUT_DRAIN_GRACE_MS: u64 = 100;
 const DEFAULT_READ_WAIT_MS: u64 = 0;
 const MAX_READ_WAIT_MS: u64 = 10_000;
+const MAX_INPUT_BYTES: usize = 64 * 1024;
 
 pub struct ProcessProvider {
     sessions: HandleRegistry<Arc<ProcessSession>>,
@@ -41,6 +42,7 @@ impl ProcessProvider {
     ) -> Result<Value, CapabilityError> {
         let program = string_argument(arguments, "program")?.to_owned();
         let args = string_array_argument(arguments, "args")?;
+        let pty = bool_argument(arguments, "pty", false)?;
         let initial_wait_ms = u64_argument(arguments, "initial_wait_ms", DEFAULT_INITIAL_WAIT_MS)?;
         if initial_wait_ms > MAX_INITIAL_WAIT_MS {
             return Err(invalid_arguments(
@@ -48,8 +50,9 @@ impl ProcessProvider {
             ));
         }
 
-        let session = tokio::task::spawn_blocking(move || ProcessSession::spawn(&program, &args))
-            .await
+        let session =
+            tokio::task::spawn_blocking(move || ProcessSession::spawn(&program, &args, pty))
+                .await
             .map_err(|error| provider_failure(&format!("process spawn task failed: {error}")))??;
         let handle = self.sessions.insert("proc", Arc::clone(&session));
 
@@ -80,6 +83,7 @@ impl ProcessProvider {
 
         Ok(json!({
             "handle": handle,
+            "pty": session.is_pty(),
             "running": status.running,
             "exit_code": status.exit_code,
             "stdout": stdout_budget.content,
@@ -162,6 +166,35 @@ impl ProcessProvider {
             "stderr_continuation": stderr.continuation,
         }))
     }
+
+    async fn input(&self, arguments: &Value) -> Result<Value, CapabilityError> {
+        let handle = string_argument(arguments, "handle")?;
+        let data = string_argument(arguments, "data")?.to_owned();
+        if data.len() > MAX_INPUT_BYTES {
+            return Err(invalid_arguments("process input exceeds the maximum supported size"));
+        }
+
+        let session = self.sessions.with(handle, Arc::clone)?;
+        if !session.status()?.running {
+            return Err(CapabilityError {
+                code: ErrorCode::ProcessFinished,
+                message: "cannot write input to a finished process".to_owned(),
+                recovery_hint: None,
+                details: json!({ "handle": handle }),
+            });
+        }
+
+        let accepted_bytes =
+            tokio::task::spawn_blocking(move || session.write_input(data.as_bytes()))
+                .await
+                .map_err(|error| provider_failure(&format!("process input task failed: {error}")))??;
+
+        Ok(json!({
+            "handle": handle,
+            "accepted_bytes": accepted_bytes,
+        }))
+    }
+
 }
 
 impl Default for ProcessProvider {
@@ -194,6 +227,7 @@ impl CapabilityProvider for ProcessProvider {
                 self.read(&invocation.arguments, invocation.response_mode.clone())
                     .await?
             }
+            "input" => self.input(&invocation.arguments).await?,
             _ => {
                 return Err(CapabilityError {
                     code: ErrorCode::CapabilityUnavailable,
@@ -239,6 +273,18 @@ fn string_array_argument(arguments: &Value, key: &str) -> Result<Vec<String>, Ca
                 .ok_or_else(|| invalid_arguments(&format!("{key} must contain only strings")))
         })
         .collect()
+}
+
+fn bool_argument(arguments: &Value, key: &str, default: bool) -> Result<bool, CapabilityError> {
+    let Some(value) = arguments.get(key) else {
+        return Ok(default);
+    };
+    if value.is_null() {
+        return Ok(default);
+    }
+    value
+        .as_bool()
+        .ok_or_else(|| invalid_arguments(&format!("{key} must be a boolean")))
 }
 
 fn u64_argument(arguments: &Value, key: &str, default: u64) -> Result<u64, CapabilityError> {
