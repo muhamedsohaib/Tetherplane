@@ -1,0 +1,11 @@
+{
+  "version": 1,
+  "request_id": "f6666666-6666-4666-8666-202609180002",
+  "device_id": "Leno",
+  "status": "success",
+  "data": {
+    "path": "agent/providers/search/src/lib.rs",
+    "replacements": 3
+  },
+  "completed_at": "2026-09-18T09:23:59.794017+00:00"
+}
