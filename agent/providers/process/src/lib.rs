@@ -139,8 +139,8 @@ impl ProcessProvider {
             None => session.incremental_snapshot(),
         };
         let budget = ResponseBudget::for_mode(response_mode);
-        let stdout = budget_output(stdout, &budget)?;
-        let stderr = budget_output(stderr, &budget)?;
+        let stdout = budget_output(&stdout, &budget)?;
+        let stderr = budget_output(&stderr, &budget)?;
 
         if !explicit {
             session.advance_read_cursors(stdout.cursor, stderr.cursor);
@@ -275,7 +275,7 @@ struct DeliveredOutput {
 }
 
 fn budget_output(
-    slice: OutputSlice,
+    slice: &OutputSlice,
     budget: &ResponseBudget,
 ) -> Result<DeliveredOutput, CapabilityError> {
     let budgeted = budget.apply_text(&slice.text, 0)?;
