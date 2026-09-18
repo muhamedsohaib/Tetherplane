@@ -18,6 +18,8 @@ use session::ProcessSession;
 const DEFAULT_INITIAL_WAIT_MS: u64 = 250;
 const MAX_INITIAL_WAIT_MS: u64 = 10_000;
 const OUTPUT_DRAIN_GRACE_MS: u64 = 100;
+const DEFAULT_READ_WAIT_MS: u64 = 0;
+const MAX_READ_WAIT_MS: u64 = 10_000;
 
 pub struct ProcessProvider {
     sessions: HandleRegistry<Arc<ProcessSession>>,
@@ -91,6 +93,52 @@ impl ProcessProvider {
             "stderr_continuation": stderr_budget.continuation.map(|cursor| cursor.offset),
         }))
     }
+
+    async fn read(&self, arguments: &Value) -> Result<Value, CapabilityError> {
+        let handle = string_argument(arguments, "handle")?;
+        let wait_ms = u64_argument(arguments, "wait_ms", DEFAULT_READ_WAIT_MS)?;
+        if wait_ms > MAX_READ_WAIT_MS {
+            return Err(invalid_arguments(
+                "wait_ms exceeds the maximum supported wait",
+            ));
+        }
+
+        let session = self.sessions.with(handle, Arc::clone)?;
+        let deadline = Instant::now()
+            .checked_add(Duration::from_millis(wait_ms))
+            .unwrap_or_else(Instant::now);
+
+        let mut status = session.status()?;
+        while !session.has_unseen_output() && status.running && Instant::now() < deadline {
+            tokio::time::sleep(Duration::from_millis(5)).await;
+            status = session.status()?;
+        }
+
+        if !status.running {
+            let drain_deadline = Instant::now()
+                .checked_add(Duration::from_millis(OUTPUT_DRAIN_GRACE_MS))
+                .unwrap_or_else(Instant::now);
+            while !session.outputs_drained() && Instant::now() < drain_deadline {
+                tokio::time::sleep(Duration::from_millis(2)).await;
+            }
+        }
+
+        let (stdout, stderr) = session.read_incremental();
+        Ok(json!({
+            "handle": handle,
+            "running": status.running,
+            "exit_code": status.exit_code,
+            "stdout": stdout.text,
+            "stderr": stderr.text,
+            "stdout_cursor": stdout.next_cursor,
+            "stderr_cursor": stderr.next_cursor,
+            "stdout_start_cursor": stdout.start_cursor,
+            "stderr_start_cursor": stderr.start_cursor,
+            "stdout_truncated_before": stdout.truncated_before,
+            "stderr_truncated_before": stderr.truncated_before,
+        }))
+    }
+
 }
 
 impl Default for ProcessProvider {
@@ -119,6 +167,7 @@ impl CapabilityProvider for ProcessProvider {
                 self.run(&invocation.arguments, invocation.response_mode.clone())
                     .await?
             }
+            "read" => self.read(&invocation.arguments).await?,
             _ => {
                 return Err(CapabilityError {
                     code: ErrorCode::CapabilityUnavailable,

@@ -46,16 +46,36 @@ impl BoundedOutput {
     }
 
     pub(crate) fn snapshot(&self) -> OutputSlice {
+        let start_cursor = self
+            .inner
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner)
+            .start_cursor;
+        self.read_from(start_cursor)
+    }
+
+    pub(crate) fn next_cursor(&self) -> u64 {
+        self.inner
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner)
+            .next_cursor
+    }
+
+    pub(crate) fn read_from(&self, cursor: u64) -> OutputSlice {
         let state = self
             .inner
             .lock()
             .unwrap_or_else(std::sync::PoisonError::into_inner);
-        let bytes: Vec<u8> = state.bytes.iter().copied().collect();
+        let effective_cursor = cursor.max(state.start_cursor).min(state.next_cursor);
+        let skip = usize::try_from(effective_cursor.saturating_sub(state.start_cursor))
+            .unwrap_or(state.bytes.len())
+            .min(state.bytes.len());
+        let bytes: Vec<u8> = state.bytes.iter().skip(skip).copied().collect();
         OutputSlice {
             text: String::from_utf8_lossy(&bytes).into_owned(),
-            start_cursor: state.start_cursor,
+            start_cursor: effective_cursor,
             next_cursor: state.next_cursor,
-            truncated_before: state.start_cursor > 0,
+            truncated_before: cursor < state.start_cursor,
         }
     }
 }

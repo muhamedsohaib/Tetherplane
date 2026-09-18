@@ -28,6 +28,13 @@ pub(crate) struct ProcessSession {
     pid: u32,
     origin: ResourceOrigin,
     exit_code: Mutex<Option<i32>>,
+    read_cursors: Mutex<ReadCursors>,
+}
+
+#[derive(Clone, Copy, Debug, Default)]
+struct ReadCursors {
+    stdout: u64,
+    stderr: u64,
 }
 
 impl ProcessSession {
@@ -98,6 +105,7 @@ impl ProcessSession {
             pid,
             origin: ResourceOrigin::Tetherplane,
             exit_code: Mutex::new(None),
+            read_cursors: Mutex::new(ReadCursors::default()),
         }))
     }
 
@@ -149,6 +157,26 @@ impl ProcessSession {
 
     pub(crate) fn stderr_snapshot(&self) -> OutputSlice {
         self.stderr.snapshot()
+    }
+
+    pub(crate) fn has_unseen_output(&self) -> bool {
+        let cursors = self
+            .read_cursors
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner);
+        self.stdout.next_cursor() > cursors.stdout || self.stderr.next_cursor() > cursors.stderr
+    }
+
+    pub(crate) fn read_incremental(&self) -> (OutputSlice, OutputSlice) {
+        let mut cursors = self
+            .read_cursors
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner);
+        let stdout = self.stdout.read_from(cursors.stdout);
+        let stderr = self.stderr.read_from(cursors.stderr);
+        cursors.stdout = stdout.next_cursor;
+        cursors.stderr = stderr.next_cursor;
+        (stdout, stderr)
     }
 
     #[allow(dead_code)]
