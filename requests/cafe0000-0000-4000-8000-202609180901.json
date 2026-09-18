@@ -1,0 +1,12 @@
+{
+  "version": 1,
+  "request_id": "cafe0000-0000-4000-8000-202609180901",
+  "device_id": "Leno",
+  "op": "files.patch",
+  "args": {
+    "path": "agent/tether-core/src/policy.rs",
+    "old": "        if invocation.capability.starts_with(\"filesystem.\")\n            && let Some(path) = invocation\n                .arguments\n                .get(\"path\")\n                .and_then(serde_json::Value::as_str)\n            && let Err(error) = authorize_path(Path::new(path), &self.config.allowed_directories)\n        {\n            return PolicyDecision::Deny {\n                reason: error.message,\n            };\n        }\n\n        if invocation.capability == \"process.terminate\"\n",
+    "new": "        if invocation.capability.starts_with(\"filesystem.\")\n            && let Err(error) =\n                authorize_filesystem_arguments(invocation, &self.config.allowed_directories)\n        {\n            return PolicyDecision::Deny {\n                reason: error.message,\n            };\n        }\n\n        if invocation.capability == \"filesystem.move\"\n            && invocation\n                .arguments\n                .get(\"replace\")\n                .and_then(serde_json::Value::as_bool)\n                == Some(true)\n        {\n            return PolicyDecision::RequireApproval {\n                reason: \"filesystem.move with replacement requires explicit approval\".into(),\n                approval_scope: ApprovalScope {\n                    capability: invocation.capability.clone(),\n                },\n            };\n        }\n\n        if invocation.capability == \"process.terminate\"\n",
+    "expected_replacements": 1
+  }
+}
