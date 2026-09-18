@@ -150,7 +150,9 @@ fn string_array_argument(arguments: &Value, key: &str) -> Result<Vec<String>, Ca
         return Ok(Vec::new());
     };
     let Some(values) = value.as_array() else {
-        return Err(invalid_arguments(&format!("{key} must be an array of strings")));
+        return Err(invalid_arguments(&format!(
+            "{key} must be an array of strings"
+        )));
     };
 
     values
