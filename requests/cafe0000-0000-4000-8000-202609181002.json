@@ -1,0 +1,12 @@
+{
+  "version": 1,
+  "request_id": "cafe0000-0000-4000-8000-202609181002",
+  "device_id": "Leno",
+  "op": "files.patch",
+  "args": {
+    "path": "agent/providers/filesystem/src/write.rs",
+    "old": "\ntrait OptionBoolExt {\n    fn transpose(self) -> Result<Option<bool>, ()>;\n}\n\nimpl OptionBoolExt for Option<Option<bool>> {\n    fn transpose(self) -> Result<Option<bool>, ()> {\n        match self {\n            None => Ok(None),\n            Some(Some(value)) => Ok(Some(value)),\n            Some(None) => Err(()),\n        }\n    }\n}\n",
+    "new": "",
+    "expected_replacements": 1
+  }
+}
