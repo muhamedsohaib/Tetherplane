@@ -31,7 +31,7 @@ pub(crate) struct ProcessSession {
 }
 
 impl ProcessSession {
-    pub(crate) fn spawn(program: String, args: Vec<String>) -> Result<Arc<Self>, CapabilityError> {
+    pub(crate) fn spawn(program: &str, args: &[String]) -> Result<Arc<Self>, CapabilityError> {
         let mut command = Command::new(&program);
         command
             .args(&args)
@@ -175,9 +175,8 @@ where
         let mut buffer = [0_u8; 4096];
         loop {
             match reader.read(&mut buffer) {
-                Ok(0) => break,
-                Ok(count) => output.append(&buffer[..count]),
-                Err(_) => break,
+                Ok(count) if count > 0 => output.append(&buffer[..count]),
+                Ok(_) | Err(_) => break,
             }
         }
         done.store(true, Ordering::Release);

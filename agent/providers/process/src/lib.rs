@@ -45,7 +45,7 @@ impl ProcessProvider {
             ));
         }
 
-        let session = tokio::task::spawn_blocking(move || ProcessSession::spawn(program, args))
+        let session = tokio::task::spawn_blocking(move || ProcessSession::spawn(&program, &args))
             .await
             .map_err(|error| provider_failure(&format!("process spawn task failed: {error}")))??;
         let handle = self.sessions.insert("proc", Arc::clone(&session));
