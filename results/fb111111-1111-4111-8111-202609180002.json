@@ -1,0 +1,12 @@
+{
+  "version": 1,
+  "request_id": "fb111111-1111-4111-8111-202609180002",
+  "device_id": "Leno",
+  "status": "success",
+  "data": {
+    "path": "agent/providers/search/Cargo.toml",
+    "content": "[package]\nname = \"tether-search-provider\"\nversion.workspace = true\nedition.workspace = true\nlicense.workspace = true\npublish = false\n\n[dependencies]\nasync-trait = \"0.1\"\nglobset = \"0.4\"\nignore = \"0.4\"\nregex = \"1\"\nserde_json = \"1\"\ntether-core = { path = \"../../tether-core\" }\n\n[dev-dependencies]\ntempfile = \"3\"\ntokio = { version = \"1\", features = [\"macros\", \"rt-multi-thread\", \"time\"] }\n\n[lints]\nworkspace = true\n",
+    "truncated": false
+  },
+  "completed_at": "2026-09-18T09:33:32.711989+00:00"
+}
