@@ -1,0 +1,15 @@
+{
+  "version": 1,
+  "request_id": "e2222222-2222-4222-8222-202609180001",
+  "device_id": "Leno",
+  "status": "success",
+  "data": {
+    "kind": "cargo_test",
+    "cwd": ".",
+    "exit_code": 101,
+    "stdout": "",
+    "stderr": "    Updating crates.io index\n     Locking 14 packages to latest compatible versions\n      Adding aho-corasick v1.1.5\n      Adding bstr v1.13.1\n      Adding crossbeam-deque v0.8.8\n      Adding crossbeam-epoch v0.9.21\n      Adding crossbeam-utils v0.8.23\n      Adding globset v0.4.20\n      Adding ignore v0.4.33\n      Adding log v0.4.34\n      Adding regex v1.13.1\n      Adding regex-automata v0.4.18\n      Adding regex-syntax v0.8.11\n      Adding same-file v1.0.6\n      Adding walkdir v2.5.0\n      Adding winapi-util v0.1.11\n Downloading crates ...\n  Downloaded log v0.4.34\n  Downloaded crossbeam-utils v0.8.23\n  Downloaded winapi-util v0.1.11\n  Downloaded same-file v1.0.6\n  Downloaded walkdir v2.5.0\n  Downloaded globset v0.4.20\n  Downloaded crossbeam-epoch v0.9.21\n  Downloaded crossbeam-deque v0.8.8\n  Downloaded ignore v0.4.33\n  Downloaded regex v1.13.1\n  Downloaded aho-corasick v1.1.5\n  Downloaded regex-syntax v0.8.11\n  Downloaded bstr v1.13.1\n  Downloaded regex-automata v0.4.18\n   Compiling memchr v2.8.3\n   Compiling windows-sys v0.61.2\n   Compiling crossbeam-utils v0.8.23\n   Compiling tokio v1.53.1\n   Compiling regex-syntax v0.8.11\n   Compiling crossbeam-epoch v0.9.21\n   Compiling crossbeam-deque v0.8.8\n   Compiling log v0.4.34\n   Compiling serde_json v1.0.151\n   Compiling aho-corasick v1.1.5\n   Compiling tempfile v3.27.0\n   Compiling winapi-util v0.1.11\n   Compiling bstr v1.13.1\n   Compiling same-file v1.0.6\n   Compiling walkdir v2.5.0\n   Compiling tether-core v0.1.0 (<repo>\\agent\\tether-core)\n   Compiling regex-automata v0.4.18\n   Compiling tether-filesystem-provider v0.1.0 (<repo>\\agent\\providers\\filesystem)\n   Compiling globset v0.4.20\n   Compiling regex v1.13.1\n   Compiling ignore v0.4.33\n   Compiling tether-search-provider v0.1.0 (<repo>\\agent\\providers\\search)\nerror[E0432]: unresolved import `super::SearchProvider`\n  --> agent\\providers\\search\\src\\search_tests.rs:11:5\n   |\n11 | use super::SearchProvider;\n   |     ^^^^^^^--------------\n   |            |\n   |            no `SearchProvider` in the root\n\nFor more information about this error, try `rustc --explain E0432`.\nerror: could not compile `tether-search-provider` (lib test) due to 1 previous error\n",
+    "truncated": false
+  },
+  "completed_at": "2026-09-18T09:03:38.706367+00:00"
+}
