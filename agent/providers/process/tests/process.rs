@@ -2,12 +2,12 @@ use serde_json::{Value, json};
 use tether_core::{Actor, ActorKind, CapabilityProvider, InvocationEnvelope, ResponseMode};
 use tether_process_provider::ProcessProvider;
 
-fn invocation(arguments: Value) -> InvocationEnvelope {
+fn invocation(capability: &str, arguments: Value) -> InvocationEnvelope {
     InvocationEnvelope {
         protocol_version: "1.0".into(),
         request_id: "00000000-0000-4000-8000-000000000008".parse().unwrap(),
         device_id: Some("Leno".into()),
-        capability: "process.run".into(),
+        capability: capability.into(),
         arguments,
         actor: Actor {
             id: "process-test".into(),
@@ -50,13 +50,35 @@ fn long_command() -> (&'static str, Vec<&'static str>) {
     )
 }
 
+#[cfg(unix)]
+fn incremental_command() -> (&'static str, Vec<&'static str>) {
+    (
+        "/bin/sh",
+        vec![
+            "-c",
+            "printf 'one\\n'; sleep 1; printf 'two\\n'; sleep 1",
+        ],
+    )
+}
+
+#[cfg(windows)]
+fn incremental_command() -> (&'static str, Vec<&'static str>) {
+    (
+        "cmd.exe",
+        vec![
+            "/C",
+            "echo one & ping -n 2 127.0.0.1 >nul & echo two & ping -n 2 127.0.0.1 >nul",
+        ],
+    )
+}
+
 #[tokio::test]
 async fn short_command_returns_complete_bounded_output_and_exit_code() {
     let provider = ProcessProvider::new();
     let (program, args) = short_command();
 
     let result = provider
-        .execute(&invocation(json!({
+        .execute(&invocation("process.run", json!({
             "program": program,
             "args": args,
             "initial_wait_ms": 2_000,
@@ -80,7 +102,7 @@ async fn long_command_returns_handle_and_initial_output_while_running() {
     let (program, args) = long_command();
 
     let result = provider
-        .execute(&invocation(json!({
+        .execute(&invocation("process.run", json!({
             "program": program,
             "args": args,
             "initial_wait_ms": 100,
@@ -96,5 +118,72 @@ async fn long_command_returns_handle_and_initial_output_while_running() {
         result.data["stdout"]
             .as_str()
             .is_some_and(|output| output.contains("started"))
+    );
+}
+
+#[tokio::test]
+async fn incremental_reads_return_only_output_newer_than_the_session_cursor() {
+    let provider = ProcessProvider::new();
+    let (program, args) = incremental_command();
+
+    let started = provider
+        .execute(&invocation(
+            "process.run",
+            json!({
+                "program": program,
+                "args": args,
+                "initial_wait_ms": 0,
+            }),
+        ))
+        .await
+        .unwrap();
+    let handle = started.data["handle"].as_str().unwrap().to_owned();
+
+    let first = provider
+        .execute(&invocation(
+            "process.read",
+            json!({
+                "handle": handle,
+                "wait_ms": 500,
+            }),
+        ))
+        .await
+        .unwrap();
+
+    assert!(
+        first.data["stdout"]
+            .as_str()
+            .is_some_and(|output| output.contains("one"))
+    );
+    assert!(
+        first.data["stdout"]
+            .as_str()
+            .is_some_and(|output| !output.contains("two"))
+    );
+
+    let second = provider
+        .execute(&invocation(
+            "process.read",
+            json!({
+                "handle": handle,
+                "wait_ms": 1_500,
+            }),
+        ))
+        .await
+        .unwrap();
+
+    assert!(
+        second.data["stdout"]
+            .as_str()
+            .is_some_and(|output| output.contains("two"))
+    );
+    assert!(
+        second.data["stdout"]
+            .as_str()
+            .is_some_and(|output| !output.contains("one"))
+    );
+    assert!(
+        first.data["stdout_cursor"].as_u64().unwrap()
+            < second.data["stdout_cursor"].as_u64().unwrap()
     );
 }
