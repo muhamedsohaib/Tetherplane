@@ -4,18 +4,14 @@ use std::time::Duration;
 
 use serde_json::{Value, json};
 use tempfile::TempDir;
-use tether_core::{
-    Actor, ActorKind, CapabilityProvider, InvocationEnvelope, ResponseMode,
-};
+use tether_core::{Actor, ActorKind, CapabilityProvider, InvocationEnvelope, ResponseMode};
 
 use tether_search_provider::SearchProvider;
 
 fn invocation(capability: &str, arguments: Value) -> InvocationEnvelope {
     InvocationEnvelope {
         protocol_version: "1.0".into(),
-        request_id: "00000000-0000-4000-8000-000000000007"
-            .parse()
-            .unwrap(),
+        request_id: "00000000-0000-4000-8000-000000000007".parse().unwrap(),
         device_id: Some("Leno".into()),
         capability: capability.into(),
         arguments,
@@ -145,16 +141,7 @@ async fn literal_filename_search_is_case_insensitive_and_nested() {
     let temp = fixture();
     let provider = SearchProvider::new();
 
-    let handle = start_filename(
-        &provider,
-        temp.path(),
-        "alpha",
-        false,
-        false,
-        false,
-        100,
-    )
-    .await;
+    let handle = start_filename(&provider, temp.path(), "alpha", false, false, false, 100).await;
     let paths = collect_relative_paths(&provider, &handle).await;
 
     assert_eq!(paths, vec!["Alpha.TXT", "alpha.log"]);
@@ -165,16 +152,7 @@ async fn case_sensitive_filename_search_distinguishes_case() {
     let temp = fixture();
     let provider = SearchProvider::new();
 
-    let handle = start_filename(
-        &provider,
-        temp.path(),
-        "Alpha",
-        false,
-        true,
-        false,
-        100,
-    )
-    .await;
+    let handle = start_filename(&provider, temp.path(), "Alpha", false, true, false, 100).await;
     let paths = collect_relative_paths(&provider, &handle).await;
 
     assert_eq!(paths, vec!["Alpha.TXT"]);
@@ -205,16 +183,7 @@ async fn literal_search_does_not_treat_regex_metacharacters_as_patterns() {
     let temp = fixture();
     let provider = SearchProvider::new();
 
-    let handle = start_filename(
-        &provider,
-        temp.path(),
-        "report[1]",
-        false,
-        true,
-        false,
-        100,
-    )
-    .await;
+    let handle = start_filename(&provider, temp.path(), "report[1]", false, true, false, 100).await;
     let paths = collect_relative_paths(&provider, &handle).await;
 
     assert_eq!(paths, vec!["report[1].txt"]);
@@ -258,16 +227,7 @@ async fn filename_search_respects_max_results() {
     let temp = fixture();
     let provider = SearchProvider::new();
 
-    let handle = start_filename(
-        &provider,
-        temp.path(),
-        ".",
-        true,
-        false,
-        true,
-        2,
-    )
-    .await;
+    let handle = start_filename(&provider, temp.path(), ".", true, false, true, 2).await;
     let paths = collect_relative_paths(&provider, &handle).await;
 
     assert_eq!(paths.len(), 2);
@@ -277,24 +237,10 @@ async fn filename_search_respects_max_results() {
 async fn literal_content_search_returns_bounded_context() {
     let temp = TempDir::new().unwrap();
     let file = temp.path().join("notes.txt");
-    fs::write(
-        &file,
-        "zero\nbefore\nNeedle target\nafter\nlast\n",
-    )
-    .unwrap();
+    fs::write(&file, "zero\nbefore\nNeedle target\nafter\nlast\n").unwrap();
     let provider = SearchProvider::new();
 
-    let handle = start_content(
-        &provider,
-        temp.path(),
-        "needle",
-        false,
-        false,
-        &[],
-        1,
-        100,
-    )
-    .await;
+    let handle = start_content(&provider, temp.path(), "needle", false, false, &[], 1, 100).await;
     let matches = collect_matches(&provider, &handle).await;
 
     assert_eq!(matches.len(), 1);
@@ -370,17 +316,7 @@ async fn content_search_skips_binary_and_invalid_utf8_without_aborting() {
     .unwrap();
     let provider = SearchProvider::new();
 
-    let handle = start_content(
-        &provider,
-        temp.path(),
-        "needle",
-        false,
-        true,
-        &[],
-        0,
-        100,
-    )
-    .await;
+    let handle = start_content(&provider, temp.path(), "needle", false, true, &[], 0, 100).await;
     let matches = collect_matches(&provider, &handle).await;
     let mut paths: Vec<_> = matches
         .iter()
@@ -394,11 +330,7 @@ async fn content_search_skips_binary_and_invalid_utf8_without_aborting() {
 fn large_filename_fixture(count: usize) -> TempDir {
     let temp = TempDir::new().unwrap();
     for index in 0..count {
-        fs::write(
-            temp.path().join(format!("match-{index:04}.txt")),
-            "content",
-        )
-        .unwrap();
+        fs::write(temp.path().join(format!("match-{index:04}.txt")), "content").unwrap();
     }
     temp
 }
@@ -407,16 +339,7 @@ fn large_filename_fixture(count: usize) -> TempDir {
 async fn progressive_reads_only_return_unseen_matches() {
     let temp = large_filename_fixture(8);
     let provider = SearchProvider::new();
-    let handle = start_filename(
-        &provider,
-        temp.path(),
-        "match-",
-        false,
-        true,
-        false,
-        8,
-    )
-    .await;
+    let handle = start_filename(&provider, temp.path(), "match-", false, true, false, 8).await;
 
     tokio::time::sleep(Duration::from_millis(20)).await;
 
@@ -457,16 +380,7 @@ async fn progressive_reads_only_return_unseen_matches() {
 async fn search_list_reports_session_state_and_bounded_queue_metadata() {
     let temp = large_filename_fixture(300);
     let provider = SearchProvider::new();
-    let handle = start_filename(
-        &provider,
-        temp.path(),
-        "match-",
-        false,
-        true,
-        false,
-        300,
-    )
-    .await;
+    let handle = start_filename(&provider, temp.path(), "match-", false, true, false, 300).await;
 
     tokio::time::sleep(Duration::from_millis(30)).await;
 
@@ -491,16 +405,7 @@ async fn search_list_reports_session_state_and_bounded_queue_metadata() {
 async fn bounded_queue_never_exceeds_reported_capacity() {
     let temp = large_filename_fixture(512);
     let provider = SearchProvider::new();
-    let handle = start_filename(
-        &provider,
-        temp.path(),
-        "match-",
-        false,
-        true,
-        false,
-        512,
-    )
-    .await;
+    let handle = start_filename(&provider, temp.path(), "match-", false, true, false, 512).await;
 
     tokio::time::sleep(Duration::from_millis(50)).await;
 
@@ -522,24 +427,12 @@ async fn bounded_queue_never_exceeds_reported_capacity() {
 async fn search_stop_cancels_an_active_search_and_reaches_terminal_state() {
     let temp = large_filename_fixture(512);
     let provider = SearchProvider::new();
-    let handle = start_filename(
-        &provider,
-        temp.path(),
-        "match-",
-        false,
-        true,
-        false,
-        512,
-    )
-    .await;
+    let handle = start_filename(&provider, temp.path(), "match-", false, true, false, 512).await;
 
     tokio::time::sleep(Duration::from_millis(30)).await;
 
     let stopped = provider
-        .execute(&invocation(
-            "search.stop",
-            json!({ "handle": handle }),
-        ))
+        .execute(&invocation("search.stop", json!({ "handle": handle })))
         .await
         .unwrap();
     assert_eq!(stopped.data["state"].as_str(), Some("cancelled"));
@@ -559,8 +452,7 @@ async fn search_stop_cancels_an_active_search_and_reaches_terminal_state() {
 
         if session["state"].as_str() == Some("cancelled") {
             assert!(
-                session["queued"].as_u64().unwrap()
-                    <= session["queue_capacity"].as_u64().unwrap()
+                session["queued"].as_u64().unwrap() <= session["queue_capacity"].as_u64().unwrap()
             );
             return;
         }

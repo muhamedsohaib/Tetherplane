@@ -104,8 +104,7 @@ impl PolicyBroker for LocalPolicyBroker {
                 .arguments
                 .get("root")
                 .and_then(serde_json::Value::as_str)
-            && let Err(error) =
-                authorize_path(Path::new(root), &self.config.allowed_directories)
+            && let Err(error) = authorize_path(Path::new(root), &self.config.allowed_directories)
         {
             return PolicyDecision::Deny {
                 reason: error.message,

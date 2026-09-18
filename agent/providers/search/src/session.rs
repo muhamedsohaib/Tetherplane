@@ -1,6 +1,6 @@
+use std::sync::Mutex;
 use std::sync::atomic::{AtomicBool, AtomicU8, AtomicUsize, Ordering};
 use std::sync::mpsc::{Receiver, SyncSender, TryRecvError, TrySendError};
-use std::sync::Mutex;
 use std::thread;
 use std::time::Duration;
 
@@ -42,22 +42,16 @@ impl SearchSession {
     }
 
     pub(crate) fn mark_completed(&self) {
-        let _ = self.state.compare_exchange(
-            RUNNING,
-            COMPLETED,
-            Ordering::AcqRel,
-            Ordering::Acquire,
-        );
+        let _ =
+            self.state
+                .compare_exchange(RUNNING, COMPLETED, Ordering::AcqRel, Ordering::Acquire);
     }
 
     pub(crate) fn cancel(&self) {
         self.cancelled.store(true, Ordering::Release);
-        let _ = self.state.compare_exchange(
-            RUNNING,
-            CANCELLED,
-            Ordering::AcqRel,
-            Ordering::Acquire,
-        );
+        let _ =
+            self.state
+                .compare_exchange(RUNNING, CANCELLED, Ordering::AcqRel, Ordering::Acquire);
     }
 
     pub(crate) fn state_name(&self) -> &'static str {

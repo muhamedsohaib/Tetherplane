@@ -231,11 +231,7 @@ enum TextMatcher {
 }
 
 impl TextMatcher {
-    fn new(
-        query: &str,
-        use_regex: bool,
-        case_sensitive: bool,
-    ) -> Result<Self, CapabilityError> {
+    fn new(query: &str, use_regex: bool, case_sensitive: bool) -> Result<Self, CapabilityError> {
         if use_regex {
             let regex = RegexBuilder::new(query)
                 .case_insensitive(!case_sensitive)
@@ -447,11 +443,7 @@ fn bool_argument(arguments: &Value, key: &str, default: bool) -> Result<bool, Ca
     }
 }
 
-fn usize_argument(
-    arguments: &Value,
-    key: &str,
-    default: usize,
-) -> Result<usize, CapabilityError> {
+fn usize_argument(arguments: &Value, key: &str, default: usize) -> Result<usize, CapabilityError> {
     let Some(value) = arguments.get(key) else {
         return Ok(default);
     };
@@ -489,15 +481,12 @@ fn glob_set_argument(arguments: &Value) -> Result<Option<GlobSet>, CapabilityErr
         builder.add(glob);
     }
 
-    builder
-        .build()
-        .map(Some)
-        .map_err(|error| CapabilityError {
-            code: ErrorCode::InvalidArguments,
-            message: format!("invalid file glob set: {error}"),
-            recovery_hint: None,
-            details: Value::Null,
-        })
+    builder.build().map(Some).map_err(|error| CapabilityError {
+        code: ErrorCode::InvalidArguments,
+        message: format!("invalid file glob set: {error}"),
+        recovery_hint: None,
+        details: Value::Null,
+    })
 }
 
 fn invalid_arguments(message: &str) -> CapabilityError {
