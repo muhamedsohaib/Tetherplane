@@ -1,0 +1,11 @@
+{
+  "version": 1,
+  "request_id": "f1111111-1111-4111-8111-202609180001",
+  "device_id": "Leno",
+  "status": "success",
+  "data": {
+    "path": "agent/providers/filesystem/src/list.rs",
+    "bytes": 4382
+  },
+  "completed_at": "2026-09-18T08:48:22.825477+00:00"
+}
