@@ -69,6 +69,41 @@ fn incremental_command() -> (&'static str, Vec<&'static str>) {
     )
 }
 
+#[cfg(unix)]
+fn completed_output_command() -> (&'static str, Vec<&'static str>) {
+    (
+        "/bin/sh",
+        vec!["-c", "printf 'alpha\\nbeta\\ngamma\\n'"],
+    )
+}
+
+#[cfg(windows)]
+fn completed_output_command() -> (&'static str, Vec<&'static str>) {
+    ("cmd.exe", vec!["/C", "echo alpha & echo beta & echo gamma"])
+}
+
+#[cfg(unix)]
+fn large_output_command() -> (&'static str, Vec<&'static str>) {
+    (
+        "/bin/sh",
+        vec![
+            "-c",
+            "i=0; while [ $i -lt 2500 ]; do printf '0123456789\\n'; i=$((i+1)); done",
+        ],
+    )
+}
+
+#[cfg(windows)]
+fn large_output_command() -> (&'static str, Vec<&'static str>) {
+    (
+        "cmd.exe",
+        vec![
+            "/C",
+            "for /L %i in (1,1,2500) do @echo 0123456789",
+        ],
+    )
+}
+
 #[tokio::test]
 async fn short_command_returns_complete_bounded_output_and_exit_code() {
     let provider = ProcessProvider::new();
@@ -188,5 +223,119 @@ async fn incremental_reads_return_only_output_newer_than_the_session_cursor() {
     assert!(
         first.data["stdout_cursor"].as_u64().unwrap()
             < second.data["stdout_cursor"].as_u64().unwrap()
+    );
+}
+
+#[tokio::test]
+async fn absolute_and_tail_reads_do_not_advance_the_default_cursor() {
+    let provider = ProcessProvider::new();
+    let (program, args) = completed_output_command();
+
+    let started = provider
+        .execute(&invocation(
+            "process.run",
+            json!({
+                "program": program,
+                "args": args,
+                "initial_wait_ms": 2_000,
+            }),
+        ))
+        .await
+        .unwrap();
+    let handle = started.data["handle"].as_str().unwrap().to_owned();
+    let full = started.data["stdout"].as_str().unwrap();
+    let beta_offset = i64::try_from(full.find("beta").unwrap()).unwrap();
+    let gamma_offset = full.find("gamma").unwrap();
+    let tail_bytes = i64::try_from(full.len() - gamma_offset).unwrap();
+
+    let absolute = provider
+        .execute(&invocation(
+            "process.read",
+            json!({
+                "handle": handle,
+                "offset": beta_offset,
+            }),
+        ))
+        .await
+        .unwrap();
+    let absolute_stdout = absolute.data["stdout"].as_str().unwrap();
+    assert!(!absolute_stdout.contains("alpha"));
+    assert!(absolute_stdout.contains("beta"));
+    assert!(absolute_stdout.contains("gamma"));
+
+    let tail = provider
+        .execute(&invocation(
+            "process.read",
+            json!({
+                "handle": handle,
+                "offset": -tail_bytes,
+            }),
+        ))
+        .await
+        .unwrap();
+    let tail_stdout = tail.data["stdout"].as_str().unwrap();
+    assert!(!tail_stdout.contains("alpha"));
+    assert!(!tail_stdout.contains("beta"));
+    assert!(tail_stdout.contains("gamma"));
+
+    let incremental = provider
+        .execute(&invocation(
+            "process.read",
+            json!({ "handle": handle }),
+        ))
+        .await
+        .unwrap();
+    let incremental_stdout = incremental.data["stdout"].as_str().unwrap();
+    assert!(incremental_stdout.contains("alpha"));
+    assert!(incremental_stdout.contains("beta"));
+    assert!(incremental_stdout.contains("gamma"));
+}
+
+#[tokio::test]
+async fn compact_absolute_read_returns_an_absolute_continuation_cursor() {
+    let provider = ProcessProvider::new();
+    let (program, args) = large_output_command();
+
+    let started = provider
+        .execute(&invocation(
+            "process.run",
+            json!({
+                "program": program,
+                "args": args,
+                "initial_wait_ms": 5_000,
+            }),
+        ))
+        .await
+        .unwrap();
+    let handle = started.data["handle"].as_str().unwrap().to_owned();
+
+    let first = provider
+        .execute(&invocation(
+            "process.read",
+            json!({
+                "handle": handle,
+                "offset": 0,
+            }),
+        ))
+        .await
+        .unwrap();
+    let first_stdout = first.data["stdout"].as_str().unwrap();
+    assert!(first_stdout.len() <= 16 * 1024);
+    let continuation = first.data["stdout_continuation"].as_u64().unwrap();
+    assert!(continuation > 0);
+
+    let second = provider
+        .execute(&invocation(
+            "process.read",
+            json!({
+                "handle": handle,
+                "offset": continuation,
+            }),
+        ))
+        .await
+        .unwrap();
+    assert!(!second.data["stdout"].as_str().unwrap().is_empty());
+    assert!(
+        second.data["stdout_start_cursor"].as_u64().unwrap() >= continuation
     );
 }
