@@ -71,10 +71,7 @@ fn incremental_command() -> (&'static str, Vec<&'static str>) {
 
 #[cfg(unix)]
 fn completed_output_command() -> (&'static str, Vec<&'static str>) {
-    (
-        "/bin/sh",
-        vec!["-c", "printf 'alpha\\nbeta\\ngamma\\n'"],
-    )
+    ("/bin/sh", vec!["-c", "printf 'alpha\\nbeta\\ngamma\\n'"])
 }
 
 #[cfg(windows)]
@@ -97,10 +94,7 @@ fn large_output_command() -> (&'static str, Vec<&'static str>) {
 fn large_output_command() -> (&'static str, Vec<&'static str>) {
     (
         "cmd.exe",
-        vec![
-            "/C",
-            "for /L %i in (1,1,2500) do @echo 0123456789",
-        ],
+        vec!["/C", "for /L %i in (1,1,2500) do @echo 0123456789"],
     )
 }
 
@@ -279,10 +273,7 @@ async fn absolute_and_tail_reads_do_not_advance_the_default_cursor() {
     assert!(tail_stdout.contains("gamma"));
 
     let incremental = provider
-        .execute(&invocation(
-            "process.read",
-            json!({ "handle": handle }),
-        ))
+        .execute(&invocation("process.read", json!({ "handle": handle })))
         .await
         .unwrap();
     let incremental_stdout = incremental.data["stdout"].as_str().unwrap();
@@ -335,7 +326,5 @@ async fn compact_absolute_read_returns_an_absolute_continuation_cursor() {
         .await
         .unwrap();
     assert!(!second.data["stdout"].as_str().unwrap().is_empty());
-    assert!(
-        second.data["stdout_start_cursor"].as_u64().unwrap() >= continuation
-    );
+    assert!(second.data["stdout_start_cursor"].as_u64().unwrap() >= continuation);
 }
