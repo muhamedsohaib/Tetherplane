@@ -43,7 +43,7 @@ impl CapabilityProvider for FilesystemProvider {
         let data = match operation {
             "read" => read::read(&invocation.arguments, invocation.response_mode.clone())?,
             "read_many" => {
-                read::read_many(&invocation.arguments, invocation.response_mode.clone())?
+                read::read_many(&invocation.arguments, &invocation.response_mode)?
             }
             "list" => list::list(&invocation.arguments)?,
             "info" => list::info(&invocation.arguments)?,
@@ -79,7 +79,7 @@ pub(crate) fn invalid_arguments(message: &str) -> CapabilityError {
     }
 }
 
-pub(crate) fn io_error(path: &Path, error: io::Error) -> CapabilityError {
+pub(crate) fn io_error(path: &Path, error: &io::Error) -> CapabilityError {
     CapabilityError {
         code: ErrorCode::ProviderFailure,
         message: error.to_string(),

@@ -13,15 +13,15 @@ pub(crate) fn write(arguments: &Value) -> Result<Value, CapabilityError> {
     let content = content_argument(arguments)?;
     let parent = existing_parent(&path)?;
 
-    let mut temp = NamedTempFile::new_in(parent).map_err(|error| io_error(&path, error))?;
+    let mut temp = NamedTempFile::new_in(parent).map_err(|error| io_error(&path, &error))?;
     temp.write_all(content.as_bytes())
-        .map_err(|error| io_error(&path, error))?;
-    temp.flush().map_err(|error| io_error(&path, error))?;
+        .map_err(|error| io_error(&path, &error))?;
+    temp.flush().map_err(|error| io_error(&path, &error))?;
     temp.as_file()
         .sync_all()
-        .map_err(|error| io_error(&path, error))?;
+        .map_err(|error| io_error(&path, &error))?;
     temp.persist(&path)
-        .map_err(|error| io_error(&path, error.error))?;
+        .map_err(|error| io_error(&path, &error.error))?;
 
     Ok(json!({
         "path": path.to_string_lossy(),
@@ -39,10 +39,10 @@ pub(crate) fn append(arguments: &Value) -> Result<Value, CapabilityError> {
         .create(true)
         .append(true)
         .open(&path)
-        .map_err(|error| io_error(&path, error))?;
+        .map_err(|error| io_error(&path, &error))?;
     file.write_all(content.as_bytes())
-        .map_err(|error| io_error(&path, error))?;
-    file.flush().map_err(|error| io_error(&path, error))?;
+        .map_err(|error| io_error(&path, &error))?;
+    file.flush().map_err(|error| io_error(&path, &error))?;
 
     Ok(json!({
         "path": path.to_string_lossy(),
@@ -54,7 +54,7 @@ pub(crate) fn append(arguments: &Value) -> Result<Value, CapabilityError> {
 pub(crate) fn mkdir(arguments: &Value) -> Result<Value, CapabilityError> {
     let path = path_argument(arguments, "path")?;
     existing_parent(&path)?;
-    fs::create_dir(&path).map_err(|error| io_error(&path, error))?;
+    fs::create_dir(&path).map_err(|error| io_error(&path, &error))?;
 
     Ok(json!({
         "path": path.to_string_lossy(),
@@ -89,7 +89,7 @@ pub(crate) fn move_path(arguments: &Value) -> Result<Value, CapabilityError> {
         remove_existing(&destination)?;
     }
 
-    fs::rename(&source, &destination).map_err(|error| io_error(&source, error))?;
+    fs::rename(&source, &destination).map_err(|error| io_error(&source, &error))?;
 
     Ok(json!({
         "source": source.to_string_lossy(),
@@ -99,11 +99,11 @@ pub(crate) fn move_path(arguments: &Value) -> Result<Value, CapabilityError> {
 }
 
 fn remove_existing(path: &Path) -> Result<(), CapabilityError> {
-    let metadata = fs::symlink_metadata(path).map_err(|error| io_error(path, error))?;
+    let metadata = fs::symlink_metadata(path).map_err(|error| io_error(path, &error))?;
     if metadata.is_dir() {
-        fs::remove_dir_all(path).map_err(|error| io_error(path, error))
+        fs::remove_dir_all(path).map_err(|error| io_error(path, &error))
     } else {
-        fs::remove_file(path).map_err(|error| io_error(path, error))
+        fs::remove_file(path).map_err(|error| io_error(path, &error))
     }
 }
 

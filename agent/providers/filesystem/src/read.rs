@@ -11,7 +11,7 @@ pub(crate) fn read(arguments: &Value, mode: ResponseMode) -> Result<Value, Capab
     read_path(&path, arguments, mode)
 }
 
-pub(crate) fn read_many(arguments: &Value, mode: ResponseMode) -> Result<Value, CapabilityError> {
+pub(crate) fn read_many(arguments: &Value, mode: &ResponseMode) -> Result<Value, CapabilityError> {
     let paths = arguments
         .get("paths")
         .and_then(Value::as_array)
@@ -52,7 +52,7 @@ pub(crate) fn read_many(arguments: &Value, mode: ResponseMode) -> Result<Value, 
 }
 
 fn read_path(path: &Path, arguments: &Value, mode: ResponseMode) -> Result<Value, CapabilityError> {
-    let text = fs::read_to_string(path).map_err(|error| io_error(path, error))?;
+    let text = fs::read_to_string(path).map_err(|error| io_error(path, &error))?;
     let lines: Vec<&str> = text.split_inclusive('\n').collect();
     let total_lines = lines.len();
     let offset = optional_i64(arguments, "offset")?.unwrap_or(0);
@@ -66,9 +66,9 @@ fn read_path(path: &Path, arguments: &Value, mode: ResponseMode) -> Result<Value
     };
 
     let length = optional_usize(arguments, "length")?;
-    let end_line = length
-        .map(|length| start_line.saturating_add(length).min(total_lines))
-        .unwrap_or(total_lines);
+    let end_line = length.map_or(total_lines, |length| {
+        start_line.saturating_add(length).min(total_lines)
+    });
     let selected = lines[start_line..end_line].concat();
 
     let budget = ResponseBudget::for_mode(mode);

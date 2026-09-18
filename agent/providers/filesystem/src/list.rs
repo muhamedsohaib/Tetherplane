@@ -10,7 +10,7 @@ use crate::{invalid_arguments, io_error};
 pub(crate) fn list(arguments: &Value) -> Result<Value, CapabilityError> {
     let root = path_argument(arguments, "path")?;
     let depth = optional_usize(arguments, "depth")?.unwrap_or(1);
-    let metadata = fs::metadata(&root).map_err(|error| io_error(&root, error))?;
+    let metadata = fs::metadata(&root).map_err(|error| io_error(&root, &error))?;
     if !metadata.is_dir() {
         return Err(invalid_arguments(
             "filesystem.list path must be a directory",
@@ -34,10 +34,10 @@ pub(crate) fn list(arguments: &Value) -> Result<Value, CapabilityError> {
 
 pub(crate) fn info(arguments: &Value) -> Result<Value, CapabilityError> {
     let path = path_argument(arguments, "path")?;
-    let metadata = fs::metadata(&path).map_err(|error| io_error(&path, error))?;
+    let metadata = fs::metadata(&path).map_err(|error| io_error(&path, &error))?;
     let modified = metadata
         .modified()
-        .map_err(|error| io_error(&path, error))?
+        .map_err(|error| io_error(&path, &error))?
         .duration_since(UNIX_EPOCH)
         .map_err(|_| invalid_arguments("modified time predates the Unix epoch"))?;
 
@@ -70,22 +70,22 @@ fn walk(
         return Ok(());
     }
 
-    let read_dir = fs::read_dir(current).map_err(|error| io_error(current, error))?;
+    let read_dir = fs::read_dir(current).map_err(|error| io_error(current, &error))?;
     let mut children = read_dir
         .collect::<Result<Vec<_>, _>>()
-        .map_err(|error| io_error(current, error))?;
+        .map_err(|error| io_error(current, &error))?;
     children.sort_by_key(fs::DirEntry::file_name);
 
     for child in children {
         let path = child.path();
-        let file_type = child.file_type().map_err(|error| io_error(&path, error))?;
+        let file_type = child.file_type().map_err(|error| io_error(&path, &error))?;
         let relative = path
             .strip_prefix(root)
             .map_err(|_| invalid_arguments("listed entry escaped the requested root"))?;
 
         entries.push(json!({
             "relative_path": relative.to_string_lossy().replace('\\', "/"),
-            "type": file_type_name(&file_type),
+            "type": file_type_name(file_type),
             "depth": current_depth,
         }));
 
@@ -115,7 +115,7 @@ fn metadata_type(metadata: &fs::Metadata) -> &'static str {
     }
 }
 
-fn file_type_name(file_type: &fs::FileType) -> &'static str {
+fn file_type_name(file_type: fs::FileType) -> &'static str {
     if file_type.is_file() {
         "file"
     } else if file_type.is_dir() {

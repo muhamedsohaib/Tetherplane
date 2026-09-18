@@ -18,7 +18,7 @@ pub(crate) fn patch(arguments: &Value) -> Result<Value, CapabilityError> {
         return Err(invalid_arguments("old must not be empty"));
     }
 
-    let current = fs::read_to_string(&path).map_err(|error| io_error(&path, error))?;
+    let current = fs::read_to_string(&path).map_err(|error| io_error(&path, &error))?;
     let matches: Vec<usize> = current
         .match_indices(old)
         .map(|(offset, _)| offset)
@@ -78,23 +78,20 @@ fn atomic_replace(path: &Path, content: &str) -> Result<(), CapabilityError> {
             }),
         })?;
 
-    let mut temp = NamedTempFile::new_in(parent).map_err(|error| io_error(path, error))?;
+    let mut temp = NamedTempFile::new_in(parent).map_err(|error| io_error(path, &error))?;
     temp.write_all(content.as_bytes())
-        .map_err(|error| io_error(path, error))?;
-    temp.flush().map_err(|error| io_error(path, error))?;
+        .map_err(|error| io_error(path, &error))?;
+    temp.flush().map_err(|error| io_error(path, &error))?;
     temp.as_file()
         .sync_all()
-        .map_err(|error| io_error(path, error))?;
+        .map_err(|error| io_error(path, &error))?;
     temp.persist(path)
-        .map_err(|error| io_error(path, error.error))?;
+        .map_err(|error| io_error(path, &error.error))?;
     Ok(())
 }
 
 fn line_at(content: &str, byte_offset: usize) -> usize {
-    content.as_bytes()[..byte_offset.min(content.len())]
-        .iter()
-        .filter(|byte| **byte == b'\n')
-        .count()
+    content[..byte_offset.min(content.len())].matches('\n').count()
 }
 
 fn path_argument(arguments: &Value, key: &str) -> Result<PathBuf, CapabilityError> {
