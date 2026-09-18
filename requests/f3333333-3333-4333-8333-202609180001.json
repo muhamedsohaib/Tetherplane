@@ -1,0 +1,9 @@
+{
+  "version": 1,
+  "request_id": "f3333333-3333-4333-8333-202609180001",
+  "device_id": "Leno",
+  "op": "files.read",
+  "args": {
+    "path": "agent/providers/search/src/search_tests.rs"
+  }
+}
