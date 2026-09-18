@@ -1,0 +1,10 @@
+{
+  "version": 1,
+  "request_id": "ab12cd34-5678-4ef0-a100-202609180003",
+  "device_id": "Leno",
+  "op": "files.write",
+  "args": {
+    "path": "agent/tether-core/src/handles.rs",
+    "content": "use std::collections::HashMap;\nuse std::sync::RwLock;\n\nuse serde_json::Value;\nuse uuid::Uuid;\n\nuse crate::{CapabilityError, ErrorCode};\n\npub struct HandleRegistry<T> {\n    values: RwLock<HashMap<String, T>>,\n}\n\nimpl<T> HandleRegistry<T> {\n    #[must_use]\n    pub fn new() -> Self {\n        Self {\n            values: RwLock::new(HashMap::new()),\n        }\n    }\n\n    pub fn insert(&self, kind: &'static str, value: T) -> String {\n        let handle = format!(\"{kind}_{}\", Uuid::new_v4().simple());\n        let mut values = self\n            .values\n            .write()\n            .unwrap_or_else(std::sync::PoisonError::into_inner);\n        values.insert(handle.clone(), value);\n        handle\n    }\n\n    /// Accesses the value for `handle` through the provided function.\n    ///\n    /// # Errors\n    ///\n    /// Returns a capability error when the handle is unknown or has expired.\n    pub fn with<R>(&self, handle: &str, f: impl FnOnce(&T) -> R) -> Result<R, CapabilityError> {\n        let values = self\n            .values\n            .read()\n            .unwrap_or_else(std::sync::PoisonError::into_inner);\n        let value = values.get(handle).ok_or_else(|| CapabilityError {\n            code: ErrorCode::InvalidArguments,\n            message: \"unknown or expired handle\".to_owned(),\n            recovery_hint: None,\n            details: Value::Null,\n        })?;\n        Ok(f(value))\n    }\n\n    pub fn remove(&self, handle: &str) -> Option<T> {\n        self.values\n            .write()\n            .unwrap_or_else(std::sync::PoisonError::into_inner)\n            .remove(handle)\n    }\n}\n\nimpl<T> Default for HandleRegistry<T> {\n    fn default() -> Self {\n        Self::new()\n    }\n}\n"
+  }
+}
