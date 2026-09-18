@@ -32,7 +32,7 @@ pub(crate) struct ProcessSession {
 
 impl ProcessSession {
     pub(crate) fn spawn(program: &str, args: &[String]) -> Result<Arc<Self>, CapabilityError> {
-        let mut command = Command::new(&program);
+        let mut command = Command::new(program);
         command
             .args(args)
             .stdin(Stdio::piped())
@@ -48,7 +48,7 @@ impl ProcessSession {
 
         let mut child = command
             .spawn()
-            .map_err(|error| spawn_error(&program, &error))?;
+            .map_err(|error| spawn_error(program, &error))?;
         let pid = child.id();
         let stdin = child.stdin.take();
         let stdout_pipe = child
