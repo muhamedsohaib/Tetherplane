@@ -1,0 +1,12 @@
+{
+  "version": 1,
+  "request_id": "e1111111-1111-4111-8111-202609180003",
+  "device_id": "Leno",
+  "op": "files.patch",
+  "args": {
+    "path": "agent/providers/search/src/lib.rs",
+    "old": "#![forbid(unsafe_code)]\n\npub const CRATE_NAME: &str = \"tether-search-provider\";\n",
+    "new": "#![forbid(unsafe_code)]\n\n#[cfg(test)]\nmod search_tests;\n\npub const CRATE_NAME: &str = \"tether-search-provider\";\n",
+    "expected_replacements": 1
+  }
+}
