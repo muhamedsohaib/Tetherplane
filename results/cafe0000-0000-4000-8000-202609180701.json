@@ -1,0 +1,15 @@
+{
+  "version": 1,
+  "request_id": "cafe0000-0000-4000-8000-202609180701",
+  "device_id": "Leno",
+  "status": "success",
+  "data": {
+    "kind": "git_status",
+    "cwd": ".",
+    "exit_code": 0,
+    "stdout": "## emergency/mvp-control-plane...origin/emergency/mvp-control-plane\n M Cargo.lock\n M agent/providers/filesystem/Cargo.toml\n M agent/providers/filesystem/src/lib.rs\n M agent/tether-core/src/lib.rs\n?? agent/providers/filesystem/src/filesystem_tests.rs\n?? agent/providers/filesystem/src/list.rs\n?? agent/providers/filesystem/src/patch.rs\n?? agent/providers/filesystem/src/read.rs\n?? agent/providers/filesystem/src/write.rs\n?? agent/tether-core/src/budget.rs\n?? agent/tether-core/src/handles.rs\n?? agent/tether-core/tests/budget.rs\n?? agent/tether-core/tests/handles.rs\n",
+    "stderr": "",
+    "truncated": false
+  },
+  "completed_at": "2026-09-18T08:10:56.783504+00:00"
+}
