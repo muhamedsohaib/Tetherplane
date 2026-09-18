@@ -1,0 +1,11 @@
+{
+  "version": 1,
+  "request_id": "cafe0000-0000-4000-8000-202609180401",
+  "device_id": "Leno",
+  "status": "success",
+  "data": {
+    "path": "agent/providers/filesystem/src/write.rs",
+    "bytes": 4861
+  },
+  "completed_at": "2026-09-18T08:07:23.932605+00:00"
+}
