@@ -12,7 +12,9 @@ pub(crate) fn list(arguments: &Value) -> Result<Value, CapabilityError> {
     let depth = optional_usize(arguments, "depth")?.unwrap_or(1);
     let metadata = fs::metadata(&root).map_err(|error| io_error(&root, error))?;
     if !metadata.is_dir() {
-        return Err(invalid_arguments("filesystem.list path must be a directory"));
+        return Err(invalid_arguments(
+            "filesystem.list path must be a directory",
+        ));
     }
 
     let mut entries = Vec::new();
@@ -76,9 +78,7 @@ fn walk(
 
     for child in children {
         let path = child.path();
-        let file_type = child
-            .file_type()
-            .map_err(|error| io_error(&path, error))?;
+        let file_type = child.file_type().map_err(|error| io_error(&path, error))?;
         let relative = path
             .strip_prefix(root)
             .map_err(|_| invalid_arguments("listed entry escaped the requested root"))?;
@@ -90,7 +90,13 @@ fn walk(
         }));
 
         if file_type.is_dir() {
-            walk(root, &path, current_depth.saturating_add(1), max_depth, entries)?;
+            walk(
+                root,
+                &path,
+                current_depth.saturating_add(1),
+                max_depth,
+                entries,
+            )?;
         }
     }
 
@@ -133,9 +139,9 @@ fn optional_usize(arguments: &Value, key: &str) -> Result<Option<usize>, Capabil
     match arguments.get(key) {
         None | Some(Value::Null) => Ok(None),
         Some(value) => {
-            let raw = value
-                .as_u64()
-                .ok_or_else(|| invalid_arguments(&format!("{key} must be a non-negative integer")))?;
+            let raw = value.as_u64().ok_or_else(|| {
+                invalid_arguments(&format!("{key} must be a non-negative integer"))
+            })?;
             usize::try_from(raw)
                 .map(Some)
                 .map_err(|_| invalid_arguments(&format!("{key} is too large")))

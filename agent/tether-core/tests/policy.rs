@@ -301,8 +301,5 @@ fn filesystem_move_replace_requires_approval() {
         json!({ "source": source, "destination": destination, "replace": true }),
     ));
 
-    assert!(matches!(
-        decision,
-        PolicyDecision::RequireApproval { .. }
-    ));
+    assert!(matches!(decision, PolicyDecision::RequireApproval { .. }));
 }

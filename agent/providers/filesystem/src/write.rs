@@ -108,8 +108,10 @@ fn remove_existing(path: &Path) -> Result<(), CapabilityError> {
 }
 
 fn existing_parent(path: &Path) -> Result<&Path, CapabilityError> {
-    let parent = path.parent().filter(|parent| parent.is_dir()).ok_or_else(|| {
-        CapabilityError {
+    let parent = path
+        .parent()
+        .filter(|parent| parent.is_dir())
+        .ok_or_else(|| CapabilityError {
             code: ErrorCode::InvalidArguments,
             message: "parent directory does not exist".into(),
             recovery_hint: None,
@@ -118,8 +120,7 @@ fn existing_parent(path: &Path) -> Result<&Path, CapabilityError> {
                 "parent": path.parent().map(|parent| parent.to_string_lossy()),
                 "reason": "parent_missing",
             }),
-        }
-    })?;
+        })?;
     Ok(parent)
 }
 

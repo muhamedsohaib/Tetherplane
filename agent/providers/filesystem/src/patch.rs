@@ -19,7 +19,10 @@ pub(crate) fn patch(arguments: &Value) -> Result<Value, CapabilityError> {
     }
 
     let current = fs::read_to_string(&path).map_err(|error| io_error(&path, error))?;
-    let matches: Vec<usize> = current.match_indices(old).map(|(offset, _)| offset).collect();
+    let matches: Vec<usize> = current
+        .match_indices(old)
+        .map(|(offset, _)| offset)
+        .collect();
 
     if matches.len() != expected {
         return Err(CapabilityError {
@@ -62,8 +65,10 @@ pub(crate) fn patch(arguments: &Value) -> Result<Value, CapabilityError> {
 }
 
 fn atomic_replace(path: &Path, content: &str) -> Result<(), CapabilityError> {
-    let parent = path.parent().filter(|parent| parent.is_dir()).ok_or_else(|| {
-        CapabilityError {
+    let parent = path
+        .parent()
+        .filter(|parent| parent.is_dir())
+        .ok_or_else(|| CapabilityError {
             code: ErrorCode::InvalidArguments,
             message: "parent directory does not exist".into(),
             recovery_hint: None,
@@ -71,8 +76,7 @@ fn atomic_replace(path: &Path, content: &str) -> Result<(), CapabilityError> {
                 "path": path.to_string_lossy(),
                 "reason": "parent_missing",
             }),
-        }
-    })?;
+        })?;
 
     let mut temp = NamedTempFile::new_in(parent).map_err(|error| io_error(path, error))?;
     temp.write_all(content.as_bytes())
@@ -112,8 +116,6 @@ fn expected_replacements(arguments: &Value) -> Result<usize, CapabilityError> {
     let raw = arguments
         .get("expected_replacements")
         .and_then(Value::as_u64)
-        .ok_or_else(|| {
-            invalid_arguments("expected_replacements must be a non-negative integer")
-        })?;
+        .ok_or_else(|| invalid_arguments("expected_replacements must be a non-negative integer"))?;
     usize::try_from(raw).map_err(|_| invalid_arguments("expected_replacements is too large"))
 }

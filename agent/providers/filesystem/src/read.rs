@@ -11,10 +11,7 @@ pub(crate) fn read(arguments: &Value, mode: ResponseMode) -> Result<Value, Capab
     read_path(&path, arguments, mode)
 }
 
-pub(crate) fn read_many(
-    arguments: &Value,
-    mode: ResponseMode,
-) -> Result<Value, CapabilityError> {
+pub(crate) fn read_many(arguments: &Value, mode: ResponseMode) -> Result<Value, CapabilityError> {
     let paths = arguments
         .get("paths")
         .and_then(Value::as_array)
@@ -54,17 +51,15 @@ pub(crate) fn read_many(
     Ok(json!({ "entries": entries }))
 }
 
-fn read_path(
-    path: &Path,
-    arguments: &Value,
-    mode: ResponseMode,
-) -> Result<Value, CapabilityError> {
+fn read_path(path: &Path, arguments: &Value, mode: ResponseMode) -> Result<Value, CapabilityError> {
     let text = fs::read_to_string(path).map_err(|error| io_error(path, error))?;
     let lines: Vec<&str> = text.split_inclusive('\n').collect();
     let total_lines = lines.len();
     let offset = optional_i64(arguments, "offset")?.unwrap_or(0);
     let start_line = if offset >= 0 {
-        usize::try_from(offset).unwrap_or(usize::MAX).min(total_lines)
+        usize::try_from(offset)
+            .unwrap_or(usize::MAX)
+            .min(total_lines)
     } else {
         let tail = usize::try_from(offset.unsigned_abs()).unwrap_or(usize::MAX);
         total_lines.saturating_sub(tail)
@@ -128,9 +123,9 @@ fn optional_usize(arguments: &Value, key: &str) -> Result<Option<usize>, Capabil
     match arguments.get(key) {
         None | Some(Value::Null) => Ok(None),
         Some(value) => {
-            let raw = value
-                .as_u64()
-                .ok_or_else(|| invalid_arguments(&format!("{key} must be a non-negative integer")))?;
+            let raw = value.as_u64().ok_or_else(|| {
+                invalid_arguments(&format!("{key} must be a non-negative integer"))
+            })?;
             usize::try_from(raw)
                 .map(Some)
                 .map_err(|_| invalid_arguments(&format!("{key} is too large")))
