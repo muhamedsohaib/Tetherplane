@@ -91,7 +91,9 @@ fn atomic_replace(path: &Path, content: &str) -> Result<(), CapabilityError> {
 }
 
 fn line_at(content: &str, byte_offset: usize) -> usize {
-    content[..byte_offset.min(content.len())].matches('\n').count()
+    content[..byte_offset.min(content.len())]
+        .matches('\n')
+        .count()
 }
 
 fn path_argument(arguments: &Value, key: &str) -> Result<PathBuf, CapabilityError> {

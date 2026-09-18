@@ -42,9 +42,7 @@ impl CapabilityProvider for FilesystemProvider {
 
         let data = match operation {
             "read" => read::read(&invocation.arguments, invocation.response_mode.clone())?,
-            "read_many" => {
-                read::read_many(&invocation.arguments, &invocation.response_mode)?
-            }
+            "read_many" => read::read_many(&invocation.arguments, &invocation.response_mode)?,
             "list" => list::list(&invocation.arguments)?,
             "info" => list::info(&invocation.arguments)?,
             "write" => write::write(&invocation.arguments)?,
