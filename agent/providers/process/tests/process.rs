@@ -54,10 +54,7 @@ fn long_command() -> (&'static str, Vec<&'static str>) {
 fn incremental_command() -> (&'static str, Vec<&'static str>) {
     (
         "/bin/sh",
-        vec![
-            "-c",
-            "printf 'one\\n'; sleep 1; printf 'two\\n'; sleep 1",
-        ],
+        vec!["-c", "printf 'one\\n'; sleep 1; printf 'two\\n'; sleep 1"],
     )
 }
 
@@ -78,11 +75,14 @@ async fn short_command_returns_complete_bounded_output_and_exit_code() {
     let (program, args) = short_command();
 
     let result = provider
-        .execute(&invocation("process.run", json!({
-            "program": program,
-            "args": args,
-            "initial_wait_ms": 2_000,
-        })))
+        .execute(&invocation(
+            "process.run",
+            json!({
+                "program": program,
+                "args": args,
+                "initial_wait_ms": 2_000,
+            }),
+        ))
         .await
         .unwrap();
 
@@ -102,11 +102,14 @@ async fn long_command_returns_handle_and_initial_output_while_running() {
     let (program, args) = long_command();
 
     let result = provider
-        .execute(&invocation("process.run", json!({
-            "program": program,
-            "args": args,
-            "initial_wait_ms": 100,
-        })))
+        .execute(&invocation(
+            "process.run",
+            json!({
+                "program": program,
+                "args": args,
+                "initial_wait_ms": 100,
+            }),
+        ))
         .await
         .unwrap();
 
