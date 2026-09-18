@@ -1,0 +1,11 @@
+{
+  "version": 1,
+  "request_id": "ab12cd34-5678-4ef0-a100-202609180002",
+  "device_id": "Leno",
+  "status": "success",
+  "data": {
+    "path": "agent/tether-core/src/budget.rs",
+    "bytes": 3083
+  },
+  "completed_at": "2026-09-18T07:58:01.943304+00:00"
+}
