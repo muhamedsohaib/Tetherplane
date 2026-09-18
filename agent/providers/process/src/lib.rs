@@ -53,7 +53,9 @@ impl ProcessProvider {
         let session =
             tokio::task::spawn_blocking(move || ProcessSession::spawn(&program, &args, pty))
                 .await
-            .map_err(|error| provider_failure(&format!("process spawn task failed: {error}")))??;
+                .map_err(|error| {
+                    provider_failure(&format!("process spawn task failed: {error}"))
+                })??;
         let handle = self.sessions.insert("proc", Arc::clone(&session));
 
         let deadline = Instant::now()
@@ -171,7 +173,9 @@ impl ProcessProvider {
         let handle = string_argument(arguments, "handle")?;
         let data = string_argument(arguments, "data")?.to_owned();
         if data.len() > MAX_INPUT_BYTES {
-            return Err(invalid_arguments("process input exceeds the maximum supported size"));
+            return Err(invalid_arguments(
+                "process input exceeds the maximum supported size",
+            ));
         }
 
         let session = self.sessions.with(handle, Arc::clone)?;
@@ -187,14 +191,15 @@ impl ProcessProvider {
         let accepted_bytes =
             tokio::task::spawn_blocking(move || session.write_input(data.as_bytes()))
                 .await
-                .map_err(|error| provider_failure(&format!("process input task failed: {error}")))??;
+                .map_err(|error| {
+                    provider_failure(&format!("process input task failed: {error}"))
+                })??;
 
         Ok(json!({
             "handle": handle,
             "accepted_bytes": accepted_bytes,
         }))
     }
-
 }
 
 impl Default for ProcessProvider {

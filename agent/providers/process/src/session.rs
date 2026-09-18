@@ -28,13 +28,9 @@ impl ProcessChild {
         match self {
             Self::Pipe(child) => child.try_wait().map(|status| {
                 status.map(|status| {
-                    status.code().unwrap_or_else(|| {
-                        if status.success() {
-                            0
-                        } else {
-                            1
-                        }
-                    })
+                    status
+                        .code()
+                        .unwrap_or_else(|| if status.success() { 0 } else { 1 })
                 })
             }),
             Self::Pty(child) => child.try_wait().map(|status| {
@@ -261,7 +257,9 @@ impl ProcessSession {
         writer
             .write_all(data)
             .and_then(|()| writer.flush())
-            .map_err(|error| provider_failure(&format!("failed to write process input: {error}")))?;
+            .map_err(|error| {
+                provider_failure(&format!("failed to write process input: {error}"))
+            })?;
         Ok(data.len())
     }
 
