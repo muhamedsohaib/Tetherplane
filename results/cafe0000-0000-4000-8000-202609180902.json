@@ -1,0 +1,11 @@
+{
+  "version": 1,
+  "request_id": "cafe0000-0000-4000-8000-202609180902",
+  "device_id": "Leno",
+  "status": "success",
+  "data": {
+    "path": "agent/tether-core/src/policy.rs",
+    "replacements": 1
+  },
+  "completed_at": "2026-09-18T08:13:44.450122+00:00"
+}
