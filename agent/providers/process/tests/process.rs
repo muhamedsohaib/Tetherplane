@@ -98,6 +98,26 @@ fn large_output_command() -> (&'static str, Vec<&'static str>) {
     )
 }
 
+#[cfg(unix)]
+fn interactive_command() -> (&'static str, Vec<&'static str>) {
+    ("/bin/sh", vec!["-i"])
+}
+
+#[cfg(windows)]
+fn interactive_command() -> (&'static str, Vec<&'static str>) {
+    ("cmd.exe", vec!["/Q"])
+}
+
+#[cfg(unix)]
+fn interactive_input() -> &'static str {
+    "printf 'tether-input-ok\\n'\nexit\n"
+}
+
+#[cfg(windows)]
+fn interactive_input() -> &'static str {
+    "echo tether-input-ok\r\nexit\r\n"
+}
+
 #[tokio::test]
 async fn short_command_returns_complete_bounded_output_and_exit_code() {
     let provider = ProcessProvider::new();
@@ -327,4 +347,58 @@ async fn compact_absolute_read_returns_an_absolute_continuation_cursor() {
         .unwrap();
     assert!(!second.data["stdout"].as_str().unwrap().is_empty());
     assert!(second.data["stdout_start_cursor"].as_u64().unwrap() >= continuation);
+}
+
+#[tokio::test]
+async fn interactive_pty_session_accepts_input_and_returns_echoed_output() {
+    let provider = ProcessProvider::new();
+    let (program, args) = interactive_command();
+
+    let started = provider
+        .execute(&invocation(
+            "process.run",
+            json!({
+                "program": program,
+                "args": args,
+                "pty": true,
+                "initial_wait_ms": 100,
+            }),
+        ))
+        .await
+        .unwrap();
+    let handle = started.data["handle"].as_str().unwrap().to_owned();
+    assert_eq!(started.data["running"].as_bool(), Some(true));
+
+    let input = interactive_input();
+    let accepted = provider
+        .execute(&invocation(
+            "process.input",
+            json!({
+                "handle": handle,
+                "data": input,
+            }),
+        ))
+        .await
+        .unwrap();
+    assert_eq!(
+        accepted.data["accepted_bytes"].as_u64(),
+        Some(u64::try_from(input.len()).unwrap())
+    );
+
+    let read = provider
+        .execute(&invocation(
+            "process.read",
+            json!({
+                "handle": handle,
+                "wait_ms": 2_000,
+            }),
+        ))
+        .await
+        .unwrap();
+
+    assert!(
+        read.data["stdout"]
+            .as_str()
+            .is_some_and(|output| output.contains("tether-input-ok"))
+    );
 }
