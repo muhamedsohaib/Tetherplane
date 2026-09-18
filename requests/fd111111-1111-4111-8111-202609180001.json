@@ -1,0 +1,12 @@
+{
+  "version": 1,
+  "request_id": "fd111111-1111-4111-8111-202609180001",
+  "device_id": "Leno",
+  "op": "files.patch",
+  "args": {
+    "path": "agent/providers/search/src/lib.rs",
+    "old": "        let spawned = thread::Builder::new().name(worker_name).spawn(move || {\n            run_search(worker_session, spec);\n        });",
+    "new": "        let spawned = thread::Builder::new().name(worker_name).spawn(move || {\n            run_search(&worker_session, spec);\n        });",
+    "expected_replacements": 1
+  }
+}
