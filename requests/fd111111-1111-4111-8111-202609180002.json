@@ -1,0 +1,12 @@
+{
+  "version": 1,
+  "request_id": "fd111111-1111-4111-8111-202609180002",
+  "device_id": "Leno",
+  "op": "files.patch",
+  "args": {
+    "path": "agent/providers/search/src/lib.rs",
+    "old": "fn run_search(session: Arc<SearchSession>, spec: SearchWorkerSpec) {\n    match spec {\n        SearchWorkerSpec::Filename(spec) => run_filename_search(&session, &spec),\n        SearchWorkerSpec::Content(spec) => run_content_search(&session, &spec),\n    }\n}",
+    "new": "fn run_search(session: &SearchSession, spec: SearchWorkerSpec) {\n    match spec {\n        SearchWorkerSpec::Filename(spec) => run_filename_search(session, &spec),\n        SearchWorkerSpec::Content(spec) => run_content_search(session, &spec),\n    }\n}",
+    "expected_replacements": 1
+  }
+}
