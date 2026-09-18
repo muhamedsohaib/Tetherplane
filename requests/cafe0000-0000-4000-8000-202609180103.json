@@ -1,0 +1,12 @@
+{
+  "version": 1,
+  "request_id": "cafe0000-0000-4000-8000-202609180103",
+  "device_id": "Leno",
+  "op": "files.patch",
+  "args": {
+    "path": "agent/providers/filesystem/src/lib.rs",
+    "old": "#![forbid(unsafe_code)]\n\npub const CRATE_NAME: &str = \"tether-filesystem-provider\";\n",
+    "new": "#![forbid(unsafe_code)]\n\n#[cfg(test)]\nmod filesystem_tests;\n\npub const CRATE_NAME: &str = \"tether-filesystem-provider\";\n",
+    "expected_replacements": 1
+  }
+}
