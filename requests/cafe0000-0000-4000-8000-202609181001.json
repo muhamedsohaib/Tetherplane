@@ -1,0 +1,12 @@
+{
+  "version": 1,
+  "request_id": "cafe0000-0000-4000-8000-202609181001",
+  "device_id": "Leno",
+  "op": "files.patch",
+  "args": {
+    "path": "agent/providers/filesystem/src/write.rs",
+    "old": "    let replace = arguments\n        .get(\"replace\")\n        .map(Value::as_bool)\n        .transpose()\n        .map_err(|_| invalid_arguments(\"replace must be a boolean\"))?\n        .unwrap_or(false);\n",
+    "new": "    let replace = match arguments.get(\"replace\") {\n        None | Some(Value::Null) => false,\n        Some(Value::Bool(value)) => *value,\n        Some(_) => return Err(invalid_arguments(\"replace must be a boolean\")),\n    };\n",
+    "expected_replacements": 1
+  }
+}
