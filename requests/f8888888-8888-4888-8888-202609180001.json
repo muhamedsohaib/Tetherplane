@@ -1,0 +1,12 @@
+{
+  "version": 1,
+  "request_id": "f8888888-8888-4888-8888-202609180001",
+  "device_id": "Leno",
+  "op": "files.patch",
+  "args": {
+    "path": "agent/tether-core/src/policy.rs",
+    "old": "        if invocation.capability.starts_with(\"filesystem.\")\n            && let Err(error) =\n                authorize_filesystem_arguments(invocation, &self.config.allowed_directories)\n        {\n            return PolicyDecision::Deny {\n                reason: error.message,\n            };\n        }\n\n        if invocation.capability == \"filesystem.move\"\n",
+    "new": "        if invocation.capability.starts_with(\"filesystem.\")\n            && let Err(error) =\n                authorize_filesystem_arguments(invocation, &self.config.allowed_directories)\n        {\n            return PolicyDecision::Deny {\n                reason: error.message,\n            };\n        }\n\n        if invocation.capability == \"search.start\"\n            && let Some(root) = invocation\n                .arguments\n                .get(\"root\")\n                .and_then(serde_json::Value::as_str)\n            && let Err(error) =\n                authorize_path(Path::new(root), &self.config.allowed_directories)\n        {\n            return PolicyDecision::Deny {\n                reason: error.message,\n            };\n        }\n\n        if invocation.capability == \"filesystem.move\"\n",
+    "expected_replacements": 1
+  }
+}
