@@ -1,0 +1,11 @@
+{
+  "version": 1,
+  "request_id": "f6666666-6666-4666-8666-202609180001",
+  "device_id": "Leno",
+  "op": "process.run",
+  "args": {
+    "kind": "cargo_test",
+    "cwd": ".",
+    "timeout_seconds": 180
+  }
+}
