@@ -111,7 +111,6 @@ async fn start_content(
     case_sensitive: bool,
     globs: &[&str],
     context_lines: usize,
-    max_results: usize,
 ) -> String {
     let result = provider
         .execute(&invocation(
@@ -125,7 +124,7 @@ async fn start_content(
                 "include_hidden": false,
                 "globs": globs,
                 "context_lines": context_lines,
-                "max_results": max_results,
+                "max_results": 100,
             }),
         ))
         .await
@@ -240,7 +239,7 @@ async fn literal_content_search_returns_bounded_context() {
     fs::write(&file, "zero\nbefore\nNeedle target\nafter\nlast\n").unwrap();
     let provider = SearchProvider::new();
 
-    let handle = start_content(&provider, temp.path(), "needle", false, false, &[], 1, 100).await;
+    let handle = start_content(&provider, temp.path(), "needle", false, false, &[], 1).await;
     let matches = collect_matches(&provider, &handle).await;
 
     assert_eq!(matches.len(), 1);
@@ -267,7 +266,6 @@ async fn regex_content_search_matches_only_matching_lines() {
         true,
         &[],
         0,
-        100,
     )
     .await;
     let matches = collect_matches(&provider, &handle).await;
@@ -292,7 +290,6 @@ async fn content_search_respects_file_glob_filters() {
         true,
         &["*.txt"],
         0,
-        100,
     )
     .await;
     let matches = collect_matches(&provider, &handle).await;
@@ -316,7 +313,7 @@ async fn content_search_skips_binary_and_invalid_utf8_without_aborting() {
     .unwrap();
     let provider = SearchProvider::new();
 
-    let handle = start_content(&provider, temp.path(), "needle", false, true, &[], 0, 100).await;
+    let handle = start_content(&provider, temp.path(), "needle", false, true, &[], 0).await;
     let matches = collect_matches(&provider, &handle).await;
     let mut paths: Vec<_> = matches
         .iter()
