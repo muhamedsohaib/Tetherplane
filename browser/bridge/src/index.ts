@@ -117,3 +117,11 @@ export type SemanticReference = {
   frame_id: string;
   snapshot_revision: number;
 };
+
+export {
+  SemanticSnapshotEngine,
+  StaleReferenceError,
+  type BackendSemanticNode,
+  type BrowserSemanticSnapshot,
+  type SnapshotSemanticNode,
+} from "./semantic.ts";
