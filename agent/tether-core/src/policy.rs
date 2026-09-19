@@ -5,9 +5,7 @@ use std::path::{Component, Path, PathBuf};
 
 use serde_json::json;
 
-use crate::{
-    CapabilityError, ErrorCode, InvocationEnvelope, PrincipalProfile, ResourceOrigin,
-};
+use crate::{CapabilityError, ErrorCode, InvocationEnvelope, PrincipalProfile, ResourceOrigin};
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub enum SideEffectClass {

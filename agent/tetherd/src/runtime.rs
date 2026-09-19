@@ -28,7 +28,7 @@ impl AgentRuntime {
             && let Some(profile) = principal.as_ref()
             && !profile.allowed_directories.is_empty()
         {
-            allowed_roots = profile.allowed_directories.clone();
+            allowed_roots.clone_from(&profile.allowed_directories);
         }
         if allowed_roots.is_empty() {
             allowed_roots.push(std::env::current_dir().map_err(|error| CapabilityError {
@@ -113,9 +113,9 @@ impl DeviceProvider {
         operations
             .iter()
             .filter(|operation| {
-                self.allowed_capabilities.as_ref().is_none_or(|allowed| {
-                    allowed.contains(&format!("{namespace}.{}", operation))
-                })
+                self.allowed_capabilities
+                    .as_ref()
+                    .is_none_or(|allowed| allowed.contains(&format!("{namespace}.{operation}")))
             })
             .map(|operation| (*operation).to_owned())
             .collect()

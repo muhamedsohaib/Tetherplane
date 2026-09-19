@@ -54,8 +54,12 @@ fn load_principal_profile(path: Option<&PathBuf>) -> Result<Option<PrincipalProf
         return Ok(None);
     };
 
-    let content = std::fs::read_to_string(path)
-        .map_err(|error| format!("failed to read principal profile {}: {error}", path.display()))?;
+    let content = std::fs::read_to_string(path).map_err(|error| {
+        format!(
+            "failed to read principal profile {}: {error}",
+            path.display()
+        )
+    })?;
     let profile = serde_json::from_str::<PrincipalProfile>(&content)
         .map_err(|error| format!("invalid principal profile {}: {error}", path.display()))?;
     Ok(Some(profile))

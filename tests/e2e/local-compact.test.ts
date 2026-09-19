@@ -296,3 +296,79 @@ async function proveUnavailableProviders(client: Client) {
     assert.match(String(error.message), /not installed|unavailable/i);
   }
 }
+
+test("launch-bound principal constrains the real MCP surface and execution", async () => {
+  const local = await startLocalCompact({
+    principalProfile: {
+      principal_id: "model:deepseek-engineer",
+      authentication: "local_process_binding",
+      allowed_devices: ["Leno"],
+      allowed_capabilities: [
+        "device.capabilities",
+        "filesystem.read",
+        "filesystem.write",
+      ],
+    },
+  });
+
+  try {
+    const capabilities = structured(
+      await call(local.client, "device", {
+        op: "capabilities",
+        args: {},
+        device: "Leno",
+      }),
+    );
+    const providers = capabilities.providers as Array<Record<string, unknown>>;
+    const filesystem = providers.find(
+      (provider) => provider.namespace === "filesystem",
+    );
+    const processProvider = providers.find(
+      (provider) => provider.namespace === "process",
+    );
+    assert.deepEqual(filesystem?.operations, ["read", "write"]);
+    assert.deepEqual(processProvider?.operations, []);
+
+    const target = path.join(local.root, "principal-proof.txt");
+    const write = await call(local.client, "files", {
+      op: "write",
+      device: "Leno",
+      args: { path: target, content: "principal-bound\n" },
+    });
+    assert.equal(write.isError, undefined);
+
+    const read = structured(
+      await call(local.client, "files", {
+        op: "read",
+        device: "Leno",
+        args: { path: target },
+      }),
+    );
+    assert.equal(read.content, "principal-bound\n");
+
+    const outside = path.resolve(local.root, "..", "principal-outside.txt");
+    const deniedOutside = await call(local.client, "files", {
+      op: "read",
+      device: "Leno",
+      args: { path: outside },
+    });
+    assert.equal(deniedOutside.isError, true);
+    assert.equal(
+      (structured(deniedOutside).error as Record<string, unknown>).code,
+      "permission_denied",
+    );
+
+    const deniedProcess = await call(local.client, "process", {
+      op: "run",
+      device: "Leno",
+      args: { program: "cmd.exe", args: ["/C", "echo should-not-run"] },
+    });
+    assert.equal(deniedProcess.isError, true);
+    assert.equal(
+      (structured(deniedProcess).error as Record<string, unknown>).code,
+      "permission_denied",
+    );
+  } finally {
+    await local.close();
+  }
+});

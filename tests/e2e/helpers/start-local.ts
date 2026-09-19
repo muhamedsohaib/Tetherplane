@@ -1,4 +1,4 @@
-import { mkdtemp, rm } from "node:fs/promises";
+import { mkdtemp, rm, writeFile } from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
@@ -12,10 +12,25 @@ export type LocalCompactHarness = {
   close(): Promise<void>;
 };
 
-export async function startLocalCompact(): Promise<LocalCompactHarness> {
+export type LocalCompactOptions = {
+  principalProfile?: {
+    principal_id: string;
+    authentication: "local_process_binding";
+    allowed_devices: string[];
+    allowed_capabilities: string[];
+    allowed_roots?: string[];
+  };
+};
+
+export async function startLocalCompact(
+  options: LocalCompactOptions = {},
+): Promise<LocalCompactHarness> {
   const here = path.dirname(fileURLToPath(import.meta.url));
   const repoRoot = path.resolve(here, "..", "..", "..");
   const root = await mkdtemp(path.join(os.tmpdir(), "tetherplane-e2e-"));
+  const controlRoot = await mkdtemp(
+    path.join(os.tmpdir(), "tetherplane-e2e-control-"),
+  );
   const executable = process.platform === "win32" ? "tetherd.exe" : "tetherd";
   const tetherdPath = path.join(repoRoot, "target", "debug", executable);
   const adapterPath = path.join(
@@ -26,15 +41,26 @@ export async function startLocalCompact(): Promise<LocalCompactHarness> {
     "stdio-server.js",
   );
 
+  const adapterArgs = [
+    adapterPath,
+    "--tetherd",
+    tetherdPath,
+    "--allow",
+    root,
+  ];
+  if (options.principalProfile) {
+    const profilePath = path.join(controlRoot, "principal-profile.json");
+    const profile = {
+      ...options.principalProfile,
+      allowed_roots: options.principalProfile.allowed_roots ?? [root],
+    };
+    await writeFile(profilePath, JSON.stringify(profile, null, 2), "utf8");
+    adapterArgs.push("--principal-profile", profilePath);
+  }
+
   const transport = new StdioClientTransport({
     command: process.execPath,
-    args: [
-      adapterPath,
-      "--tetherd",
-      tetherdPath,
-      "--allow",
-      root,
-    ],
+    args: adapterArgs,
     cwd: repoRoot,
     stderr: "pipe",
   });
@@ -48,6 +74,7 @@ export async function startLocalCompact(): Promise<LocalCompactHarness> {
   } catch (error) {
     await transport.close().catch(() => undefined);
     await rm(root, { recursive: true, force: true });
+    await rm(controlRoot, { recursive: true, force: true });
     throw error;
   }
 
@@ -57,6 +84,7 @@ export async function startLocalCompact(): Promise<LocalCompactHarness> {
     async close() {
       await client.close();
       await rm(root, { recursive: true, force: true });
+      await rm(controlRoot, { recursive: true, force: true });
     },
   };
 }

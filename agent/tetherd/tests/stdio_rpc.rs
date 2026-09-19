@@ -291,18 +291,8 @@ fn launch_bound_principal_overrides_caller_claim_and_enforces_grants() {
     denied_request["principal_id"] = json!("model:spoofed");
 
     let mut stdin = child.stdin.take().unwrap();
-    writeln!(
-        stdin,
-        "{}",
-        serde_json::to_string(&status_request).unwrap()
-    )
-    .unwrap();
-    writeln!(
-        stdin,
-        "{}",
-        serde_json::to_string(&denied_request).unwrap()
-    )
-    .unwrap();
+    writeln!(stdin, "{}", serde_json::to_string(&status_request).unwrap()).unwrap();
+    writeln!(stdin, "{}", serde_json::to_string(&denied_request).unwrap()).unwrap();
     drop(stdin);
 
     let stdout = child.stdout.take().unwrap();
@@ -315,10 +305,7 @@ fn launch_bound_principal_overrides_caller_claim_and_enforces_grants() {
 
     assert_eq!(responses[STATUS_ID]["status"], "success");
     assert_eq!(responses[DENIED_ID]["status"], "error");
-    assert_eq!(
-        responses[DENIED_ID]["error"]["code"],
-        "permission_denied"
-    );
+    assert_eq!(responses[DENIED_ID]["error"]["code"], "permission_denied");
 
     let exit = child.wait().unwrap();
     let _ = std::fs::remove_file(&profile_path);
@@ -390,10 +377,7 @@ fn principal_capability_discovery_filters_ungranted_operations() {
         .find(|provider| provider["namespace"] == "process")
         .unwrap();
 
-    assert_eq!(
-        device["operations"],
-        json!(["status", "capabilities"])
-    );
+    assert_eq!(device["operations"], json!(["status", "capabilities"]));
     assert_eq!(filesystem["operations"], json!(["read"]));
     assert_eq!(process["operations"], json!([]));
 

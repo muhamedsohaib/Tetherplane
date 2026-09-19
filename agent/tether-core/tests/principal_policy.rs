@@ -40,11 +40,7 @@ fn invocation(
     }
 }
 
-fn profile(
-    principal_id: &str,
-    capabilities: &[&str],
-    roots: Vec<PathBuf>,
-) -> PrincipalProfile {
+fn profile(principal_id: &str, capabilities: &[&str], roots: Vec<PathBuf>) -> PrincipalProfile {
     PrincipalProfile {
         principal_id: principal_id.into(),
         authentication: PrincipalAuthentication::LocalProcessBinding,
@@ -59,12 +55,11 @@ fn profile(
 
 #[test]
 fn principal_capability_authority_is_independent_of_controller_label() {
-    let config = LocalPolicyConfig::new(vec![])
-        .with_principal(profile(
-            "model:deepseek-engineer",
-            &["device.status"],
-            vec![],
-        ));
+    let config = LocalPolicyConfig::new(vec![]).with_principal(profile(
+        "model:deepseek-engineer",
+        &["device.status"],
+        vec![],
+    ));
     let broker = LocalPolicyBroker::new(config);
 
     for actor_id in ["deepseek-client", "chatgpt-client"] {
@@ -81,20 +76,16 @@ fn principal_capability_authority_is_independent_of_controller_label() {
 
 #[test]
 fn same_controller_label_gets_different_authority_under_different_principals() {
-    let allowed = LocalPolicyBroker::new(
-        LocalPolicyConfig::new(vec![]).with_principal(profile(
-            "model:operator",
-            &["process.run"],
-            vec![],
-        )),
-    );
-    let denied = LocalPolicyBroker::new(
-        LocalPolicyConfig::new(vec![]).with_principal(profile(
-            "model:observer",
-            &["device.status"],
-            vec![],
-        )),
-    );
+    let allowed = LocalPolicyBroker::new(LocalPolicyConfig::new(vec![]).with_principal(profile(
+        "model:operator",
+        &["process.run"],
+        vec![],
+    )));
+    let denied = LocalPolicyBroker::new(LocalPolicyConfig::new(vec![]).with_principal(profile(
+        "model:observer",
+        &["device.status"],
+        vec![],
+    )));
     let allowed_request = invocation(
         Some("model:operator"),
         "qwen-client",
@@ -119,13 +110,11 @@ fn same_controller_label_gets_different_authority_under_different_principals() {
 
 #[test]
 fn principal_device_scope_is_enforced() {
-    let broker = LocalPolicyBroker::new(
-        LocalPolicyConfig::new(vec![]).with_principal(profile(
-            "model:deepseek-engineer",
-            &["device.status"],
-            vec![],
-        )),
-    );
+    let broker = LocalPolicyBroker::new(LocalPolicyConfig::new(vec![]).with_principal(profile(
+        "model:deepseek-engineer",
+        &["device.status"],
+        vec![],
+    )));
     let request = invocation(
         Some("model:deepseek-engineer"),
         "deepseek-client",
