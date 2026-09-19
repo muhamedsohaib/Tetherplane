@@ -369,13 +369,34 @@ fn large_filename_fixture(count: usize) -> TempDir {
     temp
 }
 
+async fn wait_for_queued(provider: &SearchProvider, handle: &str, minimum: u64) {
+    for _ in 0..100 {
+        let listed = provider
+            .execute(&invocation("search.list", json!({})))
+            .await
+            .unwrap();
+        let session = listed.data["sessions"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .find(|item| item["handle"].as_str() == Some(handle))
+            .cloned()
+            .unwrap();
+        if session["queued"].as_u64().unwrap_or_default() >= minimum {
+            return;
+        }
+        tokio::time::sleep(Duration::from_millis(5)).await;
+    }
+    panic!("search queue did not reach {minimum} items");
+}
+
 #[tokio::test]
 async fn progressive_reads_only_return_unseen_matches() {
     let temp = large_filename_fixture(8);
     let provider = SearchProvider::new();
     let handle = start_filename(&provider, temp.path(), "match-", false, true, false, 8).await;
 
-    tokio::time::sleep(Duration::from_millis(20)).await;
+    wait_for_queued(&provider, &handle, 4).await;
 
     let first = provider
         .execute(&invocation(
