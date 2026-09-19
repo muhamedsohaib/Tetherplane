@@ -39,6 +39,7 @@ fn batch_invocation(mode: &str) -> InvocationEnvelope {
         request_id: Uuid::parse_str("33333333-3333-4333-8333-333333333333").unwrap(),
         device_id: Some("Leno".into()),
         principal_id: None,
+        job_id: None,
         capability: "batch.execute".into(),
         arguments: json!({
             "mode": mode,

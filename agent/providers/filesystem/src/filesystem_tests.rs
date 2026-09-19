@@ -15,6 +15,7 @@ fn invocation(capability: &str, arguments: Value) -> InvocationEnvelope {
         request_id: "00000000-0000-4000-8000-000000000001".parse().unwrap(),
         device_id: Some("Leno".into()),
         principal_id: None,
+        job_id: None,
         capability: capability.into(),
         arguments,
         actor: Actor {

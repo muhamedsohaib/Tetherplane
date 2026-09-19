@@ -1,5 +1,6 @@
 #![forbid(unsafe_code)]
 
+mod job;
 mod runtime;
 mod stdio_rpc;
 
@@ -12,6 +13,7 @@ use tether_core::PrincipalProfile;
 struct CliOptions {
     allowed_roots: Vec<PathBuf>,
     principal_profile: Option<PathBuf>,
+    state_dir: Option<PathBuf>,
 }
 
 fn parse_args() -> Result<CliOptions, String> {
@@ -19,6 +21,7 @@ fn parse_args() -> Result<CliOptions, String> {
     let mut stdio_rpc = false;
     let mut allowed_roots = Vec::new();
     let mut principal_profile = None;
+    let mut state_dir = None;
 
     while let Some(argument) = arguments.next() {
         match argument.as_str() {
@@ -35,6 +38,12 @@ fn parse_args() -> Result<CliOptions, String> {
                     .ok_or_else(|| "--principal-profile requires a path".to_owned())?;
                 principal_profile = Some(PathBuf::from(path));
             }
+            "--state-dir" => {
+                let path = arguments
+                    .next()
+                    .ok_or_else(|| "--state-dir requires a path".to_owned())?;
+                state_dir = Some(PathBuf::from(path));
+            }
             _ => return Err(format!("unknown tetherd argument: {argument}")),
         }
     }
@@ -46,6 +55,7 @@ fn parse_args() -> Result<CliOptions, String> {
     Ok(CliOptions {
         allowed_roots,
         principal_profile,
+        state_dir,
     })
 }
 
@@ -83,7 +93,7 @@ async fn main() {
         }
     };
 
-    let runtime = match AgentRuntime::new(options.allowed_roots, principal) {
+    let runtime = match AgentRuntime::new(options.allowed_roots, principal, options.state_dir) {
         Ok(runtime) => Arc::new(runtime),
         Err(error) => {
             eprintln!("failed to initialize tetherd runtime: {}", error.message);

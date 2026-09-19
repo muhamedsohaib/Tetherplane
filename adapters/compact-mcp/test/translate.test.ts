@@ -12,6 +12,11 @@ const mappings = [
   ["browser", "inspect", "browser.inspect"],
   ["desktop", "observe", "desktop.observe"],
   ["batch", "execute", "batch.execute"],
+  ["device", "job_create", "job.create"],
+  ["device", "job_get", "job.get"],
+  ["device", "job_checkpoint", "job.checkpoint"],
+  ["device", "job_acquire_lease", "job.acquire_lease"],
+  ["device", "job_release_lease", "job.release_lease"],
 ] as const;
 
 test("maps compact tool operations to canonical capabilities", () => {
@@ -36,6 +41,7 @@ test("constructs canonical invocation defaults and forwards common fields", () =
       response_mode: "debug",
       device: "Leno",
       idempotency_key: "idem-11",
+      job_id: "job_0123456789abcdef0123456789abcdef",
     },
     { sessionId: "mcp-session-11" },
   );
@@ -52,6 +58,10 @@ test("constructs canonical invocation defaults and forwards common fields", () =
   assert.equal(invocation.device_id, "Leno");
   assert.equal(invocation.response_mode, "debug");
   assert.equal(invocation.idempotency_key, "idem-11");
+  assert.equal(
+    invocation.job_id,
+    "job_0123456789abcdef0123456789abcdef",
+  );
   assert.deepEqual(invocation.preconditions, []);
   assert.deepEqual(invocation.expectations, []);
 });

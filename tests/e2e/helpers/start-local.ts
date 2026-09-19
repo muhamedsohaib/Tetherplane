@@ -20,6 +20,7 @@ export type LocalCompactOptions = {
     allowed_capabilities: string[];
     allowed_roots?: string[];
   };
+  stateDir?: string;
 };
 
 export async function startLocalCompact(
@@ -56,6 +57,9 @@ export async function startLocalCompact(
     };
     await writeFile(profilePath, JSON.stringify(profile, null, 2), "utf8");
     adapterArgs.push("--principal-profile", profilePath);
+  }
+  if (options.stateDir) {
+    adapterArgs.push("--state-dir", options.stateDir);
   }
 
   const transport = new StdioClientTransport({

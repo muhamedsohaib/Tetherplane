@@ -7,13 +7,14 @@ publish = false
 
 [dependencies]
 async-trait = "0.1"
+serde = { version = "1", features = ["derive"] }
 serde_json = "1"
 tether-core = { path = "../tether-core" }
 tether-filesystem-provider = { path = "../providers/filesystem" }
 tether-process-provider = { path = "../providers/process" }
 tether-search-provider = { path = "../providers/search" }
 tokio = { version = "1", features = ["io-std", "io-util", "macros", "rt-multi-thread", "sync"] }
-uuid = "1"
+uuid = { version = "1", features = ["v4"] }
 
 [dev-dependencies]
 serde_json = "1"

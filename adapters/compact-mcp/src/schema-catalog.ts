@@ -98,6 +98,27 @@ const CATALOG: Record<string, JsonSchema> = {
     grace_ms: nonNegativeInteger,
     force: boolean,
   }),
+  "job.create": objectSchema(["objective"], {
+    objective: string,
+    target_device: string,
+    permitted_principals: { type: "array", items: string },
+  }),
+  "job.get": objectSchema(["job_id"], {
+    job_id: string,
+  }),
+  "job.checkpoint": objectSchema(["job_id", "state"], {
+    job_id: string,
+    state: { type: "object" },
+    status: string,
+  }),
+  "job.acquire_lease": objectSchema(["job_id"], {
+    job_id: string,
+    ttl_ms: { type: "integer", minimum: 1, maximum: 3_600_000 },
+  }),
+  "job.release_lease": objectSchema(["job_id"], {
+    job_id: string,
+    lease_id: string,
+  }),
   "batch.execute": objectSchema(["mode", "operations"], {
     mode: { enum: ["parallel", "sequential"] },
     operations: { type: "array", minItems: 1 },

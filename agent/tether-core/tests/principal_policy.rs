@@ -26,6 +26,7 @@ fn invocation(
         request_id: Uuid::new_v4(),
         device_id: device_id.map(str::to_owned),
         principal_id: principal_id.map(str::to_owned),
+        job_id: None,
         capability: capability.into(),
         arguments,
         actor: Actor {

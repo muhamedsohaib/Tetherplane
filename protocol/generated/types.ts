@@ -11,6 +11,7 @@ export interface InvocationEnvelope {
   request_id: string;
   device_id: string | null;
   principal_id?: string | null;
+  job_id?: string | null;
   capability: string;
   arguments: {
     [k: string]: unknown;

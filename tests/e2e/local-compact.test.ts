@@ -1,4 +1,6 @@
 import assert from "node:assert/strict";
+import { mkdtemp, rm } from "node:fs/promises";
+import os from "node:os";
 import path from "node:path";
 import test from "node:test";
 
@@ -370,5 +372,130 @@ test("launch-bound principal constrains the real MCP surface and execution", asy
     );
   } finally {
     await local.close();
+  }
+});
+
+test("durable job handoff survives MCP controller replacement", async () => {
+  const stateDir = await mkdtemp(
+    path.join(os.tmpdir(), "tetherplane-e2e-job-state-"),
+  );
+
+  let creator: Awaited<ReturnType<typeof startLocalCompact>> | undefined;
+  let second: Awaited<ReturnType<typeof startLocalCompact>> | undefined;
+
+  try {
+    creator = await startLocalCompact({
+      stateDir,
+      principalProfile: {
+        principal_id: "model:deepseek-engineer",
+        authentication: "local_process_binding",
+        allowed_devices: ["Leno"],
+        allowed_capabilities: [
+          "job.create",
+          "job.get",
+          "job.acquire_lease",
+          "job.checkpoint",
+          "job.release_lease",
+        ],
+      },
+    });
+
+    const created = structured(
+      await call(creator.client, "device", {
+        op: "job_create",
+        device: "Leno",
+        args: {
+          objective: "handoff from DeepSeek to Qwen",
+          permitted_principals: ["model:qwen-general"],
+        },
+      }),
+    );
+    const jobId = created.job_id as string;
+    assert.match(jobId, /^job_[0-9a-f]{32}$/);
+
+    const acquired = structured(
+      await call(creator.client, "device", {
+        op: "job_acquire_lease",
+        device: "Leno",
+        job_id: jobId,
+        args: { ttl_ms: 5_000 },
+      }),
+    );
+    const leaseId = (
+      acquired.active_lease as Record<string, unknown>
+    ).lease_id as string;
+
+    const checkpointed = structured(
+      await call(creator.client, "device", {
+        op: "job_checkpoint",
+        device: "Leno",
+        job_id: jobId,
+        args: {
+          status: "ready_for_handoff",
+          state: {
+            step: "sandbox_artifact_created",
+            artifacts: ["artifact.txt"],
+          },
+        },
+      }),
+    );
+    assert.equal(checkpointed.status, "ready_for_handoff");
+
+    const released = structured(
+      await call(creator.client, "device", {
+        op: "job_release_lease",
+        device: "Leno",
+        job_id: jobId,
+        args: { lease_id: leaseId },
+      }),
+    );
+    assert.equal(released.active_lease, null);
+
+    await creator.close();
+    creator = undefined;
+
+    second = await startLocalCompact({
+      stateDir,
+      principalProfile: {
+        principal_id: "model:qwen-general",
+        authentication: "local_process_binding",
+        allowed_devices: ["Leno"],
+        allowed_capabilities: ["job.get", "job.acquire_lease"],
+      },
+    });
+
+    const readBack = structured(
+      await call(second.client, "device", {
+        op: "job_get",
+        device: "Leno",
+        job_id: jobId,
+        args: {},
+      }),
+    );
+    assert.equal(readBack.creator_principal, "model:deepseek-engineer");
+    assert.equal(
+      (
+        (readBack.latest_checkpoint as Record<string, unknown>)
+          .state as Record<string, unknown>
+      ).step,
+      "sandbox_artifact_created",
+    );
+
+    const reacquired = structured(
+      await call(second.client, "device", {
+        op: "job_acquire_lease",
+        device: "Leno",
+        job_id: jobId,
+        args: { ttl_ms: 5_000 },
+      }),
+    );
+    assert.equal(
+      (reacquired.active_lease as Record<string, unknown>).principal_id,
+      "model:qwen-general",
+    );
+  } finally {
+    await creator?.close().catch(() => undefined);
+    await second?.close().catch(() => undefined);
+    await rm(stateDir, { recursive: true, force: true });
   }
 });

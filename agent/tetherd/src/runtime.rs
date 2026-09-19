@@ -14,6 +14,8 @@ use tether_filesystem_provider::FilesystemProvider;
 use tether_process_provider::ProcessProvider;
 use tether_search_provider::SearchProvider;
 
+use crate::job::JobProvider;
+
 pub struct AgentRuntime {
     router: CapabilityRouter,
     bound_principal_id: Option<String>,
@@ -23,6 +25,7 @@ impl AgentRuntime {
     pub fn new(
         mut allowed_roots: Vec<PathBuf>,
         principal: Option<PrincipalProfile>,
+        state_dir: Option<PathBuf>,
     ) -> Result<Self, CapabilityError> {
         if allowed_roots.is_empty()
             && let Some(profile) = principal.as_ref()
@@ -44,6 +47,7 @@ impl AgentRuntime {
         let principal_capabilities = principal
             .as_ref()
             .map(|profile| profile.allowed_capabilities.clone());
+        let job_available = state_dir.is_some();
         let mut policy_config = LocalPolicyConfig::new(allowed_roots);
         if let Some(profile) = principal {
             policy_config = policy_config.with_principal(profile);
@@ -51,10 +55,18 @@ impl AgentRuntime {
         let policy = Arc::new(LocalPolicyBroker::new(policy_config));
         let mut router = CapabilityRouter::with_policy(policy);
 
-        router.register(Arc::new(DeviceProvider::new(principal_capabilities)))?;
+        router.register(Arc::new(DeviceProvider::new(
+            principal_capabilities,
+            job_available,
+        )))?;
         router.register(Arc::new(FilesystemProvider::new()))?;
         router.register(Arc::new(SearchProvider::new()))?;
         router.register(Arc::new(ProcessProvider::new()))?;
+        if let Some(state_dir) = state_dir {
+            router.register(Arc::new(JobProvider::new(&state_dir)?))?;
+        } else {
+            router.register(Arc::new(UnavailableProvider::new("job")))?;
+        }
         router.register(Arc::new(UnavailableProvider::new("browser")))?;
         router.register(Arc::new(UnavailableProvider::new("desktop")))?;
 
@@ -75,13 +87,15 @@ impl AgentRuntime {
 struct DeviceProvider {
     started: Instant,
     allowed_capabilities: Option<BTreeSet<String>>,
+    job_available: bool,
 }
 
 impl DeviceProvider {
-    fn new(allowed_capabilities: Option<BTreeSet<String>>) -> Self {
+    fn new(allowed_capabilities: Option<BTreeSet<String>>, job_available: bool) -> Self {
         Self {
             started: Instant::now(),
             allowed_capabilities,
+            job_available,
         }
     }
 
@@ -103,6 +117,7 @@ impl DeviceProvider {
                 { "namespace": "search", "available": true, "operations": self.operations("search", &["start", "read", "stop", "list"]) },
                 { "namespace": "process", "available": true, "operations": self.operations("process", &["run", "read", "input", "list_sessions", "list_system", "terminate"]) },
                 { "namespace": "batch", "available": true, "operations": self.operations("batch", &["execute"]) },
+                { "namespace": "job", "available": self.job_available, "operations": if self.job_available { self.operations("job", &["create", "get", "checkpoint", "acquire_lease", "release_lease"]) } else { Vec::<String>::new() } },
                 { "namespace": "browser", "available": false, "operations": [] },
                 { "namespace": "desktop", "available": false, "operations": [] }
             ]

@@ -33,6 +33,7 @@ const commonInputSchema = z.object({
     .default("compact"),
   device: z.string().optional(),
   idempotency_key: z.string().optional(),
+  job_id: z.string().optional(),
 });
 
 const TOOL_NAMES = [

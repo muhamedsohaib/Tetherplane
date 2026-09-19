@@ -16,6 +16,7 @@ export type CompactToolInput = {
   response_mode?: "compact" | "normal" | "debug";
   device?: string;
   idempotency_key?: string;
+  job_id?: string;
 };
 
 export type TranslationContext = {
@@ -31,6 +32,8 @@ export function translateCompactCall(
     protocol_version: "1.0",
     request_id: randomUUID(),
     device_id: input.device ?? null,
+    principal_id: null,
+    job_id: input.job_id ?? null,
     capability: canonicalCapability(tool, input.op),
     arguments: input.args ?? {},
     actor: {
@@ -49,6 +52,10 @@ function canonicalCapability(
   tool: CompactToolName,
   operation: string,
 ): string {
+  if (tool === "device" && operation.startsWith("job_")) {
+    return `job.${operation.slice("job_".length)}`;
+  }
+
   if (tool === "files") {
     switch (operation) {
       case "search":

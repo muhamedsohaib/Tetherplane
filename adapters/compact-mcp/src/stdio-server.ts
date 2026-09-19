@@ -44,6 +44,16 @@ function parseArgs(argv: string[]): CliOptions {
       continue;
     }
 
+    if (argument === "--state-dir") {
+      const value = argv[index + 1];
+      if (!value) {
+        throw new Error("--state-dir requires a path");
+      }
+      tetherdArgs.push("--state-dir", value);
+      index += 1;
+      continue;
+    }
+
     throw new Error(`unknown compact MCP argument: ${argument}`);
   }
 

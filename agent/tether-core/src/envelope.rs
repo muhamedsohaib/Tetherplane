@@ -33,6 +33,8 @@ pub struct InvocationEnvelope {
     pub device_id: Option<String>,
     #[serde(default)]
     pub principal_id: Option<String>,
+    #[serde(default)]
+    pub job_id: Option<String>,
     pub capability: String,
     pub arguments: Value,
     pub actor: Actor,

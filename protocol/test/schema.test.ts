@@ -71,3 +71,20 @@ test("invocation accepts authenticated principal context", () => {
     ajv.errorsText(validateInvocation.errors),
   );
 });
+
+test("invocation accepts optional durable job context", () => {
+  const ajv = new Ajv({ allErrors: true, strict: true });
+  const schema = loadJson(schemaPaths.invocation);
+  const validateInvocation = ajv.compile(schema);
+  const invocation = {
+    ...loadJson(fixturePaths.invocation),
+    principal_id: "model:deepseek-engineer",
+    job_id: "job_01HZXMODELNEUTRAL",
+  };
+
+  assert.equal(
+    validateInvocation(invocation),
+    true,
+    ajv.errorsText(validateInvocation.errors),
+  );
+});
