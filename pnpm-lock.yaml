@@ -31,6 +31,16 @@ importers:
         specifier: 24.13.6
         version: 24.13.6
 
+  adapters/model-client:
+    dependencies:
+      '@tetherplane/protocol':
+        specifier: workspace:*
+        version: link:../../protocol
+    devDependencies:
+      '@types/node':
+        specifier: 24.13.6
+        version: 24.13.6
+
   protocol:
     devDependencies:
       ajv:
@@ -48,6 +58,9 @@ importers:
       '@tetherplane/compact-mcp':
         specifier: workspace:*
         version: link:../../adapters/compact-mcp
+      '@tetherplane/model-client':
+        specifier: workspace:*
+        version: link:../../adapters/model-client
     devDependencies:
       '@types/node':
         specifier: 24.13.6

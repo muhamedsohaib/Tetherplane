@@ -4,14 +4,15 @@
   "private": true,
   "type": "module",
   "scripts": {
-    "pretest": "pnpm --filter @tetherplane/compact-mcp build",
+    "pretest": "cargo build -p tetherd && pnpm --filter @tetherplane/compact-mcp build && pnpm --filter @tetherplane/model-client build",
     "build": "tsc -p tsconfig.json",
-    "test": "node --test local-compact.test.ts",
+    "test": "node --test *.test.ts",
     "typecheck": "tsc --noEmit -p tsconfig.json"
   },
   "dependencies": {
     "@modelcontextprotocol/sdk": "1.30.0",
-    "@tetherplane/compact-mcp": "workspace:*"
+    "@tetherplane/compact-mcp": "workspace:*",
+    "@tetherplane/model-client": "workspace:*"
   },
   "devDependencies": {
     "@types/node": "24.13.6"
