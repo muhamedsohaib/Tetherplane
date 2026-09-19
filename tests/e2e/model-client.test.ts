@@ -1,5 +1,5 @@
 import assert from "node:assert/strict";
-import { mkdtemp, rm, writeFile } from "node:fs/promises";
+import { mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
 import { createServer, type Server } from "node:http";
 import type { AddressInfo } from "node:net";
 import os from "node:os";
@@ -210,6 +210,109 @@ test("generic model client drives tetherd directly without MCP", async () => {
       "deepseek-v4-local",
       "deepseek-v4-local",
     ]);
+  } finally {
+    await agent.close();
+    await fakeModel.close();
+    await rm(sandbox, { recursive: true, force: true });
+    await rm(controlRoot, { recursive: true, force: true });
+  }
+});
+
+test("read-only Contrarian principal cannot escalate through model output", async () => {
+  const here = path.dirname(fileURLToPath(import.meta.url));
+  const repoRoot = path.resolve(here, "..", "..");
+  const sandbox = await mkdtemp(
+    path.join(os.tmpdir(), "tetherplane-contrarian-sandbox-"),
+  );
+  const controlRoot = await mkdtemp(
+    path.join(os.tmpdir(), "tetherplane-contrarian-control-"),
+  );
+  const stateDir = path.join(controlRoot, "state");
+  const profilePath = path.join(controlRoot, "principal.json");
+  const target = path.join(sandbox, "observed.txt");
+  const executable = process.platform === "win32" ? "tetherd.exe" : "tetherd";
+  const tetherdPath = path.join(repoRoot, "target", "debug", executable);
+
+  await writeFile(target, "seed\n", "utf8");
+  await writeFile(
+    profilePath,
+    JSON.stringify(
+      {
+        principal_id: "model:arcus-contrarian",
+        authentication: "local_process_binding",
+        allowed_devices: ["Leno"],
+        allowed_capabilities: ["filesystem.read"],
+        allowed_roots: [sandbox],
+      },
+      null,
+      2,
+    ),
+    "utf8",
+  );
+
+  const fakeModel = await startFakeModel([
+    {
+      capability: "filesystem.read",
+      arguments: { path: target },
+      device: "Leno",
+    },
+    {
+      capability: "filesystem.write",
+      arguments: { path: target, content: "mutated\n" },
+      device: "Leno",
+    },
+    {
+      capability: "process.run",
+      arguments: {
+        program: process.platform === "win32" ? "cmd.exe" : "/bin/sh",
+        args:
+          process.platform === "win32"
+            ? ["/C", "echo should-not-run"]
+            : ["-c", "echo should-not-run"],
+      },
+      device: "Leno",
+    },
+  ]);
+
+  const agent = await LocalAgentClient.spawn({
+    tetherdPath,
+    tetherdArgs: [
+      "--principal-profile",
+      profilePath,
+      "--allow",
+      sandbox,
+      "--state-dir",
+      stateDir,
+    ],
+  });
+  const model = new OpenAICompatibleModelClient({
+    endpoint: fakeModel.endpoint,
+    model: "arcus-contrarian-abliterated-local",
+  });
+  const controller = new ModelController({ model, agent });
+
+  try {
+    const read = await controller.executeNext({
+      objective: "inspect the seeded artifact",
+    });
+    assert.equal(read.status, "success");
+    assert.equal(
+      (read.data as Record<string, unknown>).content,
+      "seed\n",
+    );
+
+    const deniedWrite = await controller.executeNext({
+      objective: "attempt to mutate the artifact",
+    });
+    assert.equal(deniedWrite.status, "error");
+    assert.equal(deniedWrite.error?.code, "permission_denied");
+    assert.equal(await readFile(target, "utf8"), "seed\n");
+
+    const deniedProcess = await controller.executeNext({
+      objective: "attempt process execution",
+    });
+    assert.equal(deniedProcess.status, "error");
+    assert.equal(deniedProcess.error?.code, "permission_denied");
   } finally {
     await agent.close();
     await fakeModel.close();
