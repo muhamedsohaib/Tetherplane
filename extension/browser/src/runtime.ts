@@ -1,6 +1,8 @@
 import {
   BrowserPolicyError,
   type BrowserOperation,
+  type RawBrowserDiagnosticEvent,
+  type RawBrowserDownload,
 } from "@tetherplane/browser-bridge";
 
 export type ExtensionRuntimeSession = {
@@ -28,19 +30,35 @@ export type ExtensionPageAgent = {
   ): Promise<void>;
 };
 
+export type ExtensionOperationalAgent = {
+  uploadFile(
+    pageId: string,
+    backendId: string,
+    filePath: string,
+  ): Promise<void>;
+  downloads(pageId?: string): Promise<RawBrowserDownload[]>;
+  diagnostics(
+    pageId: string,
+    limit: number,
+  ): Promise<RawBrowserDiagnosticEvent[]>;
+};
+
 export class ExtensionCommandRuntime {
   readonly #session: ExtensionRuntimeSession;
   readonly #controller: ExtensionCommandController;
   readonly #pageAgent: ExtensionPageAgent;
+  readonly #operationalAgent: ExtensionOperationalAgent | null;
 
   constructor(options: {
     session: ExtensionRuntimeSession;
     controller: ExtensionCommandController;
     pageAgent: ExtensionPageAgent;
+    operationalAgent?: ExtensionOperationalAgent;
   }) {
     this.#session = options.session;
     this.#controller = options.controller;
     this.#pageAgent = options.pageAgent;
+    this.#operationalAgent = options.operationalAgent ?? null;
   }
 
   async run(): Promise<void> {
@@ -161,12 +179,52 @@ export class ExtensionCommandRuntime {
         return { performed: true };
       }
 
+      case "upload": {
+        const agent = this.#requireOperationalAgent("upload");
+        await agent.uploadFile(
+          requiredString(args, "page_id"),
+          requiredString(args, "backend_id"),
+          requiredString(args, "file_path"),
+        );
+        return { uploaded: true };
+      }
+
+      case "downloads": {
+        const agent = this.#requireOperationalAgent("downloads");
+        const pageId = optionalString(args, "page_id");
+        return {
+          downloads: await agent.downloads(pageId),
+        };
+      }
+
+      case "diagnostics": {
+        const agent = this.#requireOperationalAgent("diagnostics");
+        return {
+          events: await agent.diagnostics(
+            requiredString(args, "page_id"),
+            optionalPositiveInteger(args, "limit") ?? 100,
+          ),
+        };
+      }
+
       default:
         throw new RuntimeCommandError(
           "capability_unavailable",
           `unsupported extension operation: ${operation}`,
         );
     }
+  }
+
+  #requireOperationalAgent(
+    operation: string,
+  ): ExtensionOperationalAgent {
+    if (!this.#operationalAgent) {
+      throw new RuntimeCommandError(
+        "capability_unavailable",
+        `extension operational backend is unavailable for ${operation}`,
+      );
+    }
+    return this.#operationalAgent;
   }
 
   #sendError(
@@ -240,6 +298,44 @@ function requiredString(
     throw new RuntimeCommandError(
       "invalid_arguments",
       `${key} must be a non-empty string`,
+    );
+  }
+  return raw;
+}
+
+function optionalString(
+  value: Record<string, unknown>,
+  key: string,
+): string | undefined {
+  const raw = value[key];
+  if (raw === undefined) {
+    return undefined;
+  }
+  if (typeof raw !== "string" || !raw.trim()) {
+    throw new RuntimeCommandError(
+      "invalid_arguments",
+      `${key} must be a non-empty string when provided`,
+    );
+  }
+  return raw;
+}
+
+function optionalPositiveInteger(
+  value: Record<string, unknown>,
+  key: string,
+): number | undefined {
+  const raw = value[key];
+  if (raw === undefined) {
+    return undefined;
+  }
+  if (
+    typeof raw !== "number" ||
+    !Number.isSafeInteger(raw) ||
+    raw <= 0
+  ) {
+    throw new RuntimeCommandError(
+      "invalid_arguments",
+      `${key} must be a positive integer when provided`,
     );
   }
   return raw;

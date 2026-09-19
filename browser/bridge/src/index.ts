@@ -168,3 +168,13 @@ export {
   launchCdpOwnedBrowser,
   type LaunchedCdpControl,
 } from "./cdp-control.ts";
+
+export {
+  BrowserOperationalEngine,
+  type BrowserCheckpoint,
+  type BrowserDiagnosticEvent,
+  type BrowserDownload,
+  type BrowserOperationalBackend,
+  type RawBrowserDiagnosticEvent,
+  type RawBrowserDownload,
+} from "./operations.ts";

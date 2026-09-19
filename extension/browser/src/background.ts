@@ -10,6 +10,11 @@ import {
   ChromePageAgent,
   type ChromeScriptingApi,
 } from "./page-agent.ts";
+import {
+  ChromeOperationalAgent,
+  type ChromeDebuggerApi,
+  type ChromeDownloadsApi,
+} from "./operations.ts";
 import { ExtensionCommandRuntime } from "./runtime.ts";
 import { ExtensionBridgeClient } from "./session.ts";
 
@@ -47,6 +52,7 @@ async function bootExtension(): Promise<void> {
       launchToken: currentConfig.launch_token,
       extensionId: chrome.runtime.id,
     });
+    let operationalAgent: ChromeOperationalAgent | undefined;
 
     try {
       await session.connect();
@@ -56,10 +62,18 @@ async function bootExtension(): Promise<void> {
         scripting:
           chrome.scripting as unknown as ChromeScriptingApi,
       });
+      operationalAgent = new ChromeOperationalAgent({
+        controller,
+        debuggerApi:
+          chrome.debugger as unknown as ChromeDebuggerApi,
+        downloadsApi:
+          chrome.downloads as unknown as ChromeDownloadsApi,
+      });
       const runtime = new ExtensionCommandRuntime({
         session,
         controller,
         pageAgent,
+        operationalAgent,
       });
 
       session.send({
@@ -77,6 +91,7 @@ async function bootExtension(): Promise<void> {
         error,
       );
     } finally {
+      await operationalAgent?.close().catch(() => undefined);
       session.close();
     }
 

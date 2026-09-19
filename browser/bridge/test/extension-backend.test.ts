@@ -187,3 +187,65 @@ test("extension backend exposes owned-tab lifecycle commands without activating 
   assert.equal(page.active, false);
   assert.equal(page.ownership, "tetherplane");
 });
+
+test("extension backend exposes operational upload downloads and diagnostics commands", async () => {
+  const transport = new FakeTransport();
+  const backend = new ExtensionBrowserBackend({ transport });
+
+  const upload = backend.uploadFile(
+    "tab:7",
+    "frame:0|css:#upload-input",
+    "C:\\fixtures\\upload.txt",
+  );
+  await new Promise((resolve) => setTimeout(resolve, 0));
+  const uploadId = String(transport.sent[0]?.request_id);
+  assert.deepEqual(transport.sent[0]?.args, {
+    page_id: "tab:7",
+    backend_id: "frame:0|css:#upload-input",
+    file_path: "C:\\fixtures\\upload.txt",
+  });
+  transport.push(success(uploadId, { uploaded: true }));
+  await upload;
+
+  const downloads = backend.downloads("tab:7");
+  await new Promise((resolve) => setTimeout(resolve, 0));
+  const downloadsId = String(transport.sent[1]?.request_id);
+  transport.push(
+    success(downloadsId, {
+      downloads: [
+        {
+          backend_id: "chrome:42",
+          page_id: "tab:7",
+          filename: "file.txt",
+          local_path: "C:\\Downloads\\file.txt",
+          state: "complete",
+          bytes_received: 4,
+          total_bytes: 4,
+        },
+      ],
+    }),
+  );
+  assert.equal((await downloads)[0]?.backend_id, "chrome:42");
+
+  const diagnostics = backend.diagnostics("tab:7", 10);
+  await new Promise((resolve) => setTimeout(resolve, 0));
+  const diagnosticsId = String(transport.sent[2]?.request_id);
+  transport.push(
+    success(diagnosticsId, {
+      events: [
+        {
+          kind: "console",
+          level: "error",
+          message: "failure",
+        },
+      ],
+    }),
+  );
+  assert.deepEqual(await diagnostics, [
+    {
+      kind: "console",
+      level: "error",
+      message: "failure",
+    },
+  ]);
+});

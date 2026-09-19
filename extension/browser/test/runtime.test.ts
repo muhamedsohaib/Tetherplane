@@ -249,3 +249,111 @@ test("command runtime rejects malformed and unsupported commands", async () => {
   });
   assert.equal(context.session.sent.length, 1);
 });
+
+test("command runtime routes upload downloads and diagnostics to operational agent", async () => {
+  const session = new FakeSession();
+  const controller = new FakeController();
+  const pageAgent = new FakePageAgent();
+  const calls: Array<Record<string, unknown>> = [];
+  const operationalAgent = {
+    async uploadFile(
+      pageId: string,
+      backendId: string,
+      filePath: string,
+    ) {
+      calls.push({
+        kind: "upload",
+        pageId,
+        backendId,
+        filePath,
+      });
+    },
+    async downloads(pageId?: string) {
+      calls.push({ kind: "downloads", pageId });
+      return [
+        {
+          backend_id: "chrome:1",
+          page_id: pageId ?? "browser",
+          filename: "file.txt",
+          local_path: "C:\\Downloads\\file.txt",
+          state: "complete" as const,
+          bytes_received: 4,
+          total_bytes: 4,
+        },
+      ];
+    },
+    async diagnostics(pageId: string, limit: number) {
+      calls.push({ kind: "diagnostics", pageId, limit });
+      return [
+        {
+          kind: "console" as const,
+          level: "error",
+          message: "failure",
+        },
+      ];
+    },
+  };
+  const runtime = new ExtensionCommandRuntime({
+    session,
+    controller,
+    pageAgent,
+    operationalAgent,
+  });
+
+  await runtime.handleMessage({
+    type: "command",
+    request_id: "upload-1",
+    operation: "upload",
+    args: {
+      page_id: "tab:7",
+      backend_id: "frame:0|css:#upload-input",
+      file_path: "C:\\fixtures\\upload.txt",
+    },
+  });
+  await runtime.handleMessage({
+    type: "command",
+    request_id: "downloads-1",
+    operation: "downloads",
+    args: { page_id: "tab:7" },
+  });
+  await runtime.handleMessage({
+    type: "command",
+    request_id: "diagnostics-1",
+    operation: "diagnostics",
+    args: { page_id: "tab:7", limit: 25 },
+  });
+
+  assert.deepEqual(calls, [
+    {
+      kind: "upload",
+      pageId: "tab:7",
+      backendId: "frame:0|css:#upload-input",
+      filePath: "C:\\fixtures\\upload.txt",
+    },
+    { kind: "downloads", pageId: "tab:7" },
+    { kind: "diagnostics", pageId: "tab:7", limit: 25 },
+  ]);
+  assert.equal(session.sent.length, 3);
+  assert.deepEqual(session.sent[1]?.data, {
+    downloads: [
+      {
+        backend_id: "chrome:1",
+        page_id: "tab:7",
+        filename: "file.txt",
+        local_path: "C:\\Downloads\\file.txt",
+        state: "complete",
+        bytes_received: 4,
+        total_bytes: 4,
+      },
+    ],
+  });
+  assert.deepEqual(session.sent[2]?.data, {
+    events: [
+      {
+        kind: "console",
+        level: "error",
+        message: "failure",
+      },
+    ],
+  });
+});

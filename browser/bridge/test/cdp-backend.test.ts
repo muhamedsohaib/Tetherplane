@@ -22,6 +22,14 @@ class FakeCdpControl implements CdpControl {
     selectorToken: string;
     action: Record<string, unknown>;
   }> = [];
+  readonly uploads: Array<{
+    targetId: string;
+    frameId: string;
+    selectorToken: string;
+    filePath: string;
+  }> = [];
+  downloadRecords: Awaited<ReturnType<CdpControl["downloads"]>> = [];
+  diagnosticRecords: Awaited<ReturnType<CdpControl["diagnostics"]>> = [];
   frameList: CdpFrame[] = [
     {
       frame_id: "top",
@@ -97,6 +105,36 @@ class FakeCdpControl implements CdpControl {
     });
   }
 
+  async uploadFile(
+    targetId: string,
+    frameId: string,
+    selectorToken: string,
+    filePath: string,
+  ): Promise<void> {
+    this.uploads.push({
+      targetId,
+      frameId,
+      selectorToken,
+      filePath,
+    });
+  }
+
+  async downloads(targetId?: string) {
+    return this.downloadRecords
+      .filter(
+        (item) =>
+          targetId === undefined ||
+          item.page_id === `cdp:${targetId}`,
+      )
+      .map((item) => structuredClone(item));
+  }
+
+  async diagnostics(_targetId: string, _limit: number) {
+    return this.diagnosticRecords.map((item) =>
+      structuredClone(item),
+    );
+  }
+
   async close(): Promise<void> {}
 }
 
@@ -137,13 +175,13 @@ test("CDP fallback advertises reduced Tetherplane-owned capability surface truth
       "wait",
       "navigate",
       "close",
+      "upload",
+      "downloads",
+      "diagnostics",
     ],
     unavailable_operations: [
       "attach",
       "detach",
-      "upload",
-      "downloads",
-      "diagnostics",
       "checkpoint",
     ],
   });
@@ -297,4 +335,83 @@ test("CDP semantic action returns to the exact observed frame", async () => {
       },
     },
   ]);
+});
+
+test("CDP backend exposes native upload downloads and diagnostics for owned targets", async () => {
+  const control = new FakeCdpControl();
+  const backend = new CdpBrowserBackend({ control });
+  const page = await backend.createTab(
+    "https://fixture.example/editor",
+  );
+
+  await backend.uploadFile(
+    page.page_id,
+    "frame:top|css:#upload-input",
+    "C:\\fixtures\\upload.txt",
+  );
+  assert.deepEqual(control.uploads, [
+    {
+      targetId: "target-1",
+      frameId: "top",
+      selectorToken: "css:#upload-input",
+      filePath: "C:\\fixtures\\upload.txt",
+    },
+  ]);
+
+  control.downloadRecords = [
+    {
+      backend_id: "cdp-download:one",
+      page_id: page.page_id,
+      filename: "file.txt",
+      local_path: "C:\\Downloads\\file.txt",
+      state: "complete",
+      bytes_received: 4,
+      total_bytes: 4,
+    },
+  ];
+  assert.equal((await backend.downloads(page.page_id)).length, 1);
+
+  control.diagnosticRecords = [
+    {
+      kind: "network",
+      level: "error",
+      message: "response 503",
+      url: "https://fixture.example/api/fail",
+      response_status: 503,
+    },
+  ];
+  assert.equal(
+    (await backend.diagnostics(page.page_id, 10))[0]
+      ?.response_status,
+    503,
+  );
+});
+
+test("CDP operational methods reject unowned target IDs", async () => {
+  const control = new FakeCdpControl();
+  const backend = new CdpBrowserBackend({ control });
+
+  await assert.rejects(
+    () =>
+      backend.uploadFile(
+        "cdp:human-target",
+        "frame:top|css:#upload-input",
+        "C:\\fixtures\\upload.txt",
+      ),
+    (error: unknown) =>
+      error instanceof CdpBackendError &&
+      error.code === "permission_denied",
+  );
+  await assert.rejects(
+    () => backend.downloads("cdp:human-target"),
+    (error: unknown) =>
+      error instanceof CdpBackendError &&
+      error.code === "permission_denied",
+  );
+  await assert.rejects(
+    () => backend.diagnostics("cdp:human-target", 10),
+    (error: unknown) =>
+      error instanceof CdpBackendError &&
+      error.code === "permission_denied",
+  );
 });

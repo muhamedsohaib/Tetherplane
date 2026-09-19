@@ -4,6 +4,10 @@ import type {
   ResolvedBrowserAction,
 } from "./action.ts";
 import type { BackendSemanticNode } from "./semantic.ts";
+import type {
+  RawBrowserDiagnosticEvent,
+  RawBrowserDownload,
+} from "./operations.ts";
 
 export type CdpTargetInfo = {
   target_id: string;
@@ -47,6 +51,17 @@ export type CdpControl = {
     selectorToken: string,
     action: Record<string, unknown>,
   ): Promise<void>;
+  uploadFile(
+    targetId: string,
+    frameId: string,
+    selectorToken: string,
+    filePath: string,
+  ): Promise<void>;
+  downloads(targetId?: string): Promise<RawBrowserDownload[]>;
+  diagnostics(
+    targetId: string,
+    limit: number,
+  ): Promise<RawBrowserDiagnosticEvent[]>;
   close(): Promise<void>;
 };
 
@@ -103,13 +118,13 @@ export class CdpBrowserBackend implements BrowserBridgeBackend {
         "wait",
         "navigate",
         "close",
+        "upload",
+        "downloads",
+        "diagnostics",
       ],
       unavailable_operations: [
         "attach",
         "detach",
-        "upload",
-        "downloads",
-        "diagnostics",
         "checkpoint",
       ],
     };
@@ -260,6 +275,56 @@ export class CdpBrowserBackend implements BrowserBridgeBackend {
       parsed.selectorToken,
       action as unknown as Record<string, unknown>,
     );
+  }
+
+  async uploadFile(
+    pageIdValue: string,
+    backendId: string,
+    filePath: string,
+  ): Promise<void> {
+    if (!filePath.trim()) {
+      throw new CdpBackendError(
+        "invalid_arguments",
+        "file_path must be non-empty",
+      );
+    }
+    const targetId = this.#requireOwnedTarget(pageIdValue);
+    const parsed = parseBackendId(backendId);
+    const frames = await this.#control.frames(targetId);
+    if (
+      !frames.some(
+        (frame) => frame.frame_id === parsed.frameId,
+      )
+    ) {
+      throw new CdpBackendError(
+        "stale_reference",
+        "CDP upload frame no longer exists",
+      );
+    }
+    await this.#control.uploadFile(
+      targetId,
+      parsed.frameId,
+      parsed.selectorToken,
+      filePath,
+    );
+  }
+
+  async downloads(
+    pageIdValue?: string,
+  ): Promise<RawBrowserDownload[]> {
+    const targetId =
+      pageIdValue === undefined
+        ? undefined
+        : this.#requireOwnedTarget(pageIdValue);
+    return this.#control.downloads(targetId);
+  }
+
+  async diagnostics(
+    pageIdValue: string,
+    limit: number,
+  ): Promise<RawBrowserDiagnosticEvent[]> {
+    const targetId = this.#requireOwnedTarget(pageIdValue);
+    return this.#control.diagnostics(targetId, limit);
   }
 
   async waitForSettled(

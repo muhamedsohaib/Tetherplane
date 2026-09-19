@@ -3,8 +3,17 @@
   "name": "Tetherplane Browser Bridge",
   "version": "0.1.0",
   "description": "Background semantic browser control for Tetherplane-owned and explicitly shared tabs.",
-  "permissions": ["tabs", "storage", "scripting"],
-  "host_permissions": ["http://*/*", "https://*/*"],
+  "permissions": [
+    "debugger",
+    "downloads",
+    "scripting",
+    "storage",
+    "tabs"
+  ],
+  "host_permissions": [
+    "http://*/*",
+    "https://*/*"
+  ],
   "background": {
     "service_worker": "dist/background.js",
     "type": "module"

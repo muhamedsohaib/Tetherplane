@@ -23,7 +23,13 @@ test("MV3 manifest exposes only browser-control permissions required by B4", asy
   const permissions = manifest.permissions as string[];
   assert.deepEqual(
     [...permissions].sort(),
-    ["scripting", "storage", "tabs"].sort(),
+    [
+      "debugger",
+      "downloads",
+      "scripting",
+      "storage",
+      "tabs",
+    ].sort(),
   );
   for (const forbidden of [
     "cookies",

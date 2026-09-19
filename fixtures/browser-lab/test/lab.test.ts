@@ -87,6 +87,7 @@ test("browser lab exposes frame upload download and slow-request fixtures", asyn
     assert.match(pageHtml, /Nested fixture/);
     assert.match(pageHtml, /Fixture upload/);
     assert.match(pageHtml, /Download fixture/);
+    assert.match(pageHtml, /Fail request/);
 
     const frame = await fetch(new URL("/frame", lab.origin));
     assert.equal(frame.status, 200);
@@ -101,6 +102,14 @@ test("browser lab exposes frame upload download and slow-request fixtures", asyn
     assert.deepEqual(await upload.json(), {
       received_bytes: 14,
       revision: 1,
+    });
+
+    const uploadState = await fetch(
+      new URL("/api/upload-state", lab.origin),
+    );
+    assert.equal(uploadState.status, 200);
+    assert.deepEqual(await uploadState.json(), {
+      last_upload: "fixture-upload",
     });
 
     const download = await fetch(new URL("/download.txt", lab.origin));

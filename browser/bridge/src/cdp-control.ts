@@ -24,6 +24,10 @@ import {
   type CdpFrameObservation,
   type CdpTargetInfo,
 } from "./cdp-backend.ts";
+import type {
+  RawBrowserDiagnosticEvent,
+  RawBrowserDownload,
+} from "./operations.ts";
 
 type CdpResponse = {
   id?: number;
@@ -43,9 +47,16 @@ type PendingRequest = {
   reject(error: CdpBackendError): void;
 };
 
+type CdpEventListener = (event: {
+  sessionId?: string;
+  method: string;
+  params: Record<string, unknown>;
+}) => void;
+
 class CdpWire {
   readonly #socket: WebSocket;
   readonly #pending = new Map<number, PendingRequest>();
+  readonly #eventListeners = new Set<CdpEventListener>();
   #nextId = 1;
   #closed = false;
 
@@ -124,6 +135,14 @@ class CdpWire {
     });
   }
 
+  onEvent(listener: CdpEventListener): void {
+    this.#eventListeners.add(listener);
+  }
+
+  offEvent(listener: CdpEventListener): void {
+    this.#eventListeners.delete(listener);
+  }
+
   close(): void {
     if (this.#closed) {
       return;
@@ -147,6 +166,18 @@ class CdpWire {
     }
 
     if (typeof message.id !== "number") {
+      if (typeof message.method === "string") {
+        const event = {
+          ...(message.sessionId
+            ? { sessionId: message.sessionId }
+            : {}),
+          method: message.method,
+          params: message.params ?? {},
+        };
+        for (const listener of this.#eventListeners) {
+          listener(event);
+        }
+      }
       return;
     }
 
@@ -202,21 +233,46 @@ class OwnedChromiumControl implements LaunchedCdpControl {
   readonly #child: ChildProcess;
   readonly #wire: CdpWire;
   readonly #browserPid: number | null;
+  readonly #downloadDir: string;
   readonly #sessions = new Map<string, string>();
+  readonly #sessionTargets = new Map<string, string>();
+  readonly #diagnosticsEnabled = new Set<string>();
+  readonly #diagnosticsByTarget = new Map<
+    string,
+    RawBrowserDiagnosticEvent[]
+  >();
+  readonly #downloadsByGuid = new Map<
+    string,
+    {
+      guid: string;
+      url: string;
+      suggested_filename: string;
+      state: RawBrowserDownload["state"];
+      bytes_received: number;
+      total_bytes: number | null;
+    }
+  >();
+  readonly #eventListener: CdpEventListener;
   #closed = false;
 
   constructor(options: {
     child: ChildProcess;
     wire: CdpWire;
     profileDir: string;
+    downloadDir: string;
     executablePath: string;
     browserPid: number | null;
   }) {
     this.#child = options.child;
     this.#wire = options.wire;
     this.#browserPid = options.browserPid;
+    this.#downloadDir = options.downloadDir;
     this.profile_dir = options.profileDir;
     this.executable_path = options.executablePath;
+    this.#eventListener = (event) => {
+      this.#handleCdpEvent(event);
+    };
+    this.#wire.onEvent(this.#eventListener);
   }
 
   async createTarget(
@@ -267,7 +323,13 @@ class OwnedChromiumControl implements LaunchedCdpControl {
     await this.#wire.send("Target.closeTarget", {
       targetId,
     });
+    const sessionId = this.#sessions.get(targetId);
+    if (sessionId) {
+      this.#sessionTargets.delete(sessionId);
+    }
     this.#sessions.delete(targetId);
+    this.#diagnosticsEnabled.delete(targetId);
+    this.#diagnosticsByTarget.delete(targetId);
   }
 
   async navigateTarget(
@@ -363,12 +425,143 @@ class OwnedChromiumControl implements LaunchedCdpControl {
     }
   }
 
+  async uploadFile(
+    targetId: string,
+    frameId: string,
+    selectorToken: string,
+    filePath: string,
+  ): Promise<void> {
+    if (!selectorToken.startsWith("css:")) {
+      throw new CdpBackendError(
+        "stale_reference",
+        "CDP upload selector is invalid",
+      );
+    }
+
+    const sessionId = await this.#sessionForTarget(targetId);
+    const contextId = await this.#isolatedWorld(
+      sessionId,
+      frameId,
+    );
+    await this.#wire.send("DOM.enable", {}, sessionId);
+
+    const selector = selectorToken.slice("css:".length);
+    const evaluated = await this.#wire.send(
+      "Runtime.evaluate",
+      {
+        expression: `document.querySelector(${JSON.stringify(selector)})`,
+        contextId,
+        returnByValue: false,
+      },
+      sessionId,
+    );
+    if (evaluated.exceptionDetails) {
+      throw new CdpBackendError(
+        "stale_reference",
+        "CDP upload selector evaluation failed",
+      );
+    }
+    const remoteObject = isRecord(evaluated.result)
+      ? evaluated.result
+      : {};
+    const objectId = remoteObject.objectId;
+    if (typeof objectId !== "string" || !objectId) {
+      throw new CdpBackendError(
+        "stale_reference",
+        "file input no longer exists",
+      );
+    }
+
+    await this.#wire.send(
+      "DOM.setFileInputFiles",
+      {
+        objectId,
+        files: [filePath],
+      },
+      sessionId,
+    );
+    await this.#wire.send(
+      "Runtime.callFunctionOn",
+      {
+        objectId,
+        functionDeclaration:
+          "function(){this.dispatchEvent(new Event('input',{bubbles:true}));this.dispatchEvent(new Event('change',{bubbles:true}));}",
+        returnByValue: true,
+      },
+      sessionId,
+    );
+  }
+
+  async downloads(
+    targetId?: string,
+  ): Promise<RawBrowserDownload[]> {
+    let targetOrigin: string | null = null;
+    if (targetId) {
+      const target = (await this.listTargets()).find(
+        (item) => item.target_id === targetId,
+      );
+      if (!target) {
+        throw new CdpBackendError(
+          "invalid_arguments",
+          "CDP target does not exist",
+        );
+      }
+      targetOrigin = safeOrigin(target.url);
+    }
+
+    return [...this.#downloadsByGuid.values()]
+      .filter(
+        (download) =>
+          !targetOrigin ||
+          safeOrigin(download.url) === targetOrigin,
+      )
+      .map((download) => ({
+        backend_id: `cdp-download:${download.guid}`,
+        page_id: targetId ? `cdp:${targetId}` : "browser",
+        filename: download.suggested_filename,
+        local_path: path.join(
+          this.#downloadDir,
+          download.suggested_filename,
+        ),
+        state: download.state,
+        bytes_received: download.bytes_received,
+        total_bytes: download.total_bytes,
+      }));
+  }
+
+  async diagnostics(
+    targetId: string,
+    limit: number,
+  ): Promise<RawBrowserDiagnosticEvent[]> {
+    const sessionId = await this.#sessionForTarget(targetId);
+    if (!this.#diagnosticsEnabled.has(targetId)) {
+      await this.#wire.send("Log.enable", {}, sessionId);
+      await this.#wire.send("Network.enable", {}, sessionId);
+      this.#diagnosticsEnabled.add(targetId);
+      this.#diagnosticsByTarget.set(
+        targetId,
+        this.#diagnosticsByTarget.get(targetId) ?? [],
+      );
+    }
+
+    const normalizedLimit = Math.max(
+      1,
+      Math.min(Math.floor(limit), 500),
+    );
+    return structuredClone(
+      (this.#diagnosticsByTarget.get(targetId) ?? []).slice(
+        -normalizedLimit,
+      ),
+    );
+  }
+
   async close(): Promise<void> {
     if (this.#closed) {
       return;
     }
     this.#closed = true;
 
+    this.#wire.offEvent(this.#eventListener);
     await this.#wire
       .send("Browser.close")
       .catch(() => undefined);
@@ -385,6 +578,88 @@ class OwnedChromiumControl implements LaunchedCdpControl {
       maxRetries: 20,
       retryDelay: 50,
     });
+  }
+
+  #handleCdpEvent(event: {
+    sessionId?: string;
+    method: string;
+    params: Record<string, unknown>;
+  }): void {
+    if (event.method === "Browser.downloadWillBegin") {
+      const guid = stringField(event.params, "guid");
+      const url = stringField(event.params, "url");
+      const suggestedFilename = stringField(
+        event.params,
+        "suggestedFilename",
+      );
+      if (guid && url && suggestedFilename) {
+        this.#downloadsByGuid.set(guid, {
+          guid,
+          url,
+          suggested_filename: suggestedFilename,
+          state: "in_progress",
+          bytes_received: 0,
+          total_bytes: null,
+        });
+      }
+      return;
+    }
+
+    if (event.method === "Browser.downloadProgress") {
+      const guid = stringField(event.params, "guid");
+      if (!guid) {
+        return;
+      }
+      const existing = this.#downloadsByGuid.get(guid);
+      if (!existing) {
+        return;
+      }
+      const state = stringField(event.params, "state");
+      const received = numberField(event.params, "receivedBytes");
+      const total = numberField(event.params, "totalBytes");
+      existing.state =
+        state === "completed"
+          ? "complete"
+          : state === "canceled"
+            ? "interrupted"
+            : "in_progress";
+      existing.bytes_received = Math.max(
+        0,
+        received ?? existing.bytes_received,
+      );
+      existing.total_bytes =
+        total !== null && total >= 0
+          ? total
+          : existing.total_bytes;
+      return;
+    }
+
+    if (!event.sessionId) {
+      return;
+    }
+    const targetId = this.#sessionTargets.get(event.sessionId);
+    if (
+      !targetId ||
+      !this.#diagnosticsEnabled.has(targetId)
+    ) {
+      return;
+    }
+
+    const diagnostic = diagnosticFromCdpEvent(
+      event.method,
+      event.params,
+    );
+    if (!diagnostic) {
+      return;
+    }
+
+    const events =
+      this.#diagnosticsByTarget.get(targetId) ?? [];
+    events.push(diagnostic);
+    if (events.length > 500) {
+      events.splice(0, events.length - 500);
+    }
+    this.#diagnosticsByTarget.set(targetId, events);
   }
 
   async #sessionForTarget(
@@ -407,6 +682,7 @@ class OwnedChromiumControl implements LaunchedCdpControl {
       "sessionId",
     );
     this.#sessions.set(targetId, sessionId);
+    this.#sessionTargets.set(sessionId, targetId);
 
     await this.#wire.send(
       "Page.enable",
@@ -554,11 +830,19 @@ export async function launchCdpOwnedBrowser(options: {
       });
     const wire = await CdpWire.connect(websocketUrl);
     const browserPid = await discoverBrowserPid(wire);
+    const downloadDir = path.join(profileDir, "Downloads");
+    await mkdir(downloadDir, { recursive: true });
+    await wire.send("Browser.setDownloadBehavior", {
+      behavior: "allow",
+      downloadPath: downloadDir,
+      eventsEnabled: true,
+    });
 
     return new OwnedChromiumControl({
       child,
       wire,
       profileDir,
+      downloadDir,
       executablePath,
       browserPid,
     });
@@ -813,6 +1097,131 @@ function parseFrameObservation(
         typeof item === "string",
     ),
   };
+}
+
+const SENSITIVE_DIAGNOSTIC_HEADERS = new Set([
+  "authorization",
+  "proxy-authorization",
+  "cookie",
+  "set-cookie",
+  "x-api-key",
+  "x-auth-token",
+  "x-access-token",
+]);
+
+function safeOrigin(value: string): string | null {
+  try {
+    return new URL(value).origin;
+  } catch {
+    return null;
+  }
+}
+
+function diagnosticFromCdpEvent(
+  method: string,
+  params: Record<string, unknown>,
+): RawBrowserDiagnosticEvent | null {
+  if (method === "Log.entryAdded") {
+    const entry = isRecord(params.entry) ? params.entry : {};
+    const message = stringField(entry, "text") ?? "";
+    return {
+      kind: "console",
+      level: stringField(entry, "level") ?? "info",
+      message,
+      ...(stringField(entry, "url")
+        ? { url: stringField(entry, "url")! }
+        : {}),
+      ...(numberField(entry, "timestamp") !== null
+        ? {
+            timestamp_ms: Math.floor(
+              numberField(entry, "timestamp")! * 1_000,
+            ),
+          }
+        : {}),
+    };
+  }
+
+  if (method === "Network.requestWillBeSent") {
+    const request = isRecord(params.request) ? params.request : {};
+    const url = stringField(request, "url") ?? "";
+    const headers = safeDiagnosticHeaders(
+      isRecord(request.headers) ? request.headers : {},
+    );
+    return {
+      kind: "network",
+      level: "info",
+      message: `request ${url}`,
+      ...(url ? { url } : {}),
+      ...(Object.keys(headers).length > 0
+        ? { request_headers: headers }
+        : {}),
+      ...(numberField(params, "timestamp") !== null
+        ? {
+            timestamp_ms: Math.floor(
+              numberField(params, "timestamp")! * 1_000,
+            ),
+          }
+        : {}),
+    };
+  }
+
+  if (method === "Network.responseReceived") {
+    const response = isRecord(params.response) ? params.response : {};
+    const url = stringField(response, "url") ?? "";
+    const status = numberField(response, "status");
+    return {
+      kind: "network",
+      level:
+        status !== null && status >= 400 ? "error" : "info",
+      message: `response ${status ?? "unknown"} ${url}`,
+      ...(url ? { url } : {}),
+      ...(status !== null ? { response_status: status } : {}),
+      ...(numberField(params, "timestamp") !== null
+        ? {
+            timestamp_ms: Math.floor(
+              numberField(params, "timestamp")! * 1_000,
+            ),
+          }
+        : {}),
+    };
+  }
+
+  return null;
+}
+
+function safeDiagnosticHeaders(
+  headers: Record<string, unknown>,
+): Record<string, string> {
+  return Object.fromEntries(
+    Object.entries(headers)
+      .filter(
+        ([name]) =>
+          !SENSITIVE_DIAGNOSTIC_HEADERS.has(
+            name.toLowerCase(),
+          ),
+      )
+      .filter((entry): entry is [string, string] =>
+        typeof entry[1] === "string",
+      ),
+  );
+}
+
+function stringField(
+  record: Record<string, unknown>,
+  key: string,
+): string | null {
+  return typeof record[key] === "string"
+    ? (record[key] as string)
+    : null;
+}
+
+function numberField(
+  record: Record<string, unknown>,
+  key: string,
+): number | null {
+  return typeof record[key] === "number"
+    ? (record[key] as number)
+    : null;
 }
 
 function requiredString(

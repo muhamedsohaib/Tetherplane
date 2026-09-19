@@ -60,7 +60,7 @@ async function handleRequest(
   const url = new URL(request.url ?? "/", "http://browser-lab.local");
 
   if (request.method === "GET" && url.pathname === "/") {
-    return html(response, mainPage());
+    return html(response, mainPage(state));
   }
 
   if (request.method === "GET" && url.pathname === "/frame") {
@@ -119,6 +119,15 @@ async function handleRequest(
     });
   }
 
+  if (
+    request.method === "GET" &&
+    url.pathname === "/api/upload-state"
+  ) {
+    return json(response, 200, {
+      last_upload: state.last_upload,
+    });
+  }
+
   if (request.method === "GET" && url.pathname === "/api/slow") {
     const delayMs = boundedDelay(url.searchParams.get("delay_ms") ?? "150");
     await sleep(delayMs);
@@ -152,29 +161,64 @@ function publicState(state: LabState) {
   };
 }
 
-function mainPage(): string {
+function escapeHtmlAttribute(value: string): string {
+  return value
+    .replaceAll("&", "&amp;")
+    .replaceAll("\"", "&quot;")
+    .replaceAll("<", "&lt;")
+    .replaceAll(">", "&gt;");
+}
+
+function mainPage(state: LabState): string {
   return `<!doctype html>
 <html>
 <head><meta charset="utf-8"><title>Tetherplane Browser Lab</title></head>
 <body>
   <main aria-label="Browser Lab">
     <label for="value-input">Project value</label>
-    <input id="value-input" value="initial" />
+    <input id="value-input" value="${escapeHtmlAttribute(state.value)}" />
     <button id="save-button" type="button">Save</button>
     <div id="validation" role="alert" hidden></div>
     <div id="toast" role="status" aria-live="polite"></div>
-    <div id="revision" data-revision="1">Revision 1</div>
+    <div id="revision" data-revision="${state.revision}">Revision ${state.revision}</div>
     <iframe title="Nested fixture" src="/frame"></iframe>
     <input id="upload-input" type="file" aria-label="Fixture upload" />
     <a id="download-link" href="/download.txt">Download fixture</a>
+    <button id="fail-request" type="button">Fail request</button>
   </main>
   <script>
-    let revision = 1;
+    let revision = ${state.revision};
     const input = document.getElementById("value-input");
     const save = document.getElementById("save-button");
     const validation = document.getElementById("validation");
     const toast = document.getElementById("toast");
     const revisionNode = document.getElementById("revision");
+    const uploadInput = document.getElementById("upload-input");
+    const failRequest = document.getElementById("fail-request");
+
+    failRequest.addEventListener("click", async () => {
+      const response = await fetch("/api/fail", {
+        headers: {
+          authorization: "Bearer SECRET-BROWSER-TOKEN",
+        },
+      });
+      toast.textContent = "Fail request " + response.status;
+    });
+
+    uploadInput.addEventListener("change", async () => {
+      const file = uploadInput.files?.[0];
+      if (!file) {
+        return;
+      }
+      const response = await fetch("/api/upload", {
+        method: "POST",
+        headers: { "content-type": "text/plain" },
+        body: await file.text(),
+      });
+      if (response.ok) {
+        toast.textContent = "Uploaded";
+      }
+    });
 
     save.addEventListener("click", async () => {
       const response = await fetch("/api/save?delay_ms=60", {

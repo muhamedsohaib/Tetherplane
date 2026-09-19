@@ -5,6 +5,10 @@ import type {
   BrowserObservedState,
   ResolvedBrowserAction,
 } from "./action.ts";
+import type {
+  RawBrowserDiagnosticEvent,
+  RawBrowserDownload,
+} from "./operations.ts";
 
 export type ExtensionCommandTransport = {
   send(message: Record<string, unknown>): void;
@@ -147,6 +151,59 @@ export class ExtensionBrowserBackend
       page_id: pageId,
       action,
     });
+  }
+
+  async uploadFile(
+    pageId: string,
+    backendId: string,
+    filePath: string,
+  ): Promise<void> {
+    await this.#call("upload", {
+      page_id: pageId,
+      backend_id: backendId,
+      file_path: filePath,
+    });
+  }
+
+  async downloads(
+    pageId?: string,
+  ): Promise<RawBrowserDownload[]> {
+    const data = await this.#call("downloads", {
+      ...(pageId ? { page_id: pageId } : {}),
+    });
+    if (!isRecord(data) || !Array.isArray(data.downloads)) {
+      throw new ExtensionBackendError(
+        "provider_failure",
+        "extension downloads response is invalid",
+      );
+    }
+    return data.downloads
+      .map(parseDownload)
+      .filter(
+        (item): item is RawBrowserDownload => item !== null,
+      );
+  }
+
+  async diagnostics(
+    pageId: string,
+    limit: number,
+  ): Promise<RawBrowserDiagnosticEvent[]> {
+    const data = await this.#call("diagnostics", {
+      page_id: pageId,
+      limit,
+    });
+    if (!isRecord(data) || !Array.isArray(data.events)) {
+      throw new ExtensionBackendError(
+        "provider_failure",
+        "extension diagnostics response is invalid",
+      );
+    }
+    return data.events
+      .map(parseDiagnostic)
+      .filter(
+        (item): item is RawBrowserDiagnosticEvent =>
+          item !== null,
+      );
   }
 
   async waitForSettled(
@@ -320,6 +377,87 @@ function isExtensionPageInfo(
       value.ownership === "shared-observe" ||
       value.ownership === "shared-authorized")
   );
+}
+
+function parseDownload(
+  value: unknown,
+): RawBrowserDownload | null {
+  if (!isRecord(value)) {
+    return null;
+  }
+  if (
+    typeof value.backend_id !== "string" ||
+    typeof value.page_id !== "string" ||
+    typeof value.filename !== "string" ||
+    !(
+      typeof value.local_path === "string" ||
+      value.local_path === null
+    ) ||
+    !(
+      value.state === "in_progress" ||
+      value.state === "complete" ||
+      value.state === "interrupted"
+    ) ||
+    typeof value.bytes_received !== "number" ||
+    !(
+      typeof value.total_bytes === "number" ||
+      value.total_bytes === null
+    )
+  ) {
+    return null;
+  }
+  return {
+    backend_id: value.backend_id,
+    page_id: value.page_id,
+    filename: value.filename,
+    local_path: value.local_path,
+    state: value.state,
+    bytes_received: value.bytes_received,
+    total_bytes: value.total_bytes,
+  };
+}
+
+function parseDiagnostic(
+  value: unknown,
+): RawBrowserDiagnosticEvent | null {
+  if (!isRecord(value)) {
+    return null;
+  }
+  if (
+    !(value.kind === "console" || value.kind === "network") ||
+    typeof value.level !== "string" ||
+    typeof value.message !== "string"
+  ) {
+    return null;
+  }
+
+  const headers =
+    isRecord(value.request_headers)
+      ? Object.fromEntries(
+          Object.entries(value.request_headers).filter(
+            (entry): entry is [string, string] =>
+              typeof entry[1] === "string",
+          ),
+        )
+      : undefined;
+
+  return {
+    kind: value.kind,
+    level: value.level,
+    message: value.message,
+    ...(typeof value.url === "string"
+      ? { url: value.url }
+      : {}),
+    ...(headers && Object.keys(headers).length > 0
+      ? { request_headers: headers }
+      : {}),
+    ...(typeof value.response_status === "number"
+      ? { response_status: value.response_status }
+      : {}),
+    ...(typeof value.timestamp_ms === "number"
+      ? { timestamp_ms: value.timestamp_ms }
+      : {}),
+  };
 }
 
 function normalizeTransportError(
