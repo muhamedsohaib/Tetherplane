@@ -4,8 +4,16 @@
   "private": true,
   "type": "module",
   "scripts": {
+    "pretest": "pnpm --filter @tetherplane/compact-mcp build",
     "build": "tsc -p tsconfig.json",
-    "test": "node --test",
+    "test": "node --test local-compact.test.ts",
     "typecheck": "tsc --noEmit -p tsconfig.json"
+  },
+  "dependencies": {
+    "@modelcontextprotocol/sdk": "1.30.0",
+    "@tetherplane/compact-mcp": "workspace:*"
+  },
+  "devDependencies": {
+    "@types/node": "24.13.6"
   }
 }

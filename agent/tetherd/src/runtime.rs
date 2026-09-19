@@ -1,3 +1,4 @@
+use std::path::PathBuf;
 use std::sync::Arc;
 use std::time::Instant;
 
@@ -16,16 +17,18 @@ pub struct AgentRuntime {
 }
 
 impl AgentRuntime {
-    pub fn new() -> Result<Self, CapabilityError> {
-        let allowed_root = std::env::current_dir().map_err(|error| CapabilityError {
-            code: ErrorCode::ProviderFailure,
-            message: format!("failed to resolve runtime working directory: {error}"),
-            recovery_hint: None,
-            details: Value::Null,
-        })?;
-        let policy = Arc::new(LocalPolicyBroker::new(LocalPolicyConfig::new(vec![
-            allowed_root,
-        ])));
+    pub fn new(mut allowed_roots: Vec<PathBuf>) -> Result<Self, CapabilityError> {
+        if allowed_roots.is_empty() {
+            allowed_roots.push(std::env::current_dir().map_err(|error| CapabilityError {
+                code: ErrorCode::ProviderFailure,
+                message: format!("failed to resolve runtime working directory: {error}"),
+                recovery_hint: None,
+                details: Value::Null,
+            })?);
+        }
+        let policy = Arc::new(LocalPolicyBroker::new(LocalPolicyConfig::new(
+            allowed_roots,
+        )));
         let mut router = CapabilityRouter::with_policy(policy);
 
         router.register(Arc::new(DeviceProvider::new()))?;

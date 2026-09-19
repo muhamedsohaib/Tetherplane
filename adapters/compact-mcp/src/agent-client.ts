@@ -51,12 +51,16 @@ export class AgentClient {
     child.once("error", () => this.#disconnect());
   }
 
-  static async spawn(options: { tetherdPath: string }): Promise<AgentClient> {
+  static async spawn(options: {
+    tetherdPath: string;
+    tetherdArgs?: string[];
+  }): Promise<AgentClient> {
     const scriptLike = /\.(?:[cm]?js|ts)$/i.test(options.tetherdPath);
     const command = scriptLike ? process.execPath : options.tetherdPath;
+    const tetherdArgs = options.tetherdArgs ?? [];
     const args = scriptLike
-      ? [options.tetherdPath, "--stdio-rpc"]
-      : ["--stdio-rpc"];
+      ? [options.tetherdPath, "--stdio-rpc", ...tetherdArgs]
+      : ["--stdio-rpc", ...tetherdArgs];
 
     const child = spawn(command, args, {
       stdio: ["pipe", "pipe", "pipe"],

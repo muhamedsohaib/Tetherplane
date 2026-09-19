@@ -40,7 +40,18 @@ importers:
         specifier: 15.0.4
         version: 15.0.4
 
-  tests/e2e: {}
+  tests/e2e:
+    dependencies:
+      '@modelcontextprotocol/sdk':
+        specifier: 1.30.0
+        version: 1.30.0(zod@4.6.5)
+      '@tetherplane/compact-mcp':
+        specifier: workspace:*
+        version: link:../../adapters/compact-mcp
+    devDependencies:
+      '@types/node':
+        specifier: 24.13.6
+        version: 24.13.6
 
 packages:
 
