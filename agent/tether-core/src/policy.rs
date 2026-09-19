@@ -91,14 +91,26 @@ impl LocalPolicyBroker {
 impl PolicyBroker for LocalPolicyBroker {
     fn evaluate(&self, invocation: &InvocationEnvelope) -> PolicyDecision {
         if invocation.capability.starts_with("filesystem.")
-            && let Some(path) = invocation
-                .arguments
-                .get("path")
-                .and_then(serde_json::Value::as_str)
-            && let Err(error) = authorize_path(Path::new(path), &self.config.allowed_directories)
+            && let Err(error) =
+                authorize_filesystem_arguments(invocation, &self.config.allowed_directories)
         {
             return PolicyDecision::Deny {
                 reason: error.message,
+            };
+        }
+
+        if invocation.capability == "filesystem.move"
+            && invocation
+                .arguments
+                .get("replace")
+                .and_then(serde_json::Value::as_bool)
+                == Some(true)
+        {
+            return PolicyDecision::RequireApproval {
+                reason: "filesystem.move with replacement requires explicit approval".into(),
+                approval_scope: ApprovalScope {
+                    capability: invocation.capability.clone(),
+                },
             };
         }
 
@@ -131,6 +143,33 @@ impl PolicyBroker for LocalPolicyBroker {
             },
         }
     }
+}
+
+fn authorize_filesystem_arguments(
+    invocation: &InvocationEnvelope,
+    allowed_directories: &[PathBuf],
+) -> Result<(), CapabilityError> {
+    for key in ["path", "source", "destination"] {
+        if let Some(path) = invocation
+            .arguments
+            .get(key)
+            .and_then(serde_json::Value::as_str)
+        {
+            authorize_path(Path::new(path), allowed_directories)?;
+        }
+    }
+
+    if let Some(paths) = invocation
+        .arguments
+        .get("paths")
+        .and_then(serde_json::Value::as_array)
+    {
+        for path in paths.iter().filter_map(serde_json::Value::as_str) {
+            authorize_path(Path::new(path), allowed_directories)?;
+        }
+    }
+
+    Ok(())
 }
 
 fn classify_capability(capability: &str) -> SideEffectClass {
