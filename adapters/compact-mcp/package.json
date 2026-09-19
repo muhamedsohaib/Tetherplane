@@ -9,8 +9,10 @@
     "typecheck": "tsc --noEmit -p tsconfig.json"
   },
   "dependencies": {
+    "@modelcontextprotocol/sdk": "1.30.0",
     "@tetherplane/protocol": "workspace:*",
-    "ajv": "8.17.1"
+    "ajv": "8.17.1",
+    "zod": "4.6.5"
   },
   "devDependencies": {
     "@types/node": "24.13.6"
