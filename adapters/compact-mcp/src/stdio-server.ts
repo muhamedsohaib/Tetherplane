@@ -54,6 +54,26 @@ function parseArgs(argv: string[]): CliOptions {
       continue;
     }
 
+    if (argument === "--browser-bridge") {
+      const value = argv[index + 1];
+      if (!value) {
+        throw new Error("--browser-bridge requires a loopback address");
+      }
+      tetherdArgs.push("--browser-bridge", value);
+      index += 1;
+      continue;
+    }
+
+    if (argument === "--browser-bridge-token-file") {
+      const value = argv[index + 1];
+      if (!value) {
+        throw new Error("--browser-bridge-token-file requires a path");
+      }
+      tetherdArgs.push("--browser-bridge-token-file", value);
+      index += 1;
+      continue;
+    }
+
     throw new Error(`unknown compact MCP argument: ${argument}`);
   }
 

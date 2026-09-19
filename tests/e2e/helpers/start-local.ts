@@ -21,6 +21,10 @@ export type LocalCompactOptions = {
     allowed_roots?: string[];
   };
   stateDir?: string;
+  browserBridge?: {
+    address: string;
+    token: string;
+  };
 };
 
 export async function startLocalCompact(
@@ -60,6 +64,16 @@ export async function startLocalCompact(
   }
   if (options.stateDir) {
     adapterArgs.push("--state-dir", options.stateDir);
+  }
+  if (options.browserBridge) {
+    const tokenPath = path.join(controlRoot, "browser-bridge-token.txt");
+    await writeFile(tokenPath, options.browserBridge.token, "utf8");
+    adapterArgs.push(
+      "--browser-bridge",
+      options.browserBridge.address,
+      "--browser-bridge-token-file",
+      tokenPath,
+    );
   }
 
   const transport = new StdioClientTransport({

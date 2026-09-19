@@ -90,6 +90,12 @@ importers:
       '@modelcontextprotocol/sdk':
         specifier: 1.30.0
         version: 1.30.0(zod@4.6.5)
+      '@tetherplane/browser-bridge':
+        specifier: workspace:*
+        version: link:../../browser/bridge
+      '@tetherplane/browser-lab':
+        specifier: workspace:*
+        version: link:../../fixtures/browser-lab
       '@tetherplane/compact-mcp':
         specifier: workspace:*
         version: link:../../adapters/compact-mcp
