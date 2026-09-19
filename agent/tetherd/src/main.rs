@@ -1,5 +1,6 @@
 #![forbid(unsafe_code)]
 
+mod audit;
 mod job;
 mod runtime;
 mod stdio_rpc;
@@ -93,7 +94,11 @@ async fn main() {
         }
     };
 
-    let runtime = match AgentRuntime::new(options.allowed_roots, principal, options.state_dir) {
+    let runtime = match AgentRuntime::new(
+        options.allowed_roots,
+        principal,
+        options.state_dir.as_deref(),
+    ) {
         Ok(runtime) => Arc::new(runtime),
         Err(error) => {
             eprintln!("failed to initialize tetherd runtime: {}", error.message);

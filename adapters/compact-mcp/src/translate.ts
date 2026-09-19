@@ -55,6 +55,9 @@ function canonicalCapability(
   if (tool === "device" && operation.startsWith("job_")) {
     return `job.${operation.slice("job_".length)}`;
   }
+  if (tool === "device" && operation.startsWith("audit_")) {
+    return `audit.${operation.slice("audit_".length)}`;
+  }
 
   if (tool === "files") {
     switch (operation) {

@@ -119,6 +119,10 @@ const CATALOG: Record<string, JsonSchema> = {
     job_id: string,
     lease_id: string,
   }),
+  "audit.read": objectSchema([], {
+    job_id: string,
+    limit: { type: "integer", minimum: 1, maximum: 500 },
+  }),
   "batch.execute": objectSchema(["mode", "operations"], {
     mode: { enum: ["parallel", "sequential"] },
     operations: { type: "array", minItems: 1 },

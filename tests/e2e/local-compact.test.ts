@@ -499,3 +499,51 @@ test("durable job handoff survives MCP controller replacement", async () => {
     await rm(stateDir, { recursive: true, force: true });
   }
 });
+
+test("audit lineage is available through the existing device MCP tool", async () => {
+  const stateDir = await mkdtemp(
+    path.join(os.tmpdir(), "tetherplane-e2e-audit-state-"),
+  );
+  let local: Awaited<ReturnType<typeof startLocalCompact>> | undefined;
+
+  try {
+    local = await startLocalCompact({
+      stateDir,
+      principalProfile: {
+        principal_id: "model:deepseek-engineer",
+        authentication: "local_process_binding",
+        allowed_devices: ["Leno"],
+        allowed_capabilities: ["device.status", "audit.read"],
+      },
+    });
+
+    const status = await call(local.client, "device", {
+      op: "status",
+      device: "Leno",
+      args: { secret: "DO-NOT-RETURN-OR-PERSIST" },
+    });
+    assert.equal(status.isError, undefined);
+
+    const audit = structured(
+      await call(local.client, "device", {
+        op: "audit_read",
+        device: "Leno",
+        args: { limit: 20 },
+      }),
+    );
+    const events = audit.events as Array<Record<string, unknown>>;
+    const statusEvent = events.find(
+      (event) => event.capability === "device.status",
+    );
+    assert.ok(statusEvent);
+    assert.equal(statusEvent.principal_id, "model:deepseek-engineer");
+    assert.equal(statusEvent.arguments, undefined);
+    assert.equal(
+      JSON.stringify(statusEvent).includes("DO-NOT-RETURN-OR-PERSIST"),
+      false,
+    );
+  } finally {
+    await local?.close().catch(() => undefined);
+    await rm(stateDir, { recursive: true, force: true });
+  }
+});

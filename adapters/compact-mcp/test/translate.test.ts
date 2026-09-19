@@ -17,6 +17,7 @@ const mappings = [
   ["device", "job_checkpoint", "job.checkpoint"],
   ["device", "job_acquire_lease", "job.acquire_lease"],
   ["device", "job_release_lease", "job.release_lease"],
+  ["device", "audit_read", "audit.read"],
 ] as const;
 
 test("maps compact tool operations to canonical capabilities", () => {
