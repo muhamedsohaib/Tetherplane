@@ -31,6 +31,8 @@ pub struct InvocationEnvelope {
     pub protocol_version: String,
     pub request_id: Uuid,
     pub device_id: Option<String>,
+    #[serde(default)]
+    pub principal_id: Option<String>,
     pub capability: String,
     pub arguments: Value,
     pub actor: Actor,

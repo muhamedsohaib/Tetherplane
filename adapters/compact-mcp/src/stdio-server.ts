@@ -34,6 +34,16 @@ function parseArgs(argv: string[]): CliOptions {
       continue;
     }
 
+    if (argument === "--principal-profile") {
+      const value = argv[index + 1];
+      if (!value) {
+        throw new Error("--principal-profile requires a path");
+      }
+      tetherdArgs.push("--principal-profile", value);
+      index += 1;
+      continue;
+    }
+
     throw new Error(`unknown compact MCP argument: ${argument}`);
   }
 

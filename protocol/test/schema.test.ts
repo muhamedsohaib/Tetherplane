@@ -56,3 +56,18 @@ const fixturePaths = {
   delete invalidResult.status;
   assert.equal(validateResult(invalidResult), false);
 });
+test("invocation accepts authenticated principal context", () => {
+  const ajv = new Ajv({ allErrors: true, strict: true });
+  const schema = loadJson(schemaPaths.invocation);
+  const validateInvocation = ajv.compile(schema);
+  const invocation = {
+    ...loadJson(fixturePaths.invocation),
+    principal_id: "model:deepseek-engineer",
+  };
+
+  assert.equal(
+    validateInvocation(invocation),
+    true,
+    ajv.errorsText(validateInvocation.errors),
+  );
+});

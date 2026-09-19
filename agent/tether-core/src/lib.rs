@@ -7,6 +7,7 @@ mod error;
 mod handles;
 mod ownership;
 mod policy;
+mod principal;
 mod provider;
 mod router;
 
@@ -22,6 +23,7 @@ pub use policy::{
     ApprovalScope, LocalPolicyBroker, LocalPolicyConfig, PolicyBroker, PolicyDecision,
     SideEffectClass, authorize_path,
 };
+pub use principal::{PrincipalAuthentication, PrincipalProfile};
 pub use provider::{CapabilityProvider, ProviderResult};
 pub use router::CapabilityRouter;
 

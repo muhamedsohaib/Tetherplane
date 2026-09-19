@@ -10,6 +10,7 @@ export interface InvocationEnvelope {
   protocol_version: "1.0";
   request_id: string;
   device_id: string | null;
+  principal_id?: string | null;
   capability: string;
   arguments: {
     [k: string]: unknown;

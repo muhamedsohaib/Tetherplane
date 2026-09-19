@@ -250,3 +250,154 @@ fn device_status_and_capabilities_are_minimal_and_truthful() {
     let exit = child.wait().unwrap();
     assert!(exit.success());
 }
+
+#[test]
+fn launch_bound_principal_overrides_caller_claim_and_enforces_grants() {
+    const STATUS_ID: &str = "00000000-0000-4000-8000-0000000000a1";
+    const DENIED_ID: &str = "00000000-0000-4000-8000-0000000000a2";
+
+    let profile_path = std::env::temp_dir().join(format!(
+        "tetherplane-principal-{}-{}.json",
+        std::process::id(),
+        STATUS_ID
+    ));
+    std::fs::write(
+        &profile_path,
+        serde_json::to_vec_pretty(&json!({
+            "principal_id": "model:deepseek-engineer",
+            "authentication": "local_process_binding",
+            "allowed_devices": ["Leno"],
+            "allowed_capabilities": ["device.status"],
+            "allowed_roots": []
+        }))
+        .unwrap(),
+    )
+    .unwrap();
+
+    let mut child = Command::new(env!("CARGO_BIN_EXE_tetherd"))
+        .arg("--stdio-rpc")
+        .arg("--principal-profile")
+        .arg(&profile_path)
+        .stdin(Stdio::piped())
+        .stdout(Stdio::piped())
+        .stderr(Stdio::piped())
+        .spawn()
+        .unwrap();
+
+    let mut status_request = device_status_invocation(STATUS_ID);
+    status_request["principal_id"] = json!("model:spoofed");
+
+    let mut denied_request = slow_process_invocation(DENIED_ID);
+    denied_request["principal_id"] = json!("model:spoofed");
+
+    let mut stdin = child.stdin.take().unwrap();
+    writeln!(
+        stdin,
+        "{}",
+        serde_json::to_string(&status_request).unwrap()
+    )
+    .unwrap();
+    writeln!(
+        stdin,
+        "{}",
+        serde_json::to_string(&denied_request).unwrap()
+    )
+    .unwrap();
+    drop(stdin);
+
+    let stdout = child.stdout.take().unwrap();
+    let reader = BufReader::new(stdout);
+    let mut responses = std::collections::BTreeMap::new();
+    for line in reader.lines().take(2) {
+        let result: Value = serde_json::from_str(&line.unwrap()).unwrap();
+        responses.insert(result["request_id"].as_str().unwrap().to_owned(), result);
+    }
+
+    assert_eq!(responses[STATUS_ID]["status"], "success");
+    assert_eq!(responses[DENIED_ID]["status"], "error");
+    assert_eq!(
+        responses[DENIED_ID]["error"]["code"],
+        "permission_denied"
+    );
+
+    let exit = child.wait().unwrap();
+    let _ = std::fs::remove_file(&profile_path);
+    assert!(exit.success());
+}
+
+#[test]
+fn principal_capability_discovery_filters_ungranted_operations() {
+    const CAPS_ID: &str = "00000000-0000-4000-8000-0000000000b1";
+
+    let profile_path = std::env::temp_dir().join(format!(
+        "tetherplane-capabilities-{}-{}.json",
+        std::process::id(),
+        CAPS_ID
+    ));
+    std::fs::write(
+        &profile_path,
+        serde_json::to_vec_pretty(&json!({
+            "principal_id": "model:observer",
+            "authentication": "local_process_binding",
+            "allowed_devices": ["Leno"],
+            "allowed_capabilities": [
+                "device.capabilities",
+                "device.status",
+                "filesystem.read"
+            ],
+            "allowed_roots": []
+        }))
+        .unwrap(),
+    )
+    .unwrap();
+
+    let mut child = Command::new(env!("CARGO_BIN_EXE_tetherd"))
+        .arg("--stdio-rpc")
+        .arg("--principal-profile")
+        .arg(&profile_path)
+        .stdin(Stdio::piped())
+        .stdout(Stdio::piped())
+        .stderr(Stdio::piped())
+        .spawn()
+        .unwrap();
+
+    let mut request = device_status_invocation(CAPS_ID);
+    request["capability"] = json!("device.capabilities");
+    request["principal_id"] = json!("model:spoofed");
+
+    let mut stdin = child.stdin.take().unwrap();
+    writeln!(stdin, "{}", serde_json::to_string(&request).unwrap()).unwrap();
+    drop(stdin);
+
+    let stdout = child.stdout.take().unwrap();
+    let mut reader = BufReader::new(stdout);
+    let mut line = String::new();
+    assert!(reader.read_line(&mut line).unwrap() > 0);
+    let result: Value = serde_json::from_str(line.trim_end()).unwrap();
+    assert_eq!(result["status"], "success");
+
+    let providers = result["data"]["providers"].as_array().unwrap();
+    let device = providers
+        .iter()
+        .find(|provider| provider["namespace"] == "device")
+        .unwrap();
+    let filesystem = providers
+        .iter()
+        .find(|provider| provider["namespace"] == "filesystem")
+        .unwrap();
+    let process = providers
+        .iter()
+        .find(|provider| provider["namespace"] == "process")
+        .unwrap();
+
+    assert_eq!(
+        device["operations"],
+        json!(["status", "capabilities"])
+    );
+    assert_eq!(filesystem["operations"], json!(["read"]));
+    assert_eq!(process["operations"], json!([]));
+
+    let exit = child.wait().unwrap();
+    let _ = std::fs::remove_file(&profile_path);
+    assert!(exit.success());
+}

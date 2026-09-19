@@ -21,6 +21,7 @@ fn invocation(capability: &str, arguments: Value) -> InvocationEnvelope {
         protocol_version: "1.0".into(),
         request_id: Uuid::new_v4(),
         device_id: None,
+        principal_id: None,
         capability: capability.into(),
         arguments,
         actor: Actor {

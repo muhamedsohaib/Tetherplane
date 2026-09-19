@@ -5,7 +5,9 @@ use std::path::{Component, Path, PathBuf};
 
 use serde_json::json;
 
-use crate::{CapabilityError, ErrorCode, InvocationEnvelope, ResourceOrigin};
+use crate::{
+    CapabilityError, ErrorCode, InvocationEnvelope, PrincipalProfile, ResourceOrigin,
+};
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub enum SideEffectClass {
@@ -45,6 +47,7 @@ pub struct LocalPolicyConfig {
     pub allowed_directories: Vec<PathBuf>,
     pub background_only: bool,
     pub operation_classes: HashMap<String, SideEffectClass>,
+    pub principal: Option<PrincipalProfile>,
 }
 
 impl LocalPolicyConfig {
@@ -64,7 +67,14 @@ impl LocalPolicyConfig {
             allowed_directories,
             background_only: true,
             operation_classes,
+            principal: None,
         }
+    }
+
+    #[must_use]
+    pub fn with_principal(mut self, principal: PrincipalProfile) -> Self {
+        self.principal = Some(principal);
+        self
     }
 }
 
@@ -87,9 +97,59 @@ impl LocalPolicyBroker {
 
         classify_capability(capability)
     }
+
+    fn principal_denial_reason(&self, invocation: &InvocationEnvelope) -> Option<String> {
+        let principal = self.config.principal.as_ref()?;
+
+        if invocation.principal_id.as_deref() != Some(principal.principal_id.as_str()) {
+            return Some("request principal does not match the authenticated principal".into());
+        }
+
+        if let Some(device_id) = invocation.device_id.as_deref()
+            && !principal.allowed_devices.contains(device_id)
+        {
+            return Some(format!(
+                "principal {} is not authorized for device {device_id}",
+                principal.principal_id
+            ));
+        }
+
+        if !principal
+            .allowed_capabilities
+            .contains(&invocation.capability)
+        {
+            return Some(format!(
+                "principal {} is not authorized for capability {}",
+                principal.principal_id, invocation.capability
+            ));
+        }
+
+        if invocation.capability.starts_with("filesystem.")
+            && let Err(error) =
+                authorize_filesystem_arguments(invocation, &principal.allowed_directories)
+        {
+            return Some(error.message);
+        }
+
+        if invocation.capability == "search.start"
+            && let Some(root) = invocation
+                .arguments
+                .get("root")
+                .and_then(serde_json::Value::as_str)
+            && let Err(error) = authorize_path(Path::new(root), &principal.allowed_directories)
+        {
+            return Some(error.message);
+        }
+
+        None
+    }
 }
 impl PolicyBroker for LocalPolicyBroker {
     fn evaluate(&self, invocation: &InvocationEnvelope) -> PolicyDecision {
+        if let Some(reason) = self.principal_denial_reason(invocation) {
+            return PolicyDecision::Deny { reason };
+        }
+
         if invocation.capability.starts_with("filesystem.")
             && let Err(error) =
                 authorize_filesystem_arguments(invocation, &self.config.allowed_directories)

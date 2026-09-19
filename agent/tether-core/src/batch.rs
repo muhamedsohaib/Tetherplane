@@ -96,6 +96,7 @@ pub(crate) fn child_invocation(
         protocol_version: parent.protocol_version.clone(),
         request_id: Uuid::new_v4(),
         device_id: parent.device_id.clone(),
+        principal_id: parent.principal_id.clone(),
         capability: operation.capability.clone(),
         arguments: operation.arguments.clone(),
         actor: parent.actor.clone(),

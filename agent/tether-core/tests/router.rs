@@ -65,6 +65,7 @@ fn invocation(capability: &str) -> InvocationEnvelope {
         protocol_version: "1.0".into(),
         request_id: Uuid::parse_str("22222222-2222-4222-8222-222222222222").unwrap(),
         device_id: None,
+        principal_id: None,
         capability: capability.into(),
         arguments: json!({}),
         actor: Actor {
