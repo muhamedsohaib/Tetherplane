@@ -11,6 +11,7 @@ const mappings = [
   ["device", "status", "device.status"],
   ["browser", "inspect", "browser.inspect"],
   ["desktop", "observe", "desktop.observe"],
+  ["batch", "execute", "batch.execute"],
 ] as const;
 
 test("maps compact tool operations to canonical capabilities", () => {

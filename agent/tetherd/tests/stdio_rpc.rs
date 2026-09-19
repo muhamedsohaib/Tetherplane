@@ -232,7 +232,7 @@ fn device_status_and_capabilities_are_minimal_and_truthful() {
     assert_eq!(status["policy_mode"].as_str(), Some("background_only"));
 
     let providers = responses[CAPS_ID]["data"]["providers"].as_array().unwrap();
-    for namespace in ["filesystem", "search", "process", "device"] {
+    for namespace in ["filesystem", "search", "process", "device", "batch"] {
         let provider = providers
             .iter()
             .find(|provider| provider["namespace"].as_str() == Some(namespace))

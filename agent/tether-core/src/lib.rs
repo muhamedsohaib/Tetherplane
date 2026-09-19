@@ -1,5 +1,6 @@
 #![forbid(unsafe_code)]
 
+mod batch;
 mod budget;
 mod envelope;
 mod error;

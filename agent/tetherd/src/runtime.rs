@@ -71,6 +71,7 @@ impl DeviceProvider {
                 { "namespace": "filesystem", "available": true, "operations": ["read", "read_many", "list", "info", "write", "append", "mkdir", "move", "patch"] },
                 { "namespace": "search", "available": true, "operations": ["start", "read", "stop", "list"] },
                 { "namespace": "process", "available": true, "operations": ["run", "read", "input", "list_sessions", "list_system", "terminate"] },
+                { "namespace": "batch", "available": true, "operations": ["execute"] },
                 { "namespace": "browser", "available": false, "operations": [] },
                 { "namespace": "desktop", "available": false, "operations": [] }
             ]
