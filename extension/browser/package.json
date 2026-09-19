@@ -1,0 +1,19 @@
+{
+  "name": "@tetherplane/browser-extension",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "pretest": "pnpm --filter @tetherplane/browser-bridge build",
+    "build": "tsc -p tsconfig.json",
+    "test": "node --test test/*.test.ts",
+    "typecheck": "pnpm --filter @tetherplane/browser-bridge build && tsc -p tsconfig.test.json"
+  },
+  "dependencies": {
+    "@tetherplane/browser-bridge": "workspace:*"
+  },
+  "devDependencies": {
+    "@types/chrome": "0.3.0",
+    "@types/node": "24.13.6"
+  }
+}

@@ -136,3 +136,17 @@ export {
   type VerifiedActionResult,
   type VerifiedActionState,
 } from "./action.ts";
+
+export {
+  startExtensionBridgeServer,
+  type AuthenticatedExtensionClient,
+  type ExtensionBridgeMessage,
+  type ExtensionBridgeServer,
+} from "./extension-session.ts";
+
+export {
+  ExtensionBrowserBackend,
+  ExtensionBackendError,
+  type ExtensionCommandTransport,
+  type ExtensionPageInfo,
+} from "./extension-backend.ts";
