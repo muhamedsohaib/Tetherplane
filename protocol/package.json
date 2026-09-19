@@ -3,6 +3,13 @@
   "version": "0.1.0",
   "private": true,
   "type": "module",
+  "types": "./generated/types.d.ts",
+  "exports": {
+    ".": {
+      "types": "./generated/types.d.ts",
+      "default": "./dist/index.js"
+    }
+  },
   "scripts": {
     "build": "node scripts/generate-types.mjs && tsc -p tsconfig.json",
     "test": "node --test",

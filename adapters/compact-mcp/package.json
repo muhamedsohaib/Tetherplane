@@ -5,7 +5,14 @@
   "type": "module",
   "scripts": {
     "build": "tsc -p tsconfig.json",
-    "test": "node --test",
+    "test": "node --test test/*.test.ts",
     "typecheck": "tsc --noEmit -p tsconfig.json"
+  },
+  "dependencies": {
+    "@tetherplane/protocol": "workspace:*",
+    "ajv": "8.17.1"
+  },
+  "devDependencies": {
+    "@types/node": "24.13.6"
   }
 }

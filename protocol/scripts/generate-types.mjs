@@ -6,7 +6,9 @@ import { compile } from "json-schema-to-typescript";
 const here = path.dirname(fileURLToPath(import.meta.url));
 const protocolRoot = path.resolve(here, "..");
 const schemaDir = path.join(protocolRoot, "schemas");
-const outputPath = path.join(protocolRoot, "generated", "types.ts");
+const outputDir = path.join(protocolRoot, "generated");
+const outputPath = path.join(outputDir, "types.ts");
+const declarationPath = path.join(outputDir, "types.d.ts");
 
 const rootSchema = {
   $schema: "http://json-schema.org/draft-07/schema#",
@@ -34,5 +36,6 @@ for (const requiredType of ["InvocationEnvelope", "ResultEnvelope", "CapabilityE
   }
 }
 
-mkdirSync(path.dirname(outputPath), { recursive: true });
+mkdirSync(outputDir, { recursive: true });
 writeFileSync(outputPath, output, "utf8");
+writeFileSync(declarationPath, output, "utf8");
