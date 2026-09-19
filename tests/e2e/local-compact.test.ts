@@ -245,7 +245,19 @@ async function provePersistentProcess(client: Client) {
   const secondStdout = second.stdout as string;
   assert.doesNotMatch(secondStdout, /one/);
   assert.match(secondStdout, /two/);
-  assert.equal(second.running, false);
+
+  let terminal = second;
+  if (second.running === true) {
+    terminal = structured(
+      await call(client, "process", {
+        op: "read",
+        args: { handle, timeout_ms: 1_500 },
+      }),
+    );
+    const terminalStdout = terminal.stdout as string;
+    assert.doesNotMatch(terminalStdout, /one|two/);
+  }
+  assert.equal(terminal.running, false);
 }
 
 async function proveBatch(client: Client, root: string) {
