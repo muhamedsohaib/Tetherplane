@@ -235,7 +235,20 @@ function invoke(
 ): RdcTranslation {
   return {
     kind: "invoke",
-    invocation: {
+    invocation: makeCanonicalInvocation(
+      capability,
+      argumentsValue,
+      source,
+    ),
+  };
+}
+
+export function makeCanonicalInvocation(
+  capability: string,
+  argumentsValue: Record<string, unknown>,
+  source: Record<string, unknown> = {},
+): InvocationEnvelope {
+  return {
       protocol_version: "1.0",
       request_id: randomUUID(),
       device_id:
@@ -252,7 +265,6 @@ function invoke(
       idempotency_key: null,
       preconditions: [],
       expectations: [],
-    },
   };
 }
 

@@ -46,6 +46,9 @@ importers:
       '@modelcontextprotocol/sdk':
         specifier: 1.30.0
         version: 1.30.0(zod@4.6.5)
+      '@tetherplane/compact-mcp':
+        specifier: workspace:*
+        version: link:../compact-mcp
       '@tetherplane/protocol':
         specifier: workspace:*
         version: link:../../protocol
