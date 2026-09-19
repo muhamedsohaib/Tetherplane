@@ -59,7 +59,7 @@ impl AuditStore {
             timestamp_unix_ms: now_ms()?,
             principal_id: invocation.principal_id.clone(),
             actor: invocation.actor.clone(),
-            job_id: invocation.job_id.clone(),
+            job_id: audit_job_id(invocation, result),
             request_id: invocation.request_id.to_string(),
             device_id: invocation.device_id.clone(),
             capability: invocation.capability.clone(),
@@ -193,6 +193,30 @@ impl CapabilityProvider for AuditProvider {
             verification: VerificationStatus::Verified,
         })
     }
+}
+
+fn audit_job_id(invocation: &InvocationEnvelope, result: &ResultEnvelope) -> Option<String> {
+    if let Some(job_id) = invocation.job_id.as_ref() {
+        return Some(job_id.clone());
+    }
+
+    if invocation.capability.starts_with("job.")
+        && let Some(job_id) = invocation.arguments.get("job_id").and_then(Value::as_str)
+    {
+        return Some(job_id.to_owned());
+    }
+
+    if invocation.capability == "job.create"
+        && let Some(job_id) = result
+            .data
+            .as_ref()
+            .and_then(|data| data.get("job_id"))
+            .and_then(Value::as_str)
+    {
+        return Some(job_id.to_owned());
+    }
+
+    None
 }
 
 fn policy_decision(result: &ResultEnvelope) -> String {

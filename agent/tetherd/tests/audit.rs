@@ -138,7 +138,7 @@ fn audit_job_lineage_is_filterable_and_principal_scoped() {
     let deepseek = write_profile(
         &root,
         "model:deepseek-engineer",
-        &["job.create", "device.status", "audit.read"],
+        &["job.create", "job.get", "device.status", "audit.read"],
     );
     let qwen = write_profile(&root, "model:qwen-general", &["audit.read"]);
 
@@ -158,11 +158,23 @@ fn audit_job_lineage_is_filterable_and_principal_scoped() {
     assert_eq!(created["status"], "success");
     let job_id = created["data"]["job_id"].as_str().unwrap().to_owned();
 
-    let status = rpc(
+    let job_get = rpc(
         &deepseek,
         &state_dir,
         &invocation(
             "00000000-0000-4000-8000-000000000212",
+            "job.get",
+            json!({ "job_id": job_id }),
+            None,
+        ),
+    );
+    assert_eq!(job_get["status"], "success");
+
+    let status = rpc(
+        &deepseek,
+        &state_dir,
+        &invocation(
+            "00000000-0000-4000-8000-000000000215",
             "device.status",
             json!({}),
             Some(&job_id),
@@ -182,13 +194,13 @@ fn audit_job_lineage_is_filterable_and_principal_scoped() {
     );
     assert_eq!(deepseek_audit["status"], "success");
     let events = deepseek_audit["data"]["events"].as_array().unwrap();
-    assert_eq!(events.len(), 1);
-    assert_eq!(
-        events[0]["request_id"],
-        "00000000-0000-4000-8000-000000000212"
-    );
+    assert_eq!(events.len(), 3);
+    assert_eq!(events[0]["capability"], "job.create");
     assert_eq!(events[0]["job_id"], job_id);
-    assert_eq!(events[0]["capability"], "device.status");
+    assert_eq!(events[1]["capability"], "job.get");
+    assert_eq!(events[1]["job_id"], job_id);
+    assert_eq!(events[2]["capability"], "device.status");
+    assert_eq!(events[2]["job_id"], job_id);
 
     let qwen_audit = rpc(
         &qwen,
