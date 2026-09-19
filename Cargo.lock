@@ -644,6 +644,16 @@ dependencies = [
 [[package]]
 name = "tetherd"
 version = "0.1.0"
+dependencies = [
+ "async-trait",
+ "serde_json",
+ "tether-core",
+ "tether-filesystem-provider",
+ "tether-process-provider",
+ "tether-search-provider",
+ "tokio",
+ "uuid",
+]
 
 [[package]]
 name = "thiserror"
