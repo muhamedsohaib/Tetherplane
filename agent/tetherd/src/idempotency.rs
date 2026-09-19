@@ -205,6 +205,11 @@ pub fn is_mutation_capability(capability: &str) -> bool {
             | "job.acquire_lease"
             | "job.release_lease"
             | "batch.execute"
+            | "browser.create_tab"
+            | "browser.navigate"
+            | "browser.close"
+            | "browser.act"
+            | "browser.upload"
     ) || capability.starts_with("browser.verified_action")
         || capability.starts_with("desktop.physical_")
 }

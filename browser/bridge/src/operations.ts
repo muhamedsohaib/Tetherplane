@@ -125,8 +125,10 @@ export class BrowserOperationalEngine {
 
   async downloads(request: {
     page_id?: string;
+    limit?: number;
   } = {}): Promise<{
     downloads: BrowserDownload[];
+    truncated: boolean;
   }> {
     if (request.page_id) {
       this.#ownership.authorize({
@@ -136,9 +138,12 @@ export class BrowserOperationalEngine {
       });
     }
 
+    const limit = normalizeLimit(request.limit);
     const raw = await this.#backend.downloads(request.page_id);
+    const selected = raw.slice(0, limit);
     return {
-      downloads: raw.map(toDownload),
+      downloads: selected.map(toDownload),
+      truncated: raw.length > selected.length,
     };
   }
 

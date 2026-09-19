@@ -228,3 +228,24 @@ test("checkpoint resource revision can detect a later conflicting edit", async (
     checkpoint.resource_revision,
   );
 });
+
+test("downloads are bounded and report truncation", async () => {
+  const { backend, engine } = setup();
+  backend.rawDownloads = Array.from({ length: 5 }, (_, index) => ({
+    backend_id: `chrome:${index}`,
+    page_id: "page:1",
+    filename: `download-${index}.txt`,
+    local_path: `C:\\Downloads\\download-${index}.txt`,
+    state: "complete" as const,
+    bytes_received: index + 1,
+    total_bytes: index + 1,
+  }));
+
+  const result = await engine.downloads({
+    page_id: "page:1",
+    limit: 2,
+  });
+
+  assert.equal(result.downloads.length, 2);
+  assert.equal(result.truncated, true);
+});

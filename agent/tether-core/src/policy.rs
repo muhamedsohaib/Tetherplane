@@ -139,6 +139,12 @@ impl LocalPolicyBroker {
             return Some(error.message);
         }
 
+        if invocation.capability == "browser.upload"
+            && let Err(error) = authorize_browser_upload(invocation, &principal.allowed_directories)
+        {
+            return Some(error.message);
+        }
+
         None
     }
 }
@@ -163,6 +169,15 @@ impl PolicyBroker for LocalPolicyBroker {
                 .get("root")
                 .and_then(serde_json::Value::as_str)
             && let Err(error) = authorize_path(Path::new(root), &self.config.allowed_directories)
+        {
+            return PolicyDecision::Deny {
+                reason: error.message,
+            };
+        }
+
+        if invocation.capability == "browser.upload"
+            && let Err(error) =
+                authorize_browser_upload(invocation, &self.config.allowed_directories)
         {
             return PolicyDecision::Deny {
                 reason: error.message,
@@ -239,6 +254,20 @@ fn authorize_filesystem_arguments(
         }
     }
 
+    Ok(())
+}
+
+fn authorize_browser_upload(
+    invocation: &InvocationEnvelope,
+    allowed_directories: &[PathBuf],
+) -> Result<(), CapabilityError> {
+    if let Some(path) = invocation
+        .arguments
+        .get("file_path")
+        .and_then(serde_json::Value::as_str)
+    {
+        authorize_path(Path::new(path), allowed_directories)?;
+    }
     Ok(())
 }
 

@@ -326,3 +326,27 @@ fn search_start_outside_allowed_directory_is_denied() {
 
     assert!(matches!(decision, PolicyDecision::Deny { .. }));
 }
+
+#[test]
+fn browser_upload_file_must_remain_inside_allowed_root() {
+    let temp = TempDir::new().unwrap();
+    let allowed = temp.path().join("allowed");
+    fs::create_dir(&allowed).unwrap();
+    let inside = allowed.join("upload.txt");
+    fs::write(&inside, "inside").unwrap();
+    let outside = temp.path().join("outside.txt");
+    fs::write(&outside, "outside").unwrap();
+    let broker = broker_for(&allowed);
+
+    let allowed_decision = broker.evaluate(&invocation(
+        "browser.upload",
+        json!({ "page_id": "page:1", "file_path": inside }),
+    ));
+    assert!(matches!(allowed_decision, PolicyDecision::Allow));
+
+    let denied_decision = broker.evaluate(&invocation(
+        "browser.upload",
+        json!({ "page_id": "page:1", "file_path": outside }),
+    ));
+    assert!(matches!(denied_decision, PolicyDecision::Deny { .. }));
+}

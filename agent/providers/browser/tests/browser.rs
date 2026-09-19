@@ -177,3 +177,82 @@ async fn browser_bridge_endpoint_must_be_loopback() {
     assert_eq!(format!("{:?}", error.code), "InvalidArguments");
     assert!(error.message.contains("loopback"));
 }
+
+#[tokio::test]
+async fn provider_recovers_after_bridge_restart_on_same_loopback_address() {
+    let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
+    let address = listener.local_addr().unwrap().to_string();
+
+    let handshake = tokio::spawn(async move {
+        let (stream, _) = listener.accept().await.unwrap();
+        let (read, mut write) = stream.into_split();
+        let mut lines = BufReader::new(read).lines();
+        let request: serde_json::Value =
+            serde_json::from_str(&lines.next_line().await.unwrap().unwrap()).unwrap();
+        assert_eq!(request["type"], "handshake");
+        let response = json!({
+            "request_id": "handshake",
+            "status": "success",
+            "data": {
+                "protocol_version": "1.0",
+                "operations": ["status"]
+            },
+            "verification": "not_applicable"
+        });
+        write
+            .write_all(format!("{response}\n").as_bytes())
+            .await
+            .unwrap();
+    });
+
+    let provider = BrowserProvider::connect(BrowserBridgeConfig {
+        address: address.clone(),
+        token: None,
+        timeout_ms: 300,
+    })
+    .await
+    .unwrap();
+    handshake.await.unwrap();
+
+    let disconnected = provider
+        .execute(&invocation("browser.status", json!({})))
+        .await
+        .unwrap_err();
+    assert!(
+        matches!(
+            format!("{:?}", disconnected.code).as_str(),
+            "Disconnected" | "Timeout"
+        ),
+        "unexpected transient bridge failure: {:?}",
+        disconnected.code
+    );
+
+    let restarted_listener = TcpListener::bind(&address).await.unwrap();
+    let restarted = tokio::spawn(async move {
+        let (stream, _) = restarted_listener.accept().await.unwrap();
+        let (read, mut write) = stream.into_split();
+        let mut lines = BufReader::new(read).lines();
+        let request: serde_json::Value =
+            serde_json::from_str(&lines.next_line().await.unwrap().unwrap()).unwrap();
+        assert_eq!(request["type"], "invoke");
+        assert_eq!(request["capability"], "browser.status");
+        let response = json!({
+            "request_id": request["request_id"],
+            "status": "success",
+            "data": { "available": true, "recovered": true },
+            "verification": "not_applicable"
+        });
+        write
+            .write_all(format!("{response}\n").as_bytes())
+            .await
+            .unwrap();
+    });
+
+    let recovered = provider
+        .execute(&invocation("browser.status", json!({})))
+        .await
+        .unwrap();
+    assert_eq!(recovered.data["available"], true);
+    assert_eq!(recovered.data["recovered"], true);
+    restarted.await.unwrap();
+}
