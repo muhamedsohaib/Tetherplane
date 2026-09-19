@@ -150,3 +150,21 @@ export {
   type ExtensionCommandTransport,
   type ExtensionPageInfo,
 } from "./extension-backend.ts";
+
+export {
+  CdpBackendError,
+  CdpBrowserBackend,
+  buildIsolatedChromiumArgs,
+  type CdpCapabilities,
+  type CdpControl,
+  type CdpFrame,
+  type CdpFrameObservation,
+  type CdpPageInfo,
+  type CdpTargetInfo,
+} from "./cdp-backend.ts";
+
+export {
+  findInstalledChromium,
+  launchCdpOwnedBrowser,
+  type LaunchedCdpControl,
+} from "./cdp-control.ts";

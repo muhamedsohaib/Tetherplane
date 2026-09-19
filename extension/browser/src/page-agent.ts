@@ -454,6 +454,29 @@ function collectDocumentSemanticState(): FrameObservation {
     return undefined;
   }
 
+  function stableAncestorName(element: Element): string {
+    const ariaLabel = element.getAttribute("aria-label");
+    if (ariaLabel) {
+      return normalizedText(ariaLabel);
+    }
+
+    const labelledBy = element.getAttribute("aria-labelledby");
+    if (labelledBy) {
+      const labels = labelledBy
+        .split(/\s+/)
+        .map(
+          (id) =>
+            document.getElementById(id)?.textContent ?? "",
+        )
+        .join(" ");
+      if (labels.trim()) {
+        return normalizedText(labels);
+      }
+    }
+
+    return "";
+  }
+
   function ancestryFor(
     element: Element,
   ): Array<{ role: string; accessible_name: string }> {
@@ -464,8 +487,18 @@ function collectDocumentSemanticState(): FrameObservation {
     let current = element.parentElement;
     while (current && ancestry.length < 4) {
       const role = roleFor(current);
-      const name = labelText(current);
-      if (name || current.hasAttribute("role")) {
+      const name = stableAncestorName(current);
+      const tag = current.tagName.toLowerCase();
+      const structural =
+        tag === "main" ||
+        tag === "form" ||
+        tag === "fieldset" ||
+        tag === "section" ||
+        tag === "nav" ||
+        tag === "article" ||
+        tag === "dialog";
+
+      if (name || current.hasAttribute("role") || structural) {
         ancestry.unshift({
           role,
           accessible_name: name,
@@ -543,10 +576,13 @@ function collectDocumentSemanticState(): FrameObservation {
   const resourceRevision =
     revisionElement?.getAttribute("data-revision") ?? null;
 
-  const fingerprintSource =
-    location.href +
-    "\n" +
-    document.documentElement.outerHTML.slice(0, 200_000);
+  const fingerprintSource = JSON.stringify({
+    url: location.href,
+    resourceRevision,
+    nodes,
+    validationMessages,
+    toasts,
+  });
   let hash = 2166136261;
   for (let index = 0; index < fingerprintSource.length; index += 1) {
     hash ^= fingerprintSource.charCodeAt(index);

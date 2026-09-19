@@ -19,6 +19,7 @@
     "ws": "8.21.3"
   },
   "devDependencies": {
+    "@tetherplane/browser-lab": "workspace:*",
     "@types/node": "24.13.6",
     "@types/ws": "8.18.1"
   }

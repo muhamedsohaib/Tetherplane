@@ -3,7 +3,8 @@
   "compilerOptions": {
     "noEmit": true,
     "allowImportingTsExtensions": true,
-    "rootDir": "."
+    "rootDir": ".",
+    "lib": ["ES2022", "DOM"]
   },
   "include": ["src/**/*.ts", "test/**/*.ts"]
 }

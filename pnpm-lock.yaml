@@ -47,6 +47,9 @@ importers:
         specifier: 8.21.3
         version: 8.21.3
     devDependencies:
+      '@tetherplane/browser-lab':
+        specifier: workspace:*
+        version: link:../../fixtures/browser-lab
       '@types/node':
         specifier: 24.13.6
         version: 24.13.6
