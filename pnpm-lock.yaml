@@ -41,6 +41,18 @@ importers:
         specifier: 24.13.6
         version: 24.13.6
 
+  browser/bridge:
+    devDependencies:
+      '@types/node':
+        specifier: 24.13.6
+        version: 24.13.6
+
+  fixtures/browser-lab:
+    devDependencies:
+      '@types/node':
+        specifier: 24.13.6
+        version: 24.13.6
+
   protocol:
     devDependencies:
       ajv:

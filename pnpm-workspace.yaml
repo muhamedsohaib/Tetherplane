@@ -1,4 +1,6 @@
 packages:
   - "protocol"
   - "adapters/*"
+  - "browser/*"
+  - "fixtures/*"
   - "tests/*"
