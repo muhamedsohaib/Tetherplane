@@ -12,8 +12,8 @@ export type BackendSemanticNode = {
   }>;
   document_id: string;
   frame_id: string;
-  value?: string;
-  description?: string;
+  value?: string | undefined;
+  description?: string | undefined;
   disabled?: boolean;
   checked?: boolean;
   selected?: boolean;
@@ -31,8 +31,8 @@ export type SnapshotSemanticNode = {
   }>;
   document_id: string;
   frame_id: string;
-  value?: string;
-  description?: string;
+  value?: string | undefined;
+  description?: string | undefined;
   disabled?: boolean;
   checked?: boolean;
   selected?: boolean;

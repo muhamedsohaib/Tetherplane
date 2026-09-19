@@ -125,3 +125,14 @@ export {
   type BrowserSemanticSnapshot,
   type SnapshotSemanticNode,
 } from "./semantic.ts";
+
+export {
+  VerifiedActionEngine,
+  type BrowserBridgeBackend,
+  type BrowserExpectation,
+  type BrowserObservedState,
+  type BrowserSemanticAction,
+  type ResolvedBrowserAction,
+  type VerifiedActionResult,
+  type VerifiedActionState,
+} from "./action.ts";
