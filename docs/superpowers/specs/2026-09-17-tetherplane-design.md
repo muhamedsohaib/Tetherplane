@@ -7,7 +7,7 @@
 
 ## 1. Purpose
 
-Tetherplane is an open-source, self-hostable control plane that allows AI clients to securely operate real computers locally or remotely through MCP while remaining lightweight for both the controlled machine and the AI model.
+Tetherplane is an open-source, self-hostable control plane that allows authenticated intelligence clients to securely operate real computers locally or remotely through one canonical execution protocol while remaining lightweight for both the controlled machine and the intelligence client. MCP is an important adapter, not the canonical execution model.
 
 Tetherplane combines the capability classes that are currently fragmented across remote desktop MCPs, desktop automation MCPs, and browser MCPs:
 
@@ -50,6 +50,10 @@ Cloud infrastructure is optional. The same capability engine serves local stdio/
 ### 2.7 Compatibility without architectural inheritance
 
 Legacy or third-party tool schemas are implemented as adapters. They never define the internal protocol or capability boundaries.
+
+### 2.8 Model-neutral control
+
+Controller/model identity and execution authority are separate. Authority belongs to an authenticated Tetherplane principal, not to ChatGPT, MCP, a model-family string, or a prompt claim. The model-neutral extension and migration contract are defined in `2026-09-19-tetherplane-model-neutral-control-plane.md`.
 
 ## 3. Canonical Architecture
 

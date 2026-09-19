@@ -28,6 +28,23 @@ Exit proof:
 - Batch executes safe independent operations concurrently.
 - Local end-to-end MCP contract tests pass.
 
+### Plan A.5 — Model-Neutral Principal and Job Control Plane
+
+Spec: `docs/superpowers/specs/2026-09-19-tetherplane-model-neutral-control-plane.md`
+
+Produces authenticated principal binding, scoped principal grants, durable job/checkpoint state, execution leases, audit lineage, and a generic non-MCP model-client proof without changing provider semantics or privileging any model vendor.
+
+Exit proof:
+
+- Caller-supplied model/controller identity cannot override the authenticated principal.
+- The same controller under two principals receives different deterministic authorization.
+- Two different controllers under one principal receive identical authorization.
+- A sandboxed principal can discover capabilities, inspect/write only its granted root, and run only granted process operations.
+- Job/checkpoint state survives controller replacement and can be read by a permitted second principal.
+- An execution lease never expands capability authority.
+- Audit lineage records the authenticated principal and canonical job/request IDs.
+- A generic non-MCP model client can drive the same canonical protocol used by the MCP adapter.
+
 ### Plan B — Browser Coexistence Engine
 
 Produces Tetherplane Bridge and the browser provider with extension-first authenticated-profile operation, CDP fallback, ownership, accessibility snapshots, semantic references, `browser.act`, semantic waits, uploads/downloads, checkpoints, verified actions, diagnostics, stale-reference reacquisition, and the synthetic SaaS fixture lab.
