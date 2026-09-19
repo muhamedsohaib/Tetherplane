@@ -385,3 +385,89 @@ fn principal_capability_discovery_filters_ungranted_operations() {
     let _ = std::fs::remove_file(&profile_path);
     assert!(exit.success());
 }
+
+#[test]
+fn successful_browser_handshake_registers_real_provider_and_capabilities() {
+    use std::net::TcpListener;
+    use std::thread;
+
+    const CAPS_ID: &str = "00000000-0000-4000-8000-0000000000c1";
+    const BROWSER_ID: &str = "00000000-0000-4000-8000-0000000000c2";
+
+    let listener = TcpListener::bind("127.0.0.1:0").unwrap();
+    let address = listener.local_addr().unwrap().to_string();
+    let bridge = thread::spawn(move || {
+        for index in 0..2 {
+            let (mut stream, _) = listener.accept().unwrap();
+            let mut line = String::new();
+            BufReader::new(stream.try_clone().unwrap())
+                .read_line(&mut line)
+                .unwrap();
+            let request: Value = serde_json::from_str(line.trim_end()).unwrap();
+            let response = if index == 0 {
+                json!({
+                    "request_id": "handshake",
+                    "status": "success",
+                    "data": {
+                        "protocol_version": "1.0",
+                        "operations": ["status", "pages", "snapshot"]
+                    },
+                    "verification": "not_applicable"
+                })
+            } else {
+                assert_eq!(request["capability"], "browser.status");
+                json!({
+                    "request_id": request["request_id"],
+                    "status": "success",
+                    "data": {"available": true, "backend": "fake"},
+                    "verification": "not_applicable"
+                })
+            };
+            writeln!(stream, "{}", serde_json::to_string(&response).unwrap()).unwrap();
+        }
+    });
+
+    let mut child = Command::new(env!("CARGO_BIN_EXE_tetherd"))
+        .arg("--stdio-rpc")
+        .arg("--browser-bridge")
+        .arg(&address)
+        .stdin(Stdio::piped())
+        .stdout(Stdio::piped())
+        .stderr(Stdio::piped())
+        .spawn()
+        .unwrap();
+
+    let mut caps = device_status_invocation(CAPS_ID);
+    caps["capability"] = json!("device.capabilities");
+    let mut browser = device_status_invocation(BROWSER_ID);
+    browser["capability"] = json!("browser.status");
+
+    let mut stdin = child.stdin.take().unwrap();
+    writeln!(stdin, "{}", serde_json::to_string(&caps).unwrap()).unwrap();
+    writeln!(stdin, "{}", serde_json::to_string(&browser).unwrap()).unwrap();
+    drop(stdin);
+
+    let stdout = child.stdout.take().unwrap();
+    let reader = BufReader::new(stdout);
+    let mut responses = std::collections::BTreeMap::new();
+    for line in reader.lines().take(2) {
+        let result: Value = serde_json::from_str(&line.unwrap()).unwrap();
+        responses.insert(result["request_id"].as_str().unwrap().to_owned(), result);
+    }
+
+    let providers = responses[CAPS_ID]["data"]["providers"].as_array().unwrap();
+    let browser_provider = providers
+        .iter()
+        .find(|provider| provider["namespace"] == "browser")
+        .unwrap();
+    assert_eq!(browser_provider["available"], true);
+    assert_eq!(
+        browser_provider["operations"],
+        json!(["status", "pages", "snapshot"])
+    );
+    assert_eq!(responses[BROWSER_ID]["status"], "success");
+    assert_eq!(responses[BROWSER_ID]["data"]["backend"], "fake");
+
+    assert!(child.wait().unwrap().success());
+    bridge.join().unwrap();
+}

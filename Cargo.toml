@@ -5,6 +5,7 @@ members = [
   "agent/providers/filesystem",
   "agent/providers/search",
   "agent/providers/process",
+  "agent/providers/browser",
   "agent/tetherd",
 ]
 

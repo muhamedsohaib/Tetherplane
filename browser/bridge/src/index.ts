@@ -178,3 +178,11 @@ export {
   type RawBrowserDiagnosticEvent,
   type RawBrowserDownload,
 } from "./operations.ts";
+
+export {
+  BrowserBridgeService,
+  startBrowserRpcServer,
+  type BrowserRpcServer,
+  type BrowserServiceBackend,
+  type BrowserServicePage,
+} from "./rpc-server.ts";

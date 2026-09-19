@@ -5,6 +5,7 @@ use std::time::Instant;
 
 use async_trait::async_trait;
 use serde_json::{Value, json};
+use tether_browser_provider::BrowserProvider;
 use tether_core::{
     CapabilityError, CapabilityProvider, CapabilityRouter, ErrorCode, InvocationEnvelope,
     LocalPolicyBroker, LocalPolicyConfig, PrincipalProfile, ProviderResult, ResultEnvelope,
@@ -34,6 +35,7 @@ impl AgentRuntime {
         mut allowed_roots: Vec<PathBuf>,
         principal: Option<PrincipalProfile>,
         state_dir: Option<&Path>,
+        browser_provider: Option<Arc<BrowserProvider>>,
     ) -> Result<Self, CapabilityError> {
         if allowed_roots.is_empty()
             && let Some(profile) = principal.as_ref()
@@ -74,10 +76,14 @@ impl AgentRuntime {
         let policy = Arc::new(LocalPolicyBroker::new(policy_config));
         let mut router = CapabilityRouter::with_policy(policy);
 
+        let browser_operations = browser_provider
+            .as_ref()
+            .map(|provider| provider.operations().to_vec());
         router.register(Arc::new(DeviceProvider::new(
             principal_capabilities,
             job_available,
             audit_available,
+            browser_operations,
         )))?;
         router.register(Arc::new(FilesystemProvider::new()))?;
         router.register(Arc::new(SearchProvider::new()))?;
@@ -92,7 +98,11 @@ impl AgentRuntime {
         } else {
             router.register(Arc::new(UnavailableProvider::new("audit")))?;
         }
-        router.register(Arc::new(UnavailableProvider::new("browser")))?;
+        if let Some(browser_provider) = browser_provider {
+            router.register(browser_provider)?;
+        } else {
+            router.register(Arc::new(UnavailableProvider::new("browser")))?;
+        }
         router.register(Arc::new(UnavailableProvider::new("desktop")))?;
 
         Ok(Self {
@@ -156,6 +166,7 @@ struct DeviceProvider {
     allowed_capabilities: Option<BTreeSet<String>>,
     job_available: bool,
     audit_available: bool,
+    browser_operations: Option<Vec<String>>,
 }
 
 impl DeviceProvider {
@@ -163,12 +174,14 @@ impl DeviceProvider {
         allowed_capabilities: Option<BTreeSet<String>>,
         job_available: bool,
         audit_available: bool,
+        browser_operations: Option<Vec<String>>,
     ) -> Self {
         Self {
             started: Instant::now(),
             allowed_capabilities,
             job_available,
             audit_available,
+            browser_operations,
         }
     }
 
@@ -192,7 +205,7 @@ impl DeviceProvider {
                 { "namespace": "batch", "available": true, "operations": self.operations("batch", &["execute"]) },
                 { "namespace": "job", "available": self.job_available, "operations": if self.job_available { self.operations("job", &["create", "get", "checkpoint", "acquire_lease", "release_lease"]) } else { Vec::<String>::new() } },
                 { "namespace": "audit", "available": self.audit_available, "operations": if self.audit_available { self.operations("audit", &["read"]) } else { Vec::<String>::new() } },
-                { "namespace": "browser", "available": false, "operations": [] },
+                { "namespace": "browser", "available": self.browser_operations.is_some(), "operations": self.browser_operations() },
                 { "namespace": "desktop", "available": false, "operations": [] }
             ]
         })
@@ -207,6 +220,20 @@ impl DeviceProvider {
                     .is_none_or(|allowed| allowed.contains(&format!("{namespace}.{operation}")))
             })
             .map(|operation| (*operation).to_owned())
+            .collect()
+    }
+
+    fn browser_operations(&self) -> Vec<String> {
+        self.browser_operations
+            .as_ref()
+            .into_iter()
+            .flatten()
+            .filter(|operation| {
+                self.allowed_capabilities
+                    .as_ref()
+                    .is_none_or(|allowed| allowed.contains(&format!("browser.{operation}")))
+            })
+            .cloned()
             .collect()
     }
 }
