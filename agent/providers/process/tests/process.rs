@@ -279,19 +279,28 @@ async fn requested_pty_session_supports_interactive_input() {
         .await
         .unwrap();
 
-    let read = provider
-        .execute(&invocation_for(
-            "process.read",
-            json!({ "handle": handle, "timeout_ms": 2_000 }),
-        ))
-        .await
-        .unwrap();
-    let stdout = read.data["stdout"].as_str().unwrap();
-    let stderr = read.data["stderr"].as_str().unwrap();
+    let mut stdout = String::new();
+    let mut stderr = String::new();
+    let mut running = true;
+    for _ in 0..8 {
+        let read = provider
+            .execute(&invocation_for(
+                "process.read",
+                json!({ "handle": handle, "timeout_ms": 500 }),
+            ))
+            .await
+            .unwrap();
+        stdout.push_str(read.data["stdout"].as_str().unwrap());
+        stderr.push_str(read.data["stderr"].as_str().unwrap());
+        running = read.data["running"].as_bool().unwrap();
+        if stdout.contains("pty:hello") || !running {
+            break;
+        }
+    }
+
     assert!(
         stdout.contains("pty:hello"),
-        "stdout={stdout:?} stderr={stderr:?} running={:?}",
-        read.data["running"]
+        "stdout={stdout:?} stderr={stderr:?} running={running:?}"
     );
 }
 
