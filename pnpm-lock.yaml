@@ -41,6 +41,22 @@ importers:
         specifier: 24.13.6
         version: 24.13.6
 
+  adapters/rdc-compat:
+    dependencies:
+      '@modelcontextprotocol/sdk':
+        specifier: 1.30.0
+        version: 1.30.0(zod@4.6.5)
+      '@tetherplane/protocol':
+        specifier: workspace:*
+        version: link:../../protocol
+      zod:
+        specifier: 4.6.5
+        version: 4.6.5
+    devDependencies:
+      '@types/node':
+        specifier: 24.13.6
+        version: 24.13.6
+
   browser/bridge:
     dependencies:
       ws:
