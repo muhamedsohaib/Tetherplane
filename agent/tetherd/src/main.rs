@@ -1,6 +1,7 @@
 #![forbid(unsafe_code)]
 
 mod audit;
+mod idempotency;
 mod job;
 mod runtime;
 mod stdio_rpc;

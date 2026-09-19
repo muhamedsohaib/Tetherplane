@@ -13,14 +13,20 @@ use tether_core::{
 use tether_filesystem_provider::FilesystemProvider;
 use tether_process_provider::ProcessProvider;
 use tether_search_provider::SearchProvider;
+use tokio::sync::Mutex;
 
 use crate::audit::{AuditProvider, AuditStore};
+use crate::idempotency::{
+    IdempotencyLookup, IdempotencyStore, conflict_result, is_mutation_capability, pending_result,
+    store_failure_result, unavailable_result,
+};
 use crate::job::JobProvider;
 
 pub struct AgentRuntime {
     router: CapabilityRouter,
     bound_principal_id: Option<String>,
     audit_store: Option<Arc<AuditStore>>,
+    idempotency_store: Option<Arc<Mutex<IdempotencyStore>>>,
 }
 
 impl AgentRuntime {
@@ -56,6 +62,11 @@ impl AgentRuntime {
             None
         };
         let audit_available = audit_store.is_some();
+        let idempotency_store = if let Some(state_dir) = state_dir {
+            Some(Arc::new(Mutex::new(IdempotencyStore::new(state_dir)?)))
+        } else {
+            None
+        };
         let mut policy_config = LocalPolicyConfig::new(allowed_roots);
         if let Some(profile) = principal {
             policy_config = policy_config.with_principal(profile);
@@ -88,6 +99,7 @@ impl AgentRuntime {
             router,
             bound_principal_id,
             audit_store,
+            idempotency_store,
         })
     }
 
@@ -95,14 +107,47 @@ impl AgentRuntime {
         if let Some(principal_id) = &self.bound_principal_id {
             invocation.principal_id = Some(principal_id.clone());
         }
+
         let audit_invocation = invocation.clone();
-        let result = self.router.execute(invocation).await;
+        let result = if invocation.idempotency_key.is_some()
+            && is_mutation_capability(&invocation.capability)
+        {
+            self.execute_idempotent(invocation).await
+        } else {
+            self.router.execute(invocation).await
+        };
+
         if let Some(audit_store) = &self.audit_store
             && let Err(error) = audit_store.append(&audit_invocation, &result)
         {
             eprintln!("audit append failed: {}", error.message);
         }
         result
+    }
+
+    async fn execute_idempotent(&self, invocation: InvocationEnvelope) -> ResultEnvelope {
+        let Some(store) = &self.idempotency_store else {
+            return unavailable_result(&invocation);
+        };
+        let guard = store.lock().await;
+
+        match guard.lookup(&invocation) {
+            Ok(IdempotencyLookup::Replay(result)) => *result,
+            Ok(IdempotencyLookup::Conflict) => conflict_result(&invocation),
+            Ok(IdempotencyLookup::Pending) => pending_result(&invocation),
+            Ok(IdempotencyLookup::Miss) => {
+                if let Err(error) = guard.reserve(&invocation) {
+                    return store_failure_result(&invocation, error);
+                }
+
+                let result = self.router.execute(invocation.clone()).await;
+                if let Err(error) = guard.complete(&invocation, &result) {
+                    return store_failure_result(&invocation, error);
+                }
+                result
+            }
+            Err(error) => store_failure_result(&invocation, error),
+        }
     }
 }
 
