@@ -25,6 +25,7 @@ export type LocalCompactOptions = {
     address: string;
     token: string;
   };
+  tetherdPath?: string;
 };
 
 export async function startLocalCompact(
@@ -37,7 +38,9 @@ export async function startLocalCompact(
     path.join(os.tmpdir(), "tetherplane-e2e-control-"),
   );
   const executable = process.platform === "win32" ? "tetherd.exe" : "tetherd";
-  const tetherdPath = path.join(repoRoot, "target", "debug", executable);
+  const tetherdPath =
+    options.tetherdPath ??
+    path.join(repoRoot, "target", "debug", executable);
   const adapterPath = path.join(
     repoRoot,
     "adapters",
