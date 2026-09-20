@@ -11,6 +11,7 @@ use tether_core::{
 };
 
 mod human_activity;
+mod private_clipboard;
 #[cfg(windows)]
 mod windows_human_activity;
 #[cfg(windows)]
@@ -19,6 +20,7 @@ mod windows_uia;
 pub use human_activity::{
     ForegroundWindowIdentity, HumanActivityMonitor, HumanActivitySnapshot, require_human_idle,
 };
+pub use private_clipboard::{PrivateClipboard, PrivateClipboardState};
 #[cfg(windows)]
 pub use windows_human_activity::WindowsHumanActivityMonitor;
 #[cfg(windows)]
@@ -114,6 +116,7 @@ pub trait DesktopBackend: Send + Sync {
 pub struct DesktopProvider {
     backend: Arc<dyn DesktopBackend>,
     ownership: Arc<TrustedOwnershipRegistry>,
+    clipboard: Arc<PrivateClipboard>,
 }
 
 impl DesktopProvider {
@@ -122,12 +125,33 @@ impl DesktopProvider {
     where
         B: DesktopBackend + 'static,
     {
-        Self { backend, ownership }
+        Self::with_clipboard(backend, ownership, Arc::new(PrivateClipboard::new()))
+    }
+
+    #[must_use]
+    pub fn with_clipboard<B>(
+        backend: Arc<B>,
+        ownership: Arc<TrustedOwnershipRegistry>,
+        clipboard: Arc<PrivateClipboard>,
+    ) -> Self
+    where
+        B: DesktopBackend + 'static,
+    {
+        Self {
+            backend,
+            ownership,
+            clipboard,
+        }
     }
 
     #[must_use]
     pub const fn operations() -> &'static [&'static str] {
-        &["snapshot", "act"]
+        &[
+            "snapshot",
+            "act",
+            "private_clipboard_get",
+            "private_clipboard_set",
+        ]
     }
 
     fn snapshot(&self, arguments: &Value) -> Result<ProviderResult, CapabilityError> {
@@ -157,14 +181,7 @@ impl DesktopProvider {
     fn act(&self, arguments: &Value) -> Result<ProviderResult, CapabilityError> {
         let reference = string_argument(arguments, "reference")?;
         let kind = parse_action_kind(string_argument(arguments, "action")?)?;
-        let value = arguments
-            .get("value")
-            .and_then(Value::as_str)
-            .map(str::to_owned);
-
-        if kind == DesktopActionKind::SetValue && value.is_none() {
-            return Err(invalid_arguments("set_value requires string value"));
-        }
+        let value = self.resolve_action_value(arguments, kind)?;
 
         let target = self.backend.target(reference)?;
         if !self
@@ -204,6 +221,59 @@ impl DesktopProvider {
             } else {
                 VerificationStatus::ExecutedUnverified
             },
+        })
+    }
+
+    fn resolve_action_value(
+        &self,
+        arguments: &Value,
+        kind: DesktopActionKind,
+    ) -> Result<Option<String>, CapabilityError> {
+        let direct = arguments
+            .get("value")
+            .and_then(Value::as_str)
+            .map(str::to_owned);
+        let from_private_clipboard = arguments
+            .get("from_private_clipboard")
+            .and_then(Value::as_bool)
+            .unwrap_or(false);
+
+        if direct.is_some() && from_private_clipboard {
+            return Err(invalid_arguments(
+                "value and from_private_clipboard cannot both be set",
+            ));
+        }
+
+        let value = if from_private_clipboard {
+            self.clipboard.get().text
+        } else {
+            direct
+        };
+
+        if kind == DesktopActionKind::SetValue && value.is_none() {
+            return Err(invalid_arguments(
+                "set_value requires value or private clipboard text",
+            ));
+        }
+        Ok(value)
+    }
+
+    fn private_clipboard_get(&self) -> ProviderResult {
+        let state = self.clipboard.get();
+        ProviderResult {
+            data: json!(state),
+            delta: None,
+            verification: VerificationStatus::NotApplicable,
+        }
+    }
+
+    fn private_clipboard_set(&self, arguments: &Value) -> Result<ProviderResult, CapabilityError> {
+        let (text, files) = private_clipboard::parse_clipboard_set(arguments)?;
+        let state = self.clipboard.set(text, files)?;
+        Ok(ProviderResult {
+            data: json!(state),
+            delta: Some(json!({ "revision": state.revision })),
+            verification: VerificationStatus::Verified,
         })
     }
 
@@ -252,6 +322,8 @@ impl CapabilityProvider for DesktopProvider {
         match operation {
             "snapshot" => self.snapshot(&invocation.arguments),
             "act" => self.act(&invocation.arguments),
+            "private_clipboard_get" => Ok(self.private_clipboard_get()),
+            "private_clipboard_set" => self.private_clipboard_set(&invocation.arguments),
             _ => Err(CapabilityError {
                 code: ErrorCode::CapabilityUnavailable,
                 message: format!("desktop operation is unavailable: {operation}"),
