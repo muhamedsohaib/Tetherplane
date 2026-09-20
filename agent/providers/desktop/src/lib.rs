@@ -10,8 +10,17 @@ use tether_core::{
     ResourceKey, ResourceOrigin, TrustedOwnershipRegistry, VerificationStatus,
 };
 
+mod human_activity;
+#[cfg(windows)]
+mod windows_human_activity;
 #[cfg(windows)]
 mod windows_uia;
+
+pub use human_activity::{
+    ForegroundWindowIdentity, HumanActivityMonitor, HumanActivitySnapshot, require_human_idle,
+};
+#[cfg(windows)]
+pub use windows_human_activity::WindowsHumanActivityMonitor;
 #[cfg(windows)]
 pub use windows_uia::WindowsUiaBackend;
 
