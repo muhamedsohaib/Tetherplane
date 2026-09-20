@@ -17,6 +17,7 @@ uuid = { version = "1", features = ["v4"] }
 # physical input or clipboard APIs; tests/windows_uia.rs enforces that boundary.
 uiautomation = { version = "0.25.1", default-features = false, features = ["pattern", "input"] }
 windows = { version = "0.62.2", features = ["Win32_UI_WindowsAndMessaging"] }
+windows-win = "3.0.0"
 winsafe = { version = "0.0.29", default-features = false, features = ["user"] }
 
 [dev-dependencies]

@@ -233,6 +233,12 @@ test(
         },
       });
       assert.equal(valueResult.isError, undefined);
+      await new Promise((resolve) => setTimeout(resolve, 200));
+      assert.equal(
+        (await readState(humanState)).focused,
+        true,
+        "human fixture lost focus after semantic set_value",
+      );
 
       const invokeResult = await call(local.client, "desktop", {
         op: "act",
@@ -242,6 +248,12 @@ test(
         },
       });
       assert.equal(invokeResult.isError, undefined);
+      await new Promise((resolve) => setTimeout(resolve, 200));
+      assert.equal(
+        (await readState(humanState)).focused,
+        true,
+        "human fixture lost focus after semantic invoke",
+      );
 
       const selectionResult = await call(local.client, "desktop", {
         op: "act",
@@ -251,6 +263,12 @@ test(
         },
       });
       assert.equal(selectionResult.isError, undefined);
+      await new Promise((resolve) => setTimeout(resolve, 200));
+      assert.equal(
+        (await readState(humanState)).focused,
+        true,
+        "human fixture lost focus after semantic select",
+      );
 
       const ownedAfter = await waitForState(
         ownedState,
