@@ -282,12 +282,12 @@ class OwnedChromiumControl implements LaunchedCdpControl {
     const result = await this.#wire.send(
       "Target.createTarget",
       {
-        url,
+        url: "about:blank",
         background,
       },
     );
     const targetId = requiredString(result, "targetId");
-    await this.#waitForDocumentReady(targetId);
+    await this.#navigateAndWait(targetId, url);
     return targetId;
   }
 
@@ -336,13 +336,7 @@ class OwnedChromiumControl implements LaunchedCdpControl {
     targetId: string,
     url: string,
   ): Promise<void> {
-    const sessionId = await this.#sessionForTarget(targetId);
-    await this.#wire.send(
-      "Page.navigate",
-      { url },
-      sessionId,
-    );
-    await this.#waitForDocumentReady(targetId);
+    await this.#navigateAndWait(targetId, url);
   }
 
   async frames(targetId: string): Promise<CdpFrame[]> {
@@ -723,24 +717,105 @@ class OwnedChromiumControl implements LaunchedCdpControl {
     return contextId;
   }
 
+  async #navigateAndWait(
+    targetId: string,
+    url: string,
+  ): Promise<void> {
+    const sessionId = await this.#sessionForTarget(targetId);
+    const navigation = await this.#wire.send(
+      "Page.navigate",
+      { url },
+      sessionId,
+    );
+    const errorText =
+      typeof navigation.errorText === "string"
+        ? navigation.errorText.trim()
+        : "";
+    if (errorText) {
+      throw new CdpBackendError(
+        "provider_failure",
+        `CDP navigation failed: ${errorText}`,
+      );
+    }
+
+    const loaderId =
+      typeof navigation.loaderId === "string" &&
+      navigation.loaderId.trim()
+        ? navigation.loaderId
+        : null;
+    await this.#waitForDocumentReady(
+      targetId,
+      loaderId,
+      url,
+    );
+  }
+
   async #waitForDocumentReady(
     targetId: string,
+    expectedLoaderId: string | null,
+    expectedUrl: string,
   ): Promise<void> {
     const sessionId = await this.#sessionForTarget(targetId);
     const deadline = Date.now() + 10_000;
+    const normalizedExpectedUrl = new URL(expectedUrl).href;
 
     while (Date.now() < deadline) {
       try {
+        const frameTree = await this.#wire.send(
+          "Page.getFrameTree",
+          {},
+          sessionId,
+        );
+        const topFrame =
+          isRecord(frameTree.frameTree) &&
+          isRecord(frameTree.frameTree.frame)
+            ? frameTree.frameTree.frame
+            : null;
+        const topLoaderId =
+          topFrame &&
+          typeof topFrame.loaderId === "string"
+            ? topFrame.loaderId
+            : null;
+
+        if (
+          expectedLoaderId !== null &&
+          topLoaderId !== expectedLoaderId
+        ) {
+          await sleep(25);
+          continue;
+        }
+
         const result = await this.#wire.send(
           "Runtime.evaluate",
           {
-            expression: "document.readyState",
+            expression:
+              "({readyState:document.readyState,href:location.href})",
             returnByValue: true,
           },
           sessionId,
         );
-        const state = evaluationValue(result);
-        if (state === "complete") {
+        const value = evaluationValue(result);
+        if (!isRecord(value)) {
+          await sleep(25);
+          continue;
+        }
+
+        const readyState =
+          typeof value.readyState === "string"
+            ? value.readyState
+            : "";
+        const href =
+          typeof value.href === "string" ? value.href : "";
+
+        const sameDocumentReady =
+          expectedLoaderId === null &&
+          href.length > 0 &&
+          new URL(href).href === normalizedExpectedUrl;
+
+        if (
+          readyState === "complete" &&
+          (expectedLoaderId !== null || sameDocumentReady)
+        ) {
           return;
         }
       } catch {
@@ -751,7 +826,7 @@ class OwnedChromiumControl implements LaunchedCdpControl {
 
     throw new CdpBackendError(
       "timeout",
-      "CDP page did not reach document.readyState=complete",
+      "CDP page did not reach the expected ready document",
     );
   }
 }
