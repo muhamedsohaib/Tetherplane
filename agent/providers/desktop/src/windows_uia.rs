@@ -328,9 +328,8 @@ fn try_background_native_invoke(element: &UIElement) -> Result<bool, CapabilityE
         return Ok(false);
     }
 
-    let handle = match element.get_native_window_handle() {
-        Ok(handle) => handle,
-        Err(_) => return Ok(false),
+    let Ok(handle) = element.get_native_window_handle() else {
+        return Ok(false);
     };
     let raw: isize = handle.into();
     if raw == 0 {
@@ -413,9 +412,8 @@ fn try_background_native_set_value(
     element: &UIElement,
     value: &str,
 ) -> Result<bool, CapabilityError> {
-    let handle = match element.get_native_window_handle() {
-        Ok(handle) => handle,
-        Err(_) => return Ok(false),
+    let Ok(handle) = element.get_native_window_handle() else {
+        return Ok(false);
     };
     let raw: isize = handle.into();
     if raw == 0 {
