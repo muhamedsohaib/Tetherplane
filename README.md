@@ -83,7 +83,7 @@ A separate RDC-shaped compatibility endpoint maps legacy core workflows to canon
 
 Measured values are published under docs/benchmarks/. They are evidence from named machines, not marketing claims.
 
-The original Leno baseline met the idle-memory target but missed the original cold-start target. That miss is retained honestly rather than reclassified as success.
+The original Leno baseline met the idle-memory target but missed the original cold-start target. That historical miss is retained honestly. A later Plan F release-candidate measurement on Leno recorded a 39.57 ms cold start, 11.94 MiB idle working set, and the exact six-tool surface; see `docs/benchmarks/release-candidate-2026-09-20.md`.
 
 ## Security
 
