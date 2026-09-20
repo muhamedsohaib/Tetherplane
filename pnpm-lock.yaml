@@ -146,6 +146,9 @@ importers:
       '@tetherplane/model-client':
         specifier: workspace:*
         version: link:../../adapters/model-client
+      '@tetherplane/relay':
+        specifier: workspace:*
+        version: link:../../relay
     devDependencies:
       '@types/node':
         specifier: 24.13.6
