@@ -54,3 +54,17 @@ pub fn require_human_idle(
         }),
     })
 }
+
+#[derive(Clone, Copy, Debug, Default)]
+pub(crate) struct UnavailableHumanActivityMonitor;
+
+impl HumanActivityMonitor for UnavailableHumanActivityMonitor {
+    fn snapshot(&self) -> Result<HumanActivitySnapshot, CapabilityError> {
+        Err(CapabilityError {
+            code: ErrorCode::CapabilityUnavailable,
+            message: "human activity monitor is not installed".into(),
+            recovery_hint: None,
+            details: serde_json::Value::Null,
+        })
+    }
+}

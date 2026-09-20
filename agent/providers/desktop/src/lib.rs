@@ -1,28 +1,40 @@
 #![forbid(unsafe_code)]
 
+use std::collections::BTreeSet;
 use std::sync::Arc;
+use std::time::{SystemTime, UNIX_EPOCH};
 
 use async_trait::async_trait;
 use serde::{Deserialize, Serialize};
 use serde_json::{Value, json};
 use tether_core::{
-    CapabilityError, CapabilityProvider, ErrorCode, InvocationEnvelope, ProviderResult,
+    ActorKind, CapabilityError, CapabilityProvider, ErrorCode, InvocationEnvelope, ProviderResult,
     ResourceKey, ResourceOrigin, TrustedOwnershipRegistry, VerificationStatus,
 };
 
+mod foreground_lease;
 mod human_activity;
+mod physical;
 mod private_clipboard;
 #[cfg(windows)]
 mod windows_human_activity;
 #[cfg(windows)]
+mod windows_physical;
+#[cfg(windows)]
 mod windows_uia;
 
+pub use foreground_lease::{
+    ForegroundLease, ForegroundLeaseGrant, ForegroundLeaseStore, RestorationStatus,
+};
 pub use human_activity::{
     ForegroundWindowIdentity, HumanActivityMonitor, HumanActivitySnapshot, require_human_idle,
 };
+pub use physical::{DesktopPoint, PhysicalDesktopExecutor, PhysicalMoveOutcome};
 pub use private_clipboard::{PrivateClipboard, PrivateClipboardState};
 #[cfg(windows)]
 pub use windows_human_activity::WindowsHumanActivityMonitor;
+#[cfg(windows)]
+pub use windows_physical::WindowsPhysicalDesktopExecutor;
 #[cfg(windows)]
 pub use windows_uia::WindowsUiaBackend;
 
@@ -117,6 +129,9 @@ pub struct DesktopProvider {
     backend: Arc<dyn DesktopBackend>,
     ownership: Arc<TrustedOwnershipRegistry>,
     clipboard: Arc<PrivateClipboard>,
+    human_activity: Arc<dyn HumanActivityMonitor>,
+    leases: Arc<ForegroundLeaseStore>,
+    physical: Arc<dyn PhysicalDesktopExecutor>,
 }
 
 impl DesktopProvider {
@@ -137,10 +152,37 @@ impl DesktopProvider {
     where
         B: DesktopBackend + 'static,
     {
+        Self::with_services(
+            backend,
+            ownership,
+            clipboard,
+            Arc::new(human_activity::UnavailableHumanActivityMonitor),
+            Arc::new(ForegroundLeaseStore::new()),
+            Arc::new(physical::DisabledPhysicalDesktopExecutor),
+        )
+    }
+
+    #[must_use]
+    pub fn with_services<B, H, P>(
+        backend: Arc<B>,
+        ownership: Arc<TrustedOwnershipRegistry>,
+        clipboard: Arc<PrivateClipboard>,
+        human_activity: Arc<H>,
+        leases: Arc<ForegroundLeaseStore>,
+        physical: Arc<P>,
+    ) -> Self
+    where
+        B: DesktopBackend + 'static,
+        H: HumanActivityMonitor + 'static,
+        P: PhysicalDesktopExecutor + 'static,
+    {
         Self {
             backend,
             ownership,
             clipboard,
+            human_activity,
+            leases,
+            physical,
         }
     }
 
@@ -151,6 +193,10 @@ impl DesktopProvider {
             "act",
             "private_clipboard_get",
             "private_clipboard_set",
+            "foreground_lease_acquire",
+            "foreground_lease_get",
+            "foreground_lease_release",
+            "physical_pointer_move",
         ]
     }
 
@@ -277,6 +323,178 @@ impl DesktopProvider {
         })
     }
 
+    fn foreground_lease_acquire(
+        &self,
+        invocation: &InvocationEnvelope,
+    ) -> Result<ProviderResult, CapabilityError> {
+        if invocation.actor.kind != ActorKind::Human {
+            return Err(CapabilityError {
+                code: ErrorCode::PermissionDenied,
+                message: "only a trusted local human actor may grant a foreground lease".into(),
+                recovery_hint: None,
+                details: Value::Null,
+            });
+        }
+
+        let principal_id = string_argument(&invocation.arguments, "for_principal_id")?;
+        let target_resource = string_argument(&invocation.arguments, "target_resource")?;
+        if target_resource != "pointer" {
+            return Err(invalid_arguments(
+                "initial foreground leases support only target_resource pointer",
+            ));
+        }
+        let capabilities = string_set_argument(&invocation.arguments, "capabilities")?;
+        if capabilities
+            .iter()
+            .any(|capability| capability != "desktop.physical_pointer_move")
+        {
+            return Err(invalid_arguments(
+                "initial foreground leases support only desktop.physical_pointer_move",
+            ));
+        }
+        let ttl_ms = u64_argument(&invocation.arguments, "ttl_ms", 30_000)?;
+        let reason = string_argument(&invocation.arguments, "reason")?;
+        let baseline_activity = self.human_activity.snapshot()?;
+        let baseline_cursor = self.physical.capture_cursor()?;
+        let lease = self.leases.acquire(ForegroundLeaseGrant {
+            principal_id: principal_id.to_owned(),
+            approved_by_actor_id: invocation.actor.id.clone(),
+            target_resource: target_resource.to_owned(),
+            capabilities,
+            issued_at_ms: epoch_ms()?,
+            ttl_ms,
+            reason: reason.to_owned(),
+            baseline_cursor: Some(baseline_cursor),
+            baseline_foreground: baseline_activity.foreground_window,
+        })?;
+
+        Ok(ProviderResult {
+            data: json!(lease),
+            delta: Some(json!({ "lease_id": lease.lease_id })),
+            verification: VerificationStatus::Verified,
+        })
+    }
+
+    fn foreground_lease_get(
+        &self,
+        invocation: &InvocationEnvelope,
+    ) -> Result<ProviderResult, CapabilityError> {
+        let lease_id = string_argument(&invocation.arguments, "lease_id")?;
+        let now_ms = epoch_ms()?;
+        let lease = self
+            .leases
+            .get(lease_id, now_ms)
+            .ok_or_else(|| foreground_lease_required("foreground lease does not exist"))?;
+        Self::authorize_lease_reader(&lease, invocation)?;
+        let lease = self.restore_if_pending(lease, now_ms)?;
+
+        Ok(ProviderResult {
+            data: json!(lease),
+            delta: None,
+            verification: VerificationStatus::NotApplicable,
+        })
+    }
+
+    fn foreground_lease_release(
+        &self,
+        invocation: &InvocationEnvelope,
+    ) -> Result<ProviderResult, CapabilityError> {
+        let lease_id = string_argument(&invocation.arguments, "lease_id")?;
+        let now_ms = epoch_ms()?;
+        let lease = self.leases.release(
+            lease_id,
+            invocation.principal_id.as_deref(),
+            invocation.actor.kind == ActorKind::Human,
+            now_ms,
+        )?;
+        let lease = self.restore_if_pending(lease, now_ms)?;
+
+        Ok(ProviderResult {
+            data: json!(lease),
+            delta: Some(json!({
+                "lease_id": lease_id,
+                "restoration_status": lease.restoration_status,
+            })),
+            verification: VerificationStatus::Verified,
+        })
+    }
+
+    fn physical_pointer_move(
+        &self,
+        invocation: &InvocationEnvelope,
+    ) -> Result<ProviderResult, CapabilityError> {
+        let lease_id = string_argument(&invocation.arguments, "lease_id")?;
+        let target_resource = string_argument(&invocation.arguments, "target_resource")?;
+        let now_ms = epoch_ms()?;
+        let lease = self
+            .leases
+            .get(lease_id, now_ms)
+            .ok_or_else(|| foreground_lease_required("foreground lease does not exist"))?;
+        let lease = self.restore_if_pending(lease, now_ms)?;
+        lease.authorize(
+            invocation.principal_id.as_deref(),
+            target_resource,
+            "desktop.physical_pointer_move",
+        )?;
+
+        require_human_idle(self.human_activity.as_ref(), 1_500)?;
+        let target = DesktopPoint {
+            x: i32_argument(&invocation.arguments, "x")?,
+            y: i32_argument(&invocation.arguments, "y")?,
+        };
+        let outcome = self.physical.pointer_move(target)?;
+
+        Ok(ProviderResult {
+            data: json!({
+                "position": outcome.position,
+                "verified": outcome.verified,
+                "lease_id": lease_id,
+            }),
+            delta: Some(json!({
+                "pointer_moved": true,
+                "position": outcome.position,
+            })),
+            verification: if outcome.verified {
+                VerificationStatus::Verified
+            } else {
+                VerificationStatus::ExecutedUnverified
+            },
+        })
+    }
+
+    fn authorize_lease_reader(
+        lease: &ForegroundLease,
+        invocation: &InvocationEnvelope,
+    ) -> Result<(), CapabilityError> {
+        if invocation.actor.kind == ActorKind::Human
+            || invocation.principal_id.as_deref() == Some(lease.principal_id.as_str())
+        {
+            return Ok(());
+        }
+
+        Err(CapabilityError {
+            code: ErrorCode::PermissionDenied,
+            message: "foreground lease belongs to a different principal".into(),
+            recovery_hint: None,
+            details: Value::Null,
+        })
+    }
+
+    fn restore_if_pending(
+        &self,
+        lease: ForegroundLease,
+        now_ms: u64,
+    ) -> Result<ForegroundLease, CapabilityError> {
+        if lease.restoration_status != RestorationStatus::Pending {
+            return Ok(lease);
+        }
+
+        if let Some(cursor) = lease.baseline_cursor {
+            self.physical.restore_cursor(cursor)?;
+        }
+        self.leases.mark_restored(&lease.lease_id, now_ms)
+    }
+
     fn node_json(&self, node: &DesktopNode) -> Value {
         json!({
             "reference": node.reference,
@@ -324,6 +542,10 @@ impl CapabilityProvider for DesktopProvider {
             "act" => self.act(&invocation.arguments),
             "private_clipboard_get" => Ok(self.private_clipboard_get()),
             "private_clipboard_set" => self.private_clipboard_set(&invocation.arguments),
+            "foreground_lease_acquire" => self.foreground_lease_acquire(invocation),
+            "foreground_lease_get" => self.foreground_lease_get(invocation),
+            "foreground_lease_release" => self.foreground_lease_release(invocation),
+            "physical_pointer_move" => self.physical_pointer_move(invocation),
             _ => Err(CapabilityError {
                 code: ErrorCode::CapabilityUnavailable,
                 message: format!("desktop operation is unavailable: {operation}"),
@@ -388,6 +610,67 @@ fn usize_argument(arguments: &Value, key: &str, default: usize) -> Result<usize,
         .as_u64()
         .ok_or_else(|| invalid_arguments(&format!("{key} must be a non-negative integer")))?;
     usize::try_from(value).map_err(|_| invalid_arguments(&format!("{key} is too large")))
+}
+
+fn string_set_argument(arguments: &Value, key: &str) -> Result<BTreeSet<String>, CapabilityError> {
+    let values = arguments
+        .get(key)
+        .and_then(Value::as_array)
+        .ok_or_else(|| invalid_arguments(&format!("{key} must be an array of strings")))?;
+    let mut result = BTreeSet::new();
+    for value in values {
+        let value = value
+            .as_str()
+            .filter(|value| !value.trim().is_empty())
+            .ok_or_else(|| {
+                invalid_arguments(&format!("{key} must contain only non-empty strings"))
+            })?;
+        result.insert(value.to_owned());
+    }
+    Ok(result)
+}
+
+fn u64_argument(arguments: &Value, key: &str, default: u64) -> Result<u64, CapabilityError> {
+    match arguments.get(key) {
+        None | Some(Value::Null) => Ok(default),
+        Some(value) => value
+            .as_u64()
+            .ok_or_else(|| invalid_arguments(&format!("{key} must be a non-negative integer"))),
+    }
+}
+
+fn i32_argument(arguments: &Value, key: &str) -> Result<i32, CapabilityError> {
+    let value = arguments
+        .get(key)
+        .and_then(Value::as_i64)
+        .ok_or_else(|| invalid_arguments(&format!("{key} must be an integer")))?;
+    i32::try_from(value).map_err(|_| invalid_arguments(&format!("{key} is out of range")))
+}
+
+fn epoch_ms() -> Result<u64, CapabilityError> {
+    let duration = SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .map_err(|error| CapabilityError {
+            code: ErrorCode::ProviderFailure,
+            message: format!("system clock is before Unix epoch: {error}"),
+            recovery_hint: None,
+            details: Value::Null,
+        })?;
+    u64::try_from(duration.as_millis()).map_err(|_| CapabilityError {
+        code: ErrorCode::ProviderFailure,
+        message: "system clock value is too large".into(),
+        recovery_hint: None,
+        details: Value::Null,
+    })
+}
+
+fn foreground_lease_required(message: &str) -> CapabilityError {
+    CapabilityError {
+        code: ErrorCode::ForegroundLeaseRequired,
+        message: message.to_owned(),
+        recovery_hint: Some("obtain a new scoped foreground lease".into()),
+        details: Value::Null,
+    }
 }
 
 fn invalid_arguments(message: &str) -> CapabilityError {
