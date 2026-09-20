@@ -52,7 +52,8 @@ try {
       idle_rss_wait_seconds: 10,
       file_fixture_lines: 1000,
       browser_provider: "not configured",
-      desktop_provider: "not configured",
+      desktop_provider:
+        process.platform === "win32" ? "windows_uia" : "not configured",
     },
   };
 
