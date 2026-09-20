@@ -82,7 +82,10 @@ impl AgentRuntime {
         let policy = Arc::new(LocalPolicyBroker::new(policy_config));
         let mut router = CapabilityRouter::with_policy(policy);
         let ownership = Arc::new(TrustedOwnershipRegistry::new());
+        #[cfg(windows)]
         let desktop_provider = create_desktop_provider(Arc::clone(&ownership))?;
+        #[cfg(not(windows))]
+        let desktop_provider = create_desktop_provider(&ownership);
         let desktop_operations = desktop_provider.as_ref().map(|_| {
             DesktopProvider::operations()
                 .iter()
@@ -182,27 +185,26 @@ impl AgentRuntime {
     }
 }
 
+#[cfg(windows)]
 fn create_desktop_provider(
     ownership: Arc<TrustedOwnershipRegistry>,
 ) -> Result<Option<Arc<DesktopProvider>>, CapabilityError> {
-    #[cfg(windows)]
-    {
-        let provider = DesktopProvider::with_services(
-            Arc::new(WindowsUiaBackend::new()?),
-            ownership,
-            Arc::new(PrivateClipboard::new()),
-            Arc::new(WindowsHumanActivityMonitor),
-            Arc::new(ForegroundLeaseStore::new()),
-            Arc::new(WindowsPhysicalDesktopExecutor),
-        );
-        Ok(Some(Arc::new(provider)))
-    }
+    let provider = DesktopProvider::with_services(
+        Arc::new(WindowsUiaBackend::new()?),
+        ownership,
+        Arc::new(PrivateClipboard::new()),
+        Arc::new(WindowsHumanActivityMonitor),
+        Arc::new(ForegroundLeaseStore::new()),
+        Arc::new(WindowsPhysicalDesktopExecutor),
+    );
+    Ok(Some(Arc::new(provider)))
+}
 
-    #[cfg(not(windows))]
-    {
-        let _ = ownership;
-        Ok(None)
-    }
+#[cfg(not(windows))]
+fn create_desktop_provider(
+    _ownership: &Arc<TrustedOwnershipRegistry>,
+) -> Option<Arc<DesktopProvider>> {
+    None
 }
 
 struct DeviceProvider {
