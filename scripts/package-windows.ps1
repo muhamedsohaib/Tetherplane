@@ -40,16 +40,25 @@ New-Item -ItemType Directory -Force -Path (Join-Path $output "bin"),(Join-Path $
 
 Copy-Item -LiteralPath $tetherd -Destination (Join-Path $output "bin\tetherd.exe")
 
+$deployStage = Join-Path $repo "target\windows-package-deploy"
+$compactDeploy = Join-Path $deployStage "compact-mcp"
+$relayDeploy = Join-Path $deployStage "relay"
+Remove-Item -LiteralPath $deployStage -Recurse -Force -ErrorAction SilentlyContinue
+
 Push-Location $repo
 try {
-    pnpm.cmd --config.node-linker=hoisted --filter @tetherplane/compact-mcp deploy --legacy --prod (Join-Path $output "adapters\compact-mcp")
+    pnpm.cmd --config.node-linker=hoisted --filter @tetherplane/compact-mcp deploy --legacy --prod "target\windows-package-deploy\compact-mcp"
     if ($LASTEXITCODE -ne 0) { throw "Compact MCP production deploy failed" }
-    pnpm.cmd --config.node-linker=hoisted --filter @tetherplane/relay deploy --legacy --prod (Join-Path $output "relay")
+    pnpm.cmd --config.node-linker=hoisted --filter @tetherplane/relay deploy --legacy --prod "target\windows-package-deploy\relay"
     if ($LASTEXITCODE -ne 0) { throw "relay production deploy failed" }
 }
 finally {
     Pop-Location
 }
+
+Copy-Item -LiteralPath $compactDeploy -Destination (Join-Path $output "adapters") -Recurse -Force
+Copy-Item -LiteralPath $relayDeploy -Destination $output -Recurse -Force
+Remove-Item -LiteralPath $deployStage -Recurse -Force -ErrorAction SilentlyContinue
 
 Copy-Item -LiteralPath (Join-Path $repo "scripts\release-smoke.mjs") -Destination (Join-Path $output "adapters\compact-mcp\smoke-six-tools.mjs")
 Copy-Item -Path (Join-Path $repo "protocol\schemas\*.json") -Destination (Join-Path $output "protocol\schemas") -Force
