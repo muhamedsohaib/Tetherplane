@@ -296,7 +296,7 @@ fn live_lease_conflicts_then_expiry_allows_reacquire() {
         &[invocation(
             "00000000-0000-4000-8000-0000000000f2",
             "job.acquire_lease",
-            json!({ "job_id": job_id, "ttl_ms": 120 }),
+            json!({ "job_id": job_id, "ttl_ms": 60_000 }),
         )],
     );
     assert_eq!(first[0]["status"], "success");
@@ -313,7 +313,11 @@ fn live_lease_conflicts_then_expiry_allows_reacquire() {
     assert_eq!(conflict[0]["status"], "error");
     assert_eq!(conflict[0]["error"]["code"], "resource_conflict");
 
-    std::thread::sleep(std::time::Duration::from_millis(160));
+    let job_path = state_dir.join("jobs").join(format!("{job_id}.json"));
+    let mut persisted =
+        serde_json::from_slice::<Value>(&std::fs::read(&job_path).unwrap()).unwrap();
+    persisted["active_lease"]["expires_at_unix_ms"] = json!(0);
+    std::fs::write(&job_path, serde_json::to_vec_pretty(&persisted).unwrap()).unwrap();
 
     let reacquired = rpc(
         &second,
