@@ -199,7 +199,7 @@ fn invalid(message: &str) -> CapabilityError {
         code: ErrorCode::InvalidArguments,
         message: message.to_owned(),
         recovery_hint: None,
-        details: Value::Null,
+        details: serde_json::json!({}),
     }
 }
 fn provider_failure(message: &str) -> CapabilityError {
@@ -207,7 +207,7 @@ fn provider_failure(message: &str) -> CapabilityError {
         code: ErrorCode::ProviderFailure,
         message: message.to_owned(),
         recovery_hint: None,
-        details: Value::Null,
+        details: serde_json::json!({}),
     }
 }
 fn disconnected(message: &str) -> CapabilityError {
@@ -215,7 +215,7 @@ fn disconnected(message: &str) -> CapabilityError {
         code: ErrorCode::Disconnected,
         message: message.to_owned(),
         recovery_hint: Some("restart or reconnect the local browser bridge".into()),
-        details: Value::Null,
+        details: serde_json::json!({}),
     }
 }
 fn timeout_error(message: &str) -> CapabilityError {
@@ -223,6 +223,6 @@ fn timeout_error(message: &str) -> CapabilityError {
         code: ErrorCode::Timeout,
         message: message.to_owned(),
         recovery_hint: None,
-        details: Value::Null,
+        details: serde_json::json!({}),
     }
 }

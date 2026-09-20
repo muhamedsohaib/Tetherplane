@@ -3,7 +3,7 @@ use std::io::Write;
 use std::path::{Path, PathBuf};
 
 use serde::{Deserialize, Serialize};
-use serde_json::{Value, json};
+use serde_json::json;
 use sha2::{Digest, Sha256};
 use tether_core::{
     CapabilityError, ErrorCode, InvocationEnvelope, ResultEnvelope, ResultStatus, Timing,
@@ -309,6 +309,6 @@ fn provider_failure(message: String) -> CapabilityError {
         code: ErrorCode::ProviderFailure,
         message,
         recovery_hint: None,
-        details: Value::Null,
+        details: serde_json::json!({}),
     }
 }

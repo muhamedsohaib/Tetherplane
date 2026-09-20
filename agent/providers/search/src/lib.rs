@@ -108,7 +108,7 @@ impl SearchProvider {
                 code: ErrorCode::ProviderFailure,
                 message: format!("failed to start search worker: {error}"),
                 recovery_hint: None,
-                details: Value::Null,
+                details: serde_json::json!({}),
             });
         }
 
@@ -488,7 +488,7 @@ fn glob_set_argument(arguments: &Value) -> Result<Option<GlobSet>, CapabilityErr
         code: ErrorCode::InvalidArguments,
         message: format!("invalid file glob set: {error}"),
         recovery_hint: None,
-        details: Value::Null,
+        details: serde_json::json!({}),
     })
 }
 
@@ -497,7 +497,7 @@ fn invalid_arguments(message: &str) -> CapabilityError {
         code: ErrorCode::InvalidArguments,
         message: message.to_owned(),
         recovery_hint: None,
-        details: Value::Null,
+        details: serde_json::json!({}),
     }
 }
 

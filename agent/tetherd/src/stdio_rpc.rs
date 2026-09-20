@@ -86,7 +86,7 @@ fn invalid_invocation_result(request_id: Uuid, message: &str) -> ResultEnvelope 
             code: ErrorCode::InvalidArguments,
             message: format!("invalid invocation JSON: {message}"),
             recovery_hint: None,
-            details: serde_json::Value::Null,
+            details: serde_json::json!({}),
         }),
         verification: VerificationStatus::Failed,
         continuation: None,

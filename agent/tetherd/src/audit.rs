@@ -170,7 +170,7 @@ impl CapabilityProvider for AuditProvider {
                 code: ErrorCode::PermissionDenied,
                 message: "audit.read requires an authenticated principal".into(),
                 recovery_hint: None,
-                details: Value::Null,
+                details: serde_json::json!({}),
             })?;
         let limit = invocation
             .arguments
@@ -250,7 +250,7 @@ fn invalid_arguments(message: &str) -> CapabilityError {
         code: ErrorCode::InvalidArguments,
         message: message.to_owned(),
         recovery_hint: None,
-        details: Value::Null,
+        details: serde_json::json!({}),
     }
 }
 
@@ -259,6 +259,6 @@ fn provider_failure(message: String) -> CapabilityError {
         code: ErrorCode::ProviderFailure,
         message,
         recovery_hint: None,
-        details: Value::Null,
+        details: serde_json::json!({}),
     }
 }

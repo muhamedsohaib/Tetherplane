@@ -4,7 +4,7 @@ use std::sync::{Arc, Mutex};
 use std::time::Duration;
 
 use portable_pty::{CommandBuilder, MasterPty, PtySize, native_pty_system};
-use serde_json::{Value, json};
+use serde_json::json;
 use sysinfo::{Pid, System};
 use tether_core::{CapabilityError, ErrorCode};
 use tokio::io::{AsyncRead, AsyncReadExt, AsyncWriteExt};
@@ -426,7 +426,7 @@ impl ProcessSession {
                         code: ErrorCode::ProviderFailure,
                         message: format!("process output task failed: {error}"),
                         recovery_hint: None,
-                        details: Value::Null,
+                        details: serde_json::json!({}),
                     });
                 }
             }
@@ -600,7 +600,7 @@ fn process_finished() -> CapabilityError {
         code: ErrorCode::ProcessFinished,
         message: "process has already finished".into(),
         recovery_hint: None,
-        details: Value::Null,
+        details: serde_json::json!({}),
     }
 }
 

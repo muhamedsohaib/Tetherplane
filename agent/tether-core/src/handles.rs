@@ -1,7 +1,6 @@
 use std::collections::HashMap;
 use std::sync::RwLock;
 
-use serde_json::Value;
 use uuid::Uuid;
 
 use crate::{CapabilityError, ErrorCode};
@@ -42,7 +41,7 @@ impl<T> HandleRegistry<T> {
             code: ErrorCode::InvalidArguments,
             message: "unknown or expired handle".to_owned(),
             recovery_hint: None,
-            details: Value::Null,
+            details: serde_json::json!({}),
         })?;
         Ok(f(value))
     }

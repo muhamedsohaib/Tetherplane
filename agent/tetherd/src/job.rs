@@ -361,7 +361,7 @@ fn authenticated_principal(invocation: &InvocationEnvelope) -> Result<&str, Capa
             code: ErrorCode::PermissionDenied,
             message: "job operations require an authenticated principal".into(),
             recovery_hint: None,
-            details: Value::Null,
+            details: serde_json::json!({}),
         })
 }
 
@@ -498,7 +498,7 @@ fn invalid_arguments(message: &str) -> CapabilityError {
         code: ErrorCode::InvalidArguments,
         message: message.to_owned(),
         recovery_hint: None,
-        details: Value::Null,
+        details: serde_json::json!({}),
     }
 }
 
@@ -507,6 +507,6 @@ fn provider_failure(message: String) -> CapabilityError {
         code: ErrorCode::ProviderFailure,
         message,
         recovery_hint: None,
-        details: Value::Null,
+        details: serde_json::json!({}),
     }
 }
