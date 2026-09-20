@@ -11,6 +11,12 @@ use tether_core::{
     LocalPolicyBroker, LocalPolicyConfig, PrincipalProfile, ProviderResult, ResultEnvelope,
     TrustedOwnershipRegistry, VerificationStatus,
 };
+use tether_desktop_provider::DesktopProvider;
+#[cfg(windows)]
+use tether_desktop_provider::{
+    ForegroundLeaseStore, PrivateClipboard, WindowsHumanActivityMonitor,
+    WindowsPhysicalDesktopExecutor, WindowsUiaBackend,
+};
 use tether_filesystem_provider::FilesystemProvider;
 use tether_process_provider::ProcessProvider;
 use tether_search_provider::SearchProvider;
@@ -76,6 +82,13 @@ impl AgentRuntime {
         let policy = Arc::new(LocalPolicyBroker::new(policy_config));
         let mut router = CapabilityRouter::with_policy(policy);
         let ownership = Arc::new(TrustedOwnershipRegistry::new());
+        let desktop_provider = create_desktop_provider(Arc::clone(&ownership))?;
+        let desktop_operations = desktop_provider.as_ref().map(|_| {
+            DesktopProvider::operations()
+                .iter()
+                .map(ToString::to_string)
+                .collect()
+        });
 
         let browser_operations = browser_provider
             .as_ref()
@@ -85,6 +98,7 @@ impl AgentRuntime {
             job_available,
             audit_available,
             browser_operations,
+            desktop_operations,
         )))?;
         router.register(Arc::new(FilesystemProvider::new()))?;
         router.register(Arc::new(SearchProvider::new()))?;
@@ -106,7 +120,11 @@ impl AgentRuntime {
         } else {
             router.register(Arc::new(UnavailableProvider::new("browser")))?;
         }
-        router.register(Arc::new(UnavailableProvider::new("desktop")))?;
+        if let Some(desktop_provider) = desktop_provider {
+            router.register(desktop_provider)?;
+        } else {
+            router.register(Arc::new(UnavailableProvider::new("desktop")))?;
+        }
 
         Ok(Self {
             router,
@@ -164,12 +182,36 @@ impl AgentRuntime {
     }
 }
 
+fn create_desktop_provider(
+    ownership: Arc<TrustedOwnershipRegistry>,
+) -> Result<Option<Arc<DesktopProvider>>, CapabilityError> {
+    #[cfg(windows)]
+    {
+        let provider = DesktopProvider::with_services(
+            Arc::new(WindowsUiaBackend::new()?),
+            ownership,
+            Arc::new(PrivateClipboard::new()),
+            Arc::new(WindowsHumanActivityMonitor),
+            Arc::new(ForegroundLeaseStore::new()),
+            Arc::new(WindowsPhysicalDesktopExecutor),
+        );
+        Ok(Some(Arc::new(provider)))
+    }
+
+    #[cfg(not(windows))]
+    {
+        let _ = ownership;
+        Ok(None)
+    }
+}
+
 struct DeviceProvider {
     started: Instant,
     allowed_capabilities: Option<BTreeSet<String>>,
     job_available: bool,
     audit_available: bool,
     browser_operations: Option<Vec<String>>,
+    desktop_operations: Option<Vec<String>>,
 }
 
 impl DeviceProvider {
@@ -178,6 +220,7 @@ impl DeviceProvider {
         job_available: bool,
         audit_available: bool,
         browser_operations: Option<Vec<String>>,
+        desktop_operations: Option<Vec<String>>,
     ) -> Self {
         Self {
             started: Instant::now(),
@@ -185,6 +228,7 @@ impl DeviceProvider {
             job_available,
             audit_available,
             browser_operations,
+            desktop_operations,
         }
     }
 
@@ -209,7 +253,7 @@ impl DeviceProvider {
                 { "namespace": "job", "available": self.job_available, "operations": if self.job_available { self.operations("job", &["create", "get", "checkpoint", "acquire_lease", "release_lease"]) } else { Vec::<String>::new() } },
                 { "namespace": "audit", "available": self.audit_available, "operations": if self.audit_available { self.operations("audit", &["read"]) } else { Vec::<String>::new() } },
                 { "namespace": "browser", "available": self.browser_operations.is_some(), "operations": self.browser_operations() },
-                { "namespace": "desktop", "available": false, "operations": [] }
+                { "namespace": "desktop", "available": self.desktop_operations.is_some(), "operations": self.desktop_operations() }
             ]
         })
     }
@@ -235,6 +279,20 @@ impl DeviceProvider {
                 self.allowed_capabilities
                     .as_ref()
                     .is_none_or(|allowed| allowed.contains(&format!("browser.{operation}")))
+            })
+            .cloned()
+            .collect()
+    }
+
+    fn desktop_operations(&self) -> Vec<String> {
+        self.desktop_operations
+            .as_ref()
+            .into_iter()
+            .flatten()
+            .filter(|operation| {
+                self.allowed_capabilities
+                    .as_ref()
+                    .is_none_or(|allowed| allowed.contains(&format!("desktop.{operation}")))
             })
             .cloned()
             .collect()

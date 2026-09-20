@@ -239,13 +239,40 @@ fn device_status_and_capabilities_are_minimal_and_truthful() {
             .unwrap();
         assert_eq!(provider["available"].as_bool(), Some(true));
     }
-    for namespace in ["browser", "desktop"] {
-        let provider = providers
+    let browser = providers
+        .iter()
+        .find(|provider| provider["namespace"].as_str() == Some("browser"))
+        .unwrap();
+    assert_eq!(browser["available"].as_bool(), Some(false));
+
+    let desktop = providers
+        .iter()
+        .find(|provider| provider["namespace"].as_str() == Some("desktop"))
+        .unwrap();
+    #[cfg(windows)]
+    {
+        assert_eq!(desktop["available"].as_bool(), Some(true));
+        let operations = desktop["operations"].as_array().unwrap();
+        let operations = operations
             .iter()
-            .find(|provider| provider["namespace"].as_str() == Some(namespace))
-            .unwrap();
-        assert_eq!(provider["available"].as_bool(), Some(false));
+            .map(|value| value.as_str().unwrap())
+            .collect::<std::collections::BTreeSet<_>>();
+        assert_eq!(
+            operations,
+            std::collections::BTreeSet::from([
+                "act",
+                "foreground_lease_acquire",
+                "foreground_lease_get",
+                "foreground_lease_release",
+                "physical_pointer_move",
+                "private_clipboard_get",
+                "private_clipboard_set",
+                "snapshot",
+            ])
+        );
     }
+    #[cfg(not(windows))]
+    assert_eq!(desktop["available"].as_bool(), Some(false));
 
     let exit = child.wait().unwrap();
     assert!(exit.success());

@@ -123,6 +123,68 @@ const CATALOG: Record<string, JsonSchema> = {
     job_id: string,
     limit: { type: "integer", minimum: 1, maximum: 500 },
   }),
+  "desktop.snapshot": objectSchema([], {
+    max_nodes: { type: "integer", minimum: 1, maximum: 1000 },
+  }),
+  "desktop.act": objectSchema(["reference", "action"], {
+    reference: string,
+    action: {
+      enum: [
+        "invoke",
+        "set_value",
+        "select",
+        "toggle",
+        "expand",
+        "collapse",
+      ],
+    },
+    value: string,
+    from_private_clipboard: boolean,
+  }),
+  "desktop.private_clipboard_get": objectSchema([], {}),
+  "desktop.private_clipboard_set": objectSchema([], {
+    text: { type: ["string", "null"], maxLength: 1048576 },
+    files: {
+      type: "array",
+      maxItems: 64,
+      items: { type: "string", minLength: 1, maxLength: 4096 },
+    },
+  }),
+  "desktop.foreground_lease_acquire": objectSchema(
+    [
+      "for_principal_id",
+      "target_resource",
+      "capabilities",
+      "reason",
+    ],
+    {
+      for_principal_id: string,
+      target_resource: { enum: ["pointer"] },
+      capabilities: {
+        type: "array",
+        minItems: 1,
+        uniqueItems: true,
+        items: { enum: ["desktop.physical_pointer_move"] },
+      },
+      ttl_ms: { type: "integer", minimum: 1, maximum: 120000 },
+      reason: string,
+    },
+  ),
+  "desktop.foreground_lease_get": objectSchema(["lease_id"], {
+    lease_id: string,
+  }),
+  "desktop.foreground_lease_release": objectSchema(["lease_id"], {
+    lease_id: string,
+  }),
+  "desktop.physical_pointer_move": objectSchema(
+    ["lease_id", "target_resource", "x", "y"],
+    {
+      lease_id: string,
+      target_resource: { enum: ["pointer"] },
+      x: integer,
+      y: integer,
+    },
+  ),
   "batch.execute": objectSchema(["mode", "operations"], {
     mode: { enum: ["parallel", "sequential"] },
     operations: { type: "array", minItems: 1 },
