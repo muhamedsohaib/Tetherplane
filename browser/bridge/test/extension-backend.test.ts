@@ -89,6 +89,30 @@ test("extension backend correlates out-of-order semantic observations", async ()
   assert.equal((await second).page_id, "tab:2");
 });
 
+test("extension backend message pump goes idle after the last pending command", async () => {
+  const transport = new FakeTransport();
+  const backend = new ExtensionBrowserBackend({ transport });
+
+  const observing = backend.observe("tab:idle");
+  await new Promise((resolve) => setTimeout(resolve, 0));
+  const requestId = String(transport.sent[0]?.request_id);
+  transport.push(
+    success(requestId, {
+      page_id: "tab:idle",
+      url: "https://fixture.example/idle",
+      semantic_revision: 1,
+      resource_revision: null,
+      nodes: [],
+      validation_messages: [],
+      toasts: [],
+    }),
+  );
+
+  await observing;
+  await new Promise((resolve) => setTimeout(resolve, 0));
+  assert.equal(transport.waiters.length, 0);
+});
+
 test("extension backend perform preserves machine-readable extension error", async () => {
   const transport = new FakeTransport();
   const backend = new ExtensionBrowserBackend({ transport });

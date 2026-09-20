@@ -235,7 +235,6 @@ export class ExtensionBrowserBackend
     operation: string,
     args: Record<string, unknown>,
   ): Promise<unknown> {
-    this.#ensurePump();
     const requestId = randomUUID();
 
     return new Promise((resolve, reject) => {
@@ -247,6 +246,7 @@ export class ExtensionBrowserBackend
           operation,
           args,
         });
+        this.#ensurePump();
       } catch (error) {
         this.#pending.delete(requestId);
         reject(
@@ -269,7 +269,7 @@ export class ExtensionBrowserBackend
 
   async #pump(): Promise<void> {
     try {
-      for (;;) {
+      while (this.#pending.size > 0) {
         const message = await this.#transport.nextMessage();
         if (
           message.type !== "result" ||
