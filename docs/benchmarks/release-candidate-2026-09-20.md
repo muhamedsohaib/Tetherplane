@@ -1,7 +1,7 @@
 # Tetherplane Release-Candidate Benchmark
 
 **Measured:** 2026-09-20 (Asia/Dubai)
-**Source commit:** `7cf9c8164887abc35ce19b7b6a26be67ea79a544`
+**Source commit:** `67e017e25c5dd201aeedf5edfbfe75d429c760d7`
 **Machine:** Leno
 **OS:** Windows `10.0.26200` x64
 **CPU:** 11th Gen Intel Core i5-1135G7 @ 2.40 GHz
@@ -16,11 +16,11 @@ Release-profile `tetherd` was measured through `scripts/bench-local.ps1`.
 
 | Metric | Measured value | Original design target | Result |
 | --- | ---: | ---: | --- |
-| Cold start to first `device.status` | **39.57 ms** | <250 ms | met in this run |
-| Idle working set after 10 seconds | **11.94 MiB** (12,521,472 bytes) | <50 MiB | met |
+| Cold start to first `device.status` | **1,229.56 ms** | <250 ms | missed in this run |
+| Idle working set after 10 seconds | **17.44 MiB** (18,288,640 bytes) | <50 MiB | met |
 | Default MCP-visible tools | **6** | exactly 6 | invariant met |
 
-The previous historical baseline at `docs/benchmarks/local-core-baseline.md` measured 2,580.35 ms cold start on the same named machine and missed the target. That historical result remains valid evidence. The fresh 39.57 ms result shows that the miss was not reproduced on the current release candidate; it does not establish a cross-machine startup guarantee.
+The previous historical baseline at `docs/benchmarks/local-core-baseline.md` measured 2,580.35 ms cold start on the same named machine and missed the target. An earlier Plan F run measured 39.57 ms, but the final F8 refresh measured 1,229.56 ms. The startup target therefore remains a measured miss for this release candidate, with substantial run-to-run variance that should be investigated separately rather than hidden.
 
 The measured tool list remained exactly:
 
@@ -49,9 +49,9 @@ The benchmark metadata correctly reported the Windows UI Automation desktop prov
 
 | Metric | Measured value |
 | --- | ---: |
-| Semantic snapshot | **28.86 ms** |
-| Verified action | **89.08 ms** |
-| Total two-call workflow | **117.94 ms** |
+| Semantic snapshot | **52.95 ms** |
+| Verified action | **151.99 ms** |
+| Total two-call workflow | **204.94 ms** |
 | AI-visible round trips from unknown initial state | **2** |
 | Verification | **verified** |
 
@@ -63,11 +63,11 @@ The browser benchmark used a Tetherplane-owned isolated browser context. It did 
 
 | Metric | Measured value |
 | --- | ---: |
-| Semantic snapshot | **457.90 ms** |
-| Value set | **19.81 ms** |
-| Invoke | **20.14 ms** |
-| Selection | **23.53 ms** |
-| Total four calls | **521.38 ms** |
+| Semantic snapshot | **1,585.23 ms** |
+| Value set | **35.43 ms** |
+| Invoke | **31.48 ms** |
+| Selection | **33.01 ms** |
+| Total four calls | **1,685.15 ms** |
 
 The benchmark observed 13 fixture semantic nodes, classified the fixture as Tetherplane-owned, verified the resulting fixture state, and asserted that the physical cursor position was unchanged across semantic operations.
 
