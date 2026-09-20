@@ -39,9 +39,6 @@ jobs:
       - name: Install pnpm 10
         run: corepack prepare pnpm@10 --activate
 
-      - name: Install TypeScript
-        run: npm install --global typescript@5.8.3
-
       - name: Install workspace
         run: pnpm install --frozen-lockfile
 
@@ -50,3 +47,18 @@ jobs:
 
       - name: TypeScript tests
         run: pnpm -r test
+
+      - name: TypeScript builds
+        run: pnpm -r build
+
+      - name: Authored unsafe scan
+        run: python scripts/check-no-unsafe.py
+
+      - name: Windows release binary
+        if: runner.os == 'Windows'
+        run: cargo build --release -p tetherd
+
+      - name: Windows package/install smoke
+        if: runner.os == 'Windows'
+        shell: pwsh
+        run: ./tests/release/windows-package-smoke.ps1
