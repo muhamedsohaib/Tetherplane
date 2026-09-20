@@ -10,6 +10,11 @@ use tether_core::{
     ResourceKey, ResourceOrigin, TrustedOwnershipRegistry, VerificationStatus,
 };
 
+#[cfg(windows)]
+mod windows_uia;
+#[cfg(windows)]
+pub use windows_uia::WindowsUiaBackend;
+
 const DEFAULT_MAX_NODES: usize = 200;
 const MAX_NODES: usize = 1_000;
 
@@ -21,6 +26,14 @@ pub enum DesktopPattern {
     Selection,
     Toggle,
     ExpandCollapse,
+}
+
+#[derive(Clone, Copy, Debug, Deserialize, Eq, PartialEq, Serialize)]
+pub struct DesktopRect {
+    pub left: i32,
+    pub top: i32,
+    pub right: i32,
+    pub bottom: i32,
 }
 
 #[derive(Clone, Debug, Deserialize, PartialEq, Serialize)]
@@ -35,6 +48,7 @@ pub struct DesktopNode {
     pub enabled: bool,
     pub focusable: bool,
     pub focused: bool,
+    pub bounding_rectangle: Option<DesktopRect>,
     pub patterns: Vec<DesktopPattern>,
 }
 
@@ -196,6 +210,7 @@ impl DesktopProvider {
             "enabled": node.enabled,
             "focusable": node.focusable,
             "focused": node.focused,
+            "bounding_rectangle": node.bounding_rectangle,
             "patterns": node.patterns,
             "origin": self.origin_label(node.process_id),
         })

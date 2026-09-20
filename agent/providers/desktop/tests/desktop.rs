@@ -76,6 +76,7 @@ fn node(reference: &str, process_id: u32, name: &str) -> DesktopNode {
         enabled: true,
         focusable: true,
         focused: false,
+        bounding_rectangle: None,
         patterns: vec![DesktopPattern::Invoke, DesktopPattern::Value],
     }
 }
