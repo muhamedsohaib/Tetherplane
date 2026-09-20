@@ -4,8 +4,11 @@
   "private": true,
   "type": "module",
   "scripts": {
+    "prebuild": "pnpm --filter @tetherplane/compact-mcp build",
     "build": "tsc -p tsconfig.json",
+    "pretest": "pnpm --filter @tetherplane/compact-mcp build",
     "test": "node --test test/*.test.ts",
+    "pretypecheck": "pnpm --filter @tetherplane/compact-mcp build",
     "typecheck": "tsc --noEmit -p tsconfig.test.json"
   },
   "dependencies": {

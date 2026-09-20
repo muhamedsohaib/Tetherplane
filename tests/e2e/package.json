@@ -4,9 +4,12 @@
   "private": true,
   "type": "module",
   "scripts": {
-    "pretest": "cargo build -p tetherd && pnpm --filter @tetherplane/compact-mcp build && pnpm --filter @tetherplane/rdc-compat build && pnpm --filter @tetherplane/model-client build && pnpm --filter @tetherplane/browser-bridge build && pnpm --filter @tetherplane/browser-lab build && pnpm --filter @tetherplane/relay build",
+    "build:deps": "pnpm --filter @tetherplane/compact-mcp build && pnpm --filter @tetherplane/rdc-compat build && pnpm --filter @tetherplane/model-client build && pnpm --filter @tetherplane/browser-bridge build && pnpm --filter @tetherplane/browser-lab build && pnpm --filter @tetherplane/relay build",
+    "prebuild": "pnpm run build:deps",
     "build": "tsc -p tsconfig.json",
+    "pretest": "cargo build -p tetherd && pnpm run build:deps",
     "test": "node --test *.test.ts",
+    "pretypecheck": "pnpm run build:deps",
     "typecheck": "tsc --noEmit -p tsconfig.json"
   },
   "dependencies": {
