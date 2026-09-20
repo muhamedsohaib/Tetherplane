@@ -107,7 +107,14 @@ function findPattern(
 
 test(
   "Windows desktop coexists with a human window through Compact MCP",
-  { skip: process.platform !== "win32" },
+  {
+    // GitHub-hosted Windows runners do not provide the interactive desktop
+    // required to certify UI Automation coexistence. This proof runs on
+    // interactive Windows machines such as Leno.
+    skip:
+      process.platform !== "win32" ||
+      process.env.GITHUB_ACTIONS === "true",
+  },
   async () => {
     const here = path.dirname(fileURLToPath(import.meta.url));
     const fixturePath = path.join(here, "fixtures", "windows-desktop-fixture.ps1");

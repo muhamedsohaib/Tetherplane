@@ -198,10 +198,19 @@ test(
         ).some((entry) => entry.sessionId === sessionId),
       );
 
+      const interactiveCommand =
+        process.platform === "win32"
+          ? "cmd.exe /Q /K"
+          : "node -i";
+      const interactiveInput =
+        process.platform === "win32"
+          ? "echo GOT:hello"
+          : 'console.log("GOT:hello")';
+
       const started = data(
         await call(harness.client, "start_process", {
-          command: "node -i",
-          timeout_ms: 0,
+          command: interactiveCommand,
+          timeout_ms: 500,
         }),
       );
       const compatPid = started.pid;
@@ -212,7 +221,7 @@ test(
         "interact_with_process",
         {
           pid: compatPid,
-          input: 'console.log("GOT:hello")',
+          input: interactiveInput,
           timeout_ms: 2_000,
         },
       );
