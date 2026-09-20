@@ -487,6 +487,9 @@ fn try_background_native_select(
     walker: &UITreeWalker,
     element: &UIElement,
 ) -> Result<bool, CapabilityError> {
+    const LB_SETCURSEL: windows_win::sys::UINT = 0x0186;
+    const LB_ERR: windows_win::sys::LRESULT = -1;
+
     let Ok(parent) = walker.get_parent(element) else {
         return Ok(false);
     };
@@ -521,8 +524,6 @@ fn try_background_native_select(
         index = index.saturating_add(1);
     }
 
-    const LB_SETCURSEL: windows_win::sys::UINT = 0x0186;
-    const LB_ERR: windows_win::sys::LRESULT = -1;
     let hwnd = raw as windows_win::sys::HWND;
     let result = windows_win::raw::window::send_message(hwnd, LB_SETCURSEL, index, 0, Some(1_000))
         .map_err(|error| CapabilityError {
