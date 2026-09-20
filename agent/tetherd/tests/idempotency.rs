@@ -1,18 +1,14 @@
+use serde_json::{Value, json};
 use std::io::{BufRead, BufReader, Write};
 use std::path::{Path, PathBuf};
 use std::process::{Command, Stdio};
-use std::time::{SystemTime, UNIX_EPOCH};
-
-use serde_json::{Value, json};
+use uuid::Uuid;
 
 fn unique_root() -> PathBuf {
-    let nonce = SystemTime::now()
-        .duration_since(UNIX_EPOCH)
-        .unwrap()
-        .as_nanos();
     std::env::temp_dir().join(format!(
-        "tetherplane-idempotency-test-{}-{nonce}",
-        std::process::id()
+        "tetherplane-idempotency-test-{}-{}",
+        std::process::id(),
+        Uuid::new_v4().as_simple()
     ))
 }
 
