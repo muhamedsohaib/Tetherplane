@@ -1,6 +1,7 @@
 packages:
   - "protocol"
   - "adapters/*"
+  - "relay"
   - "browser/*"
   - "extension/*"
   - "fixtures/*"

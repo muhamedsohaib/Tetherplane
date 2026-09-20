@@ -1,0 +1,22 @@
+{
+  "name": "@tetherplane/relay",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "build": "tsc -p tsconfig.json",
+    "test": "node --test test/*.test.ts",
+    "typecheck": "tsc --noEmit -p tsconfig.test.json"
+  },
+  "dependencies": {
+    "@modelcontextprotocol/sdk": "1.30.0",
+    "@tetherplane/compact-mcp": "workspace:*",
+    "@tetherplane/protocol": "workspace:*",
+    "ws": "8.21.3",
+    "zod": "4.6.5"
+  },
+  "devDependencies": {
+    "@types/node": "24.13.6",
+    "@types/ws": "8.18.1"
+  }
+}
