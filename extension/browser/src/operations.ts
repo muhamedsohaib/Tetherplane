@@ -1,5 +1,3 @@
-import path from "node:path";
-
 import type {
   BrowserOperation,
   RawBrowserDiagnosticEvent,
@@ -212,7 +210,7 @@ export class ChromeOperationalAgent {
         backend_id: `chrome:${item.id}`,
         page_id: page?.page_id ?? "browser",
         filename:
-          path.basename(item.filename) ||
+          portableBasename(item.filename) ||
           `download-${item.id}`,
         local_path: item.filename || null,
         state: normalizeDownloadState(item.state),
@@ -488,6 +486,10 @@ function normalizeMaxEvents(value: number | undefined): number {
     );
   }
   return Math.min(value, 2_000);
+}
+
+function portableBasename(value: string): string {
+  return value.split(/[\\/]/).filter(Boolean).at(-1) ?? "";
 }
 
 function originOf(value: string): string | null {
