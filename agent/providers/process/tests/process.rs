@@ -1,6 +1,9 @@
 use serde_json::{Value, json};
+use std::sync::Arc;
+
 use tether_core::{
-    Actor, ActorKind, CapabilityProvider, ErrorCode, InvocationEnvelope, ResponseMode,
+    Actor, ActorKind, CapabilityProvider, ErrorCode, InvocationEnvelope, ResourceKey, ResponseMode,
+    TrustedOwnershipRegistry,
 };
 use tether_process_provider::ProcessProvider;
 
@@ -471,4 +474,39 @@ async fn terminate_pty_session_gracefully_without_force() {
         terminated.data["terminal_reason"].as_str(),
         Some("graceful_termination")
     );
+}
+
+#[cfg(windows)]
+const OWNERSHIP_SCRIPT: &str = "ping -n 30 127.0.0.1 >NUL";
+#[cfg(unix)]
+const OWNERSHIP_SCRIPT: &str = "sleep 30";
+
+#[tokio::test]
+async fn spawned_process_registers_trusted_ownership_and_termination_revokes_it() {
+    let ownership = Arc::new(TrustedOwnershipRegistry::new());
+    let provider = ProcessProvider::with_ownership(Arc::clone(&ownership));
+
+    let started = provider
+        .execute(&invocation(shell_arguments(OWNERSHIP_SCRIPT, 0)))
+        .await
+        .unwrap();
+    let handle = started.data["handle"].as_str().unwrap().to_owned();
+    let pid = u32::try_from(started.data["pid"].as_u64().unwrap()).unwrap();
+
+    assert!(ownership.is_tetherplane_owned(&ResourceKey::Process(pid)));
+    assert!(!ownership.is_tetherplane_owned(&ResourceKey::Process(pid.saturating_add(10_000),)));
+
+    provider
+        .execute(&invocation_for(
+            "process.terminate",
+            json!({
+                "handle": handle,
+                "grace_ms": 100,
+                "force": true
+            }),
+        ))
+        .await
+        .unwrap();
+
+    assert_eq!(ownership.origin(&ResourceKey::Process(pid)), None);
 }

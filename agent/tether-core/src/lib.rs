@@ -18,7 +18,7 @@ pub use envelope::{
 };
 pub use error::{CapabilityError, ErrorCode};
 pub use handles::HandleRegistry;
-pub use ownership::ResourceOrigin;
+pub use ownership::{ResourceKey, ResourceOrigin, TrustedOwnershipRegistry};
 pub use policy::{
     ApprovalScope, LocalPolicyBroker, LocalPolicyConfig, PolicyBroker, PolicyDecision,
     SideEffectClass, authorize_path,

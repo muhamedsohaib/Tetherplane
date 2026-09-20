@@ -9,7 +9,7 @@ use tether_browser_provider::BrowserProvider;
 use tether_core::{
     CapabilityError, CapabilityProvider, CapabilityRouter, ErrorCode, InvocationEnvelope,
     LocalPolicyBroker, LocalPolicyConfig, PrincipalProfile, ProviderResult, ResultEnvelope,
-    VerificationStatus,
+    TrustedOwnershipRegistry, VerificationStatus,
 };
 use tether_filesystem_provider::FilesystemProvider;
 use tether_process_provider::ProcessProvider;
@@ -75,6 +75,7 @@ impl AgentRuntime {
         }
         let policy = Arc::new(LocalPolicyBroker::new(policy_config));
         let mut router = CapabilityRouter::with_policy(policy);
+        let ownership = Arc::new(TrustedOwnershipRegistry::new());
 
         let browser_operations = browser_provider
             .as_ref()
@@ -87,7 +88,9 @@ impl AgentRuntime {
         )))?;
         router.register(Arc::new(FilesystemProvider::new()))?;
         router.register(Arc::new(SearchProvider::new()))?;
-        router.register(Arc::new(ProcessProvider::new()))?;
+        router.register(Arc::new(ProcessProvider::with_ownership(Arc::clone(
+            &ownership,
+        ))))?;
         if let Some(state_dir) = state_dir.as_ref() {
             router.register(Arc::new(JobProvider::new(state_dir)?))?;
         } else {

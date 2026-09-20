@@ -12,7 +12,8 @@ use serde_json::{Value, json};
 use sysinfo::System;
 use tether_core::{
     CapabilityError, CapabilityProvider, ErrorCode, HandleRegistry, InvocationEnvelope,
-    ProviderResult, ResponseBudget, VerificationStatus,
+    ProviderResult, ResourceKey, ResourceOrigin, ResponseBudget, TrustedOwnershipRegistry,
+    VerificationStatus,
 };
 
 use session::ProcessSession;
@@ -20,14 +21,21 @@ use session::ProcessSession;
 pub struct ProcessProvider {
     sessions: HandleRegistry<Arc<ProcessSession>>,
     handles: Mutex<BTreeSet<String>>,
+    ownership: Arc<TrustedOwnershipRegistry>,
 }
 
 impl ProcessProvider {
     #[must_use]
     pub fn new() -> Self {
+        Self::with_ownership(Arc::new(TrustedOwnershipRegistry::new()))
+    }
+
+    #[must_use]
+    pub fn with_ownership(ownership: Arc<TrustedOwnershipRegistry>) -> Self {
         Self {
             sessions: HandleRegistry::new(),
             handles: Mutex::new(BTreeSet::new()),
+            ownership,
         }
     }
 
@@ -41,6 +49,10 @@ impl ProcessProvider {
         let wait_ms = u64_argument(arguments, "wait_ms", 250)?;
         let pty = bool_argument(arguments, "pty", false)?;
         let session = Arc::new(ProcessSession::spawn(program, &args, pty).await?);
+        self.ownership.register(
+            ResourceKey::Process(session.pid()),
+            ResourceOrigin::Tetherplane,
+        );
         let handle = self.sessions.insert("proc", Arc::clone(&session));
         self.handles
             .lock()
@@ -51,6 +63,10 @@ impl ProcessProvider {
             .wait_for_exit(Duration::from_millis(wait_ms))
             .await?;
         let (running, exit_code) = session.status().await?;
+        if !running {
+            self.ownership
+                .unregister(&ResourceKey::Process(session.pid()));
+        }
         let budget = ResponseBudget::for_mode(invocation.response_mode.clone());
         let (raw_stdout, raw_stderr, output_truncated) = session.take_unseen_output();
         let stdout = budget.apply_text(&raw_stdout, 0)?;
@@ -103,6 +119,10 @@ impl ProcessProvider {
         }
 
         let (running, exit_code) = session.status().await?;
+        if !running {
+            self.ownership
+                .unregister(&ResourceKey::Process(session.pid()));
+        }
         let (raw_stdout, raw_stderr, output_truncated) = match mode {
             "unseen" => session.take_unseen_output(),
             "absolute" => {
@@ -147,6 +167,10 @@ impl ProcessProvider {
         for handle in handles {
             let session = self.sessions.with(&handle, Arc::clone)?;
             let (running, exit_code) = session.status().await?;
+            if !running {
+                self.ownership
+                    .unregister(&ResourceKey::Process(session.pid()));
+            }
             sessions.push(json!({
                 "handle": handle,
                 "pid": session.pid(),
@@ -161,7 +185,7 @@ impl ProcessProvider {
         Ok(json!({ "sessions": sessions }))
     }
 
-    fn list_system(arguments: &Value) -> Result<Value, CapabilityError> {
+    fn list_system(&self, arguments: &Value) -> Result<Value, CapabilityError> {
         let max_results = usize::try_from(u64_argument(arguments, "max_results", 256)?)
             .map_err(|_| invalid_arguments("max_results is too large"))?;
         let system = System::new_all();
@@ -173,7 +197,14 @@ impl ProcessProvider {
                     "pid": pid.as_u32(),
                     "name": process.name().to_string_lossy(),
                     "exe": process.exe().map(|path| path.to_string_lossy().into_owned()),
-                    "origin": "human_or_external",
+                    "origin": if self
+                        .ownership
+                        .is_tetherplane_owned(&ResourceKey::Process(pid.as_u32()))
+                    {
+                        "tetherplane"
+                    } else {
+                        "human_or_external"
+                    },
                 })
             })
             .collect();
@@ -200,6 +231,10 @@ impl ProcessProvider {
         let (running, exit_code, terminal_reason) = session
             .terminate(Duration::from_millis(grace_ms), force)
             .await?;
+        if !running {
+            self.ownership
+                .unregister(&ResourceKey::Process(session.pid()));
+        }
 
         Ok(json!({
             "handle": handle,
@@ -238,7 +273,7 @@ impl CapabilityProvider for ProcessProvider {
             "read" => self.read(&invocation.arguments, invocation).await?,
             "input" => self.input(&invocation.arguments).await?,
             "list_sessions" => self.list_sessions().await?,
-            "list_system" => Self::list_system(&invocation.arguments)?,
+            "list_system" => self.list_system(&invocation.arguments)?,
             "terminate" => self.terminate(&invocation.arguments).await?,
             _ => {
                 return Err(CapabilityError {
