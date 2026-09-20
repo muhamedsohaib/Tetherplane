@@ -524,19 +524,13 @@ fn try_background_native_select(
     const LB_SETCURSEL: windows_win::sys::UINT = 0x0186;
     const LB_ERR: windows_win::sys::LRESULT = -1;
     let hwnd = raw as windows_win::sys::HWND;
-    let result = windows_win::raw::window::send_message(
-        hwnd,
-        LB_SETCURSEL,
-        index,
-        0,
-        Some(1_000),
-    )
-    .map_err(|error| CapabilityError {
-        code: ErrorCode::ActionUnverified,
-        message: format!("background-safe native selection failed: {error}"),
-        recovery_hint: Some("take a fresh desktop snapshot and retry semantically".into()),
-        details: serde_json::json!({}),
-    })?;
+    let result = windows_win::raw::window::send_message(hwnd, LB_SETCURSEL, index, 0, Some(1_000))
+        .map_err(|error| CapabilityError {
+            code: ErrorCode::ActionUnverified,
+            message: format!("background-safe native selection failed: {error}"),
+            recovery_hint: Some("take a fresh desktop snapshot and retry semantically".into()),
+            details: serde_json::json!({}),
+        })?;
     if result == LB_ERR {
         return Err(CapabilityError {
             code: ErrorCode::ActionUnverified,
