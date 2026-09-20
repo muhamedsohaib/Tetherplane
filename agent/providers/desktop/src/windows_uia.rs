@@ -36,7 +36,7 @@ enum WorkerRequest {
 #[derive(Clone, Debug, Eq, Ord, PartialEq, PartialOrd)]
 struct ElementIdentity {
     process_id: u32,
-    runtime_id: Vec<i32>,
+    parent_reference: Option<String>,
     automation_id: String,
     class_name: String,
     name: String,
@@ -155,7 +155,6 @@ impl WorkerState {
         parent_reference: Option<&str>,
     ) -> Option<DesktopNode> {
         let process_id = element.get_process_id().ok()?;
-        let runtime_id = element.get_runtime_id().unwrap_or_default();
         let automation_id = element.get_automation_id().unwrap_or_default();
         let class_name = element.get_classname().unwrap_or_default();
         let name = element.get_name().unwrap_or_default();
@@ -165,15 +164,13 @@ impl WorkerState {
 
         let identity = ElementIdentity {
             process_id,
-            runtime_id: runtime_id.clone(),
+            parent_reference: parent_reference.map(str::to_owned),
             automation_id: automation_id.clone(),
             class_name: class_name.clone(),
             name: name.clone(),
             role: role.clone(),
         };
-        let reference = if runtime_id.is_empty() {
-            self.allocate_reference()
-        } else if let Some(reference) = self.stable_references.get(&identity) {
+        let reference = if let Some(reference) = self.stable_references.get(&identity) {
             reference.clone()
         } else {
             let reference = self.allocate_reference();
@@ -217,6 +214,15 @@ impl WorkerState {
     }
 
     fn target(&mut self, reference: &str) -> Result<DesktopNode, CapabilityError> {
+        if let Ok(target) = self.refresh_target(reference) {
+            return Ok(target);
+        }
+
+        self.snapshot()?;
+        self.refresh_target(reference)
+    }
+
+    fn refresh_target(&mut self, reference: &str) -> Result<DesktopNode, CapabilityError> {
         let cached = self
             .references
             .get(reference)
@@ -499,7 +505,7 @@ fn uia_action_error(error: &uiautomation::Error) -> CapabilityError {
         code: ErrorCode::ActionUnverified,
         message: format!("Windows UI Automation semantic action failed: {error}"),
         recovery_hint: Some("take a fresh desktop snapshot and retry semantically".into()),
-        details: serde_json::Value::Null,
+        details: serde_json::json!({}),
     }
 }
 
@@ -517,7 +523,7 @@ fn disconnected_worker() -> CapabilityError {
         code: ErrorCode::Disconnected,
         message: "Windows UI Automation worker is disconnected".into(),
         recovery_hint: Some("restart the local Tetherplane agent".into()),
-        details: serde_json::Value::Null,
+        details: serde_json::json!({}),
     }
 }
 
@@ -526,7 +532,7 @@ fn invalid_arguments(message: &str) -> CapabilityError {
         code: ErrorCode::InvalidArguments,
         message: message.to_owned(),
         recovery_hint: None,
-        details: serde_json::Value::Null,
+        details: serde_json::json!({}),
     }
 }
 
@@ -535,6 +541,6 @@ fn provider_failure(message: impl Into<String>) -> CapabilityError {
         code: ErrorCode::ProviderFailure,
         message: message.into(),
         recovery_hint: None,
-        details: serde_json::Value::Null,
+        details: serde_json::json!({}),
     }
 }

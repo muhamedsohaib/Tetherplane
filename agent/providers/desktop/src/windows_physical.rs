@@ -37,6 +37,6 @@ fn physical_error(error: &uiautomation::Error) -> CapabilityError {
         code: ErrorCode::ProviderFailure,
         message: format!("Windows physical desktop fallback failed: {error}"),
         recovery_hint: None,
-        details: serde_json::Value::Null,
+        details: serde_json::json!({}),
     }
 }

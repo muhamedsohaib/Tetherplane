@@ -2,7 +2,7 @@ use std::collections::{BTreeSet, HashMap};
 use std::sync::Mutex;
 
 use serde::{Deserialize, Serialize};
-use serde_json::{Value, json};
+use serde_json::json;
 use tether_core::{CapabilityError, ErrorCode};
 use uuid::Uuid;
 
@@ -236,7 +236,7 @@ fn foreground_lease_required(message: &str) -> CapabilityError {
         code: ErrorCode::ForegroundLeaseRequired,
         message: message.to_owned(),
         recovery_hint: Some("obtain a new scoped foreground lease".into()),
-        details: Value::Null,
+        details: serde_json::json!({}),
     }
 }
 
@@ -245,6 +245,6 @@ fn invalid_arguments(message: &str) -> CapabilityError {
         code: ErrorCode::InvalidArguments,
         message: message.to_owned(),
         recovery_hint: None,
-        details: Value::Null,
+        details: serde_json::json!({}),
     }
 }

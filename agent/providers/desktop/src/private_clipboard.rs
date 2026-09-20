@@ -116,6 +116,6 @@ fn invalid_arguments(message: &str) -> CapabilityError {
         code: ErrorCode::InvalidArguments,
         message: message.to_owned(),
         recovery_hint: None,
-        details: Value::Null,
+        details: serde_json::json!({}),
     }
 }

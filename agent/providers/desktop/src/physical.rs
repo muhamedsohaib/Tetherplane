@@ -1,5 +1,4 @@
 use serde::{Deserialize, Serialize};
-use serde_json::Value;
 use tether_core::{CapabilityError, ErrorCode};
 
 #[derive(Clone, Copy, Debug, Default, Deserialize, Eq, PartialEq, Serialize)]
@@ -59,6 +58,6 @@ fn unavailable() -> CapabilityError {
         code: ErrorCode::CapabilityUnavailable,
         message: "physical desktop fallback is not installed".into(),
         recovery_hint: None,
-        details: Value::Null,
+        details: serde_json::json!({}),
     }
 }

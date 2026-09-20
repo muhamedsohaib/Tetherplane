@@ -15,7 +15,7 @@ impl HumanActivityMonitor for WindowsHumanActivityMonitor {
             code: ErrorCode::ProviderFailure,
             message: format!("failed to read Windows last-input state: {error}"),
             recovery_hint: None,
-            details: serde_json::Value::Null,
+            details: serde_json::json!({}),
         })?;
 
         let tick_bytes = GetTickCount64().to_le_bytes();

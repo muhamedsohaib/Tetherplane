@@ -332,7 +332,7 @@ impl DesktopProvider {
                 code: ErrorCode::PermissionDenied,
                 message: "only a trusted local human actor may grant a foreground lease".into(),
                 recovery_hint: None,
-                details: Value::Null,
+                details: serde_json::json!({}),
             });
         }
 
@@ -476,7 +476,7 @@ impl DesktopProvider {
             code: ErrorCode::PermissionDenied,
             message: "foreground lease belongs to a different principal".into(),
             recovery_hint: None,
-            details: Value::Null,
+            details: serde_json::json!({}),
         })
     }
 
@@ -654,13 +654,13 @@ fn epoch_ms() -> Result<u64, CapabilityError> {
             code: ErrorCode::ProviderFailure,
             message: format!("system clock is before Unix epoch: {error}"),
             recovery_hint: None,
-            details: Value::Null,
+            details: serde_json::json!({}),
         })?;
     u64::try_from(duration.as_millis()).map_err(|_| CapabilityError {
         code: ErrorCode::ProviderFailure,
         message: "system clock value is too large".into(),
         recovery_hint: None,
-        details: Value::Null,
+        details: serde_json::json!({}),
     })
 }
 
@@ -669,7 +669,7 @@ fn foreground_lease_required(message: &str) -> CapabilityError {
         code: ErrorCode::ForegroundLeaseRequired,
         message: message.to_owned(),
         recovery_hint: Some("obtain a new scoped foreground lease".into()),
-        details: Value::Null,
+        details: serde_json::json!({}),
     }
 }
 
@@ -678,7 +678,7 @@ fn invalid_arguments(message: &str) -> CapabilityError {
         code: ErrorCode::InvalidArguments,
         message: message.to_owned(),
         recovery_hint: None,
-        details: Value::Null,
+        details: serde_json::json!({}),
     }
 }
 

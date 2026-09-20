@@ -64,7 +64,7 @@ impl HumanActivityMonitor for UnavailableHumanActivityMonitor {
             code: ErrorCode::CapabilityUnavailable,
             message: "human activity monitor is not installed".into(),
             recovery_hint: None,
-            details: serde_json::Value::Null,
+            details: serde_json::json!({}),
         })
     }
 }
