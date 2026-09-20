@@ -105,10 +105,17 @@ export async function startExtensionBridgeServer(options: {
     let authenticatedClient: ExtensionClient | undefined;
     let authenticated = false;
 
+    const rejectConnection = (code: number, reason: string): void => {
+      if (authenticatedClient) {
+        clients.delete(authenticatedClient);
+      }
+      socket.close(code, reason);
+    };
+
     socket.on("message", (data) => {
       const parsed = parseMessage(String(data));
       if (!parsed) {
-        socket.close(4002, "invalid_json");
+        rejectConnection(4002, "invalid_json");
         return;
       }
 
@@ -119,7 +126,7 @@ export async function startExtensionBridgeServer(options: {
           typeof parsed.extension_id !== "string" ||
           !parsed.extension_id.trim()
         ) {
-          socket.close(4001, "unauthorized");
+          rejectConnection(4001, "unauthorized");
           return;
         }
 
@@ -144,7 +151,7 @@ export async function startExtensionBridgeServer(options: {
       }
 
       if (containsSensitiveBrowserState(parsed)) {
-        socket.close(4003, "sensitive_data_forbidden");
+        rejectConnection(4003, "sensitive_data_forbidden");
         return;
       }
 

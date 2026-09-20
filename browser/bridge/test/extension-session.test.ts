@@ -139,7 +139,7 @@ test("extension bridge rejects credential-shaped payloads after authentication",
       }),
     );
     await onceMessage(socket);
-    await bridge.waitForAuthenticatedClient();
+    const client = await bridge.waitForAuthenticatedClient();
 
     const closed = new Promise<number>((resolve) => {
       socket.once("close", (code) => resolve(code));
@@ -156,6 +156,10 @@ test("extension bridge rejects credential-shaped payloads after authentication",
 
     assert.equal(await closed, 4003);
     assert.equal(bridge.authenticatedClientCount(), 0);
+    await assert.rejects(
+      client.nextMessage(),
+      /extension bridge client (?:is )?disconnected/,
+    );
   } finally {
     socket.close();
     await bridge.close();
