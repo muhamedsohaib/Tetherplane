@@ -1,6 +1,7 @@
 import { spawn, type ChildProcessWithoutNullStreams } from "node:child_process";
 import { once } from "node:events";
 import { readFileSync } from "node:fs";
+import { createRequire } from "node:module";
 import { createInterface, type Interface } from "node:readline";
 
 import { Ajv, type ValidateFunction } from "ajv";
@@ -29,6 +30,8 @@ export class AgentProtocolError extends Error {
     this.name = "AgentProtocolError";
   }
 }
+
+const require = createRequire(import.meta.url);
 
 const validateResult =
   process.env.NODE_ENV === "production" ? null : createResultValidator();
@@ -169,16 +172,14 @@ export class AgentClient {
 
 function createResultValidator(): ValidateFunction<unknown> {
   const ajv = new Ajv({ allErrors: true, strict: true });
-  ajv.addSchema(loadSchema("../../../protocol/schemas/error.schema.json"));
+  ajv.addSchema(loadSchema("@tetherplane/protocol/schemas/error.schema.json"));
   return ajv.compile(
-    loadSchema("../../../protocol/schemas/result.schema.json"),
+    loadSchema("@tetherplane/protocol/schemas/result.schema.json"),
   );
 }
 
-function loadSchema(relativePath: string): object {
-  return JSON.parse(
-    readFileSync(new URL(relativePath, import.meta.url), "utf8"),
-  ) as object;
+function loadSchema(specifier: string): object {
+  return JSON.parse(readFileSync(require.resolve(specifier), "utf8")) as object;
 }
 
 function resultRequestId(value: unknown): string | null {

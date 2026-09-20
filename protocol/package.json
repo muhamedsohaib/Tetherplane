@@ -8,7 +8,9 @@
     ".": {
       "types": "./generated/types.d.ts",
       "default": "./dist/index.js"
-    }
+    },
+    "./schemas/error.schema.json": "./schemas/error.schema.json",
+    "./schemas/result.schema.json": "./schemas/result.schema.json"
   },
   "scripts": {
     "build": "node scripts/generate-types.mjs && tsc -p tsconfig.json",
