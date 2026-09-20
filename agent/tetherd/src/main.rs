@@ -3,17 +3,30 @@
 mod audit;
 mod idempotency;
 mod job;
+mod relay_ws;
 mod runtime;
 mod stdio_rpc;
 
 use std::path::PathBuf;
 use std::sync::Arc;
+use std::time::Duration;
 
 use runtime::AgentRuntime;
 use tether_browser_provider::{BrowserBridgeConfig, BrowserProvider};
 use tether_core::PrincipalProfile;
 
+enum TransportMode {
+    Stdio,
+    Relay {
+        url: String,
+        device_id: String,
+        credential_file: PathBuf,
+        allow_insecure_localhost: bool,
+    },
+}
+
 struct CliOptions {
+    transport: TransportMode,
     allowed_roots: Vec<PathBuf>,
     principal_profile: Option<PathBuf>,
     state_dir: Option<PathBuf>,
@@ -29,6 +42,10 @@ fn parse_args() -> Result<CliOptions, String> {
     let mut state_dir = None;
     let mut browser_bridge = None;
     let mut browser_bridge_token_file = None;
+    let mut relay_url = None;
+    let mut device_id = None;
+    let mut device_credential_file = None;
+    let mut relay_allow_insecure_localhost = false;
 
     while let Some(argument) = arguments.next() {
         match argument.as_str() {
@@ -63,15 +80,55 @@ fn parse_args() -> Result<CliOptions, String> {
                     .ok_or_else(|| "--browser-bridge-token-file requires a path".to_owned())?;
                 browser_bridge_token_file = Some(PathBuf::from(path));
             }
+            "--relay-url" => {
+                relay_url = Some(
+                    arguments
+                        .next()
+                        .ok_or_else(|| "--relay-url requires a URL".to_owned())?,
+                );
+            }
+            "--device-id" => {
+                device_id = Some(
+                    arguments
+                        .next()
+                        .ok_or_else(|| "--device-id requires a value".to_owned())?,
+                );
+            }
+            "--device-credential-file" => {
+                device_credential_file =
+                    Some(PathBuf::from(arguments.next().ok_or_else(|| {
+                        "--device-credential-file requires a path".to_owned()
+                    })?));
+            }
+            "--relay-allow-insecure-localhost" => relay_allow_insecure_localhost = true,
             _ => return Err(format!("unknown tetherd argument: {argument}")),
         }
     }
 
-    if !stdio_rpc {
-        return Err("tetherd requires --stdio-rpc for the local JSONL transport".into());
-    }
+    let transport = match (stdio_rpc, relay_url) {
+        (true, None) => {
+            if device_id.is_some() || device_credential_file.is_some() {
+                return Err("--device-id and --device-credential-file require --relay-url".into());
+            }
+            TransportMode::Stdio
+        }
+        (false, Some(url)) => TransportMode::Relay {
+            url,
+            device_id: device_id.ok_or_else(|| "--relay-url requires --device-id".to_owned())?,
+            credential_file: device_credential_file
+                .ok_or_else(|| "--relay-url requires --device-credential-file".to_owned())?,
+            allow_insecure_localhost: relay_allow_insecure_localhost,
+        },
+        (true, Some(_)) => {
+            return Err("--stdio-rpc and --relay-url are mutually exclusive".into());
+        }
+        (false, None) => {
+            return Err("tetherd requires either --stdio-rpc or --relay-url".into());
+        }
+    };
 
     Ok(CliOptions {
+        transport,
         allowed_roots,
         principal_profile,
         state_dir,
@@ -120,6 +177,8 @@ async fn main() {
         }
     };
 
+    let transport = options.transport;
+
     let principal = match load_principal_profile(options.principal_profile.as_ref()) {
         Ok(principal) => principal,
         Err(message) => {
@@ -167,8 +226,40 @@ async fn main() {
         }
     };
 
-    if let Err(error) = stdio_rpc::serve(runtime).await {
-        eprintln!("stdio RPC failed: {error}");
+    let result = match transport {
+        TransportMode::Stdio => stdio_rpc::serve(runtime)
+            .await
+            .map_err(|error| format!("stdio RPC failed: {error}")),
+        TransportMode::Relay {
+            url,
+            device_id,
+            credential_file,
+            allow_insecure_localhost,
+        } => {
+            let credential = match relay_ws::load_device_credential(&credential_file) {
+                Ok(credential) => credential,
+                Err(message) => {
+                    eprintln!("{message}");
+                    std::process::exit(2);
+                }
+            };
+            relay_ws::serve(
+                runtime,
+                relay_ws::RelayConfig {
+                    url,
+                    device_id,
+                    credential,
+                    allow_insecure_localhost,
+                    reconnect_delay: Duration::from_secs(2),
+                },
+            )
+            .await
+            .map_err(|error| format!("relay transport failed: {error}"))
+        }
+    };
+
+    if let Err(message) = result {
+        eprintln!("{message}");
         std::process::exit(1);
     }
 }
