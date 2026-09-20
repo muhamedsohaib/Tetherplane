@@ -288,8 +288,65 @@ fn execute_invoke(element: &UIElement) -> Result<(bool, serde_json::Value), Capa
     let pattern = element
         .get_pattern::<UIInvokePattern>()
         .map_err(|error| uia_action_error(&error))?;
+
+    if try_background_native_invoke(element)? {
+        return Ok((
+            false,
+            json!({
+                "action": "invoke",
+                "transport": "native_button_message",
+            }),
+        ));
+    }
+
+    if !element.has_keyboard_focus().unwrap_or(false) {
+        return Err(CapabilityError {
+            code: ErrorCode::ActionUnverified,
+            message:
+                "background-safe invoke is unavailable for this unfocused control".into(),
+            recovery_hint: Some(
+                "use a provider-native background invocation path or an explicitly authorized foreground lease"
+                    .into(),
+            ),
+            details: serde_json::json!({}),
+        });
+    }
+
     pattern.invoke().map_err(|error| uia_action_error(&error))?;
-    Ok((false, json!({ "action": "invoke" })))
+    Ok((
+        false,
+        json!({
+            "action": "invoke",
+            "transport": "uia_invoke_pattern_already_focused",
+        }),
+    ))
+}
+
+fn try_background_native_invoke(element: &UIElement) -> Result<bool, CapabilityError> {
+    let role = element.get_localized_control_type().unwrap_or_default();
+    if !role.eq_ignore_ascii_case("button") {
+        return Ok(false);
+    }
+
+    let handle = match element.get_native_window_handle() {
+        Ok(handle) => handle,
+        Err(_) => return Ok(false),
+    };
+    let raw: isize = handle.into();
+    if raw == 0 {
+        return Ok(false);
+    }
+
+    let hwnd = raw as windows_win::sys::HWND;
+    windows_win::raw::window::send_push_button(hwnd, Some(1_000)).map_err(|error| {
+        CapabilityError {
+            code: ErrorCode::ActionUnverified,
+            message: format!("background-safe native invoke failed: {error}"),
+            recovery_hint: Some("take a fresh desktop snapshot and retry semantically".into()),
+            details: serde_json::json!({}),
+        }
+    })?;
+    Ok(true)
 }
 
 fn execute_set_value(
