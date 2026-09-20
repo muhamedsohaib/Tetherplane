@@ -253,7 +253,8 @@ impl WorkerState {
             .element
             .clone();
 
-        let (verified, delta) = execute_semantic_action(&element, action)?;
+        let (verified, delta) =
+            execute_semantic_action(&self.automation, &self.walker, &element, action)?;
 
         let target = self.target(&action.reference).unwrap_or(before);
         Ok(DesktopActionOutcome {
@@ -271,13 +272,15 @@ impl WorkerState {
 }
 
 fn execute_semantic_action(
+    automation: &UIAutomation,
+    walker: &UITreeWalker,
     element: &UIElement,
     action: &DesktopAction,
 ) -> Result<(bool, serde_json::Value), CapabilityError> {
     match action.kind {
         DesktopActionKind::Invoke => execute_invoke(element),
         DesktopActionKind::SetValue => execute_set_value(element, action),
-        DesktopActionKind::Select => execute_select(element),
+        DesktopActionKind::Select => execute_select(automation, walker, element),
         DesktopActionKind::Toggle => execute_toggle(element),
         DesktopActionKind::Expand => execute_expand(element),
         DesktopActionKind::Collapse => execute_collapse(element),
@@ -433,10 +436,40 @@ fn try_background_native_set_value(
     }
 }
 
-fn execute_select(element: &UIElement) -> Result<(bool, serde_json::Value), CapabilityError> {
+fn execute_select(
+    automation: &UIAutomation,
+    walker: &UITreeWalker,
+    element: &UIElement,
+) -> Result<(bool, serde_json::Value), CapabilityError> {
     let pattern = element
         .get_pattern::<UISelectionItemPattern>()
         .map_err(|error| uia_action_error(&error))?;
+
+    if try_background_native_select(automation, walker, element)? {
+        let selected = pattern.is_selected().unwrap_or(false);
+        return Ok((
+            selected,
+            json!({
+                "action": "select",
+                "selected": selected,
+                "transport": "native_listbox_message",
+            }),
+        ));
+    }
+
+    if !element.has_keyboard_focus().unwrap_or(false) {
+        return Err(CapabilityError {
+            code: ErrorCode::ActionUnverified,
+            message:
+                "background-safe selection is unavailable for this unfocused control".into(),
+            recovery_hint: Some(
+                "use a provider-native background selection path or an explicitly authorized foreground lease"
+                    .into(),
+            ),
+            details: serde_json::json!({}),
+        });
+    }
+
     pattern.select().map_err(|error| uia_action_error(&error))?;
     let selected = pattern.is_selected().unwrap_or(false);
     Ok((
@@ -444,8 +477,75 @@ fn execute_select(element: &UIElement) -> Result<(bool, serde_json::Value), Capa
         json!({
             "action": "select",
             "selected": selected,
+            "transport": "uia_selection_pattern_already_focused",
         }),
     ))
+}
+
+fn try_background_native_select(
+    automation: &UIAutomation,
+    walker: &UITreeWalker,
+    element: &UIElement,
+) -> Result<bool, CapabilityError> {
+    let Ok(parent) = walker.get_parent(element) else {
+        return Ok(false);
+    };
+    let parent_role = parent.get_localized_control_type().unwrap_or_default();
+    if !parent_role.eq_ignore_ascii_case("list") {
+        return Ok(false);
+    }
+
+    let Ok(handle) = parent.get_native_window_handle() else {
+        return Ok(false);
+    };
+    let raw: isize = handle.into();
+    if raw == 0 {
+        return Ok(false);
+    }
+
+    let Ok(mut current) = walker.get_first_child(&parent) else {
+        return Ok(false);
+    };
+    let mut index = 0_usize;
+    loop {
+        if automation
+            .compare_elements(&current, element)
+            .unwrap_or(false)
+        {
+            break;
+        }
+        let Ok(next) = walker.get_next_sibling(&current) else {
+            return Ok(false);
+        };
+        current = next;
+        index = index.saturating_add(1);
+    }
+
+    const LB_SETCURSEL: windows_win::sys::UINT = 0x0186;
+    const LB_ERR: windows_win::sys::LRESULT = -1;
+    let hwnd = raw as windows_win::sys::HWND;
+    let result = windows_win::raw::window::send_message(
+        hwnd,
+        LB_SETCURSEL,
+        index,
+        0,
+        Some(1_000),
+    )
+    .map_err(|error| CapabilityError {
+        code: ErrorCode::ActionUnverified,
+        message: format!("background-safe native selection failed: {error}"),
+        recovery_hint: Some("take a fresh desktop snapshot and retry semantically".into()),
+        details: serde_json::json!({}),
+    })?;
+    if result == LB_ERR {
+        return Err(CapabilityError {
+            code: ErrorCode::ActionUnverified,
+            message: "background-safe native selection was rejected by the list control".into(),
+            recovery_hint: Some("take a fresh desktop snapshot and retry semantically".into()),
+            details: serde_json::json!({}),
+        });
+    }
+    Ok(true)
 }
 
 fn execute_toggle(element: &UIElement) -> Result<(bool, serde_json::Value), CapabilityError> {
