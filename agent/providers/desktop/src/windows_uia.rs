@@ -303,6 +303,41 @@ fn execute_set_value(
     let pattern = element
         .get_pattern::<UIValuePattern>()
         .map_err(|error| uia_action_error(&error))?;
+
+    if pattern.is_readonly().unwrap_or(false) {
+        return Err(CapabilityError {
+            code: ErrorCode::PermissionDenied,
+            message: "desktop value target is read-only".into(),
+            recovery_hint: None,
+            details: serde_json::json!({}),
+        });
+    }
+
+    if try_background_native_set_value(element, value)? {
+        let persisted = pattern.get_value().is_ok_and(|current| current == value);
+        return Ok((
+            persisted,
+            json!({
+                "action": "set_value",
+                "value_persisted": persisted,
+                "transport": "native_window_message",
+            }),
+        ));
+    }
+
+    if !element.has_keyboard_focus().unwrap_or(false) {
+        return Err(CapabilityError {
+            code: ErrorCode::ActionUnverified,
+            message:
+                "background-safe value mutation is unavailable for this unfocused control".into(),
+            recovery_hint: Some(
+                "use a provider-native background mutation path or an explicitly authorized foreground lease"
+                    .into(),
+            ),
+            details: serde_json::json!({}),
+        });
+    }
+
     pattern
         .set_value(value)
         .map_err(|error| uia_action_error(&error))?;
@@ -312,8 +347,35 @@ fn execute_set_value(
         json!({
             "action": "set_value",
             "value_persisted": persisted,
+            "transport": "uia_value_pattern_already_focused",
         }),
     ))
+}
+
+fn try_background_native_set_value(
+    element: &UIElement,
+    value: &str,
+) -> Result<bool, CapabilityError> {
+    let handle = match element.get_native_window_handle() {
+        Ok(handle) => handle,
+        Err(_) => return Ok(false),
+    };
+    let raw: isize = handle.into();
+    if raw == 0 {
+        return Ok(false);
+    }
+
+    let hwnd = raw as windows_win::sys::HWND;
+    if windows_win::raw::window::send_set_text(hwnd, value) {
+        Ok(true)
+    } else {
+        Err(CapabilityError {
+            code: ErrorCode::ActionUnverified,
+            message: "background-safe native value mutation failed".into(),
+            recovery_hint: Some("take a fresh desktop snapshot and retry semantically".into()),
+            details: serde_json::json!({}),
+        })
+    }
 }
 
 fn execute_select(element: &UIElement) -> Result<(bool, serde_json::Value), CapabilityError> {
