@@ -1,0 +1,22 @@
+export {
+  StaticClientAuthenticator,
+  type ClientAuthenticator,
+  type ClientIdentity,
+  type StaticClientCredential,
+} from "./auth/static-auth.ts";
+export {
+  DeviceRegistry,
+  generateDeviceCredential,
+  hashDeviceCredential,
+  type DeviceBinding,
+} from "./devices/registry.ts";
+export {
+  DeviceRouter,
+  type DeviceConnectionHandle,
+  type DeviceToRelayMessage,
+  type RelayToDeviceMessage,
+} from "./routing/device-router.ts";
+export {
+  RelayServer,
+  type RelayListenAddress,
+} from "./server.ts";
