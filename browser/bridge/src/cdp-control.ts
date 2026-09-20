@@ -221,6 +221,8 @@ class CdpWire {
   }
 }
 
+export const DEFAULT_CDP_LAUNCH_TIMEOUT_MS = 20_000;
+
 export type LaunchedCdpControl = CdpControl & {
   readonly profile_dir: string;
   readonly executable_path: string;
@@ -901,7 +903,7 @@ export async function launchCdpOwnedBrowser(options: {
         child,
         profileDir,
         timeoutMs:
-          options.launchTimeoutMs ?? 10_000,
+          options.launchTimeoutMs ?? DEFAULT_CDP_LAUNCH_TIMEOUT_MS,
       });
     const wire = await CdpWire.connect(websocketUrl);
     const browserPid = await discoverBrowserPid(wire);
@@ -922,9 +924,7 @@ export async function launchCdpOwnedBrowser(options: {
       browserPid,
     });
   } catch (error) {
-    if (child.exitCode === null) {
-      child.kill();
-    }
+    await stopOwnedChromiumProcesses(child, null);
     await rm(profileDir, {
       recursive: true,
       force: true,

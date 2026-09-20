@@ -19,7 +19,7 @@ import {
 
 test(
   "CDP fallback drives Browser Lab through an isolated Tetherplane-owned Chrome profile",
-  { timeout: 30_000 },
+  { timeout: 45_000 },
   async () => {
     const executablePath = findInstalledChromium();
     assert.ok(
@@ -28,16 +28,17 @@ test(
     );
 
     const lab = await startBrowserLab();
-    const control = await launchCdpOwnedBrowser({
-      executablePath,
-    });
-    const profileDir = control.profile_dir;
-    const backend = new CdpBrowserBackend({
-      control,
-      pollIntervalMs: 20,
-    });
-
     try {
+      const control = await launchCdpOwnedBrowser({
+        executablePath,
+      });
+      const profileDir = control.profile_dir;
+      const backend = new CdpBrowserBackend({
+        control,
+        pollIntervalMs: 20,
+      });
+
+      try {
       assert.equal((await backend.pages()).length, 0);
 
       const page = await backend.createTab(lab.origin);
@@ -167,19 +168,21 @@ test(
 
       await backend.close(page.page_id);
       assert.equal((await backend.pages()).length, 0);
+      } finally {
+        await backend.shutdown();
+      }
+
+      assert.equal(existsSync(profileDir), false);
     } finally {
-      await backend.shutdown();
       await lab.close();
     }
-
-    assert.equal(existsSync(profileDir), false);
   },
 );
 
 
 test(
   "CDP fallback performs real B6 upload download diagnostics and checkpoint operations",
-  { timeout: 40_000 },
+  { timeout: 55_000 },
   async () => {
     const executablePath = findInstalledChromium();
     assert.ok(
@@ -191,25 +194,26 @@ test(
     const tempRoot = await mkdtemp(
       path.join(os.tmpdir(), "tetherplane-b6-upload-"),
     );
-    const uploadPath = path.join(tempRoot, "fixture-upload.txt");
-    await writeFile(uploadPath, "uploaded-through-cdp\n", "utf8");
-
-    const control = await launchCdpOwnedBrowser({
-      executablePath,
-    });
-    const backend = new CdpBrowserBackend({
-      control,
-      pollIntervalMs: 20,
-    });
-    const ownership = new BrowserOwnershipRegistry();
-    const semantics = new SemanticSnapshotEngine();
-    const operations = new BrowserOperationalEngine({
-      backend,
-      ownership,
-      semantics,
-    });
-
     try {
+      const uploadPath = path.join(tempRoot, "fixture-upload.txt");
+      await writeFile(uploadPath, "uploaded-through-cdp\n", "utf8");
+
+      const control = await launchCdpOwnedBrowser({
+        executablePath,
+      });
+      const backend = new CdpBrowserBackend({
+        control,
+        pollIntervalMs: 20,
+      });
+      const ownership = new BrowserOwnershipRegistry();
+      const semantics = new SemanticSnapshotEngine();
+      const operations = new BrowserOperationalEngine({
+        backend,
+        ownership,
+        semantics,
+      });
+
+      try {
       const page = await backend.createTab(lab.origin);
       ownership.register({
         page_id: page.page_id,
@@ -345,8 +349,10 @@ test(
         JSON.stringify(failureDiagnostic).includes("authorization"),
         false,
       );
+      } finally {
+        await backend.shutdown();
+      }
     } finally {
-      await backend.shutdown();
       await lab.close();
       await rm(tempRoot, {
         recursive: true,

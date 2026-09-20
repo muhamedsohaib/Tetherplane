@@ -164,6 +164,7 @@ export {
 } from "./cdp-backend.ts";
 
 export {
+  DEFAULT_CDP_LAUNCH_TIMEOUT_MS,
   findInstalledChromium,
   launchCdpOwnedBrowser,
   type LaunchedCdpControl,

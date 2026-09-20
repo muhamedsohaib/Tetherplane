@@ -4,6 +4,7 @@ import test from "node:test";
 import {
   CdpBackendError,
   CdpBrowserBackend,
+  DEFAULT_CDP_LAUNCH_TIMEOUT_MS,
   buildIsolatedChromiumArgs,
   type CdpControl,
   type CdpFrame,
@@ -185,6 +186,10 @@ test("CDP fallback advertises reduced Tetherplane-owned capability surface truth
       "checkpoint",
     ],
   });
+});
+
+test("isolated Chromium launch budget tolerates slow hosted runners", () => {
+  assert.ok(DEFAULT_CDP_LAUNCH_TIMEOUT_MS >= 20_000);
 });
 
 test("isolated Chromium args always use a dedicated profile and ephemeral debugging port", () => {
