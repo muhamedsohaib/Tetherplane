@@ -22,7 +22,7 @@ $supervisorProcess = $null
 try {
     New-Item -ItemType Directory -Force -Path $root,$allow | Out-Null
 
-    & $packageScript -OutputPath $stage -SkipBuild
+    & powershell.exe -NoProfile -NonInteractive -ExecutionPolicy Bypass -File $packageScript -OutputPath $stage -SkipBuild
     if ($LASTEXITCODE -ne 0) {
         throw "package script failed with exit code $LASTEXITCODE"
     }
