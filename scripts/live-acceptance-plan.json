@@ -1,0 +1,117 @@
+{
+  "version": 1,
+  "release": "v0.1.0",
+  "purpose": "Guarded final acceptance sequence for Tetherplane v1 on Leno before creating a public release tag.",
+  "stages": [
+    {
+      "id": "source_of_truth",
+      "phase": "prepare",
+      "automated": true,
+      "requires_user_present": false,
+      "foreground_disruptive": false,
+      "destructive": false,
+      "external_communication": false,
+      "financial": false,
+      "description": "Require Windows, main branch, clean worktree, and local HEAD equal to origin/main."
+    },
+    {
+      "id": "release_package",
+      "phase": "prepare",
+      "automated": true,
+      "requires_user_present": false,
+      "foreground_disruptive": false,
+      "destructive": false,
+      "external_communication": false,
+      "financial": false,
+      "description": "Build a Windows v0.1.0 candidate package from the verified source tree."
+    },
+    {
+      "id": "isolated_install",
+      "phase": "prepare",
+      "automated": true,
+      "requires_user_present": false,
+      "foreground_disruptive": false,
+      "destructive": false,
+      "external_communication": false,
+      "financial": false,
+      "description": "Install the candidate side-by-side under Tetherplane-owned LocalAppData without registering a scheduled task."
+    },
+    {
+      "id": "installed_six_tool_smoke",
+      "phase": "prepare",
+      "automated": true,
+      "requires_user_present": false,
+      "foreground_disruptive": false,
+      "destructive": false,
+      "external_communication": false,
+      "financial": false,
+      "description": "Run the installed Compact MCP smoke and require exactly device/files/process/browser/desktop/batch."
+    },
+    {
+      "id": "local_core",
+      "phase": "live",
+      "automated": true,
+      "requires_user_present": true,
+      "foreground_disruptive": false,
+      "destructive": false,
+      "external_communication": false,
+      "financial": false,
+      "description": "Exercise real local filesystem, process, batching, response budgets, and agent startup while the operator observes Leno."
+    },
+    {
+      "id": "browser_semantic",
+      "phase": "live",
+      "automated": true,
+      "requires_user_present": true,
+      "foreground_disruptive": false,
+      "destructive": false,
+      "external_communication": false,
+      "financial": false,
+      "description": "Exercise verified semantic browser work in a Tetherplane-owned isolated context without hijacking human browser state."
+    },
+    {
+      "id": "desktop_semantic",
+      "phase": "live",
+      "automated": true,
+      "requires_user_present": true,
+      "foreground_disruptive": false,
+      "destructive": false,
+      "external_communication": false,
+      "financial": false,
+      "description": "Exercise Windows UI Automation semantic actions and require the physical cursor to remain unchanged."
+    },
+    {
+      "id": "remote_plane",
+      "phase": "manual",
+      "automated": false,
+      "requires_user_present": true,
+      "foreground_disruptive": false,
+      "destructive": false,
+      "external_communication": false,
+      "financial": false,
+      "description": "From a separately paired client, make a real authenticated relay call to Leno while the operator watches for disruption."
+    },
+    {
+      "id": "cleanup",
+      "phase": "cleanup",
+      "automated": false,
+      "requires_user_present": false,
+      "foreground_disruptive": false,
+      "destructive": true,
+      "external_communication": false,
+      "financial": false,
+      "description": "Explicitly remove only the Tetherplane-owned side-by-side acceptance install and state."
+    },
+    {
+      "id": "release_tag",
+      "phase": "finalize",
+      "automated": false,
+      "requires_user_present": false,
+      "foreground_disruptive": false,
+      "destructive": false,
+      "external_communication": true,
+      "financial": false,
+      "description": "Only after live local and remote acceptance pass, create the v0.1.0 tag that triggers public release automation."
+    }
+  ]
+}

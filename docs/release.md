@@ -30,6 +30,22 @@ Run:
 
     powershell -NoProfile -ExecutionPolicy Bypass -File tests/release/windows-package-smoke.ps1
 
+## Live acceptance gate
+
+Before creating the public `v0.1.0` tag, follow `docs/live-acceptance.md`.
+
+Preparation is non-interactive and uses a side-by-side LocalAppData install:
+
+    node scripts/live-acceptance.mjs --prepare
+
+The observed local phase requires the operator physically present at Leno:
+
+    node scripts/live-acceptance.mjs --live --user-present
+
+A separate authenticated remote MCP call to Leno must also pass while the operator observes that human-owned foreground state is not disrupted. The acceptance runner does not handle or print relay credentials.
+
 ## Tagged release automation
 
 .github/workflows/release.yml builds a Windows x64 package for version tags, produces a ZIP and SHA-256 checksum, and creates the corresponding GitHub Release. No release tag is created by ordinary CI.
+
+Do not create `v0.1.0` until both local and remote live acceptance have passed.
