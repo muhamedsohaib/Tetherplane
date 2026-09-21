@@ -61,6 +61,8 @@ Ordinary uninstall removes installed binaries but preserves state. State purge r
 
 The Windows Compact MCP edge requires a system Node.js runtime. Runtime package dependencies are staged with the release package; pnpm is not required at runtime.
 
+Before publishing `v0.1.0`, run the operator-observed live acceptance procedure in `docs/live-acceptance.md`. The final publication gate includes local filesystem/process/browser/desktop proof on Leno plus a separately authenticated remote relay call while the operator watches for disruption.
+
 ## Remote mode
 
 tether-relay provides pairing, account/device routing, Streamable HTTP MCP, outbound device WebSockets, revocation, and reconnect isolation. Production direct relay transport requires HTTPS/WSS. Plain HTTP/WS is restricted to explicit loopback development mode.
