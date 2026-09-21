@@ -74,17 +74,25 @@ try {
         "-File", (Join-Path $supervisorLaunch "tetherplane-agent.ps1")
     ) -PassThru
 
-    Start-Sleep -Seconds 8
+    $runs = 0
+    $restartDeadline = [DateTime]::UtcNow.AddSeconds(30)
 
-    $runs = if (Test-Path -LiteralPath $runLog) {
-        @(Get-Content -LiteralPath $runLog).Count
-    }
-    else {
-        0
+    while ($runs -lt 2 -and [DateTime]::UtcNow -lt $restartDeadline) {
+        if ($supervisorProcess.HasExited) {
+            throw "background agent launcher exited before restart proof; exit_code=$($supervisorProcess.ExitCode) observed_runs=$runs"
+        }
+
+        if (Test-Path -LiteralPath $runLog) {
+            $runs = @(Get-Content -LiteralPath $runLog).Count
+        }
+
+        if ($runs -lt 2) {
+            Start-Sleep -Milliseconds 250
+        }
     }
 
     if ($runs -lt 2) {
-        throw "background agent launcher did not restart a crashing tetherd; observed runs=$runs"
+        throw "background agent launcher did not restart a crashing tetherd within 30 seconds; observed runs=$runs"
     }
 
     if (-not $supervisorProcess.HasExited) {
