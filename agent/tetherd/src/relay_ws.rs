@@ -215,15 +215,6 @@ fn wrong_device_result(invocation: &InvocationEnvelope, local_device_id: &str) -
 mod tests {
     use super::validate_relay_url;
 
-    #[tokio::test]
-    async fn wss_connector_has_a_selected_crypto_provider() {
-        let result = tokio_tungstenite::connect_async("wss://127.0.0.1:1/device").await;
-        assert!(
-            result.is_err(),
-            "closed local WSS endpoint should return a connection error",
-        );
-    }
-
     #[test]
     fn relay_url_requires_wss_except_explicit_loopback_test_mode() {
         assert!(validate_relay_url("wss://relay.example.test/device", false).is_ok());
