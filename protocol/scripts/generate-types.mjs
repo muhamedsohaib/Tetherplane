@@ -1,4 +1,4 @@
-import { mkdirSync, writeFileSync } from "node:fs";
+import { mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { fileURLToPath } from "node:url";
 import path from "node:path";
 import { compile } from "json-schema-to-typescript";
@@ -37,5 +37,19 @@ for (const requiredType of ["InvocationEnvelope", "ResultEnvelope", "CapabilityE
 }
 
 mkdirSync(outputDir, { recursive: true });
-writeFileSync(outputPath, output, "utf8");
-writeFileSync(declarationPath, output, "utf8");
+writeIfChanged(outputPath, output);
+writeIfChanged(declarationPath, output);
+
+function writeIfChanged(filePath, content) {
+  try {
+    if (readFileSync(filePath, "utf8") === content) {
+      return;
+    }
+  } catch (error) {
+    if (error?.code !== "ENOENT") {
+      throw error;
+    }
+  }
+
+  writeFileSync(filePath, content, "utf8");
+}
