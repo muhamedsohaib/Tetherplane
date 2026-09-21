@@ -1,6 +1,8 @@
 import assert from "node:assert/strict";
+import { execFile } from "node:child_process";
 import { readFile } from "node:fs/promises";
 import test from "node:test";
+import { promisify } from "node:util";
 import { fileURLToPath } from "node:url";
 
 type Stage = {
@@ -20,8 +22,12 @@ type AcceptancePlan = {
   stages: Stage[];
 };
 
+const execFileAsync = promisify(execFile);
 const planPath = fileURLToPath(
   new URL("../../scripts/live-acceptance-plan.json", import.meta.url),
+);
+const runnerPath = fileURLToPath(
+  new URL("../../scripts/live-acceptance.mjs", import.meta.url),
 );
 
 test("v0.1.0 live acceptance plan is explicit and human-safe", async () => {
@@ -91,4 +97,22 @@ test("v0.1.0 live acceptance plan is explicit and human-safe", async () => {
     assert.equal(stage.external_communication, false);
     assert.equal(stage.financial, false);
   }
+});
+
+test("live acceptance runner describes the canonical plan without side effects", async () => {
+  const expected = JSON.parse(
+    await readFile(planPath, "utf8"),
+  ) as AcceptancePlan;
+
+  const { stdout, stderr } = await execFileAsync(
+    process.execPath,
+    [runnerPath, "--describe"],
+    {
+      encoding: "utf8",
+      env: { ...process.env },
+    },
+  );
+
+  assert.equal(stderr, "");
+  assert.deepEqual(JSON.parse(stdout), expected);
 });
