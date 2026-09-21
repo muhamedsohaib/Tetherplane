@@ -69,7 +69,7 @@ if ($InstallScheduledTask) {
     $agentArgs | ConvertTo-Json -Depth 4 | Set-Content -LiteralPath (Join-Path $configDir "agent-args.json") -Encoding UTF8
 
     $taskName = "Tetherplane Agent"
-    $action = New-ScheduledTaskAction -Execute "powershell.exe" -Argument ('-NoProfile -ExecutionPolicy Bypass -File "' + (Join-Path $install "launch\tetherplane-agent.ps1") + '"')
+    $action = New-ScheduledTaskAction -Execute "powershell.exe" -Argument ('-NoProfile -NonInteractive -WindowStyle Hidden -ExecutionPolicy Bypass -File "' + (Join-Path $install "launch\tetherplane-agent.ps1") + '"')
     $trigger = New-ScheduledTaskTrigger -AtLogOn
     $existingTask = Get-ScheduledTask -TaskName $taskName -ErrorAction SilentlyContinue
     if ($existingTask -and -not $Force) {

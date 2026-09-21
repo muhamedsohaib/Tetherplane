@@ -16,5 +16,27 @@ $arguments = @(Get-Content -LiteralPath $argsPath -Raw | ConvertFrom-Json)
 if ($arguments.Count -eq 0) {
     throw "background agent arguments are empty"
 }
-& $tetherd @arguments
-exit $LASTEXITCODE
+
+$minimumDelaySeconds = 2
+$maximumDelaySeconds = 60
+$restartDelaySeconds = $minimumDelaySeconds
+
+while ($true) {
+    $startedAt = Get-Date
+
+    & $tetherd @arguments
+
+    $runtimeSeconds = ((Get-Date) - $startedAt).TotalSeconds
+
+    Start-Sleep -Seconds $restartDelaySeconds
+
+    if ($runtimeSeconds -ge 60) {
+        $restartDelaySeconds = $minimumDelaySeconds
+    }
+    else {
+        $restartDelaySeconds = [Math]::Min(
+            $restartDelaySeconds * 2,
+            $maximumDelaySeconds
+        )
+    }
+}
