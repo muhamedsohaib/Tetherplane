@@ -1253,6 +1253,7 @@ dependencies = [
  "serde",
  "serde_json",
  "sha2",
+ "rustls",
  "tether-browser-provider",
  "tether-core",
  "tether-desktop-provider",
