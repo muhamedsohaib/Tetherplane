@@ -10,6 +10,8 @@ async-trait = "0.1"
 futures-util = "0.3.34"
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
+# tokio-tungstenite disables Rustls default features, so select one provider explicitly.
+rustls = { version = "0.23.45", default-features = false, features = ["ring"] }
 sha2 = "0.10"
 tether-browser-provider = { path = "../providers/browser" }
 tether-core = { path = "../tether-core" }
