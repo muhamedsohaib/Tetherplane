@@ -4,6 +4,7 @@ import { readFile } from "node:fs/promises";
 import test from "node:test";
 import { promisify } from "node:util";
 import { fileURLToPath } from "node:url";
+import { normalizeCommandForPlatform } from "../../scripts/live-acceptance-command.mjs";
 
 type Stage = {
   id: string;
@@ -115,4 +116,54 @@ test("live acceptance runner describes the canonical plan without side effects",
 
   assert.equal(stderr, "");
   assert.deepEqual(JSON.parse(stdout), expected);
+});
+
+
+test("live acceptance normalizes Windows batch commands through ComSpec", () => {
+  assert.deepEqual(
+    normalizeCommandForPlatform(
+      "pnpm.cmd",
+      ["--filter", "@tetherplane/e2e", "build:deps"],
+      "win32",
+      "C:\\Windows\\System32\\cmd.exe",
+    ),
+    {
+      command: "C:\\Windows\\System32\\cmd.exe",
+      args: [
+        "/d",
+        "/s",
+        "/c",
+        "pnpm.cmd",
+        "--filter",
+        "@tetherplane/e2e",
+        "build:deps",
+      ],
+    },
+  );
+
+  assert.deepEqual(
+    normalizeCommandForPlatform(
+      "powershell.exe",
+      ["-NoProfile"],
+      "win32",
+      "C:\\Windows\\System32\\cmd.exe",
+    ),
+    {
+      command: "powershell.exe",
+      args: ["-NoProfile"],
+    },
+  );
+
+  assert.deepEqual(
+    normalizeCommandForPlatform(
+      "pnpm",
+      ["--filter", "@tetherplane/e2e", "build:deps"],
+      "linux",
+      undefined,
+    ),
+    {
+      command: "pnpm",
+      args: ["--filter", "@tetherplane/e2e", "build:deps"],
+    },
+  );
 });
