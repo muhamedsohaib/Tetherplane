@@ -91,6 +91,8 @@ $manifest = [ordered]@{
     node_runtime_required = $true
     default_mcp_tools = @("device","files","process","browser","desktop","batch")
 }
-$manifest | ConvertTo-Json -Depth 4 | Set-Content -LiteralPath (Join-Path $output "manifest.json") -Encoding UTF8
+$manifestJson = $manifest | ConvertTo-Json -Depth 4
+$utf8NoBom = New-Object System.Text.UTF8Encoding($false)
+[IO.File]::WriteAllText((Join-Path $output "manifest.json"), $manifestJson, $utf8NoBom)
 
 Write-Output "TETHERPLANE_WINDOWS_PACKAGE_OK $output"

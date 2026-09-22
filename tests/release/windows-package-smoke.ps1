@@ -22,7 +22,7 @@ $supervisorProcess = $null
 try {
     New-Item -ItemType Directory -Force -Path $root,$allow | Out-Null
 
-    & $packageScript -OutputPath $stage -SkipBuild
+    & powershell.exe -NoProfile -NonInteractive -ExecutionPolicy Bypass -File $packageScript -OutputPath $stage -SkipBuild
     if ($LASTEXITCODE -ne 0) {
         throw "package script failed with exit code $LASTEXITCODE"
     }
@@ -42,6 +42,12 @@ try {
         if (-not (Test-Path -LiteralPath (Join-Path $stage $relative))) {
             throw "release package is missing $relative"
         }
+    }
+
+    $manifestPath = Join-Path $stage "manifest.json"
+    & node -e 'JSON.parse(require("fs").readFileSync(process.argv[1], "utf8"));' $manifestPath
+    if ($LASTEXITCODE -ne 0) {
+        throw "packaged manifest.json is not directly parseable UTF-8 JSON"
     }
 
     $stagedInstallScript = Get-Content -LiteralPath (Join-Path $stage "install-windows.ps1") -Raw
