@@ -16,6 +16,6 @@ export function normalizeCommandForPlatform(
 
   return {
     command: comSpec || "cmd.exe",
-    args: ["/d", "/s", "/c", command, ...args],
+    args: ["/d", "/s", "/c", "call", command, ...args],
   };
 }
