@@ -135,6 +135,7 @@ test("live acceptance normalizes Windows batch commands through ComSpec", () => 
         "/d",
         "/s",
         "/c",
+        "call",
         "pnpm.cmd",
         "--filter",
         "@tetherplane/e2e",
