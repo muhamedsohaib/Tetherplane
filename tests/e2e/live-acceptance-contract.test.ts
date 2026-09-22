@@ -1,9 +1,12 @@
 import assert from "node:assert/strict";
-import { execFile } from "node:child_process";
-import { readFile } from "node:fs/promises";
+import { execFile, spawnSync } from "node:child_process";
+import { mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
+import os from "node:os";
+import path from "node:path";
 import test from "node:test";
 import { promisify } from "node:util";
 import { fileURLToPath } from "node:url";
+import { normalizeCommandForPlatform } from "../../scripts/live-acceptance-command.mjs";
 
 type Stage = {
   id: string;
@@ -116,3 +119,97 @@ test("live acceptance runner describes the canonical plan without side effects",
   assert.equal(stderr, "");
   assert.deepEqual(JSON.parse(stdout), expected);
 });
+
+
+test("live acceptance normalizes Windows batch commands through ComSpec", () => {
+  assert.deepEqual(
+    normalizeCommandForPlatform(
+      "pnpm.cmd",
+      ["--filter", "@tetherplane/e2e", "build:deps"],
+      "win32",
+      "C:\\Windows\\System32\\cmd.exe",
+    ),
+    {
+      command: "C:\\Windows\\System32\\cmd.exe",
+      args: [
+        "/d",
+        "/s",
+        "/c",
+        "call",
+        "pnpm.cmd",
+        "--filter",
+        "@tetherplane/e2e",
+        "build:deps",
+      ],
+    },
+  );
+
+  assert.deepEqual(
+    normalizeCommandForPlatform(
+      "powershell.exe",
+      ["-NoProfile"],
+      "win32",
+      "C:\\Windows\\System32\\cmd.exe",
+    ),
+    {
+      command: "powershell.exe",
+      args: ["-NoProfile"],
+    },
+  );
+
+  assert.deepEqual(
+    normalizeCommandForPlatform(
+      "pnpm",
+      ["--filter", "@tetherplane/e2e", "build:deps"],
+      "linux",
+      undefined,
+    ),
+    {
+      command: "pnpm",
+      args: ["--filter", "@tetherplane/e2e", "build:deps"],
+    },
+  );
+});
+
+
+test(
+  "live acceptance executes a real Windows cmd shim through ComSpec",
+  { skip: process.platform !== "win32" },
+  async () => {
+    const root = await mkdtemp(
+      path.join(os.tmpdir(), "tetherplane cmd shim "),
+    );
+    const script = path.join(root, "echo-value.cmd");
+
+    try {
+      await writeFile(
+        script,
+        "@echo off\r\necho shim:%1\r\n",
+        "utf8",
+      );
+
+      const normalized = normalizeCommandForPlatform(
+        script,
+        ["works"],
+        process.platform,
+        process.env.ComSpec,
+      );
+
+      const result = spawnSync(
+        normalized.command,
+        normalized.args,
+        {
+          encoding: "utf8",
+          windowsHide: true,
+        },
+      );
+
+      assert.equal(result.error, undefined);
+      assert.equal(result.status, 0);
+      assert.equal(result.stderr, "");
+      assert.equal(result.stdout.trim(), "shim:works");
+    } finally {
+      await rm(root, { recursive: true, force: true });
+    }
+  },
+);

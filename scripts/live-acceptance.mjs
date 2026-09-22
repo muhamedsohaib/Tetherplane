@@ -11,6 +11,7 @@ import os from "node:os";
 import path from "node:path";
 import process from "node:process";
 import { fileURLToPath } from "node:url";
+import { normalizeCommandForPlatform } from "./live-acceptance-command.mjs";
 
 const here = path.dirname(fileURLToPath(import.meta.url));
 const repoRoot = path.resolve(here, "..");
@@ -277,7 +278,13 @@ function stage(id, action) {
 }
 
 function run(command, args) {
-  const result = spawnSync(command, args, {
+  const normalized = normalizeCommandForPlatform(
+    command,
+    args,
+    process.platform,
+    process.env.ComSpec,
+  );
+  const result = spawnSync(normalized.command, normalized.args, {
     cwd: repoRoot,
     env: process.env,
     stdio: "inherit",
