@@ -4,6 +4,7 @@ export type ExtensionBridgeMessage = Record<string, unknown>;
 
 export type AuthenticatedExtensionClient = {
   readonly extension_id: string;
+  readonly closed: Promise<void>;
   send(message: ExtensionBridgeMessage): void;
   nextMessage(): Promise<ExtensionBridgeMessage>;
   close(): void;
@@ -23,6 +24,7 @@ type MessageWaiter = {
 
 class ExtensionClient implements AuthenticatedExtensionClient {
   readonly extension_id: string;
+  readonly closed: Promise<void>;
   readonly #socket: WebSocket;
   readonly #messages: ExtensionBridgeMessage[] = [];
   readonly #waiters: MessageWaiter[] = [];
@@ -31,6 +33,9 @@ class ExtensionClient implements AuthenticatedExtensionClient {
   constructor(extensionId: string, socket: WebSocket) {
     this.extension_id = extensionId;
     this.#socket = socket;
+    this.closed = new Promise<void>((resolve) => {
+      socket.once("close", () => resolve());
+    });
 
     socket.on("close", () => {
       this.#closed = true;
@@ -79,6 +84,7 @@ class ExtensionClient implements AuthenticatedExtensionClient {
 
 export async function startExtensionBridgeServer(options: {
   launchToken: string;
+  port?: number;
 }): Promise<ExtensionBridgeServer> {
   if (!options.launchToken.trim()) {
     throw new Error("extension launch token must be non-empty");
@@ -86,7 +92,7 @@ export async function startExtensionBridgeServer(options: {
 
   const server = new WebSocketServer({
     host: "127.0.0.1",
-    port: 0,
+    port: options.port ?? 0,
   });
   await new Promise<void>((resolve, reject) => {
     server.once("listening", () => resolve());
@@ -147,6 +153,10 @@ export async function startExtensionBridgeServer(options: {
         if (waiter) {
           waiter(authenticatedClient);
         }
+        return;
+      }
+
+      if (parsed.type === "keepalive") {
         return;
       }
 

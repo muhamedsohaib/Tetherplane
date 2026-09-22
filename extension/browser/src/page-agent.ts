@@ -1,7 +1,10 @@
 import {
   BrowserPolicyError,
-  type BackendSemanticNode,
-  type BrowserObservedState,
+} from "@tetherplane/browser-bridge/policy";
+
+import type {
+  BackendSemanticNode,
+  BrowserObservedState,
 } from "@tetherplane/browser-bridge";
 
 type PageRecord = {

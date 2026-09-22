@@ -203,3 +203,44 @@ test("owned-tab identity survives service-worker controller restart", async () =
   assert.equal(restored?.tab_id, created.tab_id);
   assert.equal(tabs.activeTabId, 1);
 });
+
+
+test("attached human tab expires back to human ownership", async () => {
+  let now = 1_000;
+  const tabs = new FakeTabs([humanTab()]);
+  const store = new MemoryStore();
+  const controller = new ExtensionTabController({
+    tabs,
+    store,
+    now: () => now,
+  });
+  await controller.initialize();
+
+  const attached = await controller.attachHumanTab(1, {
+    operations: ["navigate"],
+    ttl_ms: 1_000,
+  });
+
+  assert.equal(attached.ownership, "shared-authorized");
+  assert.equal(attached.grant?.expires_at_ms, 2_000);
+
+  now = 2_001;
+
+  await assert.rejects(
+    () =>
+      controller.navigate(
+        "tab:1",
+        "https://blocked-after-expiry.example/",
+      ),
+    (error: unknown) =>
+      error instanceof BrowserPolicyError &&
+      error.code === "permission_denied",
+  );
+
+  const expired = controller
+    .pages()
+    .find((page) => page.page_id === "tab:1");
+  assert.equal(expired?.ownership, "human");
+  assert.equal(expired?.grant, undefined);
+  assert.equal(tabs.activeTabId, 1);
+});

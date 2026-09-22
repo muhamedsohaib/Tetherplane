@@ -61,6 +61,14 @@ export class ExtensionBrowserBackend
     );
   }
 
+  capabilities(): Record<string, unknown> {
+    return {
+      backend: "extension_authenticated_profile",
+      authenticated_profile: true,
+      human_tab_sharing: true,
+    };
+  }
+
   async pages(): Promise<ExtensionPageInfo[]> {
     const data = await this.#call("pages", {});
     if (!isRecord(data) || !Array.isArray(data.pages)) {

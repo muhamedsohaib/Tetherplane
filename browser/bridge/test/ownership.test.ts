@@ -97,3 +97,50 @@ test("shared-authorized tab permits only explicitly granted operations", () => {
       error.code === "permission_denied",
   );
 });
+
+
+test("expired shared-authorized grant is denied", () => {
+  const registry = new BrowserOwnershipRegistry();
+  registry.register({
+    page_id: "page-expired",
+    ownership: "shared-authorized",
+    active: false,
+    grant: {
+      operations: ["act"],
+      expires_at_ms: Date.now() - 1,
+    },
+  });
+
+  assert.throws(
+    () =>
+      registry.authorize({
+        page_id: "page-expired",
+        operation: "act",
+        mode: "background_only",
+      }),
+    (error: unknown) =>
+      error instanceof BrowserPolicyError &&
+      error.code === "permission_denied",
+  );
+});
+
+test("unexpired shared-authorized grant remains usable", () => {
+  const registry = new BrowserOwnershipRegistry();
+  registry.register({
+    page_id: "page-live",
+    ownership: "shared-authorized",
+    active: false,
+    grant: {
+      operations: ["act"],
+      expires_at_ms: Date.now() + 60_000,
+    },
+  });
+
+  assert.doesNotThrow(() =>
+    registry.authorize({
+      page_id: "page-live",
+      operation: "act",
+      mode: "background_only",
+    }),
+  );
+});

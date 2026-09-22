@@ -199,3 +199,49 @@ test("extension session delivers authenticated inbound commands", async () => {
     args: {},
   });
 });
+
+test("authenticated extension session emits periodic keepalive traffic and cancels on close", async () => {
+  const factory = new FakeFactory();
+  let scheduled: (() => void) | null = null;
+  let cancelledHandle: unknown = null;
+
+  const client = new ExtensionBridgeClient({
+    url: "ws://127.0.0.1:8123",
+    launchToken: "launch-token",
+    extensionId: "extension-test",
+    socketFactory: factory,
+    scheduleHeartbeat: (callback) => {
+      scheduled = callback;
+      return 1;
+    },
+    cancelHeartbeat: (handle) => {
+      cancelledHandle = handle;
+    },
+  });
+
+  const connecting = client.connect();
+  const socket = factory.sockets[0];
+  assert.ok(socket);
+
+  socket.open();
+  socket.message({
+    type: "hello_ack",
+    authenticated: true,
+  });
+
+  await connecting;
+
+  const runHeartbeat = scheduled as (() => void) | null;
+  assert.ok(runHeartbeat);
+  runHeartbeat();
+
+  assert.deepEqual(
+    JSON.parse(socket.sent.at(-1) ?? "{}"),
+    {
+      type: "keepalive",
+    },
+  );
+
+  client.close();
+  assert.equal(cancelledHandle, 1);
+});

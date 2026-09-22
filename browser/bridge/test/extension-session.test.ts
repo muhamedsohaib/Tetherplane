@@ -165,3 +165,131 @@ test("extension bridge rejects credential-shaped payloads after authentication",
     await bridge.close();
   }
 });
+
+
+test("authenticated extension client exposes a close signal", async () => {
+  const bridge = await startExtensionBridgeServer({
+    launchToken: "launch-token-close",
+  });
+  const socket = new WebSocket(bridge.url);
+
+  try {
+    await onceOpen(socket);
+    socket.send(
+      JSON.stringify({
+        type: "hello",
+        token: "launch-token-close",
+        extension_id: "extension-close-test",
+      }),
+    );
+    await onceMessage(socket);
+
+    const client = await bridge.waitForAuthenticatedClient();
+    assert.ok(client.closed instanceof Promise);
+
+    socket.close();
+    await client.closed;
+    assert.equal(bridge.authenticatedClientCount(), 0);
+  } finally {
+    socket.close();
+    await bridge.close();
+  }
+});
+
+test("extension bridge consumes keepalive internally", async () => {
+  const bridge = await startExtensionBridgeServer({
+    launchToken: "launch-token",
+  });
+
+  const socket = new WebSocket(bridge.url);
+
+  try {
+    await onceOpen(socket);
+
+    socket.send(
+      JSON.stringify({
+        type: "hello",
+        token: "launch-token",
+        extension_id: "extension-test",
+      }),
+    );
+
+    await onceMessage(socket);
+
+    const client =
+      await bridge.waitForAuthenticatedClient();
+
+    socket.send(
+      JSON.stringify({
+        type: "keepalive",
+      }),
+    );
+
+    socket.send(
+      JSON.stringify({
+        type: "event",
+        event: "after_keepalive",
+      }),
+    );
+
+    assert.deepEqual(
+      await client.nextMessage(),
+      {
+        type: "event",
+        event: "after_keepalive",
+      },
+    );
+  } finally {
+    socket.close();
+    await bridge.close();
+  }
+});
+
+test("extension bridge consumes keepalive internally", async () => {
+  const bridge = await startExtensionBridgeServer({
+    launchToken: "launch-token",
+  });
+
+  const socket = new WebSocket(bridge.url);
+
+  try {
+    await onceOpen(socket);
+
+    socket.send(
+      JSON.stringify({
+        type: "hello",
+        token: "launch-token",
+        extension_id: "extension-test",
+      }),
+    );
+
+    await onceMessage(socket);
+
+    const client =
+      await bridge.waitForAuthenticatedClient();
+
+    socket.send(
+      JSON.stringify({
+        type: "keepalive",
+      }),
+    );
+
+    socket.send(
+      JSON.stringify({
+        type: "event",
+        event: "after_keepalive",
+      }),
+    );
+
+    assert.deepEqual(
+      await client.nextMessage(),
+      {
+        type: "event",
+        event: "after_keepalive",
+      },
+    );
+  } finally {
+    socket.close();
+    await bridge.close();
+  }
+});
