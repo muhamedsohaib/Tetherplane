@@ -1,8 +1,11 @@
 import {
   BrowserPolicyError,
   type BrowserOperation,
-  type RawBrowserDiagnosticEvent,
-  type RawBrowserDownload,
+} from "@tetherplane/browser-bridge/policy";
+
+import type {
+  RawBrowserDiagnosticEvent,
+  RawBrowserDownload,
 } from "@tetherplane/browser-bridge";
 
 export type ExtensionRuntimeSession = {

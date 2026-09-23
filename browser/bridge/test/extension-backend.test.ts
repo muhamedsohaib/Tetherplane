@@ -273,3 +273,16 @@ test("extension backend exposes operational upload downloads and diagnostics com
     },
   ]);
 });
+
+
+test("extension backend advertises authenticated-profile capabilities", () => {
+  const backend = new ExtensionBrowserBackend({
+    transport: new FakeTransport(),
+  });
+
+  assert.deepEqual(backend.capabilities(), {
+    backend: "extension_authenticated_profile",
+    authenticated_profile: true,
+    human_tab_sharing: true,
+  });
+});

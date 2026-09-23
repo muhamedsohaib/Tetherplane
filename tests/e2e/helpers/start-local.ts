@@ -1,3 +1,4 @@
+import { existsSync } from "node:fs";
 import { mkdtemp, rm, writeFile } from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
@@ -5,6 +6,20 @@ import { fileURLToPath } from "node:url";
 
 import { Client } from "@modelcontextprotocol/sdk/client/index.js";
 import { StdioClientTransport } from "@modelcontextprotocol/sdk/client/stdio.js";
+
+function findRepoRoot(startDir: string): string {
+  let current = startDir;
+  while (current !== path.dirname(current)) {
+    if (
+      existsSync(path.join(current, "Cargo.toml")) &&
+      existsSync(path.join(current, "pnpm-workspace.yaml"))
+    ) {
+      return current;
+    }
+    current = path.dirname(current);
+  }
+  return path.resolve(startDir, "..", "..", "..");
+}
 
 export type LocalCompactHarness = {
   client: Client;
@@ -32,7 +47,7 @@ export async function startLocalCompact(
   options: LocalCompactOptions = {},
 ): Promise<LocalCompactHarness> {
   const here = path.dirname(fileURLToPath(import.meta.url));
-  const repoRoot = path.resolve(here, "..", "..", "..");
+  const repoRoot = findRepoRoot(here);
   const root = await mkdtemp(path.join(os.tmpdir(), "tetherplane-e2e-"));
   const controlRoot = await mkdtemp(
     path.join(os.tmpdir(), "tetherplane-e2e-control-"),

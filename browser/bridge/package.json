@@ -1,26 +1,30 @@
 {
-  "name": "@tetherplane/browser-bridge",
-  "version": "0.1.0",
-  "private": true,
-  "type": "module",
-  "types": "./dist/index.d.ts",
-  "exports": {
-    ".": {
-      "types": "./dist/index.d.ts",
-      "default": "./dist/index.js"
-    }
-  },
-  "scripts": {
-    "build": "tsc -p tsconfig.json",
-    "test": "node --test test/*.test.ts",
-    "typecheck": "tsc -p tsconfig.test.json"
-  },
-  "dependencies": {
-    "ws": "8.21.3"
-  },
-  "devDependencies": {
-    "@tetherplane/browser-lab": "workspace:*",
-    "@types/node": "24.13.6",
-    "@types/ws": "8.18.1"
-  }
+    "name":  "@tetherplane/browser-bridge",
+    "version":  "0.1.0",
+    "private":  true,
+    "type":  "module",
+    "types":  "./dist/index.d.ts",
+    "exports":  {
+                    ".":  {
+                              "types":  "./dist/index.d.ts",
+                              "default":  "./dist/index.js"
+                          },
+                    "./policy":  {
+                                     "types":  "./dist/policy.d.ts",
+                                     "default":  "./dist/policy.js"
+                                 }
+                },
+    "scripts":  {
+                    "build":  "tsc -p tsconfig.json",
+                    "test":  "node --test test/*.test.ts",
+                    "typecheck":  "tsc -p tsconfig.test.json"
+                },
+    "dependencies":  {
+                         "ws":  "8.21.3"
+                     },
+    "devDependencies":  {
+                            "@tetherplane/browser-lab":  "workspace:*",
+                            "@types/node":  "24.13.6",
+                            "@types/ws":  "8.18.1"
+                        }
 }

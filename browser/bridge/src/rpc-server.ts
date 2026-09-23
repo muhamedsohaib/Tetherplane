@@ -1,4 +1,4 @@
-﻿import net from "node:net";
+import net from "node:net";
 
 import {
   BrowserOwnershipRegistry,
@@ -334,7 +334,11 @@ export async function startBrowserRpcServer(options: {
 
   const server = net.createServer((socket) => {
     socket.setEncoding("utf8");
+    socket.on("error", () => {
+      // client closed or reset connection
+    });
     let buffer = "";
+
 
     socket.on("data", (chunk) => {
       buffer += chunk;

@@ -84,10 +84,13 @@ test("browser lab exposes frame upload download and slow-request fixtures", asyn
     const pageHtml = await page.text();
     assert.equal(page.status, 200);
     assert.match(pageHtml, /Project value/);
+    assert.match(pageHtml, /Rerender editor/);
+    assert.match(pageHtml, /Duplicate editor/);
     assert.match(pageHtml, /Nested fixture/);
     assert.match(pageHtml, /Fixture upload/);
     assert.match(pageHtml, /Download fixture/);
     assert.match(pageHtml, /Fail request/);
+
 
     const frame = await fetch(new URL("/frame", lab.origin));
     assert.equal(frame.status, 200);

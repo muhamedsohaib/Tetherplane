@@ -199,7 +199,7 @@ async fn main() {
         match BrowserProvider::connect(BrowserBridgeConfig {
             address,
             token: browser_token,
-            timeout_ms: 3_000,
+            timeout_ms: 10_000,
         })
         .await
         {

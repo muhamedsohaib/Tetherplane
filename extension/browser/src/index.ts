@@ -1,8 +1,9 @@
 import {
   BrowserOwnershipRegistry,
+  BrowserPolicyError,
   type BrowserOperation,
   type BrowserOwnership,
-} from "@tetherplane/browser-bridge";
+} from "@tetherplane/browser-bridge/policy";
 
 export type ExtensionTab = {
   id: number;
@@ -37,6 +38,7 @@ export type ExtensionPageRecord = {
   ownership: BrowserOwnership;
   grant?: {
     operations: BrowserOperation[];
+    expires_at_ms: number;
   };
 };
 
@@ -50,13 +52,16 @@ export class ExtensionTabController {
   readonly #store: ExtensionOwnershipStore;
   readonly #ownership = new BrowserOwnershipRegistry();
   readonly #pages = new Map<string, ExtensionPageRecord>();
+  readonly #now: () => number;
 
   constructor(options: {
     tabs: ExtensionTabsAdapter;
     store: ExtensionOwnershipStore;
+    now?: () => number;
   }) {
     this.#tabs = options.tabs;
     this.#store = options.store;
+    this.#now = options.now ?? Date.now;
   }
 
   async initialize(): Promise<void> {
@@ -71,14 +76,20 @@ export class ExtensionTabController {
     for (const tab of await this.#tabs.list()) {
       const pageId = pageIdForTab(tab.id);
       const saved = persisted.get(pageId);
+      const restored =
+        saved && !this.#isExpired(saved)
+          ? saved
+          : undefined;
       const record: ExtensionPageRecord = {
         page_id: pageId,
         tab_id: tab.id,
         window_id: tab.window_id,
         url: tab.url,
         active: tab.active,
-        ownership: saved?.ownership ?? "human",
-        ...(saved?.grant ? { grant: structuredClone(saved.grant) } : {}),
+        ownership: restored?.ownership ?? "human",
+        ...(restored?.grant
+          ? { grant: structuredClone(restored.grant) }
+          : {}),
       };
       this.#record(record);
     }
@@ -87,8 +98,8 @@ export class ExtensionTabController {
   }
 
   pages(): ExtensionPageRecord[] {
-    return [...this.#pages.values()].map((page) =>
-      structuredClone(page),
+    return [...this.#pages.keys()].map((pageId) =>
+      this.#requirePage(pageId),
     );
   }
 
@@ -150,8 +161,22 @@ export class ExtensionTabController {
 
   async attachHumanTab(
     tabId: number,
-    grant: { operations: BrowserOperation[] },
+    grant: {
+      operations: BrowserOperation[];
+      ttl_ms: number;
+    },
   ): Promise<ExtensionPageRecord> {
+    if (
+      !Number.isSafeInteger(grant.ttl_ms) ||
+      grant.ttl_ms <= 0 ||
+      grant.ttl_ms > 3_600_000
+    ) {
+      throw new BrowserPolicyError(
+        "invalid_arguments",
+        "attachment ttl_ms must be between 1 and 3600000",
+      );
+    }
+
     const tab = await this.#tabs.get(tabId);
     if (!tab) {
       throw new Error(`missing tab: ${tabId}`);
@@ -163,7 +188,10 @@ export class ExtensionTabController {
       url: tab.url,
       active: tab.active,
       ownership: "shared-authorized",
-      grant: structuredClone(grant),
+      grant: {
+        operations: [...grant.operations],
+        expires_at_ms: this.#now() + grant.ttl_ms,
+      },
     };
     this.#record(record);
     await this.#persist();
@@ -203,7 +231,30 @@ export class ExtensionTabController {
     if (!page) {
       throw new Error(`unknown browser page: ${pageId}`);
     }
+
+    if (this.#isExpired(page)) {
+      const expired: ExtensionPageRecord = {
+        page_id: page.page_id,
+        tab_id: page.tab_id,
+        window_id: page.window_id,
+        url: page.url,
+        active: page.active,
+        ownership: "human",
+      };
+      this.#record(expired);
+      return structuredClone(expired);
+    }
+
     return structuredClone(page);
+  }
+
+  #isExpired(page: ExtensionPageRecord): boolean {
+    return (
+      page.ownership === "shared-authorized" &&
+      (!page.grant ||
+        !Number.isFinite(page.grant.expires_at_ms) ||
+        page.grant.expires_at_ms <= this.#now())
+    );
   }
 
   async #persist(): Promise<void> {
