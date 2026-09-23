@@ -244,3 +244,85 @@ test("attached human tab expires back to human ownership", async () => {
   assert.equal(expired?.grant, undefined);
   assert.equal(tabs.activeTabId, 1);
 });
+
+test("detachHumanTab immediately revokes mutation and navigation authority", async () => {
+  const tabs = new FakeTabs([humanTab()]);
+  const store = new MemoryStore();
+  const controller = new ExtensionTabController({
+    tabs,
+    store,
+  });
+  await controller.initialize();
+
+  const attached = await controller.attachHumanTab(1, {
+    operations: ["navigate"],
+    ttl_ms: 60_000,
+  });
+  assert.equal(attached.ownership, "shared-authorized");
+
+  const navigated = await controller.navigate(
+    "tab:1",
+    "https://permitted.example/",
+  );
+  assert.equal(navigated.url, "https://permitted.example/");
+
+  const detached = await controller.detachHumanTab(1);
+  assert.equal(detached.ownership, "human");
+  assert.equal(detached.grant, undefined);
+
+  await assert.rejects(
+    () =>
+      controller.navigate(
+        "tab:1",
+        "https://blocked-after-detach.example/",
+      ),
+    (error: unknown) =>
+      error instanceof BrowserPolicyError &&
+      error.code === "permission_denied",
+  );
+
+  const current = controller
+    .pages()
+    .find((page) => page.page_id === "tab:1");
+  assert.equal(current?.ownership, "human");
+  assert.equal(current?.grant, undefined);
+});
+
+test("detached human tab remains human across service-worker controller restart", async () => {
+  const tabs = new FakeTabs([humanTab()]);
+  const store = new MemoryStore();
+  const first = new ExtensionTabController({
+    tabs,
+    store,
+  });
+  await first.initialize();
+
+  await first.attachHumanTab(1, {
+    operations: ["navigate"],
+    ttl_ms: 60_000,
+  });
+  await first.detachHumanTab(1);
+
+  const restarted = new ExtensionTabController({
+    tabs,
+    store,
+  });
+  await restarted.initialize();
+
+  const page = restarted
+    .pages()
+    .find((p) => p.page_id === "tab:1");
+  assert.equal(page?.ownership, "human");
+  assert.equal(page?.grant, undefined);
+
+  await assert.rejects(
+    () =>
+      restarted.navigate(
+        "tab:1",
+        "https://blocked-after-restart.example/",
+      ),
+    (error: unknown) =>
+      error instanceof BrowserPolicyError &&
+      error.code === "permission_denied",
+  );
+});

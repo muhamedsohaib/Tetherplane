@@ -562,6 +562,11 @@ function collectDocumentSemanticState(): FrameObservation {
       '[role="alert"], [aria-invalid="true"], .error, .validation-error',
     ),
   )
+    .filter(
+      (element) =>
+        !element.hasAttribute("hidden") &&
+        element.getAttribute("aria-hidden") !== "true",
+    )
     .map((element) => normalizedText(element.textContent))
     .filter(Boolean)
     .slice(0, 50);
@@ -571,6 +576,11 @@ function collectDocumentSemanticState(): FrameObservation {
       '[role="status"], [aria-live="polite"], [aria-live="assertive"]',
     ),
   )
+    .filter(
+      (element) =>
+        !element.hasAttribute("hidden") &&
+        element.getAttribute("aria-hidden") !== "true",
+    )
     .map((element) => normalizedText(element.textContent))
     .filter(Boolean)
     .slice(0, 50);

@@ -371,3 +371,128 @@ test("transactional action engine enforces human-tab ownership before backend mu
   assert.equal(result.error?.code, "permission_denied");
   assert.equal(backend.performed.length, 0);
 });
+
+test("action without expectations returns executed_unverified", async () => {
+  const semantics = new SemanticSnapshotEngine();
+  const before = state();
+  const ref = semantics.snapshot(before.nodes, { revision: 1 }).nodes[0]!.ref;
+  const after = state({
+    semantic_revision: 2,
+    nodes: [semanticNode({ value: "filled-value" })],
+  });
+  const backend = new FakeBackend(before, [after]);
+  const engine = new VerifiedActionEngine({
+    backend,
+    ownership: ownership(),
+    semantics,
+  });
+
+  const result = await engine.execute({
+    page_id: "page-owned",
+    mode: "background_only",
+    actions: [{ kind: "fill", target: ref, value: "filled-value" }],
+  });
+
+  assert.equal(result.state, "executed_unverified");
+  assert.equal(backend.performed.length, 1);
+  assert.equal(result.after_semantic_revision, 2);
+});
+
+test("verified action verifies enabled expectation on button target", async () => {
+  const semantics = new SemanticSnapshotEngine();
+  const button = semanticNode({
+    backend_id: "button-1",
+    role: "button",
+    accessible_name: "Submit",
+    disabled: true,
+  });
+  const before = state({ nodes: [button] });
+  const ref = semantics.snapshot(before.nodes, { revision: 1 }).nodes[0]!.ref;
+  const after = state({
+    semantic_revision: 2,
+    nodes: [
+      semanticNode({
+        backend_id: "button-1",
+        role: "button",
+        accessible_name: "Submit",
+        disabled: false,
+      }),
+    ],
+  });
+  const backend = new FakeBackend(before, [after]);
+  const engine = new VerifiedActionEngine({
+    backend,
+    ownership: ownership(),
+    semantics,
+  });
+
+  const result = await engine.execute({
+    page_id: "page-owned",
+    mode: "background_only",
+    actions: [{ kind: "click", target: ref }],
+    expectations: [{ kind: "enabled", target: ref, equals: true }],
+  });
+
+  assert.equal(result.state, "verified");
+  assert.equal(result.after_semantic_revision, 2);
+});
+
+test("verified action verifies text expectation presence and absence", async () => {
+  const semantics = new SemanticSnapshotEngine();
+  const before = state();
+  const ref = semantics.snapshot(before.nodes, { revision: 1 }).nodes[0]!.ref;
+  const after = state({
+    semantic_revision: 2,
+    nodes: [
+      semanticNode({
+        backend_id: "status-msg",
+        role: "status",
+        accessible_name: "Status message",
+        description: "Operation finished",
+      }),
+    ],
+  });
+  const backend = new FakeBackend(before, [after]);
+  const engine = new VerifiedActionEngine({
+    backend,
+    ownership: ownership(),
+    semantics,
+  });
+
+  const result = await engine.execute({
+    page_id: "page-owned",
+    mode: "background_only",
+    actions: [{ kind: "click", target: ref }],
+    expectations: [
+      { kind: "text", includes: "Operation finished", present: true },
+      { kind: "text", includes: "Error", present: false },
+    ],
+  });
+
+  assert.equal(result.state, "verified");
+});
+
+test("verified action verifies url expectation", async () => {
+  const semantics = new SemanticSnapshotEngine();
+  const before = state({ url: "https://fixture.local/step1" });
+  const after = state({
+    semantic_revision: 2,
+    url: "https://fixture.local/step2",
+  });
+  const backend = new FakeBackend(before, [after]);
+  const engine = new VerifiedActionEngine({
+    backend,
+    ownership: ownership(),
+    semantics,
+  });
+
+  const result = await engine.execute({
+    page_id: "page-owned",
+    mode: "background_only",
+    actions: [{ kind: "navigate", url: "https://fixture.local/step2" }],
+    expectations: [{ kind: "url", equals: "https://fixture.local/step2" }],
+  });
+
+  assert.equal(result.state, "verified");
+  assert.equal(backend.current.url, "https://fixture.local/step2");
+});

@@ -175,9 +175,13 @@ function mainPage(state: LabState): string {
 <head><meta charset="utf-8"><title>Tetherplane Browser Lab</title></head>
 <body>
   <main aria-label="Browser Lab">
-    <label for="value-input">Project value</label>
-    <input id="value-input" value="${escapeHtmlAttribute(state.value)}" />
-    <button id="save-button" type="button">Save</button>
+    <section id="editor-container">
+      <label for="value-input">Project value</label>
+      <input id="value-input" value="${escapeHtmlAttribute(state.value)}" />
+      <button id="save-button" type="button">Save</button>
+    </section>
+    <button id="rerender-button" type="button">Rerender editor</button>
+    <button id="duplicate-button" type="button">Duplicate editor</button>
     <div id="validation" role="alert" hidden></div>
     <div id="toast" role="status" aria-live="polite"></div>
     <div id="revision" data-revision="${state.revision}">Revision ${state.revision}</div>
@@ -188,13 +192,71 @@ function mainPage(state: LabState): string {
   </main>
   <script>
     let revision = ${state.revision};
-    const input = document.getElementById("value-input");
-    const save = document.getElementById("save-button");
     const validation = document.getElementById("validation");
     const toast = document.getElementById("toast");
     const revisionNode = document.getElementById("revision");
     const uploadInput = document.getElementById("upload-input");
     const failRequest = document.getElementById("fail-request");
+    const rerenderBtn = document.getElementById("rerender-button");
+    const duplicateBtn = document.getElementById("duplicate-button");
+
+    function bindSave() {
+      const currentInput = document.querySelector("#editor-container input");
+      const currentSave = document.getElementById("save-button");
+      if (!currentSave) return;
+      currentSave.onclick = async () => {
+        const response = await fetch("/api/save?delay_ms=60", {
+          method: "POST",
+          headers: { "content-type": "application/json" },
+          body: JSON.stringify({
+            value: currentInput ? currentInput.value : "",
+            expected_revision: revision,
+          }),
+        });
+        const payload = await response.json();
+        if (!response.ok) {
+          validation.hidden = false;
+          validation.textContent = payload.message ?? payload.code;
+          return;
+        }
+        revision = payload.revision;
+        validation.hidden = true;
+        validation.textContent = "";
+        toast.textContent = "Saved";
+        const currentRevision = document.getElementById("revision");
+        if (currentRevision) {
+          const replacement = currentRevision.cloneNode(true);
+          replacement.dataset.revision = String(revision);
+          replacement.textContent = "Revision " + revision;
+          currentRevision.replaceWith(replacement);
+        }
+      };
+    }
+    bindSave();
+
+    let renderCount = 1;
+    rerenderBtn.addEventListener("click", () => {
+      renderCount += 1;
+      const container = document.getElementById("editor-container");
+      const currentInput = document.querySelector("#editor-container input");
+      const currentVal = currentInput ? currentInput.value : "";
+      container.innerHTML =
+        '<label for="value-input-' + renderCount + '">Project value</label>' +
+        '<input id="value-input-' + renderCount + '" data-render="' + renderCount + '" value="' + currentVal.replace(/"/g, '&quot;') + '" />' +
+        '<button id="save-button" type="button">Save</button>';
+      bindSave();
+      toast.textContent = "Editor rerendered";
+    });
+
+    duplicateBtn.addEventListener("click", () => {
+      const duplicateContainer = document.createElement("section");
+      duplicateContainer.id = "duplicate-container";
+      duplicateContainer.innerHTML =
+        '<label for="duplicate-input">Project value</label>' +
+        '<input id="duplicate-input" value="duplicate-value" />';
+      document.querySelector("main").appendChild(duplicateContainer);
+      toast.textContent = "Editor duplicated";
+    });
 
     failRequest.addEventListener("click", async () => {
       const response = await fetch("/api/fail", {
@@ -219,34 +281,12 @@ function mainPage(state: LabState): string {
         toast.textContent = "Uploaded";
       }
     });
-
-    save.addEventListener("click", async () => {
-      const response = await fetch("/api/save?delay_ms=60", {
-        method: "POST",
-        headers: { "content-type": "application/json" },
-        body: JSON.stringify({
-          value: input.value,
-          expected_revision: revision,
-        }),
-      });
-      const payload = await response.json();
-      if (!response.ok) {
-        validation.hidden = false;
-        validation.textContent = payload.message ?? payload.code;
-        return;
-      }
-      revision = payload.revision;
-      validation.hidden = true;
-      toast.textContent = "Saved";
-      const replacement = revisionNode.cloneNode(true);
-      replacement.dataset.revision = String(revision);
-      replacement.textContent = "Revision " + revision;
-      revisionNode.replaceWith(replacement);
-    });
   </script>
 </body>
 </html>`;
 }
+
+
 
 async function readJson(request: IncomingMessage): Promise<Record<string, unknown>> {
   const text = await readText(request);
