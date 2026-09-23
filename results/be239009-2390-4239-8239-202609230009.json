@@ -1,0 +1,15 @@
+{
+  "version": 1,
+  "request_id": "be239009-2390-4239-8239-202609230009",
+  "device_id": "Leno",
+  "status": "success",
+  "data": {
+    "kind": "git_diff",
+    "cwd": ".",
+    "exit_code": 0,
+    "stdout": "",
+    "stderr": "",
+    "truncated": false
+  },
+  "completed_at": "2026-09-23T17:57:38.246823+00:00"
+}
