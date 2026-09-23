@@ -1,0 +1,11 @@
+{
+  "version": 1,
+  "request_id": "be239005-2390-4239-8239-202609230005",
+  "device_id": "Leno",
+  "status": "error",
+  "error": {
+    "code": "permission_denied",
+    "message": "process kind is not allowed"
+  },
+  "completed_at": "2026-09-23T17:56:03.652851+00:00"
+}
