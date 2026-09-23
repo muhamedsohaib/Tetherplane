@@ -1,0 +1,15 @@
+{
+  "version": 1,
+  "request_id": "be239004-2390-4239-8239-202609230004",
+  "device_id": "Leno",
+  "status": "success",
+  "data": {
+    "kind": "git_log",
+    "cwd": ".",
+    "exit_code": 0,
+    "stdout": "f94c630 (HEAD -> feature/authenticated-browser-profile, origin/feature/authenticated-browser-profile) test(browser): make foreground coexistence probe non-disruptive\n39ad2df feat(browser): close Plan B browser coexistence engine and recovery invariants\nc3ce6cb feat(browser): harden authenticated browser profile and live persistence\n91369ef feat(browser): add Windows browser mode switch\n235625c feat(browser): install authenticated browser host on Windows\n",
+    "stderr": "",
+    "truncated": false
+  },
+  "completed_at": "2026-09-23T17:55:46.375674+00:00"
+}
