@@ -21,12 +21,18 @@ import {
 } from "@tetherplane/browser-bridge";
 
 import { startLocalCompact } from "./helpers/start-local.ts";
+import { getForegroundInfo } from "./helpers/windows-foreground.ts";
 
 function powershell(command: string): string {
   return execFileSync(
     "powershell.exe",
     ["-NoProfile", "-NonInteractive", "-Sta", "-Command", command],
-    { encoding: "utf8", stdio: ["ignore", "pipe", "ignore"], timeout: 10_000 },
+    {
+      encoding: "utf8",
+      stdio: ["ignore", "pipe", "ignore"],
+      timeout: 10_000,
+      windowsHide: true,
+    },
   ).trim();
 }
 
@@ -42,12 +48,6 @@ function cursorPosition(): { x: number; y: number } {
 function clipboardTextBase64(): string {
   return powershell(
     "Add-Type -AssemblyName System.Windows.Forms; $t=[System.Windows.Forms.Clipboard]::GetText(); if ([string]::IsNullOrEmpty($t)) { Write-Output '' } else { Write-Output ([Convert]::ToBase64String([Text.Encoding]::UTF8.GetBytes($t))) }",
-  );
-}
-
-function foregroundWindowInfo(): string {
-  return powershell(
-    "[System.IntPtr]$h = (Add-Type -MemberDefinition '[DllImport(\"user32.dll\")] public static extern IntPtr GetForegroundWindow();' -Name WinCoexist -Namespace WinAPI -PassThru)::GetForegroundWindow(); Write-Output $h.ToString()",
   );
 }
 
@@ -233,7 +233,7 @@ test(
       const clipboardBefore =
         process.platform === "win32" ? clipboardTextBase64() : null;
       const foregroundBefore =
-        process.platform === "win32" ? foregroundWindowInfo() : null;
+        process.platform === "win32" ? getForegroundInfo() : null;
 
       const tools = await local.client.listTools();
       assert.deepEqual(
@@ -567,6 +567,7 @@ test(
         op: "diagnostics",
         args: { page_id: pageId, limit: 50 },
       });
+
       await call(local.client, "browser", {
         op: "act",
         args: {
@@ -608,6 +609,7 @@ test(
           ],
         },
       });
+
       const completedDownload = await waitFor(async () => {
         const result = structured(
           await call(activeLocal.client, "browser", {
@@ -652,6 +654,7 @@ test(
       assert.equal(competingEdit.status, 200);
 
       await cdp.navigate(pageId, lab.origin);
+
       const conflict = structured(
         await call(local.client, "browser", {
           op: "act",
@@ -685,11 +688,10 @@ test(
       );
       assert.equal(backend.humanMutationAttempts, 0);
 
-
       if (process.platform === "win32") {
         const cursorAfter = cursorPosition();
         const clipboardAfter = clipboardTextBase64();
-        const foregroundAfter = foregroundWindowInfo();
+        const foregroundAfter = getForegroundInfo();
         assert.deepEqual(
           cursorAfter,
           cursorBefore,
@@ -701,9 +703,9 @@ test(
           "global clipboard changed during background browser operation",
         );
         assert.equal(
-          foregroundAfter,
-          foregroundBefore,
-          "active OS window changed during background browser operation",
+          foregroundAfter.hwnd,
+          foregroundBefore?.hwnd,
+          `active OS window changed during background browser operation: expected ${foregroundBefore?.hwnd} (${foregroundBefore?.processName}), got ${foregroundAfter.hwnd} (${foregroundAfter.processName})`,
         );
       }
     } finally {
