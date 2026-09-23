@@ -1,0 +1,11 @@
+{
+  "version": 1,
+  "request_id": "be239009-2390-4239-8239-202609230009",
+  "device_id": "Leno",
+  "op": "process.run",
+  "args": {
+    "kind": "git_diff",
+    "cwd": ".",
+    "timeout_seconds": 30
+  }
+}
