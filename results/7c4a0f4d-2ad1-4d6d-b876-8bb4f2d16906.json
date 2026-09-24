@@ -1,0 +1,12 @@
+{
+  "version": 1,
+  "request_id": "7c4a0f4d-2ad1-4d6d-b876-8bb4f2d16906",
+  "device_id": "Leno",
+  "status": "success",
+  "data": {
+    "path": "tests/e2e/package.json",
+    "content": "{\n  \"name\": \"@tetherplane/e2e\",\n  \"version\": \"0.1.0\",\n  \"private\": true,\n  \"type\": \"module\",\n  \"scripts\": {\n    \"build:deps\": \"pnpm --filter @tetherplane/compact-mcp build && pnpm --filter @tetherplane/rdc-compat build && pnpm --filter @tetherplane/model-client build && pnpm --filter @tetherplane/browser-bridge build && pnpm --filter @tetherplane/browser-lab build && pnpm --filter @tetherplane/relay build\",\n    \"prebuild\": \"pnpm run build:deps\",\n    \"build\": \"tsc -p tsconfig.json\",\n    \"pretest\": \"cargo build -p tetherd && pnpm run build:deps\",\n    \"test\": \"node --test --test-concurrency=1 *.test.ts\",\n    \"pretypecheck\": \"pnpm run build:deps\",\n    \"typecheck\": \"tsc --noEmit -p tsconfig.json\"\n  },\n  \"dependencies\": {\n    \"@modelcontextprotocol/sdk\": \"1.30.0\",\n    \"@tetherplane/browser-bridge\": \"workspace:*\",\n    \"@tetherplane/browser-lab\": \"workspace:*\",\n    \"@tetherplane/compact-mcp\": \"workspace:*\",\n    \"@tetherplane/model-client\": \"workspace:*\",\n    \"@tetherplane/relay\": \"workspace:*\"\n  },\n  \"devDependencies\": {\n    \"@types/node\": \"24.13.6\"\n  }\n}\n",
+    "truncated": false
+  },
+  "completed_at": "2026-09-24T19:31:04.698636+00:00"
+}
