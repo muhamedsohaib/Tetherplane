@@ -20,3 +20,5 @@ export {
   RelayServer,
   type RelayListenAddress,
 } from "./server.ts";
+export { OidcClientAuthenticator, type OidcOptions } from "./auth/oidc-auth.ts";
+export type { OAuthResource } from "./auth/oauth-resource.ts";

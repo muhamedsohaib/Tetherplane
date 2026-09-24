@@ -1,0 +1,48 @@
+# ChatGPT OAuth edge
+
+The relay is an OAuth protected resource, not an authorization server. Use an established provider (for example Auth0) for login, consent, authorization-code exchange and PKCE S256. The six Compact MCP tools and the device's launch-bound local authority are unchanged.
+
+## Configuration
+
+Pass this metadata file using the existing `--auth-config` option. Replace example identifiers with values from the provider and the existing relay device account. No bearer token, client secret or signing private key belongs in this file.
+
+```json
+{
+  "oidc": {
+    "issuer": "https://YOUR-TENANT.auth0.com/",
+    "audience": "https://relay.example.com/mcp",
+    "jwksUri": "https://YOUR-TENANT.auth0.com/.well-known/jwks.json",
+    "scopes": ["tetherplane:access"],
+    "bindings": [{
+      "subject": "PROVIDER-USER-SUBJECT",
+      "clientId": "REGISTERED-OAUTH-CLIENT-ID",
+      "accountId": "EXISTING-RELAY-ACCOUNT-ID",
+      "principalId": "human:owner"
+    }]
+  }
+}
+```
+
+The audience is the canonical HTTPS MCP resource URL, including `/mcp`. Configure the provider's API/resource identifier to match exactly. The issuer must match its discovery document exactly, including any trailing slash. Use its trusted JWKS URL; token headers never choose the key endpoint. This initial integration accepts RS256 JWT access tokens only. It requires expiry, issuer, audience, subject, all configured scopes, and an explicitly bound subject/client pair. The client claim is `azp` or `client_id`; conflicting values are rejected. Unknown identities fail closed. JWT account/principal claims cannot override the configured binding.
+
+Static `clients` configuration with `token_env` remains supported for development. OIDC and static credentials cannot be mixed in one configuration. Configuration changes require relay restart. JWKS retrieval uses jose caching, rotation handling and a five-second timeout. Provider/key failures fail closed without logging tokens.
+
+## Provider and ChatGPT setup
+
+1. Use a stable public HTTPS hostname for the relay. A changing tunnel hostname requires updating the resource/audience and reconnecting the client.
+2. Configure an API/resource with the exact audience and `tetherplane:access` scope. Enable RS256 access tokens and authorization-code + PKCE S256. Configure the provider to honor the OAuth `resource` parameter.
+3. Verify the provider's `/.well-known/oauth-authorization-server` or `/.well-known/openid-configuration` advertises its authorization/token endpoints and `code_challenge_methods_supported` including `S256`.
+4. Configure a predefined OAuth client for the first proof, using the callback URI supplied by the current ChatGPT setup UI. Alternatively configure supported CIMD/DCR and then bind the resulting exact client ID. Do not allow arbitrary dynamically registered clients by wildcard. Ensure requested OIDC scopes are enabled if advertised.
+5. Add the intended user's subject and client ID to `bindings`. Use the account ID already owning Leno; inventing a different account makes the paired device inaccessible. Remote principal identity remains provenance and cannot expand the device's local profile.
+6. Start the relay with this auth configuration and existing TLS or trusted same-host reverse-proxy settings. Expose the resource metadata routes as well as `/mcp`. Keep the local listener loopback-only when TLS is terminated by a proxy.
+7. Connect ChatGPT to the public `/mcp` URL, complete provider login, list the six tools, then call `device` with `op=status` and `device=Leno`. Exercise an outside-root denial to verify local enforcement.
+
+The relay serves both `/.well-known/oauth-protected-resource` and the resource-path-specific metadata URL (normally `/.well-known/oauth-protected-resource/mcp`). Metadata URLs come from configuration, never forwarded Host headers. Missing/invalid credentials receive HTTP 401 with a resource metadata challenge before session creation. Authenticated discovery includes top-level and `_meta` OAuth security schemes on all six tools. An invalid-token tool call on an existing session returns an error result with `mcp/www_authenticate` for relinking and performs no routing. Other identity/session checks remain enforced on every request.
+
+## Verification and limits
+
+Automated tests generate ephemeral signing keys and cover rejected signature, issuer, audience, expiry/not-before, missing scope and unbound identities; discovery, tool metadata, reauthentication and static-mode compatibility are exercised over HTTP. Remote-plane E2E tests run with both static credentials and signed OIDC access tokens against real tetherd, proving the outbound device path, local policy denial, account isolation, reconnect, idempotency and revocation.
+
+These tests do not establish that a real provider tenant, public endpoint or ChatGPT account linking is configured. Record a separate live proof after deployment. Access-token revocation follows provider token expiry; remove a binding and restart the relay for immediate account access removal. Existing device revocation remains available.
+
+References: [OpenAI authentication](https://developers.openai.com/plugins/build/auth), [MCP authorization](https://modelcontextprotocol.io/specification/latest/basic/authorization).

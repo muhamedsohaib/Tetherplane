@@ -152,3 +152,7 @@ The built-in static authenticator is a controlled self-host/development option, 
 The primary security boundary does not attempt to defeat malware already running with the same or greater operating-system privileges as tetherd.
 
 The remote plane also does not make arbitrary third-party application mutations reversible. Checkpoints and idempotency support recovery and conflict detection, not universal rollback.
+
+## OIDC resource-server authentication
+
+The optional OIDC authenticator verifies RS256 access tokens against a configured HTTPS issuer, audience and JWKS endpoint, requires expiry and scopes, and maps only explicitly configured subject/client pairs to relay identities. It never accepts caller-supplied account or principal claims as authority. See [OAuth deployment details](../remote/chatgpt-oauth.md).

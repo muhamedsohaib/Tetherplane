@@ -1,3 +1,4 @@
+import { generateKeyPairSync, sign } from "node:crypto";
 import assert from "node:assert/strict";
 import { spawn, type ChildProcess } from "node:child_process";
 import { once } from "node:events";
@@ -20,10 +21,11 @@ import {
 import {
   RelayServer,
   StaticClientAuthenticator,
+  OidcClientAuthenticator,
   hashDeviceCredential,
 } from "@tetherplane/relay";
 
-test("Plan D black-box remote plane preserves local authority across pairing routing reconnect idempotency and revocation", async () => {
+for (const authMode of ["static", "oidc"] as const) test(`${authMode} black-box remote plane preserves local authority across pairing routing reconnect idempotency and revocation`, async () => {
   const here = path.dirname(fileURLToPath(import.meta.url));
   const repoRoot = path.resolve(here, "..", "..");
   const temp = await mkdtemp(
@@ -76,17 +78,35 @@ test("Plan D black-box remote plane preserves local authority across pairing rou
     "utf8",
   );
 
+  const keys = generateKeyPairSync("rsa", { modulusLength: 2048 });
+  const issuer = "https://identity.example/";
+  const audience = "https://relay.example/mcp";
+  const accessToken = (subject: string, clientId: string) => {
+    const header = Buffer.from(JSON.stringify({ alg: "RS256" })).toString("base64url");
+    const claims = Buffer.from(JSON.stringify({ iss: issuer, aud: audience, sub: subject, azp: clientId, exp: Math.floor(Date.now()/1000)+300, scope: "tetherplane:access" })).toString("base64url");
+    const input = `${header}.${claims}`;
+    return `${input}.${sign("RSA-SHA256", Buffer.from(input), keys.privateKey).toString("base64url")}`;
+  };
+  const tokenA = authMode === "oidc" ? accessToken("owner-a", "client-a") : "remote-client-token-a";
+  const tokenB = authMode === "oidc" ? accessToken("owner-b", "client-b") : "remote-client-token-b";
   const relay = await RelayServer.create({
     stateFile: relayState,
-    authenticator: new StaticClientAuthenticator([
+    ...(authMode === "oidc" ? { oauth: { resource: audience, issuer, scopes: ["tetherplane:access"] } } : {}),
+    authenticator: authMode === "oidc" ? new OidcClientAuthenticator({
+      issuer, audience, jwksUri: "https://identity.example/jwks", scopes: ["tetherplane:access"],
+      bindings: [
+        { subject: "owner-a", clientId: "client-a", accountId: "account-a", principalId: "human:account-a" },
+        { subject: "owner-b", clientId: "client-b", accountId: "account-b", principalId: "human:account-b" },
+      ],
+    }, async () => keys.publicKey) : new StaticClientAuthenticator([
       {
-        token: "remote-client-token-a",
+        token: tokenA,
         accountId: "account-a",
         clientId: "client-a",
         principalId: "human:account-a",
       },
       {
-        token: "remote-client-token-b",
+        token: tokenB,
         accountId: "account-b",
         clientId: "client-b",
         principalId: "human:account-b",
@@ -130,7 +150,7 @@ test("Plan D black-box remote plane preserves local authority across pairing rou
       "/pair/approve",
       {
         method: "POST",
-        token: "remote-client-token-a",
+        token: tokenA,
         body: { userCode: started.body.userCode },
       },
     );
@@ -172,12 +192,12 @@ test("Plan D black-box remote plane preserves local authority across pairing rou
 
     clientA = await connectRemoteClient(
       address.mcpUrl,
-      "remote-client-token-a",
+      tokenA,
       "remote-account-a",
     );
     clientB = await connectRemoteClient(
       address.mcpUrl,
-      "remote-client-token-b",
+      tokenB,
       "remote-account-b",
     );
 
@@ -323,7 +343,7 @@ test("Plan D black-box remote plane preserves local authority across pairing rou
       "/devices/Leno/revoke",
       {
         method: "POST",
-        token: "remote-client-token-a",
+        token: tokenA,
         body: {},
       },
     );

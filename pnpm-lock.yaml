@@ -118,6 +118,9 @@ importers:
       '@tetherplane/protocol':
         specifier: workspace:*
         version: link:../protocol
+      jose:
+        specifier: 6.2.12
+        version: 6.2.12
       ws:
         specifier: 8.21.3
         version: 8.21.3

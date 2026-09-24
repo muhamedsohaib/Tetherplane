@@ -25,6 +25,7 @@
     "@modelcontextprotocol/sdk": "1.30.0",
     "@tetherplane/compact-mcp": "workspace:*",
     "@tetherplane/protocol": "workspace:*",
+    "jose": "6.2.12",
     "ws": "8.21.3",
     "zod": "4.6.5"
   },

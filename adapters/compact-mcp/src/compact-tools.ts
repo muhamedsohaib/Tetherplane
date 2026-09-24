@@ -1,3 +1,4 @@
+import { ListToolsRequestSchema } from "@modelcontextprotocol/sdk/types.js";
 import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import * as z from "zod";
 
@@ -23,6 +24,7 @@ export type AgentCaller = {
 export type CompactServerOptions = {
   agentClient: AgentCaller;
   sessionId?: string;
+  oauthScopes?: string[];
 };
 
 const commonInputSchema = z.object({
@@ -59,6 +61,7 @@ export function createCompactMcpServer(
       {
         description: `Tetherplane ${name} operations`,
         inputSchema: commonInputSchema,
+        ...(options.oauthScopes ? { _meta: { securitySchemes: [{ type: "oauth2", scopes: options.oauthScopes }] } } : {}),
       },
       async (input) => {
         const compactInput = input as CompactToolInput;
@@ -79,6 +82,19 @@ export function createCompactMcpServer(
     );
   }
 
+  if (options.oauthScopes) {
+    const securitySchemes = [{ type: "oauth2", scopes: [...options.oauthScopes] }];
+    // SDK 1.x registerTool drops extension fields outside _meta.
+    server.server.setRequestHandler(ListToolsRequestSchema, async () => ({
+      tools: TOOL_NAMES.map(name => ({
+        name,
+        description: `Tetherplane ${name} operations`,
+        inputSchema: z.toJSONSchema(commonInputSchema, { io: "input" }) as { type: "object" },
+        securitySchemes,
+        _meta: { securitySchemes },
+      })),
+    }));
+  }
   return server;
 }
 

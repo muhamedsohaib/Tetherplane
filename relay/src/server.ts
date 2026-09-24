@@ -1,3 +1,4 @@
+import type { OAuthResource } from "./auth/oauth-resource.ts";
 import {
   createServer as createHttpServer,
   type Server as HttpServer,
@@ -74,6 +75,7 @@ export class RelayServer {
 
   static async create(options: {
     authenticator: ClientAuthenticator;
+    oauth?: OAuthResource;
     stateFile?: string;
     tls?: HttpsServerOptions;
     allowInsecureLocalhost?: boolean;
@@ -97,6 +99,7 @@ export class RelayServer {
     const mcpGateway = new RemoteMcpHttpGateway({
       router,
       authenticator: options.authenticator,
+      ...(options.oauth ? { oauth: options.oauth } : {}),
     });
     const controlGateway = new RelayControlHttpGateway({
       registry,

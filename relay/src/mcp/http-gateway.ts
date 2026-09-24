@@ -1,3 +1,4 @@
+import { oauthChallenge, resourceMetadataUrl, validateOAuthResource, type OAuthResource } from "../auth/oauth-resource.ts";
 import { randomUUID } from "node:crypto";
 import type {
   IncomingMessage,
@@ -23,6 +24,7 @@ type McpSession = {
 
 export class RemoteMcpHttpGateway {
   readonly #router: DeviceRouter;
+  readonly #oauth: OAuthResource | undefined;
   readonly #authenticator: ClientAuthenticator;
   readonly #sessions = new Map<string, McpSession>();
   #attachedServer: Server | null = null;
@@ -33,7 +35,9 @@ export class RemoteMcpHttpGateway {
   constructor(options: {
     router: DeviceRouter;
     authenticator: ClientAuthenticator;
+    oauth?: OAuthResource;
   }) {
+    this.#oauth = options.oauth ? validateOAuthResource(options.oauth) : undefined;
     this.#router = options.router;
     this.#authenticator = options.authenticator;
   }
@@ -75,14 +79,34 @@ export class RemoteMcpHttpGateway {
       request.url ?? "/",
       `http://${request.headers.host ?? "localhost"}`,
     );
+    if (this.#oauth && ["/.well-known/oauth-protected-resource", new URL(resourceMetadataUrl(this.#oauth)).pathname].includes(url.pathname)) {
+      if (request.method !== "GET") {
+        response.writeHead(405, { allow: "GET" }).end();
+      } else {
+        writeJson(response, 200, { resource: this.#oauth.resource, authorization_servers: [this.#oauth.issuer], scopes_supported: this.#oauth.scopes, bearer_methods_supported: ["header"] });
+      }
+      return;
+    }
     if (url.pathname !== pathname) {
       return;
     }
 
-    const identity = await this.#authenticate(request);
+    const identity = await this.#authenticate(request).catch(() => null);
     if (!identity) {
       response.statusCode = 401;
-      response.setHeader("www-authenticate", "Bearer");
+      const challenge = this.#oauth ? oauthChallenge(this.#oauth) : "Bearer";
+      response.setHeader("www-authenticate", challenge);
+      // An existing session may request account relinking, but never execute a tool.
+      const sessionId = singleHeader(request.headers["mcp-session-id"]);
+      if (this.#oauth && request.method === "POST" && sessionId && this.#sessions.has(sessionId)) {
+        try {
+          const body = await readJsonBody(request) as { method?: string; id?: unknown } | null;
+          if (body?.method === "tools/call" && (typeof body.id === "string" || typeof body.id === "number")) {
+            writeJson(response, 200, { jsonrpc: "2.0", id: body.id, result: { isError: true, content: [{ type: "text", text: "Authentication required" }], _meta: { "mcp/www_authenticate": [challenge + ', error="invalid_token", error_description="Authentication required"'] } } });
+            return;
+          }
+        } catch { /* Authentication still fails closed for malformed requests. */ }
+      }
       response.end();
       return;
     }
@@ -166,6 +190,7 @@ export class RemoteMcpHttpGateway {
       },
     });
     const compactServer = createCompactMcpServer({
+      ...(this.#oauth ? { oauthScopes: this.#oauth.scopes } : {}),
       agentClient: {
         call: (invocation) => this.#router.call(identity, invocation),
       },

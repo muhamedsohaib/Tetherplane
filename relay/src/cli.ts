@@ -3,10 +3,7 @@
 import { readFile } from "node:fs/promises";
 
 import {
-  StaticClientAuthenticator,
-} from "./auth/static-auth.ts";
-import {
-  loadStaticClientCredentials,
+  loadClientAuth,
   parseRelayArgs,
 } from "./cli-config.ts";
 import { RelayServer } from "./server.ts";
@@ -19,11 +16,7 @@ async function main(): Promise<void> {
   }
 
   const options = parseRelayArgs(args);
-  const credentials = await loadStaticClientCredentials(
-    options.authConfig,
-  );
-  const authenticator =
-    new StaticClientAuthenticator(credentials);
+  const { authenticator, oauth } = await loadClientAuth(options.authConfig);
 
   const tls =
     options.tlsCert && options.tlsKey
@@ -36,6 +29,7 @@ async function main(): Promise<void> {
   const relay = await RelayServer.create({
     stateFile: options.stateFile,
     authenticator,
+    ...(oauth ? { oauth } : {}),
     ...(tls ? { tls } : {}),
     allowInsecureLocalhost:
       options.allowInsecureLocalhost,
@@ -88,7 +82,7 @@ Required security:
     development or a trusted same-host TLS/OIDC reverse proxy.
 
 Options:
-  --auth-config <path>       Static auth metadata. Tokens come from token_env.
+  --auth-config <path>       OIDC configuration or static token_env metadata.
   --state-file <path>       Device registry state file.
   --host <host>             Bind host. Default: 127.0.0.1.
   --port <port>             Bind port. Default: 8788.

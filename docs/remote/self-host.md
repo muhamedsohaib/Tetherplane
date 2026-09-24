@@ -201,3 +201,7 @@ Local path:
     MCP client -> local Compact MCP stdio adapter -> tetherd --stdio-rpc
 
 No relay is required for local operation.
+
+## ChatGPT OAuth
+
+The built-in OIDC resource-server integration and provider setup are documented in [ChatGPT OAuth edge](chatgpt-oauth.md). Static development authentication remains available.
