@@ -1,0 +1,15 @@
+{
+  "version": 1,
+  "request_id": "7c4a0f4d-2ad1-4d6d-b876-8bb4f2d16902",
+  "device_id": "Leno",
+  "status": "success",
+  "data": {
+    "kind": "git_diff",
+    "cwd": ".",
+    "exit_code": 0,
+    "stdout": " docs/remote/chatgpt-oauth.md            |   4 +-\n relay/src/mcp/http-gateway.ts           |  74 ++++++++++++----\n relay/test/mcp-http.test.ts             | 152 ++++++++++++++++++++++++++++++++\n relay/test/oauth-edge.test.ts           |   2 +-\n tests/e2e/helpers/windows-foreground.ts |  62 ++++++++-----\n tests/e2e/package.json                  |   2 +-\n tests/e2e/remote-plane.test.ts          |  29 +++++-\n 7 files changed, 278 insertions(+), 47 deletions(-)\n",
+    "stderr": "warning: in the working copy of 'docs/remote/chatgpt-oauth.md', LF will be replaced by CRLF the next time Git touches it\nwarning: in the working copy of 'relay/src/mcp/http-gateway.ts', LF will be replaced by CRLF the next time Git touches it\nwarning: in the working copy of 'relay/test/mcp-http.test.ts', LF will be replaced by CRLF the next time Git touches it\nwarning: in the working copy of 'relay/test/oauth-edge.test.ts', LF will be replaced by CRLF the next time Git touches it\nwarning: in the working copy of 'tests/e2e/helpers/windows-foreground.ts', LF will be replaced by CRLF the next time Git touches it\nwarning: in the working copy of 'tests/e2e/package.json', LF will be replaced by CRLF the next time Git touches it\nwarning: in the working copy of 'tests/e2e/remote-plane.test.ts', LF will be replaced by CRLF the next time Git touches it\n",
+    "truncated": false
+  },
+  "completed_at": "2026-09-24T19:30:16.169143+00:00"
+}
