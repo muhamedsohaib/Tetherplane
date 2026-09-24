@@ -33,6 +33,37 @@ test("relay server permits explicit plaintext loopback development mode", async 
   }
 });
 
+test("relay exposes minimal unauthenticated liveness and readiness probes", async () => {
+  const dir = await mkdtemp(
+    path.join(os.tmpdir(), "tether-relay-health-"),
+  );
+  const relay = await RelayServer.create({
+    stateFile: path.join(dir, "devices.json"),
+    authenticator: auth(),
+    allowInsecureLocalhost: true,
+  });
+
+  try {
+    const address = await relay.listen({
+      host: "127.0.0.1",
+      port: 0,
+    });
+
+    const health = await fetch(`${address.httpUrl}/healthz`);
+    assert.equal(health.status, 200);
+    assert.equal(health.headers.get("content-type"), "application/json");
+    assert.deepEqual(await health.json(), { status: "ok" });
+
+    const ready = await fetch(`${address.httpUrl}/readyz`);
+    assert.equal(ready.status, 200);
+    assert.equal(ready.headers.get("content-type"), "application/json");
+    assert.deepEqual(await ready.json(), { status: "ready" });
+  } finally {
+    await relay.close();
+    await rm(dir, { recursive: true, force: true });
+  }
+});
+
 test("plaintext relay refuses production or non-loopback binding", async () => {
   const relay = await RelayServer.create({
     authenticator: auth(),
