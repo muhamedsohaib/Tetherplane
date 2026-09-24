@@ -47,6 +47,82 @@ const TOOL_NAMES = [
   "batch",
 ] as const;
 
+type ToolName = (typeof TOOL_NAMES)[number];
+
+const TOOL_METADATA: Record<
+  ToolName,
+  {
+    title: string;
+    description: string;
+    annotations: {
+      readOnlyHint: boolean;
+      destructiveHint: boolean;
+      openWorldHint: boolean;
+    };
+  }
+> = {
+  device: {
+    title: "Tetherplane Device",
+    description:
+      "Inspect Tetherplane device status and capabilities, and retrieve operation schemas. This tool is read-only.",
+    annotations: {
+      readOnlyHint: true,
+      destructiveHint: false,
+      openWorldHint: false,
+    },
+  },
+  files: {
+    title: "Tetherplane Files",
+    description:
+      "Read, search, write, patch, list, inspect, create, and move files within locally authorized paths. Local policy remains authoritative.",
+    annotations: {
+      readOnlyHint: false,
+      destructiveHint: true,
+      openWorldHint: false,
+    },
+  },
+  process: {
+    title: "Tetherplane Process",
+    description:
+      "Run and interact with Tetherplane-owned processes, inspect sessions and system processes, and terminate only policy-authorized sessions.",
+    annotations: {
+      readOnlyHint: false,
+      destructiveHint: true,
+      openWorldHint: true,
+    },
+  },
+  browser: {
+    title: "Tetherplane Browser",
+    description:
+      "Inspect and automate authorized browser pages with semantic background-safe operations. Browser actions may navigate or mutate external web applications under local policy.",
+    annotations: {
+      readOnlyHint: false,
+      destructiveHint: true,
+      openWorldHint: true,
+    },
+  },
+  desktop: {
+    title: "Tetherplane Desktop",
+    description:
+      "Inspect and act on authorized desktop UI with semantic automation, a private clipboard, and scoped foreground leases for physical fallback.",
+    annotations: {
+      readOnlyHint: false,
+      destructiveHint: true,
+      openWorldHint: true,
+    },
+  },
+  batch: {
+    title: "Tetherplane Batch",
+    description:
+      "Execute multiple canonical Tetherplane operations in bounded parallel or sequential batches. Every child operation is independently policy-checked.",
+    annotations: {
+      readOnlyHint: false,
+      destructiveHint: true,
+      openWorldHint: true,
+    },
+  },
+};
+
 export function createCompactMcpServer(
   options: CompactServerOptions,
 ): McpServer {
@@ -56,10 +132,13 @@ export function createCompactMcpServer(
   });
 
   for (const name of TOOL_NAMES) {
+    const metadata = TOOL_METADATA[name];
     server.registerTool(
       name,
       {
-        description: `Tetherplane ${name} operations`,
+        title: metadata.title,
+        description: metadata.description,
+        annotations: metadata.annotations,
         inputSchema: commonInputSchema,
         ...(options.oauthScopes ? { _meta: { securitySchemes: [{ type: "oauth2", scopes: options.oauthScopes }] } } : {}),
       },
@@ -86,13 +165,18 @@ export function createCompactMcpServer(
     const securitySchemes = [{ type: "oauth2", scopes: [...options.oauthScopes] }];
     // SDK 1.x registerTool drops extension fields outside _meta.
     server.server.setRequestHandler(ListToolsRequestSchema, async () => ({
-      tools: TOOL_NAMES.map(name => ({
-        name,
-        description: `Tetherplane ${name} operations`,
-        inputSchema: z.toJSONSchema(commonInputSchema, { io: "input" }) as { type: "object" },
-        securitySchemes,
-        _meta: { securitySchemes },
-      })),
+      tools: TOOL_NAMES.map((name) => {
+        const metadata = TOOL_METADATA[name];
+        return {
+          name,
+          title: metadata.title,
+          description: metadata.description,
+          annotations: metadata.annotations,
+          inputSchema: z.toJSONSchema(commonInputSchema, { io: "input" }) as { type: "object" },
+          securitySchemes,
+          _meta: { securitySchemes },
+        };
+      }),
     }));
   }
   return server;
