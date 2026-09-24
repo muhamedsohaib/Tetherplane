@@ -81,9 +81,9 @@ for (const authMode of ["static", "oidc"] as const) test(`${authMode} black-box 
   const keys = generateKeyPairSync("rsa", { modulusLength: 2048 });
   const issuer = "https://identity.example/";
   const audience = "https://relay.example/mcp";
-  const accessToken = (subject: string, clientId: string) => {
+  const accessToken = (subject: string, clientId: string, scope = "tetherplane:access") => {
     const header = Buffer.from(JSON.stringify({ alg: "RS256" })).toString("base64url");
-    const claims = Buffer.from(JSON.stringify({ iss: issuer, aud: audience, sub: subject, azp: clientId, exp: Math.floor(Date.now()/1000)+300, scope: "tetherplane:access" })).toString("base64url");
+    const claims = Buffer.from(JSON.stringify({ iss: issuer, aud: audience, sub: subject, azp: clientId, exp: Math.floor(Date.now()/1000)+300, scope })).toString("base64url");
     const input = `${header}.${claims}`;
     return `${input}.${sign("RSA-SHA256", Buffer.from(input), keys.privateKey).toString("base64url")}`;
   };
@@ -195,6 +195,7 @@ for (const authMode of ["static", "oidc"] as const) test(`${authMode} black-box 
       tokenA,
       "remote-account-a",
       authMode === "oidc",
+      authMode === "oidc" ? accessToken("owner-a", "client-a", "") : undefined,
     );
     clientB = await connectRemoteClient(
       address.mcpUrl,
@@ -381,6 +382,7 @@ async function connectRemoteClient(
   token: string,
   name: string,
   discoverBeforeLinking = false,
+  staleToken?: string,
 ): Promise<Client> {
   let linked = !discoverBeforeLinking;
   const transport = new StreamableHTTPClientTransport(
@@ -389,6 +391,7 @@ async function connectRemoteClient(
       fetch: (url, init) => {
         const headers = new Headers(init?.headers);
         if (linked) headers.set("authorization", `Bearer ${token}`);
+        else if (staleToken) headers.set("authorization", `Bearer ${staleToken}`);
         return fetch(url, { ...init, headers });
       },
     },
@@ -404,6 +407,7 @@ async function connectRemoteClient(
       assert.ok(session);
       const listed = await client.listTools();
       assert.deepEqual(listed.tools.map(tool => tool.name).sort(), ["batch", "browser", "desktop", "device", "files", "process"]);
+      for (const tool of listed.tools) assert.deepEqual(tool._meta?.securitySchemes, [{ type: "oauth2", scopes: ["tetherplane:access"] }]);
       const denied = await client.callTool({ name: "device", arguments: { op: "status", device: "Leno" } });
       assert.equal(denied.isError, true);
       assert.ok(denied._meta?.["mcp/www_authenticate"]);

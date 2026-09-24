@@ -140,7 +140,7 @@ test("unauthenticated and wrong-token MCP initialization are rejected before ses
   assert.ok(address && typeof address === "object");
 
   try {
-    for (const authorization of [undefined, "Bearer wrong-token"]) {
+    for (const authorization of [undefined, "Bearer wrong-token", "Bearer", "Basic invalid", ""]) {
       const response: globalThis.Response = await fetch(
         `http://127.0.0.1:${address.port}/mcp`,
         {
@@ -193,10 +193,11 @@ async function oauthFixture(t: test.TestContext) {
   // Ephemeral signing material stays in memory and is never logged.
   const keys = await generateKeyPair("RS256");
   const jwk = await exportJWK(keys.publicKey);
-  const claims = { iss: oauth.issuer, aud: oauth.resource, sub: "owner", azp: "client-a", scope: oauth.scopes[0], exp: Math.floor(Date.now() / 1000) + 300 };
+  const clientId = "https://chatgpt.com/oauth/codex/client.json";
+  const claims = { iss: oauth.issuer, aud: oauth.resource, sub: "owner", azp: clientId, scope: oauth.scopes[0], exp: Math.floor(Date.now() / 1000) + 300 };
   const sign = (changes: Record<string, unknown> = {}) => new SignJWT({ ...claims, ...changes })
     .setProtectedHeader({ alg: "RS256", kid: "test" }).sign(keys.privateKey);
-  const identity = { accountId: "account-a", clientId: "client-a", principalId: "human:owner" };
+  const identity = { accountId: "account-a", clientId, principalId: "human:owner" };
   const alternatives = [
     { ...identity, accountId: "account-b" },
     { ...identity, clientId: "client-b" },
@@ -232,12 +233,12 @@ async function oauthFixture(t: test.TestContext) {
     ...(body === undefined ? {} : { body: JSON.stringify(body) }),
   });
   const post = (body: unknown, session?: string, authorization?: string) => request("POST", body, session, authorization);
-  const discover = async () => {
-    const response = await post(initialize);
+  const discover = async (authorization?: string) => {
+    const response = await post(initialize, undefined, authorization);
     assert.equal(response.status, 200);
     const session = response.headers.get("mcp-session-id");
     assert.ok(session);
-    const initialized = await post({ jsonrpc: "2.0", method: "notifications/initialized" }, session);
+    const initialized = await post({ jsonrpc: "2.0", method: "notifications/initialized" }, session, authorization);
     assert.equal(initialized.status, 202);
     return session;
   };
@@ -306,21 +307,56 @@ test("OAuth binds an anonymous session on a valid call and enforces every identi
   assert.equal(f.routed.mock.callCount(), 2);
 });
 
-test("OAuth malformed expired wrong-audience and rejected tokens cannot create bind or execute sessions", async (t) => {
+test("OAuth rejected credentials permit only discovery until a scoped bearer binds the same session", async (t) => {
   const f = await oauthFixture(t);
-  const session = await f.discover();
-  const rejected = ["Bearer malformed", "Basic invalid", "Bearer", "",
-    ...await Promise.all([{ exp: 1 }, { aud: "wrong" }, { iss: "https://wrong.example/" }, { scope: "other" }, { sub: "unknown" }].map(async claims => `Bearer ${await f.sign(claims)}`))];
-  for (const bound of [false, true]) {
-    if (bound) assert.equal((await f.post(toolCall(), session, `Bearer ${await f.sign()}`)).status, 200);
-    for (const authorization of rejected) {
-      const init = await f.post(initialize, undefined, authorization);
-      assert.equal(init.status, 401);
-      assert.equal(init.headers.get("mcp-session-id"), null);
+  const cases: Array<[string, string | Record<string, unknown>]> = [
+    ["invalid JWT", "Bearer malformed"], ["malformed bearer", "Bearer"],
+    ["wrong scheme", "Basic invalid"], ["empty header", ""],
+    ["expired", { exp: 1 }], ["wrong audience", { aud: "wrong" }],
+    ["wrong issuer", { iss: "https://wrong.example/" }],
+    ["empty scope", { scope: "" }], ["missing scope", { scope: undefined }],
+    ["wrong scope", { scope: "other" }], ["unknown subject", { sub: "unknown" }],
+    ["internal client ID", { azp: "tpc_unbound_test_client" }],
+  ];
+  for (const [name, credentials] of cases) {
+    await t.test(name, async () => {
+      const authorization = typeof credentials === "string" ? credentials : `Bearer ${await f.sign(credentials)}`;
+      const before = f.routed.mock.callCount();
+      const session = await f.discover(authorization);
+      assert.equal((await f.post({ jsonrpc: "2.0", id: 2, method: "ping" }, session, authorization)).status, 200);
+      const listed = await f.post({ jsonrpc: "2.0", id: 2, method: "tools/list" }, session, authorization);
+      assert.equal(listed.status, 200);
+      const data = await listed.json() as { result: { tools: Array<{ name: string; securitySchemes: unknown; _meta: { securitySchemes: unknown } }> } };
+      assert.deepEqual(data.result.tools.map(tool => tool.name).sort(), toolNames);
+      for (const tool of data.result.tools) {
+        assert.deepEqual(tool.securitySchemes, [{ type: "oauth2", scopes: ["tetherplane:access"] }]);
+        assert.deepEqual(tool._meta.securitySchemes, tool.securitySchemes);
+      }
+      for (const tool of toolNames) await assertAuthError(await f.post(toolCall(tool), session, authorization));
+      await assertAuthError(await f.post(toolCall("device", "schema"), session, authorization));
+      await assertAuthError(await f.post(toolCall(), undefined, authorization));
+      assert.equal((await f.post({ jsonrpc: "2.0", id: 4, method: "resources/list" }, session, authorization)).status, 401);
+      for (const method of ["GET", "DELETE"]) assert.equal((await f.request(method, undefined, session, authorization)).status, 401);
+      assert.equal(f.routed.mock.callCount(), before);
+
+      const valid = `Bearer ${await f.sign()}`;
+      const executed = await f.post(toolCall(), session, valid);
+      assert.equal(executed.status, 200);
+      const result = await executed.json() as { result: { isError?: boolean; structuredContent: unknown } };
+      assert.equal(result.result.isError, undefined);
+      assert.deepEqual(result.result.structuredContent, { remote: true });
+      assert.equal(f.routed.mock.callCount(), before + 1);
+      assert.deepEqual(f.routed.mock.calls[before]?.arguments[0], f.identity);
+
+      // A stale bearer cannot borrow or downgrade the newly bound identity.
       await assertAuthError(await f.post(toolCall(), session, authorization));
       assert.equal((await f.post({ jsonrpc: "2.0", id: 2, method: "tools/list" }, session, authorization)).status, 401);
-    }
-    assert.equal(f.routed.mock.callCount(), bound ? 1 : 0);
+      for (const [i, other] of f.alternatives.entries()) {
+        const different = `Bearer ${await f.sign({ sub: `other-${i}`, azp: other.clientId })}`;
+        assert.equal((await f.post(toolCall(), session, different)).status, 403);
+      }
+      assert.equal(f.routed.mock.callCount(), before + 1);
+    });
   }
 });
 

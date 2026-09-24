@@ -92,18 +92,11 @@ export class RemoteMcpHttpGateway {
     }
 
     const identity = await this.#authenticate(request).catch(() => null);
-    const anonymousDiscovery = this.#oauth &&
-      request.headers.authorization === undefined && request.method === "POST";
+    // OAuth discovery must work even when the client sends stale credentials.
+    // POST dispatch below limits unauthenticated sessions to discovery methods.
+    const anonymousDiscovery = this.#oauth && request.method === "POST";
     if (!identity && !anonymousDiscovery) {
-      // Invalid credentials never fall back to anonymous discovery.
-      const sessionId = singleHeader(request.headers["mcp-session-id"]);
-      let body: unknown;
-      if (this.#oauth && request.method === "POST" && sessionId && this.#sessions.has(sessionId)) {
-        try {
-          body = await readJsonBody(request);
-        } catch { /* Authentication still fails closed for malformed requests. */ }
-      }
-      this.#rejectAuthentication(response, body);
+      this.#rejectAuthentication(response);
       return;
     }
 
@@ -175,6 +168,10 @@ export class RemoteMcpHttpGateway {
     }
 
     if (!isInitializeRequest(body)) {
+      if (!identity) {
+        this.#rejectAuthentication(response, body);
+        return;
+      }
       writeJson(
         response,
         400,
