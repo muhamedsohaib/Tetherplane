@@ -29,6 +29,44 @@ From the repository root:
 
 The relay executable is relay/dist/cli.js. The package also exposes the tether-relay binary entry point.
 
+
+## Production relay container
+
+The repository includes `Dockerfile.relay` for a reproducible Node 22 relay image. The runtime uses a non-root `tetherplane` account and does not bake auth configuration, bearer tokens, device credentials, TLS private keys, or certificates into the image.
+
+Build from the repository root:
+
+    docker build -f Dockerfile.relay -t tetherplane-relay:local .
+
+For direct TLS termination, mount authentication metadata and TLS material at runtime and keep relay state on a persistent volume:
+
+    docker run --rm \
+      --name tetherplane-relay \
+      -p 8788:8788 \
+      -v tetherplane-relay-state:/var/lib/tetherplane \
+      -v /secure/tether-relay-auth.json:/run/secrets/tether-relay-auth.json:ro \
+      -v /secure/relay-cert.pem:/run/secrets/relay-cert.pem:ro \
+      -v /secure/relay-key.pem:/run/secrets/relay-key.pem:ro \
+      tetherplane-relay:local \
+      --auth-config /run/secrets/tether-relay-auth.json \
+      --state-file /var/lib/tetherplane/devices.json \
+      --host 0.0.0.0 \
+      --port 8788 \
+      --tls-cert /run/secrets/relay-cert.pem \
+      --tls-key /run/secrets/relay-key.pem
+
+For OAuth/OIDC, the mounted auth config contains provider metadata and explicit identity bindings only. Provider secrets remain in the identity provider or its secret-management mechanism.
+
+The relay exposes unauthenticated operational probes containing no device, account, session, or credential data:
+
+- `GET /healthz` -> `{"status":"ok"}`
+- `GET /readyz` -> `{"status":"ready"}`
+
+These endpoints are intended for container/orchestrator liveness and readiness checks. They do not grant MCP or device authority.
+
+A public ChatGPT/plugin deployment must use a stable public HTTPS hostname. Temporary tunnel URLs are appropriate for development only and must not be treated as production identity or OAuth resource identifiers.
+
+
 ## Client authentication config
 
 The development/self-host static authenticator deliberately does not accept raw bearer tokens in its JSON config.
