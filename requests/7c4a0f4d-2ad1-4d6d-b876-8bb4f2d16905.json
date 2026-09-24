@@ -1,0 +1,9 @@
+{
+  "version": 1,
+  "request_id": "7c4a0f4d-2ad1-4d6d-b876-8bb4f2d16905",
+  "device_id": "Leno",
+  "op": "files.read",
+  "args": {
+    "path": "tests/e2e/windows-foreground-helper.test.ts"
+  }
+}
