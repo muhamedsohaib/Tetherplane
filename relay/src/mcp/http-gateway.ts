@@ -17,7 +17,7 @@ import type {
 import type { DeviceRouter } from "../routing/device-router.ts";
 
 type McpSession = {
-  identity: ClientIdentity;
+  identity: ClientIdentity | null;
   transport: StreamableHTTPServerTransport;
   server: ReturnType<typeof createCompactMcpServer>;
 };
@@ -92,22 +92,18 @@ export class RemoteMcpHttpGateway {
     }
 
     const identity = await this.#authenticate(request).catch(() => null);
-    if (!identity) {
-      response.statusCode = 401;
-      const challenge = this.#oauth ? oauthChallenge(this.#oauth) : "Bearer";
-      response.setHeader("www-authenticate", challenge);
-      // An existing session may request account relinking, but never execute a tool.
+    const anonymousDiscovery = this.#oauth &&
+      request.headers.authorization === undefined && request.method === "POST";
+    if (!identity && !anonymousDiscovery) {
+      // Invalid credentials never fall back to anonymous discovery.
       const sessionId = singleHeader(request.headers["mcp-session-id"]);
+      let body: unknown;
       if (this.#oauth && request.method === "POST" && sessionId && this.#sessions.has(sessionId)) {
         try {
-          const body = await readJsonBody(request) as { method?: string; id?: unknown } | null;
-          if (body?.method === "tools/call" && (typeof body.id === "string" || typeof body.id === "number")) {
-            writeJson(response, 200, { jsonrpc: "2.0", id: body.id, result: { isError: true, content: [{ type: "text", text: "Authentication required" }], _meta: { "mcp/www_authenticate": [challenge + ', error="invalid_token", error_description="Authentication required"'] } } });
-            return;
-          }
+          body = await readJsonBody(request);
         } catch { /* Authentication still fails closed for malformed requests. */ }
       }
-      response.end();
+      this.#rejectAuthentication(response, body);
       return;
     }
 
@@ -148,7 +144,7 @@ export class RemoteMcpHttpGateway {
   async #handlePost(
     request: IncomingMessage,
     response: ServerResponse,
-    identity: ClientIdentity,
+    identity: ClientIdentity | null,
   ): Promise<void> {
     const body = await readJsonBody(request);
     const sessionId = singleHeader(
@@ -161,9 +157,18 @@ export class RemoteMcpHttpGateway {
         writeJson(response, 404, mcpSessionError("Unknown MCP session"));
         return;
       }
-      if (!sameIdentity(session.identity, identity)) {
+      if (!identity) {
+        // Block tools/call before the compact server, including local schema lookup.
+        if (session.identity || !isDiscoveryRequest(body)) {
+          this.#rejectAuthentication(response, body);
+          return;
+        }
+      } else if (session.identity && !sameIdentity(session.identity, identity)) {
         writeJson(response, 403, mcpSessionError("MCP session identity mismatch"));
         return;
+      } else {
+        // Bind once, synchronously before dispatch; never replace a bound identity.
+        session.identity ??= { ...identity };
       }
       await session.transport.handleRequest(request, response, body);
       return;
@@ -192,11 +197,14 @@ export class RemoteMcpHttpGateway {
     const compactServer = createCompactMcpServer({
       ...(this.#oauth ? { oauthScopes: this.#oauth.scopes } : {}),
       agentClient: {
-        call: (invocation) => this.#router.call(identity, invocation),
+        call: async (invocation) => {
+          if (!session.identity) throw new Error("Authentication required");
+          return this.#router.call(session.identity, invocation);
+        },
       },
     });
     session = {
-      identity: { ...identity },
+      identity: identity ? { ...identity } : null,
       transport,
       server: compactServer,
     };
@@ -213,8 +221,12 @@ export class RemoteMcpHttpGateway {
   async #handleExistingSession(
     request: IncomingMessage,
     response: ServerResponse,
-    identity: ClientIdentity,
+    identity: ClientIdentity | null,
   ): Promise<void> {
+    if (!identity) {
+      this.#rejectAuthentication(response);
+      return;
+    }
     const sessionId = singleHeader(
       request.headers["mcp-session-id"],
     );
@@ -227,11 +239,31 @@ export class RemoteMcpHttpGateway {
       writeJson(response, 404, mcpSessionError("Unknown MCP session"));
       return;
     }
-    if (!sameIdentity(session.identity, identity)) {
+    if (session.identity && !sameIdentity(session.identity, identity)) {
       writeJson(response, 403, mcpSessionError("MCP session identity mismatch"));
       return;
     }
+    session.identity ??= { ...identity };
     await session.transport.handleRequest(request, response);
+  }
+
+  #rejectAuthentication(response: ServerResponse, body?: unknown): void {
+    const challenge = this.#oauth ? oauthChallenge(this.#oauth) : "Bearer";
+    response.setHeader("www-authenticate", challenge);
+    if (this.#oauth && body && typeof body === "object" && !Array.isArray(body) &&
+      "method" in body && body.method === "tools/call" && "id" in body &&
+      (typeof body.id === "string" || typeof body.id === "number")) {
+      writeJson(response, 200, {
+        jsonrpc: "2.0", id: body.id,
+        result: {
+          isError: true,
+          content: [{ type: "text", text: "Authentication required" }],
+          _meta: { "mcp/www_authenticate": [challenge + ', error="invalid_token", error_description="Authentication required"'] },
+        },
+      });
+      return;
+    }
+    response.writeHead(401).end();
   }
 
   async #authenticate(
@@ -262,6 +294,12 @@ async function readJsonBody(
   }
   if (chunks.length === 0) return null;
   return JSON.parse(Buffer.concat(chunks).toString("utf8")) as unknown;
+}
+
+function isDiscoveryRequest(body: unknown): boolean {
+  return !!body && typeof body === "object" && !Array.isArray(body) &&
+    "method" in body && typeof body.method === "string" &&
+    ["tools/list", "notifications/initialized", "ping"].includes(body.method);
 }
 
 function bearerToken(header: string | undefined): string | null {

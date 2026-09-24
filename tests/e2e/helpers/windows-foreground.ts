@@ -117,25 +117,23 @@ export function getForegroundInfo(): ForegroundInfo {
       probeExePath = exePath;
     }
 
-    const output = execFileSync(probeExePath, {
-      encoding: "utf8",
-      stdio: ["ignore", "pipe", "ignore"],
-      windowsHide: true,
-      timeout: 5_000,
-    }).trim();
-
-    const [hwndStr, pidStr, procName, className] = output.split(":");
-    return {
-      hwnd: Number(hwndStr) || 0,
-      pid: Number(pidStr) || 0,
-      processName: procName || "unknown",
-      className: className || "",
-      raw: output,
-    };
+    let output: string | undefined;
+    try {
+      output = execFileSync(probeExePath, {
+        encoding: "utf8",
+        stdio: ["ignore", "pipe", "ignore"],
+        windowsHide: true,
+        timeout: 5_000,
+      });
+    } catch (error) {
+      if (!isProbeLaunchFailure(error)) throw error;
+    }
+    if (output !== undefined) return parseForegroundInfo(output);
   }
 
-  // Fallback if csc is unavailable: PowerShell with windowsHide: true and OpenInputDesktop
+  // Use the same read-only probe when csc is absent or Windows blocks the EXE.
   const psScript = `
+$ErrorActionPreference = 'Stop'
 Add-Type -TypeDefinition @'
 ${CS_SOURCE}
 '@
@@ -150,14 +148,34 @@ ${CS_SOURCE}
       windowsHide: true,
       timeout: 10_000,
     },
-  ).trim();
+  );
 
-  const [hwndStr, pidStr, procName, className] = output.split(":");
+  return parseForegroundInfo(output);
+}
+
+function isProbeLaunchFailure(error: unknown): boolean {
+  if (!error || typeof error !== "object") return false;
+  const failure = error as NodeJS.ErrnoException & {
+    pid?: number; status?: number | null; signal?: string | null;
+  };
+  // Node reports Windows Application Control denials as UNKNOWN. Require
+  // evidence that spawn itself failed, not a timeout or a started probe's exit.
+  return failure.pid === 0 && failure.status === null && failure.signal === null &&
+    failure.syscall?.startsWith("spawnSync ") === true &&
+    ["EACCES", "EPERM", "ENOENT", "ENOEXEC", "UNKNOWN"].includes(failure.code ?? "");
+}
+
+function parseForegroundInfo(value: string): ForegroundInfo {
+  const output = value.trim();
+  const match = /^(\d+):(\d+):([^:\r\n]+):([^\r\n]*)$/.exec(output);
+  if (!match || !Number.isSafeInteger(Number(match[1])) || !Number.isSafeInteger(Number(match[2]))) {
+    throw new Error("Invalid foreground probe output");
+  }
   return {
-    hwnd: Number(hwndStr) || 0,
-    pid: Number(pidStr) || 0,
-    processName: procName || "unknown",
-    className: className || "",
+    hwnd: Number(match[1]),
+    pid: Number(match[2]),
+    processName: match[3]!,
+    className: match[4]!,
     raw: output,
   };
 }

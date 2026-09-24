@@ -11,7 +11,7 @@ test("OAuth edge advertises trusted discovery, preserves six tools and challenge
   const headers = { "content-type": "application/json", accept: "application/json, text/event-stream" };
   const post = (body: unknown, extra: Record<string,string> = {}) => fetch(address.mcpUrl, { method: "POST", headers: { ...headers, ...extra }, body: JSON.stringify(body) });
   try {
-    const denied = await post({ jsonrpc: "2.0", id: 1, method: "initialize" });
+    const denied = await post({ jsonrpc: "2.0", id: 1, method: "initialize" }, { authorization: "Bearer invalid" });
     assert.equal(denied.status, 401);
     assert.match(denied.headers.get("www-authenticate") ?? "", /resource_metadata="https:\/\/relay.example\/\.well-known\/oauth-protected-resource\/mcp"/);
     assert.equal(denied.headers.get("mcp-session-id"), null);

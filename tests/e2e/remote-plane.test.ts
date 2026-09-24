@@ -194,6 +194,7 @@ for (const authMode of ["static", "oidc"] as const) test(`${authMode} black-box 
       address.mcpUrl,
       tokenA,
       "remote-account-a",
+      authMode === "oidc",
     );
     clientB = await connectRemoteClient(
       address.mcpUrl,
@@ -379,14 +380,16 @@ async function connectRemoteClient(
   mcpUrl: string,
   token: string,
   name: string,
+  discoverBeforeLinking = false,
 ): Promise<Client> {
+  let linked = !discoverBeforeLinking;
   const transport = new StreamableHTTPClientTransport(
     new URL(mcpUrl),
     {
-      requestInit: {
-        headers: {
-          authorization: `Bearer ${token}`,
-        },
+      fetch: (url, init) => {
+        const headers = new Headers(init?.headers);
+        if (linked) headers.set("authorization", `Bearer ${token}`);
+        return fetch(url, { ...init, headers });
       },
     },
   );
@@ -395,6 +398,24 @@ async function connectRemoteClient(
     { capabilities: {} },
   );
   await client.connect(transport as never);
+  if (discoverBeforeLinking) {
+    try {
+      const session = transport.sessionId;
+      assert.ok(session);
+      const listed = await client.listTools();
+      assert.deepEqual(listed.tools.map(tool => tool.name).sort(), ["batch", "browser", "desktop", "device", "files", "process"]);
+      const denied = await client.callTool({ name: "device", arguments: { op: "status", device: "Leno" } });
+      assert.equal(denied.isError, true);
+      assert.ok(denied._meta?.["mcp/www_authenticate"]);
+      linked = true;
+      const authorized = await client.callTool({ name: "device", arguments: { op: "status", device: "Leno" } });
+      assert.equal(authorized.isError, undefined);
+      assert.equal(transport.sessionId, session);
+    } catch (error) {
+      await client.close();
+      throw error;
+    }
+  }
   return client;
 }
 
