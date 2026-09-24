@@ -56,7 +56,9 @@ test("relay exposes minimal unauthenticated liveness and readiness probes", asyn
     assert.equal(health.headers.get("content-type"), "application/json");
     assert.deepEqual(await health.json(), { status: "ok" });
 
-    const ready = await fetch(`${address.httpUrl}/readyz`, {\n      signal: AbortSignal.timeout(1_000),\n    });
+    const ready = await fetch(`${address.httpUrl}/readyz`, {
+      signal: AbortSignal.timeout(1_000),
+    });
     assert.equal(ready.status, 200);
     assert.equal(ready.headers.get("content-type"), "application/json");
     assert.deepEqual(await ready.json(), { status: "ready" });
