@@ -20,11 +20,14 @@ ENV NODE_ENV=production
 WORKDIR /app
 
 RUN groupadd --system tetherplane \
- && useradd --system --gid tetherplane --home-dir /app --shell /usr/sbin/nologin tetherplane
+ && useradd --system --gid tetherplane --home-dir /app --shell /usr/sbin/nologin tetherplane \
+ && mkdir -p /var/lib/tetherplane \
+ && chown tetherplane:tetherplane /var/lib/tetherplane
 
 COPY --from=build --chown=tetherplane:tetherplane /workspace /app
 
 USER tetherplane
+VOLUME ["/var/lib/tetherplane"]
 EXPOSE 8788
 
 ENTRYPOINT ["node", "relay/dist/cli.js"]
