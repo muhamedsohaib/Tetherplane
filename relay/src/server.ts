@@ -27,6 +27,7 @@ import {
 import {
   DeviceRouter,
 } from "./routing/device-router.ts";
+import { RelayHealthHttpGateway } from "./health-http.ts";
 
 type NodeRelayServer =
   | ReturnType<typeof createHttpServer>
@@ -46,6 +47,7 @@ export class RelayServer {
   readonly deviceGateway: DeviceWebSocketGateway;
   readonly mcpGateway: RemoteMcpHttpGateway;
   readonly controlGateway: RelayControlHttpGateway;
+  readonly healthGateway: RelayHealthHttpGateway;
   readonly isSecure: boolean;
 
   readonly #server: NodeRelayServer;
@@ -61,6 +63,7 @@ export class RelayServer {
     deviceGateway: DeviceWebSocketGateway;
     mcpGateway: RemoteMcpHttpGateway;
     controlGateway: RelayControlHttpGateway;
+    healthGateway: RelayHealthHttpGateway;
   }) {
     this.#server = options.server;
     this.isSecure = options.secure;
@@ -71,6 +74,7 @@ export class RelayServer {
     this.deviceGateway = options.deviceGateway;
     this.mcpGateway = options.mcpGateway;
     this.controlGateway = options.controlGateway;
+    this.healthGateway = options.healthGateway;
   }
 
   static async create(options: {
@@ -101,6 +105,7 @@ export class RelayServer {
       authenticator: options.authenticator,
       ...(options.oauth ? { oauth: options.oauth } : {}),
     });
+    const healthGateway = new RelayHealthHttpGateway();
     const controlGateway = new RelayControlHttpGateway({
       registry,
       authenticator: options.authenticator,
@@ -115,6 +120,7 @@ export class RelayServer {
         : createHttpsServer(options.tls);
 
     const httpCompatible = server as unknown as HttpServer;
+    healthGateway.attach(httpCompatible);
     deviceGateway.attach(httpCompatible, "/device");
     mcpGateway.attach(httpCompatible, "/mcp");
     controlGateway.attach(httpCompatible);
@@ -129,6 +135,7 @@ export class RelayServer {
       deviceGateway,
       mcpGateway,
       controlGateway,
+      healthGateway,
     });
   }
 
@@ -178,6 +185,7 @@ export class RelayServer {
     if (this.#closed) return;
     this.#closed = true;
 
+    this.healthGateway.close();
     this.controlGateway.close();
     await this.mcpGateway.close();
     await this.deviceGateway.close();
