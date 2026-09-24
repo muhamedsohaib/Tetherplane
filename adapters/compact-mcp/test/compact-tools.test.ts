@@ -43,9 +43,9 @@ test("advertises review-grade tool metadata with and without OAuth", async () =>
     device: {
       title: "Tetherplane Device",
       description:
-        "Inspect Tetherplane device status and capabilities, and retrieve operation schemas. This tool is read-only.",
+        "Inspect device status and capabilities, retrieve operation schemas, and manage authorized Tetherplane job, checkpoint, lease, and audit state.",
       annotations: {
-        readOnlyHint: true,
+        readOnlyHint: false,
         destructiveHint: false,
         openWorldHint: false,
       },
