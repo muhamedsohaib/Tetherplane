@@ -37,6 +37,114 @@ test("exposes exactly the six canonical compact tools", async () => {
   }
 });
 
+
+test("advertises review-grade tool metadata with and without OAuth", async () => {
+  const expected = {
+    device: {
+      title: "Tetherplane Device",
+      description:
+        "Inspect Tetherplane device status and capabilities, and retrieve operation schemas. This tool is read-only.",
+      annotations: {
+        readOnlyHint: true,
+        destructiveHint: false,
+        openWorldHint: false,
+      },
+    },
+    files: {
+      title: "Tetherplane Files",
+      description:
+        "Read, search, write, patch, list, inspect, create, and move files within locally authorized paths. Local policy remains authoritative.",
+      annotations: {
+        readOnlyHint: false,
+        destructiveHint: true,
+        openWorldHint: false,
+      },
+    },
+    process: {
+      title: "Tetherplane Process",
+      description:
+        "Run and interact with Tetherplane-owned processes, inspect sessions and system processes, and terminate only policy-authorized sessions.",
+      annotations: {
+        readOnlyHint: false,
+        destructiveHint: true,
+        openWorldHint: true,
+      },
+    },
+    browser: {
+      title: "Tetherplane Browser",
+      description:
+        "Inspect and automate authorized browser pages with semantic background-safe operations. Browser actions may navigate or mutate external web applications under local policy.",
+      annotations: {
+        readOnlyHint: false,
+        destructiveHint: true,
+        openWorldHint: true,
+      },
+    },
+    desktop: {
+      title: "Tetherplane Desktop",
+      description:
+        "Inspect and act on authorized desktop UI with semantic automation, a private clipboard, and scoped foreground leases for physical fallback.",
+      annotations: {
+        readOnlyHint: false,
+        destructiveHint: true,
+        openWorldHint: true,
+      },
+    },
+    batch: {
+      title: "Tetherplane Batch",
+      description:
+        "Execute multiple canonical Tetherplane operations in bounded parallel or sequential batches. Every child operation is independently policy-checked.",
+      annotations: {
+        readOnlyHint: false,
+        destructiveHint: true,
+        openWorldHint: true,
+      },
+    },
+  } as const;
+
+  for (const oauthScopes of [null, ["tetherplane:control"]]) {
+    const server = createCompactMcpServer({
+      ...(oauthScopes ? { oauthScopes } : {}),
+      agentClient: {
+        call: async () => {
+          throw new Error("tool metadata test should not invoke the agent");
+        },
+      },
+    });
+    const client = new Client(
+      {
+        name: oauthScopes ? "oauth-metadata-test" : "metadata-test",
+        version: "0.1.0",
+      },
+      { capabilities: {} },
+    );
+    const [clientTransport, serverTransport] =
+      InMemoryTransport.createLinkedPair();
+
+    await Promise.all([
+      server.connect(serverTransport),
+      client.connect(clientTransport),
+    ]);
+
+    try {
+      const listed = await client.listTools();
+      const actual = Object.fromEntries(
+        listed.tools.map((tool) => [
+          tool.name,
+          {
+            title: tool.title,
+            description: tool.description,
+            annotations: tool.annotations,
+          },
+        ]),
+      );
+      assert.deepEqual(actual, expected);
+    } finally {
+      await Promise.all([client.close(), server.close()]);
+    }
+  }
+});
+
 test("callTool routes through AgentClient and returns compact structured success", async () => {
   const seen: import("@tetherplane/protocol").InvocationEnvelope[] = [];
   const server = createCompactMcpServer({
