@@ -12,7 +12,7 @@ import {
 
 function result(
   requestId: string,
-  data: unknown,
+  data: Record<string, unknown> | null,
   status: "success" | "error" = "success",
   error: ResultEnvelope["error"] = null,
 ): ResultEnvelope {
