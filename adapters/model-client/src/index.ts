@@ -22,6 +22,10 @@ export type NextActionInput = {
   context?: Record<string, unknown>;
 };
 
+export type ModelActionSource = {
+  nextAction(input: NextActionInput): Promise<ModelAction>;
+};
+
 export type AgentTransport = {
   call(invocation: InvocationEnvelope): Promise<ResultEnvelope>;
 };
@@ -150,6 +154,321 @@ export class ModelController {
     };
     return this.#agent.call(invocation);
   }
+}
+
+
+export type ModelWorkerOutcome =
+  | { status: "idle" }
+  | { status: "contended"; job_id: string }
+  | {
+      status: "completed" | "blocked" | "cancelled" | "action_limit";
+      job_id: string;
+      actions: number;
+    };
+
+type WorkerJob = {
+  job_id: string;
+  objective: string;
+  target_device: string;
+  latest_checkpoint: unknown;
+};
+
+const TERMINAL_JOB_STATUSES = new Set([
+  "completed",
+  "blocked",
+  "cancelled",
+]);
+
+export class TetherplaneModelWorker {
+  readonly #model: ModelActionSource;
+  readonly #agent: AgentTransport;
+  readonly #device: string;
+  readonly #maxActions: number;
+  readonly #leaseTtlMs: number;
+
+  constructor(options: {
+    model: ModelActionSource;
+    agent: AgentTransport;
+    device: string;
+    maxActions?: number;
+    leaseTtlMs?: number;
+  }) {
+    if (!options.device.trim()) {
+      throw new Error("worker device is required");
+    }
+
+    const maxActions = options.maxActions ?? 32;
+    if (!Number.isInteger(maxActions) || maxActions < 1 || maxActions > 1_000) {
+      throw new Error("maxActions must be an integer between 1 and 1000");
+    }
+
+    const leaseTtlMs = options.leaseTtlMs ?? 600_000;
+    if (
+      !Number.isInteger(leaseTtlMs) ||
+      leaseTtlMs < 1 ||
+      leaseTtlMs > 3_600_000
+    ) {
+      throw new Error(
+        "leaseTtlMs must be an integer between 1 and 3600000",
+      );
+    }
+
+    this.#model = options.model;
+    this.#agent = options.agent;
+    this.#device = options.device;
+    this.#maxActions = maxActions;
+    this.#leaseTtlMs = leaseTtlMs;
+  }
+
+  async runOnce(): Promise<ModelWorkerOutcome> {
+    const listed = await this.#call("job.list", {
+      status: "active",
+      unleased: true,
+      limit: 1,
+    });
+    if (listed.status !== "success") {
+      throw resultError("job discovery failed", listed);
+    }
+
+    const jobs = readJobs(listed.data);
+    const job = jobs[0];
+    if (!job) {
+      return { status: "idle" };
+    }
+    if (job.target_device !== this.#device) {
+      throw new ModelActionError(
+        "worker discovered a job for a different device",
+      );
+    }
+
+    const acquired = await this.#call(
+      "job.acquire_lease",
+      {
+        job_id: job.job_id,
+        ttl_ms: this.#leaseTtlMs,
+      },
+      job.job_id,
+    );
+    if (acquired.status !== "success") {
+      if (acquired.error?.code === "resource_conflict") {
+        return { status: "contended", job_id: job.job_id };
+      }
+      throw resultError("job lease acquisition failed", acquired);
+    }
+
+    const leaseId = readLeaseId(acquired.data);
+    let primaryError: unknown = null;
+    let actions = 0;
+    let lastResult: ResultEnvelope | null = null;
+
+    try {
+      for (; actions < this.#maxActions; actions += 1) {
+        const action = await this.#model.nextAction({
+          objective: job.objective,
+          context: {
+            job_id: job.job_id,
+            target_device: job.target_device,
+            latest_checkpoint: job.latest_checkpoint,
+            last_result: compactResult(lastResult),
+          },
+        });
+
+        validateWorkerAction(action, job);
+
+        const invocation = invocationForWorkerAction(
+          action,
+          job,
+          this.#device,
+        );
+        lastResult = await this.#agent.call(invocation);
+
+        if (
+          action.capability === "job.checkpoint" &&
+          lastResult.status === "success"
+        ) {
+          const terminal = terminalStatus(lastResult.data);
+          if (terminal) {
+            return {
+              status: terminal,
+              job_id: job.job_id,
+              actions: actions + 1,
+            };
+          }
+        }
+      }
+
+      return {
+        status: "action_limit",
+        job_id: job.job_id,
+        actions,
+      };
+    } catch (error) {
+      primaryError = error;
+      throw error;
+    } finally {
+      const released = await this.#call(
+        "job.release_lease",
+        {
+          job_id: job.job_id,
+          lease_id: leaseId,
+        },
+        job.job_id,
+      ).catch((error: unknown) => {
+        if (primaryError === null) throw error;
+        return null;
+      });
+      if (
+        primaryError === null &&
+        released !== null &&
+        released.status !== "success"
+      ) {
+        throw resultError("job lease release failed", released);
+      }
+    }
+  }
+
+  #call(
+    capability: string,
+    arguments_: Record<string, unknown>,
+    jobId: string | null = null,
+  ): Promise<ResultEnvelope> {
+    return this.#agent.call({
+      protocol_version: "1.0",
+      request_id: randomUUID(),
+      device_id: this.#device,
+      principal_id: null,
+      job_id: jobId,
+      capability,
+      arguments: arguments_,
+      actor: {
+        id: "model-worker",
+        kind: "ai_client",
+      },
+      session_id: null,
+      response_mode: "compact",
+      idempotency_key: null,
+      preconditions: [],
+      expectations: [],
+    });
+  }
+}
+
+function readJobs(data: ResultEnvelope["data"]): WorkerJob[] {
+  if (!isRecord(data) || !Array.isArray(data.jobs)) {
+    throw new ModelActionError("job discovery returned invalid data");
+  }
+
+  return data.jobs.map((value) => {
+    if (
+      !isRecord(value) ||
+      typeof value.job_id !== "string" ||
+      typeof value.objective !== "string" ||
+      typeof value.target_device !== "string"
+    ) {
+      throw new ModelActionError("job discovery returned an invalid job");
+    }
+    return {
+      job_id: value.job_id,
+      objective: value.objective,
+      target_device: value.target_device,
+      latest_checkpoint: value.latest_checkpoint ?? null,
+    };
+  });
+}
+
+function readLeaseId(data: ResultEnvelope["data"]): string {
+  if (
+    !isRecord(data) ||
+    !isRecord(data.active_lease) ||
+    typeof data.active_lease.lease_id !== "string"
+  ) {
+    throw new ModelActionError("job lease response is missing lease_id");
+  }
+  return data.active_lease.lease_id;
+}
+
+function validateWorkerAction(
+  action: ModelAction,
+  job: WorkerJob,
+): void {
+  if (action.device !== undefined && action.device !== job.target_device) {
+    throw new ModelActionError(
+      "model action attempted to target a different device",
+    );
+  }
+  if (action.job_id !== undefined && action.job_id !== job.job_id) {
+    throw new ModelActionError(
+      "model action attempted to target a different job",
+    );
+  }
+  if (
+    action.capability.startsWith("job.") &&
+    action.capability !== "job.checkpoint"
+  ) {
+    throw new ModelActionError(
+      "model action attempted a worker-owned job operation",
+    );
+  }
+}
+
+function invocationForWorkerAction(
+  action: ModelAction,
+  job: WorkerJob,
+  device: string,
+): InvocationEnvelope {
+  return {
+    protocol_version: "1.0",
+    request_id: randomUUID(),
+    device_id: device,
+    principal_id: null,
+    job_id: job.job_id,
+    capability: action.capability,
+    arguments:
+      action.capability === "job.checkpoint"
+        ? { ...action.arguments, job_id: job.job_id }
+        : action.arguments,
+    actor: {
+      id: "model-worker",
+      kind: "ai_client",
+    },
+    session_id: null,
+    response_mode: action.response_mode ?? "compact",
+    idempotency_key: action.idempotency_key ?? null,
+    preconditions: [],
+    expectations: [],
+  };
+}
+
+function terminalStatus(
+  data: ResultEnvelope["data"],
+): "completed" | "blocked" | "cancelled" | null {
+  if (!isRecord(data) || typeof data.status !== "string") {
+    return null;
+  }
+  if (!TERMINAL_JOB_STATUSES.has(data.status)) {
+    return null;
+  }
+  return data.status as "completed" | "blocked" | "cancelled";
+}
+
+function compactResult(
+  result: ResultEnvelope | null,
+): Record<string, unknown> | null {
+  if (!result) return null;
+  return {
+    status: result.status,
+    data: result.data,
+    error: result.error,
+    verification: result.verification,
+  };
+}
+
+function resultError(
+  prefix: string,
+  result: ResultEnvelope,
+): ModelActionError {
+  const message = result.error?.message ?? "unknown Tetherplane error";
+  return new ModelActionError(`${prefix}: ${message}`);
 }
 
 const ACTION_FIELDS = new Set([
