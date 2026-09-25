@@ -1,6 +1,9 @@
 import { z } from "zod";
 import { OidcClientAuthenticator } from "./auth/oidc-auth.ts";
-import { StaticClientAuthenticator, type ClientAuthenticator } from "./auth/static-auth.ts";
+import {
+  StaticClientAuthenticator,
+  type ClientAuthenticator,
+} from "./auth/static-auth.ts";
 import type { OAuthResource } from "./auth/oauth-resource.ts";
 import { readFile } from "node:fs/promises";
 import os from "node:os";
@@ -226,29 +229,91 @@ function requiredValue(
   return value;
 }
 
-const oidcConfigSchema = z.object({
-  oidc: z.object({
-    issuer: z.string(), audience: z.string(), jwksUri: z.string(),
-    scopes: z.array(z.string()).min(1),
-    bindings: z.array(z.object({ subject: z.string(), clientId: z.string(), accountId: z.string(), principalId: z.string() }).strict()).min(1),
-  }).strict(),
-}).strict();
+const oidcCommon = {
+  issuer: z.string(),
+  audience: z.string(),
+  jwksUri: z.string(),
+  scopes: z.array(z.string()).min(1),
+};
+
+const oidcBindingSchema = z
+  .object({
+    ...oidcCommon,
+    bindings: z
+      .array(
+        z
+          .object({
+            subject: z.string(),
+            clientId: z.string(),
+            accountId: z.string(),
+            principalId: z.string(),
+          })
+          .strict(),
+      )
+      .min(1),
+  })
+  .strict();
+
+const oidcSubjectSchema = z
+  .object({
+    ...oidcCommon,
+    identity: z
+      .object({
+        strategy: z.literal("subject"),
+        principalPrefix: z.string().min(1),
+      })
+      .strict(),
+  })
+  .strict();
+
+const oidcConfigSchema = z
+  .object({
+    oidc: z.union([oidcBindingSchema, oidcSubjectSchema]),
+  })
+  .strict();
 
 export async function loadClientAuth(
   configPath: string,
   environment: Record<string, string | undefined> = process.env,
-): Promise<{ authenticator: ClientAuthenticator; oauth?: OAuthResource }> {
+): Promise<{
+  authenticator: ClientAuthenticator;
+  oauth?: OAuthResource;
+}> {
   let parsed: unknown;
-  try { parsed = JSON.parse(await readFile(configPath, "utf8")); }
-  catch { throw new Error("Unable to read relay auth configuration JSON"); }
-  if (parsed && typeof parsed === "object" && "oidc" in parsed) {
+  try {
+    parsed = JSON.parse(await readFile(configPath, "utf8"));
+  } catch {
+    throw new Error(
+      "Unable to read relay auth configuration JSON",
+    );
+  }
+
+  if (
+    parsed &&
+    typeof parsed === "object" &&
+    "oidc" in parsed
+  ) {
     const result = oidcConfigSchema.safeParse(parsed);
-    if (!result.success) throw new Error("Invalid OIDC auth configuration");
+    if (!result.success) {
+      throw new Error("Invalid OIDC auth configuration");
+    }
     const oidc = result.data.oidc;
     return {
       authenticator: new OidcClientAuthenticator(oidc),
-      oauth: { resource: oidc.audience, issuer: oidc.issuer, scopes: oidc.scopes },
+      oauth: {
+        resource: oidc.audience,
+        issuer: oidc.issuer,
+        scopes: oidc.scopes,
+      },
     };
   }
-  return { authenticator: new StaticClientAuthenticator(await loadStaticClientCredentials(configPath, environment)) };
+
+  return {
+    authenticator: new StaticClientAuthenticator(
+      await loadStaticClientCredentials(
+        configPath,
+        environment,
+      ),
+    ),
+  };
 }
