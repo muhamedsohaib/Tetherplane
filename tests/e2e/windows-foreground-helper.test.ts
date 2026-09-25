@@ -4,7 +4,10 @@ import fs from "node:fs";
 import { syncBuiltinESMExports } from "node:module";
 import test from "node:test";
 
-import { getForegroundInfo } from "./helpers/windows-foreground.ts";
+import {
+  getCursorClipboardState,
+  getForegroundInfo,
+} from "./helpers/windows-foreground.ts";
 
 const output = "123:456:fixture:FixtureWindow\r\n";
 const expected = {
@@ -104,4 +107,77 @@ test("foreground helper also rejects malformed PowerShell output", (t) => {
   const calls = mockProbe(t, () => { throw blocked; }, () => "");
   assert.throws(() => getForegroundInfo(), /Invalid foreground probe output/);
   assert.equal(calls.length, 2);
+});
+
+
+test("cursor and clipboard helper prefers one compiled read-only probe", (t) => {
+  const platform = Object.getOwnPropertyDescriptor(
+    process,
+    "platform",
+  )!;
+  Object.defineProperty(process, "platform", {
+    ...platform,
+    value: "win32",
+  });
+  const calls: Array<{
+    file: string;
+    options: childProcess.ExecFileSyncOptions;
+  }> = [];
+
+  t.mock.method(fs, "existsSync", () => true);
+  t.mock.method(
+    childProcess,
+    "execFileSync",
+    (
+      file: string,
+      argsOrOptions:
+        | string[]
+        | childProcess.ExecFileSyncOptions,
+      options?: childProcess.ExecFileSyncOptions,
+    ) => {
+      const actualOptions = Array.isArray(argsOrOptions)
+        ? options!
+        : argsOrOptions;
+      calls.push({
+        file,
+        options: actualOptions,
+      });
+      return "12\t-34\tY2xpcGJvYXJk\r\n";
+    },
+  );
+  syncBuiltinESMExports();
+  t.after(() => {
+    t.mock.restoreAll();
+    syncBuiltinESMExports();
+    Object.defineProperty(
+      process,
+      "platform",
+      platform,
+    );
+  });
+
+  assert.deepEqual(
+    getCursorClipboardState(),
+    {
+      cursor: {
+        x: 12,
+        y: -34,
+      },
+      clipboardTextBase64: "Y2xpcGJvYXJk",
+      raw: "12\t-34\tY2xpcGJvYXJk",
+    },
+  );
+  assert.equal(calls.length, 1);
+  assert.match(
+    calls[0]!.file,
+    /tetherplane-state-probe\.exe$/,
+  );
+  assert.equal(
+    calls[0]!.options.windowsHide,
+    true,
+  );
+  assert.equal(
+    calls[0]!.options.timeout,
+    5_000,
+  );
 });

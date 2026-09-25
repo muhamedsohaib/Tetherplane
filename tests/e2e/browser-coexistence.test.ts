@@ -1,5 +1,4 @@
 import assert from "node:assert/strict";
-import { execFileSync } from "node:child_process";
 import { writeFile } from "node:fs/promises";
 import path from "node:path";
 import test from "node:test";
@@ -21,35 +20,10 @@ import {
 } from "@tetherplane/browser-bridge";
 
 import { startLocalCompact } from "./helpers/start-local.ts";
-import { getForegroundInfo } from "./helpers/windows-foreground.ts";
-
-function powershell(command: string): string {
-  return execFileSync(
-    "powershell.exe",
-    ["-NoProfile", "-NonInteractive", "-Sta", "-Command", command],
-    {
-      encoding: "utf8",
-      stdio: ["ignore", "pipe", "ignore"],
-      timeout: 10_000,
-      windowsHide: true,
-    },
-  ).trim();
-}
-
-function cursorPosition(): { x: number; y: number } {
-  const value = powershell(
-    "Add-Type -AssemblyName System.Windows.Forms; $p=[System.Windows.Forms.Cursor]::Position; Write-Output ($p.X.ToString()+','+$p.Y.ToString())",
-  );
-  const [x, y] = value.split(",").map(Number);
-  assert.ok(Number.isInteger(x) && Number.isInteger(y));
-  return { x: x as number, y: y as number };
-}
-
-function clipboardTextBase64(): string {
-  return powershell(
-    "Add-Type -AssemblyName System.Windows.Forms; $t=[System.Windows.Forms.Clipboard]::GetText(); if ([string]::IsNullOrEmpty($t)) { Write-Output '' } else { Write-Output ([Convert]::ToBase64String([Text.Encoding]::UTF8.GetBytes($t))) }",
-  );
-}
+import {
+  getCursorClipboardState,
+  getForegroundInfo,
+} from "./helpers/windows-foreground.ts";
 
 async function call(
   client: Client,
@@ -228,12 +202,14 @@ test(
         },
       });
       const activeLocal = local;
-      const cursorBefore =
-        process.platform === "win32" ? cursorPosition() : null;
-      const clipboardBefore =
-        process.platform === "win32" ? clipboardTextBase64() : null;
+      const stateBefore =
+        process.platform === "win32"
+          ? getCursorClipboardState()
+          : null;
       const foregroundBefore =
-        process.platform === "win32" ? getForegroundInfo() : null;
+        process.platform === "win32"
+          ? getForegroundInfo()
+          : null;
 
       const tools = await local.client.listTools();
       assert.deepEqual(
@@ -689,17 +665,17 @@ test(
       assert.equal(backend.humanMutationAttempts, 0);
 
       if (process.platform === "win32") {
-        const cursorAfter = cursorPosition();
-        const clipboardAfter = clipboardTextBase64();
+        const stateAfter =
+          getCursorClipboardState();
         const foregroundAfter = getForegroundInfo();
         assert.deepEqual(
-          cursorAfter,
-          cursorBefore,
+          stateAfter.cursor,
+          stateBefore?.cursor,
           "physical cursor moved during background browser operation",
         );
         assert.equal(
-          clipboardAfter,
-          clipboardBefore,
+          stateAfter.clipboardTextBase64,
+          stateBefore?.clipboardTextBase64,
           "global clipboard changed during background browser operation",
         );
         assert.equal(
