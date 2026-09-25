@@ -1,0 +1,19 @@
+{
+  "name": "@tetherplane/auth",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "engines": {
+    "node": ">=22"
+  },
+  "scripts": {
+    "build": "tsc -p tsconfig.json",
+    "typecheck": "tsc --noEmit -p tsconfig.json"
+  },
+  "dependencies": {
+    "oidc-provider": "9.12.2"
+  },
+  "devDependencies": {
+    "@types/node": "24.13.6"
+  }
+}
