@@ -156,6 +156,9 @@ export class OidcClientAuthenticator implements ClientAuthenticator {
         "identity" in this.#options &&
         this.#options.identity?.strategy === "subject"
       ) {
+        if (!isValidAccountId(payload.sub)) {
+          return null;
+        }
         return {
           accountId: payload.sub,
           clientId: client,
@@ -185,4 +188,9 @@ export class OidcClientAuthenticator implements ClientAuthenticator {
       return null;
     }
   }
+}
+
+
+function isValidAccountId(value: string): boolean {
+  return /^[A-Za-z0-9][A-Za-z0-9._:-]{0,127}$/.test(value);
 }
