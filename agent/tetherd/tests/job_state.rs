@@ -441,3 +441,108 @@ fn checkpoint_rejects_private_reasoning_fields() {
 
     std::fs::remove_dir_all(&root).unwrap();
 }
+
+
+#[test]
+fn job_list_returns_only_jobs_permitted_to_bound_principal() {
+    let root = unique_root();
+    let state_dir = root.join("state");
+    let creator = write_profile(&root, "human:owner", &["job.create"]);
+    let worker = write_profile(&root, "model:engineer", &["job.list"]);
+
+    let shared_job = create_job(
+        &creator,
+        &state_dir,
+        "00000000-0000-4000-8000-000000000121",
+        &["model:engineer"],
+    );
+    let private_job = create_job(
+        &creator,
+        &state_dir,
+        "00000000-0000-4000-8000-000000000122",
+        &[],
+    );
+
+    let listed = rpc(
+        &worker,
+        &state_dir,
+        &[invocation(
+            "00000000-0000-4000-8000-000000000123",
+            "job.list",
+            json!({}),
+        )],
+    );
+
+    assert_eq!(listed[0]["status"], "success");
+    let jobs = listed[0]["data"]["jobs"].as_array().unwrap();
+    assert_eq!(jobs.len(), 1);
+    assert_eq!(jobs[0]["job_id"], shared_job);
+    assert!(jobs.iter().all(|job| job["job_id"] != private_job));
+
+    std::fs::remove_dir_all(&root).unwrap();
+}
+
+#[test]
+fn job_list_filters_terminal_and_leased_work_for_workers() {
+    let root = unique_root();
+    let state_dir = root.join("state");
+    let creator = write_profile(
+        &root,
+        "human:owner",
+        &["job.create", "job.acquire_lease", "job.checkpoint"],
+    );
+    let worker = write_profile(&root, "model:engineer", &["job.list"]);
+    let completed = create_job(
+        &creator,
+        &state_dir,
+        "00000000-0000-4000-8000-000000000131",
+        &["model:engineer"],
+    );
+    let available = create_job(
+        &creator,
+        &state_dir,
+        "00000000-0000-4000-8000-000000000132",
+        &["model:engineer"],
+    );
+
+    let acquired = rpc(
+        &creator,
+        &state_dir,
+        &[invocation(
+            "00000000-0000-4000-8000-000000000133",
+            "job.acquire_lease",
+            json!({ "job_id": completed, "ttl_ms": 5_000 }),
+        )],
+    );
+    assert_eq!(acquired[0]["status"], "success");
+    let checkpointed = rpc(
+        &creator,
+        &state_dir,
+        &[invocation(
+            "00000000-0000-4000-8000-000000000134",
+            "job.checkpoint",
+            json!({
+                "job_id": completed,
+                "status": "completed",
+                "state": { "step": "done" }
+            }),
+        )],
+    );
+    assert_eq!(checkpointed[0]["status"], "success");
+
+    let listed = rpc(
+        &worker,
+        &state_dir,
+        &[invocation(
+            "00000000-0000-4000-8000-000000000135",
+            "job.list",
+            json!({ "status": "active", "unleased": true, "limit": 10 }),
+        )],
+    );
+    assert_eq!(listed[0]["status"], "success");
+    let jobs = listed[0]["data"]["jobs"].as_array().unwrap();
+    assert_eq!(jobs.len(), 1);
+    assert_eq!(jobs[0]["job_id"], available);
+
+    std::fs::remove_dir_all(&root).unwrap();
+}
