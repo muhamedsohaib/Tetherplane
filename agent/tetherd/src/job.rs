@@ -172,15 +172,17 @@ impl JobProvider {
         let mut paths = fs::read_dir(&self.jobs_dir)
             .map_err(|error| provider_failure(format!("failed to list job state: {error}")))?
             .filter_map(|entry| entry.ok().map(|entry| entry.path()))
-            .filter(|path| path.extension().is_some_and(|extension| extension == "json"))
+            .filter(|path| {
+                path.extension()
+                    .is_some_and(|extension| extension == "json")
+            })
             .collect::<Vec<_>>();
         paths.sort();
 
         let mut jobs = Vec::new();
         for path in paths {
-            let content = fs::read_to_string(&path).map_err(|error| {
-                provider_failure(format!("failed to read job record: {error}"))
-            })?;
+            let content = fs::read_to_string(&path)
+                .map_err(|error| provider_failure(format!("failed to read job record: {error}")))?;
             let mut record = serde_json::from_str::<JobRecord>(&content).map_err(|error| {
                 provider_failure(format!("invalid persisted job record: {error}"))
             })?;
