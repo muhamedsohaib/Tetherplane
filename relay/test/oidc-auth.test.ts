@@ -84,6 +84,8 @@ test("OIDC subject identity strategy derives account and principal only from ver
 
   for (const change of [
     { sub: undefined },
+    { sub: "user|123" },
+    { sub: "x".repeat(129) },
     { azp: undefined, client_id: undefined },
     { aud: "https://other.example/mcp" },
     { scope: "other" },
