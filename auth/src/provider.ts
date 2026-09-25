@@ -1,15 +1,12 @@
 import {
   Provider,
   errors,
+  type AdapterConstructor,
 } from "oidc-provider";
 
 import {
   createTetherAuthConfiguration,
 } from "./config.ts";
-
-export type TetherAuthAdapterConstructor = new (
-  name: string,
-) => object;
 
 export type TetherAuthProviderInput = {
   issuer: string;
@@ -18,7 +15,7 @@ export type TetherAuthProviderInput = {
   jwks: {
     keys: Array<Record<string, unknown>>;
   };
-  adapter: TetherAuthAdapterConstructor;
+  adapter: AdapterConstructor;
 };
 
 export function createTetherAuthProvider(
