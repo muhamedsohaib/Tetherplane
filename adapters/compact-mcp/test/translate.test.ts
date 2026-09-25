@@ -1,6 +1,7 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 
+import { lookupOperationSchema } from "../src/schema-catalog.ts";
 import { translateCompactCall } from "../src/translate.ts";
 
 const mappings = [
@@ -14,6 +15,7 @@ const mappings = [
   ["batch", "execute", "batch.execute"],
   ["device", "job_create", "job.create"],
   ["device", "job_get", "job.get"],
+  ["device", "job_list", "job.list"],
   ["device", "job_checkpoint", "job.checkpoint"],
   ["device", "job_acquire_lease", "job.acquire_lease"],
   ["device", "job_release_lease", "job.release_lease"],
@@ -77,4 +79,21 @@ test("defaults optional envelope fields for compact calls", () => {
   assert.equal(invocation.session_id, null);
   assert.equal(invocation.idempotency_key, null);
   assert.deepEqual(invocation.arguments, {});
+});
+
+
+test("job_list schema is discoverable through the existing device tool", () => {
+  assert.deepEqual(
+    lookupOperationSchema("device", "job_list"),
+    {
+      type: "object",
+      additionalProperties: false,
+      required: [],
+      properties: {
+        status: { type: "string" },
+        unleased: { type: "boolean" },
+        limit: { type: "integer", minimum: 1, maximum: 100 },
+      },
+    },
+  );
 });
