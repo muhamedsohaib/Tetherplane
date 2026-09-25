@@ -106,6 +106,11 @@ const CATALOG: Record<string, JsonSchema> = {
   "job.get": objectSchema(["job_id"], {
     job_id: string,
   }),
+  "job.list": objectSchema([], {
+    status: string,
+    unleased: boolean,
+    limit: { type: "integer", minimum: 1, maximum: 100 },
+  }),
   "job.checkpoint": objectSchema(["job_id", "state"], {
     job_id: string,
     state: { type: "object" },
@@ -210,6 +215,12 @@ export function listSchemaOperations(namespace: string): string[] {
 }
 
 function normalizeKey(namespace: string, operation: string): string {
+  if (namespace === "device" && operation.startsWith("job_")) {
+    return `job.${operation.slice("job_".length)}`;
+  }
+  if (namespace === "device" && operation.startsWith("audit_")) {
+    return `audit.${operation.slice("audit_".length)}`;
+  }
   if (namespace === "files") {
     if (operation.startsWith("search")) {
       const searchOperation =
