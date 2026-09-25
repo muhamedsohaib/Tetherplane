@@ -25,3 +25,53 @@ test("CLI selects OIDC explicitly, advertises its audience, and rejects mixed or
     assert.deepEqual(await legacy.authenticator.authenticate("ephemeral-test-value"), { accountId: "a", clientId: "c", principalId: "p" });
   } finally { await rm(dir, { recursive: true, force: true }); }
 });
+
+
+test("CLI accepts subject identity OIDC mode and rejects mixed identity strategies", async () => {
+  const dir = await mkdtemp(path.join(os.tmpdir(), "oauth-subject-config-"));
+  const file = path.join(dir, "auth.json");
+  const subjectOidc = {
+    issuer: "https://identity.example/",
+    audience: "https://relay.example/mcp",
+    jwksUri: "https://identity.example/jwks",
+    scopes: ["tetherplane:access"],
+    identity: {
+      strategy: "subject",
+      principalPrefix: "human:",
+    },
+  };
+
+  try {
+    await writeFile(file, JSON.stringify({ oidc: subjectOidc }));
+    const result = await config.loadClientAuth(file);
+    assert.deepEqual(result.oauth, {
+      resource: subjectOidc.audience,
+      issuer: subjectOidc.issuer,
+      scopes: subjectOidc.scopes,
+    });
+    assert.equal(await result.authenticator.authenticate("not-a-token"), null);
+
+    await writeFile(
+      file,
+      JSON.stringify({
+        oidc: {
+          ...subjectOidc,
+          bindings: [
+            {
+              subject: "owner",
+              clientId: "chatgpt",
+              accountId: "account-a",
+              principalId: "human:owner",
+            },
+          ],
+        },
+      }),
+    );
+    await assert.rejects(
+      config.loadClientAuth(file),
+      /OIDC|identity|binding|strategy/i,
+    );
+  } finally {
+    await rm(dir, { recursive: true, force: true });
+  }
+});
