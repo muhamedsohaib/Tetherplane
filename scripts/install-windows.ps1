@@ -43,7 +43,7 @@ New-Item -ItemType Directory -Force -Path $install,$state | Out-Null
 foreach ($directory in @("bin","adapters","protocol","launch")) {
     Copy-Item -LiteralPath (Join-Path $package $directory) -Destination $install -Recurse -Force
 }
-foreach ($file in @("manifest.json","README.md","SECURITY.md","CONTRIBUTING.md","LICENSE-MIT","LICENSE-APACHE","uninstall-windows.ps1")) {
+foreach ($file in @("manifest.json","README.md","SECURITY.md","CONTRIBUTING.md","LICENSE-MIT","LICENSE-APACHE","install-model-worker-windows.ps1","uninstall-windows.ps1")) {
     $source = Join-Path $package $file
     if (Test-Path -LiteralPath $source -PathType Leaf) {
         Copy-Item -LiteralPath $source -Destination (Join-Path $install $file) -Force
