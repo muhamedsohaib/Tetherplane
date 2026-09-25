@@ -17,6 +17,8 @@ if (-not $SkipBuild) {
         if ($LASTEXITCODE -ne 0) { throw "cargo release build failed" }
         pnpm.cmd --filter @tetherplane/compact-mcp build
         if ($LASTEXITCODE -ne 0) { throw "Compact MCP build failed" }
+        pnpm.cmd --filter @tetherplane/model-client build
+        if ($LASTEXITCODE -ne 0) { throw "model client build failed" }
         pnpm.cmd --filter @tetherplane/relay build
         if ($LASTEXITCODE -ne 0) { throw "relay build failed" }
     }
@@ -27,8 +29,9 @@ if (-not $SkipBuild) {
 
 $tetherd = Join-Path $repo "target\release\tetherd.exe"
 $compactDist = Join-Path $repo "adapters\compact-mcp\dist\stdio-server.js"
+$modelWorkerDist = Join-Path $repo "adapters\model-client\dist\worker-main.js"
 $relayDist = Join-Path $repo "relay\dist\cli.js"
-foreach ($required in @($tetherd, $compactDist, $relayDist)) {
+foreach ($required in @($tetherd, $compactDist, $modelWorkerDist, $relayDist)) {
     if (-not (Test-Path -LiteralPath $required -PathType Leaf)) {
         throw "release artifact is missing: $required"
     }
@@ -42,6 +45,7 @@ Copy-Item -LiteralPath $tetherd -Destination (Join-Path $output "bin\tetherd.exe
 
 $deployStage = Join-Path $repo "target\windows-package-deploy"
 $compactDeploy = Join-Path $deployStage "compact-mcp"
+$modelClientDeploy = Join-Path $deployStage "model-client"
 $relayDeploy = Join-Path $deployStage "relay"
 Remove-Item -LiteralPath $deployStage -Recurse -Force -ErrorAction SilentlyContinue
 
@@ -49,6 +53,8 @@ Push-Location $repo
 try {
     pnpm.cmd --config.node-linker=hoisted --filter @tetherplane/compact-mcp deploy --legacy --prod "target\windows-package-deploy\compact-mcp"
     if ($LASTEXITCODE -ne 0) { throw "Compact MCP production deploy failed" }
+    pnpm.cmd --config.node-linker=hoisted --filter @tetherplane/model-client deploy --legacy --prod "target\windows-package-deploy\model-client"
+    if ($LASTEXITCODE -ne 0) { throw "model client production deploy failed" }
     pnpm.cmd --config.node-linker=hoisted --filter @tetherplane/relay deploy --legacy --prod "target\windows-package-deploy\relay"
     if ($LASTEXITCODE -ne 0) { throw "relay production deploy failed" }
 }
@@ -57,6 +63,7 @@ finally {
 }
 
 Copy-Item -LiteralPath $compactDeploy -Destination (Join-Path $output "adapters") -Recurse -Force
+Copy-Item -LiteralPath $modelClientDeploy -Destination (Join-Path $output "adapters") -Recurse -Force
 Copy-Item -LiteralPath $relayDeploy -Destination $output -Recurse -Force
 Remove-Item -LiteralPath $deployStage -Recurse -Force -ErrorAction SilentlyContinue
 
@@ -65,6 +72,7 @@ Copy-Item -Path (Join-Path $repo "protocol\schemas\*.json") -Destination (Join-P
 Copy-Item -LiteralPath (Join-Path $repo "packaging\windows\tetherplane-mcp.ps1") -Destination (Join-Path $output "launch\tetherplane-mcp.ps1")
 Copy-Item -LiteralPath (Join-Path $repo "packaging\windows\tetherplane-agent.ps1") -Destination (Join-Path $output "launch\tetherplane-agent.ps1")
 Copy-Item -LiteralPath (Join-Path $repo "scripts\install-windows.ps1") -Destination (Join-Path $output "install-windows.ps1")
+Copy-Item -LiteralPath (Join-Path $repo "scripts\install-model-worker-windows.ps1") -Destination (Join-Path $output "install-model-worker-windows.ps1")
 Copy-Item -LiteralPath (Join-Path $repo "scripts\uninstall-windows.ps1") -Destination (Join-Path $output "uninstall-windows.ps1")
 
 foreach ($doc in @("README.md","SECURITY.md","CONTRIBUTING.md","LICENSE-MIT","LICENSE-APACHE")) {
