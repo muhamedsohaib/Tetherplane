@@ -266,9 +266,18 @@ const oidcSubjectSchema = z
   })
   .strict();
 
+const bridgeConfigSchema = z
+  .object({
+    tokenEnv: z
+      .string()
+      .regex(/^[A-Za-z_][A-Za-z0-9_]*$/),
+  })
+  .strict();
+
 const oidcConfigSchema = z
   .object({
     oidc: z.union([oidcBindingSchema, oidcSubjectSchema]),
+    deviceLoginBridge: bridgeConfigSchema.optional(),
   })
   .strict();
 
@@ -278,6 +287,7 @@ export async function loadClientAuth(
 ): Promise<{
   authenticator: ClientAuthenticator;
   oauth?: OAuthResource;
+  authLoginBridgeToken?: string;
 }> {
   let parsed: unknown;
   try {
@@ -298,6 +308,19 @@ export async function loadClientAuth(
       throw new Error("Invalid OIDC auth configuration");
     }
     const oidc = result.data.oidc;
+    const bridge = result.data.deviceLoginBridge;
+    const authLoginBridgeToken =
+      bridge === undefined
+        ? undefined
+        : environment[bridge.tokenEnv];
+    if (
+      bridge !== undefined &&
+      !authLoginBridgeToken
+    ) {
+      throw new Error(
+        `relay auth bridge environment variable is missing: ${bridge.tokenEnv}`,
+      );
+    }
     return {
       authenticator: new OidcClientAuthenticator(oidc),
       oauth: {
@@ -305,6 +328,9 @@ export async function loadClientAuth(
         issuer: oidc.issuer,
         scopes: oidc.scopes,
       },
+      ...(authLoginBridgeToken
+        ? { authLoginBridgeToken }
+        : {}),
     };
   }
 
