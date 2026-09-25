@@ -36,7 +36,7 @@ export type TetherAuthAddress = {
 
 export class TetherAuthServer {
   readonly #providerHandler: TetherAuthProviderHandler;
-  readonly #tls?: TetherAuthTlsOptions;
+  readonly #tls: TetherAuthTlsOptions | undefined;
   readonly #allowInsecureLocalhost: boolean;
   #server: HttpServer | null = null;
 
