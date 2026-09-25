@@ -8,6 +8,7 @@ import {
   StaticClientAuthenticator,
 } from "../src/auth/static-auth.ts";
 import { RelayServer } from "../src/server.ts";
+import { hashDeviceCredential } from "../src/devices/registry.ts";
 
 test("relay server permits explicit plaintext loopback development mode", async () => {
   const dir = await mkdtemp(
@@ -106,3 +107,93 @@ function auth(): StaticClientAuthenticator {
     },
   ]);
 }
+
+
+test("relay server attaches device-login bridge with service/device auth separation", async () => {
+  const dir = await mkdtemp(
+    path.join(os.tmpdir(), "tether-relay-auth-login-"),
+  );
+  const bridgeValue =
+    "TEST_BRIDGE_VALUE_ABCDEFGHIJKLMNOPQRSTUVWXYZ";
+  const relay = await RelayServer.create({
+    stateFile: path.join(dir, "devices.json"),
+    authenticator: auth(),
+    allowInsecureLocalhost: true,
+    authLoginBridgeToken: bridgeValue,
+  });
+
+  const deviceValue =
+    "TEST_DEVICE_VALUE_ABCDEFGHIJKLMNOPQRSTUVWXYZ";
+  const pendingPair = await relay.registry.startPairing({
+    deviceId: "Leno",
+    credentialHash: hashDeviceCredential(deviceValue),
+  });
+  await relay.registry.approvePairing({
+    accountId: "account-a",
+    userCode: pendingPair.userCode,
+  });
+
+  try {
+    const address = await relay.listen({
+      host: "127.0.0.1",
+      port: 0,
+    });
+
+    const started = await fetch(
+      `${address.httpUrl}/auth/device-login/start`,
+      {
+        method: "POST",
+        headers: {
+          authorization: `Bearer ${bridgeValue}`,
+          "content-type": "application/json",
+        },
+        body: JSON.stringify({
+          interactionUid: "interaction_123",
+        }),
+      },
+    );
+    assert.equal(started.status, 200);
+    const startedBody = await started.json() as {
+      userCode: string;
+    };
+
+    const approved = await fetch(
+      `${address.httpUrl}/auth/device-login/approve`,
+      {
+        method: "POST",
+        headers: {
+          authorization: `Device ${deviceValue}`,
+          "x-tetherplane-device-id": "Leno",
+          "content-type": "application/json",
+        },
+        body: JSON.stringify({
+          interactionUid: "interaction_123",
+          userCode: startedBody.userCode,
+        }),
+      },
+    );
+    assert.equal(approved.status, 200);
+
+    const consumed = await fetch(
+      `${address.httpUrl}/auth/device-login/consume`,
+      {
+        method: "POST",
+        headers: {
+          authorization: `Bearer ${bridgeValue}`,
+          "content-type": "application/json",
+        },
+        body: JSON.stringify({
+          interactionUid: "interaction_123",
+          userCode: startedBody.userCode,
+        }),
+      },
+    );
+    assert.equal(consumed.status, 200);
+    assert.deepEqual(await consumed.json(), {
+      accountId: "account-a",
+    });
+  } finally {
+    await relay.close();
+    await rm(dir, { recursive: true, force: true });
+  }
+});
