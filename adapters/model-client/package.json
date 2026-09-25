@@ -19,5 +19,8 @@
   },
   "devDependencies": {
     "@types/node": "24.13.6"
+  },
+  "bin": {
+    "tether-model-worker": "./dist/worker-main.js"
   }
 }
