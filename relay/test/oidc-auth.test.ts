@@ -108,7 +108,7 @@ test("OIDC subject identity strategy derives account and principal only from ver
             principalId: "human:user-123",
           },
         ],
-      }),
+      } as never),
     /identity|binding|strategy/i,
   );
 });
