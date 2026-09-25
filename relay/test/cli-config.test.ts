@@ -5,6 +5,7 @@ import path from "node:path";
 import test from "node:test";
 
 import {
+  loadClientAuth,
   loadStaticClientCredentials,
   parseRelayArgs,
 } from "../src/cli-config.ts";
@@ -153,4 +154,79 @@ test("CLI requires auth config and either TLS pair or explicit insecure loopback
   assert.equal(tls.tlsCert, "cert.pem");
   assert.equal(tls.tlsKey, "key.pem");
   assert.equal(tls.allowInsecureLocalhost, false);
+});
+
+
+test("OIDC auth config loads device-login bridge value only through environment reference", async () => {
+  const dir = await mkdtemp(
+    path.join(os.tmpdir(), "tether-relay-auth-bridge-"),
+  );
+  const authPath = path.join(dir, "auth.json");
+  await writeFile(
+    authPath,
+    JSON.stringify({
+      oidc: {
+        issuer: "https://identity.example/",
+        audience: "https://relay.example/mcp",
+        jwksUri: "https://identity.example/jwks",
+        scopes: ["tetherplane:access"],
+        identity: {
+          strategy: "subject",
+          principalPrefix: "human:",
+        },
+      },
+      deviceLoginBridge: {
+        tokenEnv: "TETHERPLANE_AUTH_BRIDGE_VALUE",
+      },
+    }),
+    "utf8",
+  );
+
+  try {
+    const loaded = await loadClientAuth(
+      authPath,
+      {
+        TETHERPLANE_AUTH_BRIDGE_VALUE:
+          "TEST_BRIDGE_VALUE_ABCDEFGHIJKLMNOPQRSTUVWXYZ",
+      },
+    );
+    assert.equal(
+      loaded.authLoginBridgeToken,
+      "TEST_BRIDGE_VALUE_ABCDEFGHIJKLMNOPQRSTUVWXYZ",
+    );
+
+    await assert.rejects(
+      loadClientAuth(authPath, {}),
+      /TETHERPLANE_AUTH_BRIDGE_VALUE/,
+    );
+
+    await writeFile(
+      authPath,
+      JSON.stringify({
+        oidc: {
+          issuer: "https://identity.example/",
+          audience: "https://relay.example/mcp",
+          jwksUri: "https://identity.example/jwks",
+          scopes: ["tetherplane:access"],
+          identity: {
+            strategy: "subject",
+            principalPrefix: "human:",
+          },
+        },
+        deviceLoginBridge: {
+          token: "RAW_VALUE_MUST_NOT_BE_PERSISTED",
+        },
+      }),
+      "utf8",
+    );
+    await assert.rejects(
+      loadClientAuth(authPath, {
+        TETHERPLANE_AUTH_BRIDGE_VALUE:
+          "TEST_BRIDGE_VALUE_ABCDEFGHIJKLMNOPQRSTUVWXYZ",
+      }),
+      /bridge|token|config/i,
+    );
+  } finally {
+    await rm(dir, { recursive: true, force: true });
+  }
 });
