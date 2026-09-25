@@ -21,6 +21,32 @@ if ($receipt -and $receipt.scheduled_task) {
     }
 }
 
+$modelWorkerRunKey = "HKCU:\Software\Microsoft\Windows\CurrentVersion\Run"
+$modelWorkerRunValue = "TetherplaneModelWorker"
+Remove-ItemProperty -Path $modelWorkerRunKey -Name $modelWorkerRunValue -ErrorAction SilentlyContinue
+
+$modelWorkerSupervisor = Join-Path $install "config\model-worker-supervisor.ps1"
+$modelWorkerMain = Join-Path $install "adapters\model-client\dist\worker-main.js"
+$modelWorkerProcesses =
+    @(
+        Get-CimInstance Win32_Process -ErrorAction SilentlyContinue |
+        Where-Object {
+            $name = [string]$_.Name
+            $commandLine = [string]$_.CommandLine
+            (
+                ($name -in @("powershell.exe", "pwsh.exe")) -and
+                ($commandLine.IndexOf($modelWorkerSupervisor, [System.StringComparison]::OrdinalIgnoreCase) -ge 0)
+            ) -or (
+                ($name -eq "node.exe") -and
+                ($commandLine.IndexOf($modelWorkerMain, [System.StringComparison]::OrdinalIgnoreCase) -ge 0)
+            )
+        }
+    )
+
+foreach ($process in $modelWorkerProcesses) {
+    Stop-Process -Id $process.ProcessId -Force -ErrorAction SilentlyContinue
+}
+
 $stateDir = $null
 $stateManaged = $false
 if ($receipt) {
