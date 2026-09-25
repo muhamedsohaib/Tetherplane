@@ -63,6 +63,9 @@ export function createTetherAuthProvider(
     },
     features: {
       ...policy.features,
+      revocation: {
+        enabled: true,
+      },
       devInteractions: {
         enabled: false,
       },
