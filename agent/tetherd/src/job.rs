@@ -125,6 +125,97 @@ impl JobProvider {
         provider_result(&record)
     }
 
+    fn list_jobs(
+        &self,
+        invocation: &InvocationEnvelope,
+    ) -> Result<ProviderResult, CapabilityError> {
+        let principal = authenticated_principal(invocation)?;
+        let requested_status = invocation
+            .arguments
+            .get("status")
+            .map(|value| {
+                value
+                    .as_str()
+                    .filter(|status| !status.trim().is_empty())
+                    .map(str::to_owned)
+                    .ok_or_else(|| invalid_arguments("status must be a non-empty string"))
+            })
+            .transpose()?;
+        let unleased = invocation
+            .arguments
+            .get("unleased")
+            .map(|value| {
+                value
+                    .as_bool()
+                    .ok_or_else(|| invalid_arguments("unleased must be a boolean"))
+            })
+            .transpose()?
+            .unwrap_or(false);
+        let limit = invocation
+            .arguments
+            .get("limit")
+            .map(|value| {
+                value
+                    .as_u64()
+                    .filter(|limit| *limit > 0 && *limit <= 100)
+                    .ok_or_else(|| invalid_arguments("limit must be between 1 and 100"))
+            })
+            .transpose()?
+            .unwrap_or(100) as usize;
+
+        let _guard = self
+            .lock
+            .lock()
+            .map_err(|_| provider_failure("job state lock is poisoned".into()))?;
+
+        let now = now_ms()?;
+        let mut paths = fs::read_dir(&self.jobs_dir)
+            .map_err(|error| provider_failure(format!("failed to list job state: {error}")))?
+            .filter_map(|entry| entry.ok().map(|entry| entry.path()))
+            .filter(|path| path.extension().is_some_and(|extension| extension == "json"))
+            .collect::<Vec<_>>();
+        paths.sort();
+
+        let mut jobs = Vec::new();
+        for path in paths {
+            let content = fs::read_to_string(&path).map_err(|error| {
+                provider_failure(format!("failed to read job record: {error}"))
+            })?;
+            let mut record = serde_json::from_str::<JobRecord>(&content).map_err(|error| {
+                provider_failure(format!("invalid persisted job record: {error}"))
+            })?;
+
+            if !record.permitted_principals.contains(principal) {
+                continue;
+            }
+
+            if prune_expired_lease(&mut record, now) {
+                record.updated_at_unix_ms = now;
+                self.store(&record)?;
+            }
+            if requested_status
+                .as_deref()
+                .is_some_and(|status| record.status != status)
+            {
+                continue;
+            }
+            if unleased && record.active_lease.is_some() {
+                continue;
+            }
+
+            jobs.push(record);
+        }
+
+        jobs.sort_by(|left, right| {
+            left.created_at_unix_ms
+                .cmp(&right.created_at_unix_ms)
+                .then_with(|| left.job_id.cmp(&right.job_id))
+        });
+        jobs.truncate(limit);
+
+        provider_result(&json!({ "jobs": jobs }))
+    }
+
     fn checkpoint(
         &self,
         invocation: &InvocationEnvelope,
@@ -340,6 +431,7 @@ impl CapabilityProvider for JobProvider {
         match operation {
             "create" => self.create_job(invocation),
             "get" => self.get_job(invocation),
+            "list" => self.list_jobs(invocation),
             "checkpoint" => self.checkpoint(invocation),
             "acquire_lease" => self.acquire_lease(invocation),
             "release_lease" => self.release_lease(invocation),
