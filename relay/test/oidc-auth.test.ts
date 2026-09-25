@@ -28,3 +28,87 @@ test("OIDC validates signed access tokens and binds only explicitly allowed subj
   assert.throws(() => new module.OidcClientAuthenticator({ ...options, scopes: [] }));
   assert.throws(() => new module.OidcClientAuthenticator({ ...options, bindings: [...options.bindings, ...options.bindings] }));
 });
+
+
+test("OIDC subject identity strategy derives account and principal only from verified token claims", async () => {
+  const module = await import("../src/auth/oidc-auth.ts");
+  const keys = await generateKeyPair("RS256");
+  const jwk = await exportJWK(keys.publicKey);
+  const options = {
+    issuer: "https://identity.example/",
+    audience: "https://relay.example/mcp",
+    jwksUri: "https://identity.example/.well-known/jwks.json",
+    scopes: ["tetherplane:access"],
+    identity: {
+      strategy: "subject" as const,
+      principalPrefix: "human:",
+    },
+  };
+  const auth = new module.OidcClientAuthenticator(
+    options,
+    createLocalJWKSet({ keys: [{ ...jwk, kid: "subject-test" }] }),
+  );
+  const base = {
+    iss: options.issuer,
+    aud: options.audience,
+    sub: "user-123",
+    azp: "https://chatgpt.com/oauth/client.json",
+    scope: "tetherplane:access",
+    exp: Math.floor(Date.now() / 1000) + 300,
+  };
+  const sign = (claims: Record<string, unknown>) =>
+    new SignJWT(claims)
+      .setProtectedHeader({ alg: "RS256", kid: "subject-test" })
+      .sign(keys.privateKey);
+
+  assert.deepEqual(await auth.authenticate(await sign(base)), {
+    accountId: "user-123",
+    clientId: "https://chatgpt.com/oauth/client.json",
+    principalId: "human:user-123",
+  });
+
+  assert.deepEqual(
+    await auth.authenticate(
+      await sign({
+        ...base,
+        azp: undefined,
+        client_id: "registered-client",
+      }),
+    ),
+    {
+      accountId: "user-123",
+      clientId: "registered-client",
+      principalId: "human:user-123",
+    },
+  );
+
+  for (const change of [
+    { sub: undefined },
+    { azp: undefined, client_id: undefined },
+    { aud: "https://other.example/mcp" },
+    { scope: "other" },
+    { iss: "https://evil.example/" },
+    { exp: 1 },
+  ]) {
+    assert.equal(
+      await auth.authenticate(await sign({ ...base, ...change })),
+      null,
+    );
+  }
+
+  assert.throws(
+    () =>
+      new module.OidcClientAuthenticator({
+        ...options,
+        bindings: [
+          {
+            subject: "user-123",
+            clientId: "chatgpt",
+            accountId: "account-a",
+            principalId: "human:user-123",
+          },
+        ],
+      }),
+    /identity|binding|strategy/i,
+  );
+});
