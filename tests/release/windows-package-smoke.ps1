@@ -31,11 +31,14 @@ try {
         "bin\tetherd.exe",
         "adapters\compact-mcp\dist\stdio-server.js",
         "adapters\compact-mcp\node_modules",
+        "adapters\model-client\dist\worker-main.js",
+        "adapters\model-client\node_modules",
         "adapters\compact-mcp\smoke-six-tools.mjs",
         "protocol\schemas\result.schema.json",
         "launch\tetherplane-mcp.ps1",
         "launch\tetherplane-agent.ps1",
         "install-windows.ps1",
+        "install-model-worker-windows.ps1",
         "uninstall-windows.ps1",
         "manifest.json"
     )) {
@@ -113,8 +116,16 @@ try {
 
     $installedTetherd = Join-Path $install "bin\tetherd.exe"
     $installedSmoke = Join-Path $install "adapters\compact-mcp\smoke-six-tools.mjs"
+    $installedWorker = Join-Path $install "adapters\model-client\dist\worker-main.js"
+    $installedWorkerInstaller = Join-Path $install "install-model-worker-windows.ps1"
     if (-not (Test-Path -LiteralPath $installedTetherd)) {
         throw "installed tetherd is missing"
+    }
+    if (-not (Test-Path -LiteralPath $installedWorker)) {
+        throw "installed model worker is missing"
+    }
+    if (-not (Test-Path -LiteralPath $installedWorkerInstaller)) {
+        throw "installed model worker activation script is missing"
     }
 
     & node $installedSmoke --tetherd $installedTetherd --allow $allow --state-dir $state
