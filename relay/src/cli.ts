@@ -16,7 +16,11 @@ async function main(): Promise<void> {
   }
 
   const options = parseRelayArgs(args);
-  const { authenticator, oauth } = await loadClientAuth(options.authConfig);
+  const {
+    authenticator,
+    oauth,
+    authLoginBridgeToken,
+  } = await loadClientAuth(options.authConfig);
 
   const tls =
     options.tlsCert && options.tlsKey
@@ -30,6 +34,9 @@ async function main(): Promise<void> {
     stateFile: options.stateFile,
     authenticator,
     ...(oauth ? { oauth } : {}),
+    ...(authLoginBridgeToken
+      ? { authLoginBridgeToken }
+      : {}),
     ...(tls ? { tls } : {}),
     allowInsecureLocalhost:
       options.allowInsecureLocalhost,
