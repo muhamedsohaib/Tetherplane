@@ -1,4 +1,6 @@
 import assert from "node:assert/strict";
+import { createServer } from "node:http";
+import type { AddressInfo } from "node:net";
 import test from "node:test";
 import { exportJWK, generateKeyPair } from "jose";
 
@@ -21,15 +23,36 @@ test("tether-auth real provider advertises OAuth code flow, S256, DCR and revoca
     adapter: TestAdapter,
   });
 
-  const metadata = provider.configuration();
+  const server = createServer(provider.callback());
+  await new Promise<void>((resolve, reject) => {
+    server.once("error", reject);
+    server.listen(0, "127.0.0.1", resolve);
+  });
 
-  assert.equal(metadata.issuer, "https://auth.example.com/");
-  assert.deepEqual(metadata.code_challenge_methods_supported, ["S256"]);
-  assert.match(metadata.registration_endpoint ?? "", /\/reg$/);
-  assert.match(metadata.revocation_endpoint ?? "", /\/token\/revocation$/);
-  assert.ok(metadata.grant_types_supported?.includes("authorization_code"));
-  assert.ok(metadata.grant_types_supported?.includes("refresh_token"));
-  assert.ok(!metadata.grant_types_supported?.includes("password"));
+  try {
+    const address = server.address() as AddressInfo;
+    const response = await fetch(
+      `http://127.0.0.1:${address.port}/.well-known/openid-configuration`,
+    );
+    assert.equal(response.status, 200);
+    const metadata = (await response.json()) as Record<string, unknown>;
+
+    assert.equal(metadata.issuer, "https://auth.example.com/");
+    assert.deepEqual(metadata.code_challenge_methods_supported, ["S256"]);
+    assert.match(String(metadata.registration_endpoint ?? ""), /\/reg$/);
+    assert.match(
+      String(metadata.revocation_endpoint ?? ""),
+      /\/token\/revocation$/,
+    );
+    const grants = metadata.grant_types_supported as string[] | undefined;
+    assert.ok(grants?.includes("authorization_code"));
+    assert.ok(grants?.includes("refresh_token"));
+    assert.ok(!grants?.includes("password"));
+  } finally {
+    await new Promise<void>((resolve, reject) => {
+      server.close((error) => (error ? reject(error) : resolve()));
+    });
+  }
 });
 
 test("tether-auth provider requires explicit signing keys and persistent adapter", () => {
