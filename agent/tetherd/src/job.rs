@@ -161,7 +161,9 @@ impl JobProvider {
                     .ok_or_else(|| invalid_arguments("limit must be between 1 and 100"))
             })
             .transpose()?
-            .unwrap_or(100) as usize;
+            .unwrap_or(100);
+        let limit = usize::try_from(limit)
+            .map_err(|_| invalid_arguments("limit exceeds platform range"))?;
 
         let _guard = self
             .lock
