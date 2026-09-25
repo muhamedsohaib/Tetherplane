@@ -19,3 +19,9 @@ jobs:
         run: pnpm install --lockfile-only --no-frozen-lockfile
       - name: Print lockfile diff
         run: git diff -- pnpm-lock.yaml
+      - name: Upload generated lockfile
+        uses: actions/upload-artifact@v4
+        with:
+          name: auth-generated-lockfile
+          path: pnpm-lock.yaml
+          if-no-files-found: error
