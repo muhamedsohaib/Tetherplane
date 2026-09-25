@@ -442,7 +442,6 @@ fn checkpoint_rejects_private_reasoning_fields() {
     std::fs::remove_dir_all(&root).unwrap();
 }
 
-
 #[test]
 fn job_list_returns_only_jobs_permitted_to_bound_principal() {
     let root = unique_root();
