@@ -53,10 +53,6 @@ export function createTetherAuthProvider(
       "tetherplane:access",
     ],
     responseTypes: ["code"],
-    grantTypes: [
-      "authorization_code",
-      "refresh_token",
-    ],
     issueRefreshToken() {
       return true;
     },
