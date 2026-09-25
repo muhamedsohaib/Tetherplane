@@ -1,4 +1,5 @@
 import type { ModelWorkerOutcome } from "./index.ts";
+export type { ModelWorkerOutcome } from "./index.ts";
 
 export type WorkerServiceConfig = {
   device: string;
