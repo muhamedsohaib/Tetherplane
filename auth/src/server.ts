@@ -23,12 +23,21 @@ export type TetherAuthTlsOptions = {
   key: string | Buffer;
 };
 
-export type TetherAuthServerOptions = {
-  providerHandler: TetherAuthProviderHandler;
-  interactions?: Pick<
+export type TetherAuthServerInteractions =
+  Pick<
     TetherAuthInteractionController,
     "beginLogin" | "completeLogin"
+  > &
+  Partial<
+    Pick<
+      TetherAuthInteractionController,
+      "beginInteraction" | "completeConsent"
+    >
   >;
+
+export type TetherAuthServerOptions = {
+  providerHandler: TetherAuthProviderHandler;
+  interactions?: TetherAuthServerInteractions;
   tls?: TetherAuthTlsOptions;
   allowInsecureLocalhost?: boolean;
 };
@@ -45,10 +54,7 @@ export type TetherAuthAddress = {
 export class TetherAuthServer {
   readonly #providerHandler: TetherAuthProviderHandler;
   readonly #interactions:
-    | Pick<
-        TetherAuthInteractionController,
-        "beginLogin" | "completeLogin"
-      >
+    | TetherAuthServerInteractions
     | undefined;
   readonly #tls: TetherAuthTlsOptions | undefined;
   readonly #allowInsecureLocalhost: boolean;
@@ -177,17 +183,80 @@ export class TetherAuthServer {
       ) {
         try {
           const pending =
-            await this.#interactions.beginLogin(
-              request,
-              response,
-              loginMatch[1],
-            );
+            this.#interactions.beginInteraction
+              ? await this.#interactions.beginInteraction(
+                  request,
+                  response,
+                  loginMatch[1],
+                )
+              : {
+                  kind: "login" as const,
+                  ...(await this.#interactions.beginLogin(
+                    request,
+                    response,
+                    loginMatch[1],
+                  )),
+                };
+
           if (!response.writableEnded) {
-            writeJson(response, 200, {
-              status:
-                "pending_device_approval",
-              ...pending,
+            writeJson(
+              response,
+              200,
+              pending.kind === "consent"
+                ? {
+                    status: "awaiting_consent",
+                    clientId: pending.clientId,
+                    oidcScopes: pending.oidcScopes,
+                    resourceScopes:
+                      pending.resourceScopes,
+                  }
+                : {
+                    status:
+                      "pending_device_approval",
+                    userCode: pending.userCode,
+                    expiresAt: pending.expiresAt,
+                  },
+            );
+          }
+        } catch {
+          if (!response.headersSent) {
+            writeJson(response, 400, {
+              error: {
+                code: "invalid_interaction",
+              },
             });
+          } else if (!response.writableEnded) {
+            response.end();
+          }
+        }
+        return;
+      }
+
+      const consentMatch =
+        /^\/interaction\/([A-Za-z0-9._~-]{8,256})\/consent$/.exec(
+          pathname,
+        );
+      if (
+        request.method === "POST" &&
+        consentMatch?.[1]
+      ) {
+        try {
+          if (!this.#interactions.completeConsent) {
+            throw new Error(
+              "consent interaction is not supported",
+            );
+          }
+          await this.#interactions.completeConsent(
+            request,
+            response,
+            consentMatch[1],
+          );
+          if (
+            !response.headersSent &&
+            !response.writableEnded
+          ) {
+            response.statusCode = 204;
+            response.end();
           }
         } catch {
           if (!response.headersSent) {

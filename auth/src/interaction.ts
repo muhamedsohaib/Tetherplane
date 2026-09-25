@@ -86,6 +86,22 @@ export type TetherAuthGrantStore = {
   }): TetherAuthGrant;
 };
 
+export type TetherAuthPendingInteraction =
+  | {
+      kind: "login";
+      userCode: string;
+      expiresAt: string;
+    }
+  | {
+      kind: "consent";
+      clientId: string;
+      oidcScopes: string[];
+      resourceScopes: Array<{
+        resource: string;
+        scopes: string[];
+      }>;
+    };
+
 type ValidatedConsent = {
   interactionUid: string;
   clientId: string;
@@ -147,6 +163,45 @@ export class TetherAuthInteractionController {
         );
       }
     }
+  }
+
+  async beginInteraction(
+    request: IncomingMessage,
+    response: ServerResponse,
+    interactionUid: string,
+  ): Promise<TetherAuthPendingInteraction> {
+    const details =
+      await this.#validatedInteraction(
+        request,
+        response,
+        interactionUid,
+      );
+
+    if (details.prompt?.name === "login") {
+      const pending = await this.#logins.start({
+        interactionUid: details.uid,
+      });
+      return {
+        kind: "login",
+        ...pending,
+      };
+    }
+
+    if (details.prompt?.name === "consent") {
+      const pending = await this.describeConsent(
+        request,
+        response,
+        interactionUid,
+      );
+      return {
+        kind: "consent",
+        ...pending,
+      };
+    }
+
+    throw new Error(
+      "OIDC interaction prompt is unsupported",
+    );
   }
 
   async beginLogin(
@@ -314,11 +369,10 @@ export class TetherAuthInteractionController {
     return "completed";
   }
 
-  async #validatedNamedInteraction(
+  async #validatedInteraction(
     request: IncomingMessage,
     response: ServerResponse,
     interactionUid: string,
-    expectedPrompt: string,
   ): Promise<TetherAuthInteractionDetails> {
     validateInteractionUid(interactionUid);
 
@@ -337,6 +391,23 @@ export class TetherAuthInteractionController {
         "OIDC interaction does not match requested interaction",
       );
     }
+
+    return details;
+  }
+
+  async #validatedNamedInteraction(
+    request: IncomingMessage,
+    response: ServerResponse,
+    interactionUid: string,
+    expectedPrompt: string,
+  ): Promise<TetherAuthInteractionDetails> {
+    const details =
+      await this.#validatedInteraction(
+        request,
+        response,
+        interactionUid,
+      );
+
     if (
       !details.prompt ||
       details.prompt.name !== expectedPrompt
