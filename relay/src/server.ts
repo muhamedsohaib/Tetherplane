@@ -1,4 +1,6 @@
 import type { OAuthResource } from "./auth/oauth-resource.ts";
+import { AuthLoginProofHttpGateway } from "./auth/login-proof-http.ts";
+import { AuthLoginProofRegistry } from "./auth/login-proof-registry.ts";
 import {
   createServer as createHttpServer,
   type Server as HttpServer,
@@ -48,6 +50,7 @@ export class RelayServer {
   readonly mcpGateway: RemoteMcpHttpGateway;
   readonly controlGateway: RelayControlHttpGateway;
   readonly healthGateway: RelayHealthHttpGateway;
+  readonly authLoginGateway: AuthLoginProofHttpGateway | null;
   readonly isSecure: boolean;
 
   readonly #server: NodeRelayServer;
@@ -64,6 +67,7 @@ export class RelayServer {
     mcpGateway: RemoteMcpHttpGateway;
     controlGateway: RelayControlHttpGateway;
     healthGateway: RelayHealthHttpGateway;
+    authLoginGateway: AuthLoginProofHttpGateway | null;
   }) {
     this.#server = options.server;
     this.isSecure = options.secure;
@@ -75,6 +79,7 @@ export class RelayServer {
     this.mcpGateway = options.mcpGateway;
     this.controlGateway = options.controlGateway;
     this.healthGateway = options.healthGateway;
+    this.authLoginGateway = options.authLoginGateway;
   }
 
   static async create(options: {
@@ -84,6 +89,7 @@ export class RelayServer {
     tls?: HttpsServerOptions;
     allowInsecureLocalhost?: boolean;
     routeTimeoutMs?: number;
+    authLoginBridgeToken?: string;
   }): Promise<RelayServer> {
     const registry = await DeviceRegistry.open(
       options.stateFile
@@ -112,6 +118,14 @@ export class RelayServer {
       disconnectDevice: (deviceId) =>
         deviceGateway.disconnectDevice(deviceId),
     });
+    const authLoginGateway =
+      options.authLoginBridgeToken === undefined
+        ? null
+        : new AuthLoginProofHttpGateway({
+            devices: registry,
+            proofs: new AuthLoginProofRegistry(),
+            bridgeToken: options.authLoginBridgeToken,
+          });
 
     const secure = options.tls !== undefined;
     const server: NodeRelayServer =
@@ -124,6 +138,7 @@ export class RelayServer {
     deviceGateway.attach(httpCompatible, "/device");
     mcpGateway.attach(httpCompatible, "/mcp");
     controlGateway.attach(httpCompatible);
+    authLoginGateway?.attach(httpCompatible);
 
     return new RelayServer({
       server,
@@ -136,6 +151,7 @@ export class RelayServer {
       mcpGateway,
       controlGateway,
       healthGateway,
+      authLoginGateway,
     });
   }
 
@@ -187,6 +203,7 @@ export class RelayServer {
 
     this.healthGateway.close();
     this.controlGateway.close();
+    this.authLoginGateway?.close();
     await this.mcpGateway.close();
     await this.deviceGateway.close();
 
