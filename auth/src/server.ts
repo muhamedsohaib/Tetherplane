@@ -9,6 +9,10 @@ import {
 } from "node:https";
 import type { AddressInfo } from "node:net";
 
+import type {
+  TetherAuthInteractionController,
+} from "./interaction.ts";
+
 export type TetherAuthProviderHandler = (
   request: IncomingMessage,
   response: ServerResponse,
@@ -21,6 +25,10 @@ export type TetherAuthTlsOptions = {
 
 export type TetherAuthServerOptions = {
   providerHandler: TetherAuthProviderHandler;
+  interactions?: Pick<
+    TetherAuthInteractionController,
+    "beginLogin" | "completeLogin"
+  >;
   tls?: TetherAuthTlsOptions;
   allowInsecureLocalhost?: boolean;
 };
@@ -36,15 +44,24 @@ export type TetherAuthAddress = {
 
 export class TetherAuthServer {
   readonly #providerHandler: TetherAuthProviderHandler;
+  readonly #interactions:
+    | Pick<
+        TetherAuthInteractionController,
+        "beginLogin" | "completeLogin"
+      >
+    | undefined;
   readonly #tls: TetherAuthTlsOptions | undefined;
   readonly #allowInsecureLocalhost: boolean;
   #server: HttpServer | null = null;
 
   constructor(options: TetherAuthServerOptions) {
     if (typeof options.providerHandler !== "function") {
-      throw new Error("tether-auth requires an OIDC provider handler");
+      throw new Error(
+        "tether-auth requires an OIDC provider handler",
+      );
     }
     this.#providerHandler = options.providerHandler;
+    this.#interactions = options.interactions;
     this.#tls = options.tls;
     this.#allowInsecureLocalhost =
       options.allowInsecureLocalhost ?? false;
@@ -54,7 +71,9 @@ export class TetherAuthServer {
     options: TetherAuthListenOptions,
   ): Promise<TetherAuthAddress> {
     if (this.#server) {
-      throw new Error("tether-auth server is already started");
+      throw new Error(
+        "tether-auth server is already started",
+      );
     }
     validateListenOptions(
       options,
@@ -66,23 +85,7 @@ export class TetherAuthServer {
       request: IncomingMessage,
       response: ServerResponse,
     ) => {
-      const pathname = safePathname(request.url);
-      if (
-        request.method === "GET" &&
-        pathname === "/healthz"
-      ) {
-        writeProbe(response, { status: "ok" });
-        return;
-      }
-      if (
-        request.method === "GET" &&
-        pathname === "/readyz"
-      ) {
-        writeProbe(response, { status: "ready" });
-        return;
-      }
-
-      this.#providerHandler(request, response);
+      void this.#handleRequest(request, response);
     };
 
     const server = this.#tls
@@ -137,6 +140,135 @@ export class TetherAuthServer {
       );
     });
   }
+
+  async #handleRequest(
+    request: IncomingMessage,
+    response: ServerResponse,
+  ): Promise<void> {
+    const pathname = safePathname(request.url);
+
+    if (
+      request.method === "GET" &&
+      pathname === "/healthz"
+    ) {
+      writeJson(response, 200, {
+        status: "ok",
+      });
+      return;
+    }
+    if (
+      request.method === "GET" &&
+      pathname === "/readyz"
+    ) {
+      writeJson(response, 200, {
+        status: "ready",
+      });
+      return;
+    }
+
+    if (this.#interactions) {
+      const loginMatch =
+        /^\/interaction\/([A-Za-z0-9._~-]{8,256})$/.exec(
+          pathname,
+        );
+      if (
+        request.method === "GET" &&
+        loginMatch?.[1]
+      ) {
+        try {
+          const pending =
+            await this.#interactions.beginLogin(
+              request,
+              response,
+              loginMatch[1],
+            );
+          if (!response.writableEnded) {
+            writeJson(response, 200, {
+              status:
+                "pending_device_approval",
+              ...pending,
+            });
+          }
+        } catch {
+          if (!response.headersSent) {
+            writeJson(response, 400, {
+              error: {
+                code: "invalid_interaction",
+              },
+            });
+          } else if (!response.writableEnded) {
+            response.end();
+          }
+        }
+        return;
+      }
+
+      const completeMatch =
+        /^\/interaction\/([A-Za-z0-9._~-]{8,256})\/device-login$/.exec(
+          pathname,
+        );
+      if (
+        request.method === "POST" &&
+        completeMatch?.[1]
+      ) {
+        try {
+          const body = await readObjectBody(
+            request,
+          );
+          const userCode = stringField(
+            body,
+            "userCode",
+          );
+          validateUserCode(userCode);
+
+          const result =
+            await this.#interactions.completeLogin(
+              request,
+              response,
+              {
+                interactionUid:
+                  completeMatch[1],
+                userCode,
+              },
+            );
+
+          if (result === "pending") {
+            if (!response.writableEnded) {
+              writeJson(response, 202, {
+                status:
+                  "pending_device_approval",
+              });
+            }
+            return;
+          }
+
+          if (
+            !response.headersSent &&
+            !response.writableEnded
+          ) {
+            response.statusCode = 204;
+            response.end();
+          }
+        } catch {
+          if (!response.headersSent) {
+            writeJson(response, 400, {
+              error: {
+                code: "invalid_interaction",
+              },
+            });
+          } else if (!response.writableEnded) {
+            response.end();
+          }
+        }
+        return;
+      }
+    }
+
+    this.#providerHandler(
+      request,
+      response,
+    );
+  }
 }
 
 function validateListenOptions(
@@ -154,7 +286,9 @@ function validateListenOptions(
     );
   }
   if (!options.host.trim()) {
-    throw new Error("tether-auth host must be non-empty");
+    throw new Error(
+      "tether-auth host must be non-empty",
+    );
   }
 
   if (secure) {
@@ -181,20 +315,95 @@ function isLoopbackHost(host: string): boolean {
   );
 }
 
-function safePathname(rawUrl: string | undefined): string {
+function safePathname(
+  rawUrl: string | undefined,
+): string {
   try {
-    return new URL(rawUrl ?? "/", "http://localhost").pathname;
+    return new URL(
+      rawUrl ?? "/",
+      "http://localhost",
+    ).pathname;
   } catch {
     return "/";
   }
 }
 
-function writeProbe(
+async function readObjectBody(
+  request: IncomingMessage,
+  maxBytes = 16 * 1024,
+): Promise<Record<string, unknown>> {
+  const chunks: Buffer[] = [];
+  let bytes = 0;
+
+  for await (const chunk of request) {
+    const buffer = Buffer.isBuffer(chunk)
+      ? chunk
+      : Buffer.from(chunk as Uint8Array);
+    bytes += buffer.length;
+    if (bytes > maxBytes) {
+      throw new Error(
+        "interaction request body exceeds size limit",
+      );
+    }
+    chunks.push(buffer);
+  }
+
+  if (chunks.length === 0) {
+    return {};
+  }
+
+  const parsed = JSON.parse(
+    Buffer.concat(chunks).toString("utf8"),
+  ) as unknown;
+  if (
+    !parsed ||
+    typeof parsed !== "object" ||
+    Array.isArray(parsed)
+  ) {
+    throw new Error(
+      "interaction request body must be a JSON object",
+    );
+  }
+  return parsed as Record<string, unknown>;
+}
+
+function stringField(
+  body: Record<string, unknown>,
+  name: string,
+): string {
+  const value = body[name];
+  if (
+    typeof value !== "string" ||
+    !value.trim()
+  ) {
+    throw new Error(
+      `${name} must be a non-empty string`,
+    );
+  }
+  return value.trim();
+}
+
+function validateUserCode(
+  value: string,
+): void {
+  if (
+    !/^[A-Z0-9]{4}-[A-Z0-9]{4}$/.test(
+      value,
+    )
+  ) {
+    throw new Error(
+      "device-login code is invalid",
+    );
+  }
+}
+
+function writeJson(
   response: ServerResponse,
-  payload: { status: "ok" | "ready" },
+  statusCode: number,
+  payload: unknown,
 ): void {
   const body = JSON.stringify(payload);
-  response.statusCode = 200;
+  response.statusCode = statusCode;
   response.setHeader(
     "content-type",
     "application/json",
@@ -214,7 +423,9 @@ function formatAddress(
   address: AddressInfo,
   secure: boolean,
 ): string {
-  const protocol = secure ? "https" : "http";
+  const protocol = secure
+    ? "https"
+    : "http";
   const host =
     address.family === "IPv6"
       ? `[${address.address}]`
