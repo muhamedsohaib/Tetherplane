@@ -7,7 +7,7 @@ import { exportJWK, generateKeyPair } from "jose";
 import { createTetherAuthProvider } from "../../auth/src/provider.ts";
 
 test("tether-auth real provider advertises OAuth code flow, S256, DCR and revocation", async () => {
-  const keys = await generateKeyPair("RS256");
+  const keys = await generateKeyPair("RS256", { extractable: true });
   const privateJwk = {
     ...(await exportJWK(keys.privateKey)),
     kid: "auth-smoke",
