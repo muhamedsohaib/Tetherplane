@@ -1,5 +1,6 @@
 import type {
   TetherAuthGrantStore,
+  TetherAuthInteractionDetails,
   TetherAuthInteractionProvider,
   TetherAuthLoginProofClient,
 } from "./interaction.ts";
@@ -53,7 +54,52 @@ export function createTetherAuthRuntime(
             request,
             response,
           );
-        return details;
+        const promptDetails =
+          details.prompt.details;
+
+        const mapped:
+          TetherAuthInteractionDetails = {
+            uid: details.uid,
+            prompt: {
+              name: details.prompt.name,
+              details: {
+                missingOIDCScope:
+                  promptDetails[
+                    "missingOIDCScope"
+                  ],
+                missingOIDCClaims:
+                  promptDetails[
+                    "missingOIDCClaims"
+                  ],
+                missingResourceScopes:
+                  promptDetails[
+                    "missingResourceScopes"
+                  ],
+                rar: promptDetails["rar"],
+              },
+            },
+            params: {
+              client_id:
+                details.params["client_id"],
+            },
+            ...(details.session
+              ? {
+                  session: {
+                    accountId:
+                      details.session.accountId,
+                  },
+                }
+              : {}),
+            ...(details.grantId ===
+            undefined
+              ? {}
+              : {
+                  grantId:
+                    details.grantId,
+                }),
+          };
+
+        return mapped;
       },
       async interactionFinished(
         request,
