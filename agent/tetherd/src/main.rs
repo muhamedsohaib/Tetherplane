@@ -196,17 +196,21 @@ async fn main() {
     };
 
     let browser_provider = if let Some(address) = options.browser_bridge {
-        match BrowserProvider::connect(BrowserBridgeConfig {
-            address,
-            token: browser_token,
-            timeout_ms: 10_000,
-        })
+        match BrowserProvider::connect_with_retry(
+            BrowserBridgeConfig {
+                address,
+                token: browser_token,
+                timeout_ms: 2_000,
+            },
+            5,
+            Duration::from_millis(100),
+        )
         .await
         {
             Ok(provider) => Some(Arc::new(provider)),
             Err(error) => {
                 eprintln!("browser bridge unavailable: {}", error.message);
-                None
+                std::process::exit(1);
             }
         }
     } else {
