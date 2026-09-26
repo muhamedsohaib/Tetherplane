@@ -270,9 +270,11 @@ export function createSqliteAdapter(options: {
           payload.userCode,
         ),
         stringField(payload.uid),
-        stringField(
-          payload.grantId,
-        ),
+        this.#model === "Grant"
+          ? id
+          : stringField(
+              payload.grantId,
+            ),
       );
     }
 
