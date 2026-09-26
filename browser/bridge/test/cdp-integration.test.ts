@@ -19,7 +19,7 @@ import {
 
 test(
   "CDP fallback drives Browser Lab through an isolated Tetherplane-owned Chrome profile",
-  { timeout: 45_000 },
+  { timeout: 60_000 },
   async () => {
     const executablePath = findInstalledChromium();
     assert.ok(
@@ -182,7 +182,7 @@ test(
 
 test(
   "CDP fallback performs real B6 upload download diagnostics and checkpoint operations",
-  { timeout: 55_000 },
+  { timeout: 70_000 },
   async () => {
     const executablePath = findInstalledChromium();
     assert.ok(

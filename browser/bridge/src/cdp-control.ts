@@ -28,6 +28,9 @@ import type {
   RawBrowserDiagnosticEvent,
   RawBrowserDownload,
 } from "./operations.ts";
+import {
+  stopOwnedChromiumProcesses,
+} from "./process-cleanup.ts";
 
 type CdpResponse = {
   id?: number;
@@ -221,7 +224,7 @@ class CdpWire {
   }
 }
 
-export const DEFAULT_CDP_LAUNCH_TIMEOUT_MS = 20_000;
+export const DEFAULT_CDP_LAUNCH_TIMEOUT_MS = 30_000;
 
 export type LaunchedCdpControl = CdpControl & {
   readonly profile_dir: string;
@@ -928,6 +931,8 @@ export async function launchCdpOwnedBrowser(options: {
     await rm(profileDir, {
       recursive: true,
       force: true,
+      maxRetries: 20,
+      retryDelay: 50,
     });
     if (error instanceof CdpBackendError) {
       throw error;
@@ -967,53 +972,6 @@ async function discoverBrowserPid(
     return null;
   }
   return null;
-}
-
-async function stopOwnedChromiumProcesses(
-  child: ChildProcess,
-  browserPid: number | null,
-): Promise<void> {
-  if (browserPid !== null) {
-    await waitForPidExit(browserPid, 500);
-    if (isProcessAlive(browserPid)) {
-      try {
-        process.kill(browserPid);
-      } catch {
-        // The browser may have exited between the liveness check and kill.
-      }
-      await waitForPidExit(browserPid, 1_000);
-    }
-  }
-
-  if (child.exitCode === null) {
-    child.kill();
-    await Promise.race([
-      once(child, "exit").then(() => undefined),
-      sleep(1_000),
-    ]).catch(() => undefined);
-  }
-}
-
-async function waitForPidExit(
-  pid: number,
-  timeoutMs: number,
-): Promise<void> {
-  const deadline = Date.now() + timeoutMs;
-  while (Date.now() < deadline) {
-    if (!isProcessAlive(pid)) {
-      return;
-    }
-    await sleep(25);
-  }
-}
-
-function isProcessAlive(pid: number): boolean {
-  try {
-    process.kill(pid, 0);
-    return true;
-  } catch {
-    return false;
-  }
 }
 
 async function waitForDevToolsActivePort(options: {
