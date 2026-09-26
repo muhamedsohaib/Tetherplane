@@ -80,7 +80,9 @@ impl BrowserProvider {
         retry_delay: Duration,
     ) -> Result<Self, CapabilityError> {
         if attempts == 0 {
-            return Err(invalid("browser bridge startup attempts must be greater than zero"));
+            return Err(invalid(
+                "browser bridge startup attempts must be greater than zero",
+            ));
         }
 
         let mut last_error = None;
