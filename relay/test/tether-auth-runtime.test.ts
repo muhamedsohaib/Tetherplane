@@ -4,6 +4,7 @@ import { exportJWK, generateKeyPair } from "jose";
 
 import {
   createTetherAuthRuntime,
+  startTetherAuthService,
 } from "../../auth/src/runtime.ts";
 
 test("tether-auth runtime composes the real provider interaction controller and hardened server", async () => {
@@ -106,3 +107,110 @@ class TestAdapter {
   async revokeByGrantId(): Promise<void> {}
   async consume(): Promise<void> {}
 }
+
+
+test("tether-auth service closes cleanly on SIGINT or SIGTERM and unregisters lifecycle handlers", async () => {
+  for (const signal of ["SIGINT", "SIGTERM"] as const) {
+    const keys = await generateKeyPair(
+      "RS256",
+      { extractable: true },
+    );
+    const privateJwk = {
+      ...(await exportJWK(keys.privateKey)),
+      kid: `lifecycle-${signal.toLowerCase()}`,
+      alg: "RS256",
+      use: "sig",
+    };
+    const listeners = new Map<
+      "SIGINT" | "SIGTERM",
+      Set<() => void>
+    >([
+      ["SIGINT", new Set()],
+      ["SIGTERM", new Set()],
+    ]);
+    const signals = {
+      once(
+        name: "SIGINT" | "SIGTERM",
+        listener: () => void,
+      ) {
+        listeners.get(name)!.add(listener);
+        return this;
+      },
+      off(
+        name: "SIGINT" | "SIGTERM",
+        listener: () => void,
+      ) {
+        listeners.get(name)!.delete(listener);
+        return this;
+      },
+      emit(name: "SIGINT" | "SIGTERM") {
+        for (const listener of [
+          ...listeners.get(name)!,
+        ]) {
+          listeners.get(name)!.delete(listener);
+          listener();
+        }
+      },
+    };
+
+    const service = await startTetherAuthService(
+      {
+        issuer: "https://auth.example.com/",
+        resource: "https://mcp.example.com/mcp",
+        interactionBasePath: "/interaction",
+        jwks: { keys: [privateJwk] },
+        adapter: TestAdapter,
+        logins: {
+          async start() {
+            return {
+              userCode: "ABCD-1234",
+              expiresAt:
+                "2026-09-26T12:00:00.000Z",
+            };
+          },
+          async consume() {
+            return null;
+          },
+        },
+        allowInsecureLocalhost: true,
+      },
+      {
+        host: "127.0.0.1",
+        port: 0,
+      },
+      signals,
+    );
+
+    assert.equal(
+      listeners.get("SIGINT")!.size,
+      1,
+    );
+    assert.equal(
+      listeners.get("SIGTERM")!.size,
+      1,
+    );
+
+    const health = await fetch(
+      `${service.address.url}/healthz`,
+    );
+    assert.equal(health.status, 200);
+
+    signals.emit(signal);
+    await service.closed;
+
+    assert.equal(
+      listeners.get("SIGINT")!.size,
+      0,
+    );
+    assert.equal(
+      listeners.get("SIGTERM")!.size,
+      0,
+    );
+
+    await assert.rejects(
+      fetch(`${service.address.url}/healthz`),
+    );
+
+    await service.close();
+  }
+});
