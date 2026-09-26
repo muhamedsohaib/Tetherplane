@@ -31,13 +31,22 @@ test(
       ),
     );
 
-    await assert.rejects(
-      startLocalCompact({
+    let startupError: unknown;
+    try {
+      const local = await startLocalCompact({
         browserBridge: {
           address: bridgeAddress,
           token: "bootstrap-test-token",
         },
-      }),
+      });
+      await local.close();
+    } catch (error) {
+      startupError = error;
+    }
+
+    assert.ok(
+      startupError instanceof Error,
+      "configured unavailable browser bridge must fail local startup",
     );
   },
 );
