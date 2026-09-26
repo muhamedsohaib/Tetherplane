@@ -100,7 +100,12 @@ impl BrowserProvider {
             }
         }
 
-        Err(last_error.expect("retry loop with attempts > 0 must record a transient error"))
+        match last_error {
+            Some(error) => Err(error),
+            None => Err(provider_failure(
+                "browser bridge startup retry exhausted without an error",
+            )),
+        }
     }
 
     #[must_use]
