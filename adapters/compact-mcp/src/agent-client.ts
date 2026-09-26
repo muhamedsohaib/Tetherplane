@@ -1,4 +1,5 @@
 import { spawn, type ChildProcessWithoutNullStreams } from "node:child_process";
+import { randomUUID } from "node:crypto";
 import { once } from "node:events";
 import { readFileSync } from "node:fs";
 import { createRequire } from "node:module";
@@ -75,7 +76,23 @@ export class AgentClient {
       once(child, "error").then(([error]) => Promise.reject(error)),
     ]);
 
-    return new AgentClient(child);
+    const client = new AgentClient(child);
+    try {
+      const result = await callWithTimeout(
+        client,
+        startupProbeInvocation(),
+        15_000,
+      );
+      if (result.status !== "success") {
+        throw new AgentProtocolError(
+          "local Tetherplane agent failed startup readiness probe",
+        );
+      }
+      return client;
+    } catch (error) {
+      await client.close().catch(() => undefined);
+      throw error;
+    }
   }
 
   call(invocation: InvocationEnvelope): Promise<ResultEnvelope> {
@@ -193,4 +210,53 @@ function resultRequestId(value: unknown): string | null {
   }
 
   return null;
+}
+
+
+function startupProbeInvocation(): InvocationEnvelope {
+  return {
+    protocol_version: "1.0",
+    request_id: randomUUID(),
+    device_id: null,
+    principal_id: null,
+    job_id: null,
+    capability: "device.status",
+    arguments: {},
+    actor: {
+      id: "compact-mcp-bootstrap",
+      kind: "ai_client",
+    },
+    session_id: null,
+    response_mode: "compact",
+    idempotency_key: null,
+    preconditions: [],
+    expectations: [],
+  };
+}
+
+async function callWithTimeout(
+  client: AgentClient,
+  invocation: InvocationEnvelope,
+  timeoutMs: number,
+): Promise<ResultEnvelope> {
+  return new Promise<ResultEnvelope>((resolve, reject) => {
+    const timer = setTimeout(() => {
+      reject(
+        new AgentDisconnectedError(
+          "local Tetherplane agent did not become ready before startup timeout",
+        ),
+      );
+    }, timeoutMs);
+
+    void client.call(invocation).then(
+      (result) => {
+        clearTimeout(timer);
+        resolve(result);
+      },
+      (error) => {
+        clearTimeout(timer);
+        reject(error);
+      },
+    );
+  });
 }
