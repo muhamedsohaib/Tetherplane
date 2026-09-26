@@ -20,13 +20,23 @@ such a tunnel address is not a stable account integration.
 
 ## ChatGPT installation path
 
-For ChatGPT web, deploy a stable HTTPS remote MCP endpoint with a reviewed
-OAuth/OIDC identity provider and configure a custom MCP app through the
-ChatGPT workspace developer flow. The identity provider must bind each client
-request to an account, client, and principal. The relay must continue to
-enforce account/device routing, and `tetherd` must continue to replace any
-caller-supplied principal with its launch-bound local principal. Keep the
-local agent's grants narrow; an OAuth login does not widen them.
+For a private ChatGPT connection, use OpenAI Secure MCP Tunnel with the
+existing local Compact MCP stdio adapter on the target device. The tunnel
+client runs beside that adapter and makes an outbound connection; it does not
+require a public Tetherplane listener or the experimental relay. Create a
+ChatGPT developer-mode MCP app using the tunnel ID, then connect that app to
+the account. This route is for private/developer-mode use and still requires
+the target device, local agent, and tunnel client to be running. The tunnel
+authenticates transport to OpenAI; local principal grants and the local
+policy broker remain the execution boundary.
+
+For a hosted multi-device deployment, use a stable HTTPS remote MCP endpoint
+with a reviewed OAuth/OIDC identity provider and configure a custom MCP app
+through the ChatGPT workspace developer flow. The identity provider must bind
+each client request to an account, client, and principal. The relay must
+continue to enforce account/device routing, and `tetherd` must continue to
+replace any caller-supplied principal with its launch-bound local principal.
+Keep the local agent's grants narrow; an OAuth login does not widen them.
 
 After the endpoint, OAuth registration, and custom app are verified, an
 eligible user must complete the account connection in ChatGPT. In a new
@@ -41,6 +51,13 @@ It can be useful on a supported desktop surface, but a remote MCP declaration
 alone does not establish ChatGPT web availability or account authorization.
 Avoid creating a second Tetherplane integration until the custom app path is
 verified and the old plugin's role is settled.
+
+Do not expose the whole six-tool interface through a tunnel with an unscoped
+local principal just to reach Ollama. `process.run` is an existing way to make
+a bounded temporary Ollama proof on a device where local policy grants it,
+but `models.invoke` is not implemented and process grants are broader than a
+model-only permission. A persistent model-facing connection needs a narrow
+local principal and a dedicated model capability before general use.
 
 ## Tool and device contract
 
@@ -114,3 +131,7 @@ connection state, MCP URL, OAuth configuration, and server health. If a device
 is absent, check the relay pairing record and live WebSocket separately. If a
 model is absent, check the device's runtime and model registration; a model
 installed on a machine does not imply a Tetherplane worker is registered.
+
+Official tunnel setup and product limits:
+https://developers.openai.com/api/docs/guides/secure-mcp-tunnels and
+https://help.openai.com/en/articles/12584461-developer-mode-and-mcp-apps-in-chatgpt.
