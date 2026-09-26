@@ -231,9 +231,12 @@ async fn main() {
     };
 
     let result = match transport {
-        TransportMode::Stdio => stdio_rpc::serve(runtime)
-            .await
-            .map_err(|error| format!("stdio RPC failed: {error}")),
+        TransportMode::Stdio => {
+            eprintln!("TETHERPLANE_STDIO_READY_V1");
+            stdio_rpc::serve(runtime)
+                .await
+                .map_err(|error| format!("stdio RPC failed: {error}"))
+        }
         TransportMode::Relay {
             url,
             device_id,

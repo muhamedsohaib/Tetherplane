@@ -1,5 +1,4 @@
 import { spawn, type ChildProcessWithoutNullStreams } from "node:child_process";
-import { randomUUID } from "node:crypto";
 import { once } from "node:events";
 import { readFileSync } from "node:fs";
 import { createRequire } from "node:module";
@@ -78,16 +77,8 @@ export class AgentClient {
 
     const client = new AgentClient(child);
     try {
-      const result = await callWithTimeout(
-        client,
-        startupProbeInvocation(),
-        15_000,
-      );
-      if (result.status !== "success") {
-        throw new AgentProtocolError(
-          "local Tetherplane agent failed startup readiness probe",
-        );
-      }
+      await waitForAgentReady(child, 15_000);
+      child.stderr.resume();
       return client;
     } catch (error) {
       await client.close().catch(() => undefined);
@@ -213,50 +204,85 @@ function resultRequestId(value: unknown): string | null {
 }
 
 
-function startupProbeInvocation(): InvocationEnvelope {
-  return {
-    protocol_version: "1.0",
-    request_id: randomUUID(),
-    device_id: null,
-    principal_id: null,
-    job_id: null,
-    capability: "device.status",
-    arguments: {},
-    actor: {
-      id: "compact-mcp-bootstrap",
-      kind: "ai_client",
-    },
-    session_id: null,
-    response_mode: "compact",
-    idempotency_key: null,
-    preconditions: [],
-    expectations: [],
-  };
-}
+const TETHERD_STDIO_READY_MARKER =
+  "TETHERPLANE_STDIO_READY_V1";
 
-async function callWithTimeout(
-  client: AgentClient,
-  invocation: InvocationEnvelope,
+async function waitForAgentReady(
+  child: ChildProcessWithoutNullStreams,
   timeoutMs: number,
-): Promise<ResultEnvelope> {
-  return new Promise<ResultEnvelope>((resolve, reject) => {
+): Promise<void> {
+  if (child.exitCode !== null) {
+    throw new AgentDisconnectedError(
+      "local Tetherplane agent exited before startup readiness",
+    );
+  }
+
+  await new Promise<void>((resolve, reject) => {
+    let settled = false;
+    let buffer = "";
+
+    const finish = (error?: Error) => {
+      if (settled) {
+        return;
+      }
+      settled = true;
+      clearTimeout(timer);
+      child.stderr.off("data", onData);
+      child.off("exit", onExit);
+      child.off("error", onError);
+      if (error) {
+        reject(error);
+      } else {
+        resolve();
+      }
+    };
+
+    const onData = (chunk: Buffer | string) => {
+      buffer += chunk.toString();
+      let newline = buffer.indexOf("\n");
+      while (newline >= 0) {
+        const line = buffer
+          .slice(0, newline)
+          .trim();
+        buffer = buffer.slice(newline + 1);
+        if (line === TETHERD_STDIO_READY_MARKER) {
+          finish();
+          return;
+        }
+        newline = buffer.indexOf("\n");
+      }
+
+      if (buffer.length > 16_384) {
+        buffer = buffer.slice(-4_096);
+      }
+    };
+
+    const onExit = () => {
+      finish(
+        new AgentDisconnectedError(
+          "local Tetherplane agent exited before startup readiness",
+        ),
+      );
+    };
+
+    const onError = () => {
+      finish(
+        new AgentDisconnectedError(
+          "local Tetherplane agent failed before startup readiness",
+        ),
+      );
+    };
+
     const timer = setTimeout(() => {
-      reject(
+      finish(
         new AgentDisconnectedError(
           "local Tetherplane agent did not become ready before startup timeout",
         ),
       );
     }, timeoutMs);
 
-    void client.call(invocation).then(
-      (result) => {
-        clearTimeout(timer);
-        resolve(result);
-      },
-      (error) => {
-        clearTimeout(timer);
-        reject(error);
-      },
-    );
+    child.stderr.on("data", onData);
+    child.once("exit", onExit);
+    child.once("error", onError);
   });
 }
