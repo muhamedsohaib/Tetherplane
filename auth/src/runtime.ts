@@ -13,6 +13,8 @@ import {
 } from "./provider.ts";
 import {
   TetherAuthServer,
+  type TetherAuthAddress,
+  type TetherAuthListenOptions,
   type TetherAuthTlsOptions,
 } from "./server.ts";
 
@@ -155,5 +157,92 @@ export function createTetherAuthRuntime(
     provider,
     interactions,
     server,
+  };
+}
+
+
+export type TetherAuthSignal =
+  | "SIGINT"
+  | "SIGTERM";
+
+export type TetherAuthSignalSource = {
+  once(
+    signal: TetherAuthSignal,
+    listener: () => void,
+  ): unknown;
+  off(
+    signal: TetherAuthSignal,
+    listener: () => void,
+  ): unknown;
+};
+
+export type TetherAuthService =
+  TetherAuthRuntime & {
+    address: TetherAuthAddress;
+    closed: Promise<void>;
+    close(): Promise<void>;
+  };
+
+export async function startTetherAuthService(
+  input: TetherAuthRuntimeInput,
+  listen: TetherAuthListenOptions,
+  signals: TetherAuthSignalSource = process,
+): Promise<TetherAuthService> {
+  const runtime =
+    createTetherAuthRuntime(input);
+  const address =
+    await runtime.server.listen(listen);
+
+  let resolveClosed!: () => void;
+  let rejectClosed!: (error: unknown) => void;
+  const closed = new Promise<void>(
+    (resolve, reject) => {
+      resolveClosed = resolve;
+      rejectClosed = reject;
+    },
+  );
+
+  let closePromise: Promise<void> | null =
+    null;
+
+  const removeSignalHandlers = () => {
+    signals.off("SIGINT", onSignal);
+    signals.off("SIGTERM", onSignal);
+  };
+
+  const close = (): Promise<void> => {
+    if (closePromise) {
+      return closePromise;
+    }
+
+    closePromise = (async () => {
+      removeSignalHandlers();
+      try {
+        await runtime.server.close();
+        resolveClosed();
+      } catch (error) {
+        rejectClosed(error);
+        throw error;
+      }
+    })();
+
+    return closePromise;
+  };
+
+  const onSignal = () => {
+    void close().catch(() => {
+      // The returned closed promise exposes shutdown failure
+      // to the owning service process without logging secrets.
+    });
+  };
+
+  signals.once("SIGINT", onSignal);
+  signals.once("SIGTERM", onSignal);
+
+  return {
+    ...runtime,
+    address,
+    closed,
+    close,
   };
 }
