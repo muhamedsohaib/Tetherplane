@@ -17,5 +17,8 @@
   "devDependencies": {
     "@types/node": "24.13.6",
     "@types/oidc-provider": "9.12.1"
+  },
+  "bin": {
+    "tether-auth": "./dist/cli.js"
   }
 }
