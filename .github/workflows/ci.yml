@@ -55,6 +55,10 @@ jobs:
         if: runner.os == 'Linux'
         run: docker build --file Dockerfile.relay --tag tetherplane-relay:ci .
 
+      - name: Auth production container
+        if: runner.os == 'Linux'
+        run: docker build --file Dockerfile.auth --tag tetherplane-auth:ci .
+
       - name: Authored unsafe scan
         run: python scripts/check-no-unsafe.py
 

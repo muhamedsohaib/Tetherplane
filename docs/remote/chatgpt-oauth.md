@@ -1,6 +1,6 @@
 # ChatGPT OAuth edge
 
-The relay is an OAuth protected resource, not an authorization server. Use an established provider (for example Auth0) for login, consent, authorization-code exchange and PKCE S256. The six Compact MCP tools and the device's launch-bound local authority are unchanged.
+The relay is an OAuth protected resource, not an authorization server. Use a conforming authorization server for login, consent, authorization-code exchange and PKCE S256. This can be an external provider or Tetherplane's reference self-hosted `tether-auth` service. The six Compact MCP tools and the device's launch-bound local authority are unchanged.
 
 ## Configuration
 
@@ -27,6 +27,12 @@ The audience is the canonical HTTPS MCP resource URL, including `/mcp`. Configur
 
 Static `clients` configuration with `token_env` remains supported for development. OIDC and static credentials cannot be mixed in one configuration. Configuration changes require relay restart. JWKS retrieval uses jose caching, rotation handling and a five-second timeout. Provider/key failures fail closed without logging tokens.
 
+## Self-hosted Tetherplane provider
+
+The production-operable self-hosted reference is documented in [Self-hosting the Tetherplane Authorization Server](self-host-auth.md). It uses the pinned `oidc-provider` implementation, PKCE S256, RFC 8707 resource indicators, DCR, persistent SQLite authorization state, explicit JWKS signing keys, device-assisted account proof, and refresh/revocation persistence.
+
+The relay remains provider-neutral. When using `tether-auth`, configure the relay with the same stable issuer, canonical MCP audience/resource, trusted JWKS endpoint, required `tetherplane:access` scope, and verified subject identity strategy. External conforming providers remain supported.
+
 ## Provider and ChatGPT setup
 
 1. Use a stable public HTTPS hostname for the relay. A changing tunnel hostname requires updating the resource/audience and reconnecting the client.
@@ -45,6 +51,6 @@ A valid scoped OAuth bearer binds the anonymous session to its authenticated acc
 
 Automated tests generate ephemeral signing keys and cover rejected signature, issuer, audience, expiry/not-before, missing scope and unbound identities; discovery, tool metadata, reauthentication and static-mode compatibility are exercised over HTTP. Remote-plane E2E tests run with both static credentials and signed OIDC access tokens against real tetherd, proving the outbound device path, local policy denial, account isolation, reconnect, idempotency and revocation.
 
-These tests do not establish that a real provider tenant, public endpoint or ChatGPT account linking is configured. Record a separate live proof after deployment. Access-token revocation follows provider token expiry; remove a binding and restart the relay for immediate account access removal. Existing device revocation remains available.
+These tests do not establish that a real public endpoint or ChatGPT account linking is configured. Record a separate live proof after deployment. For the self-hosted reference provider, A3 tests additionally prove DCR client persistence, grant/refresh persistence across restart, and persisted grant-wide revocation. Existing device revocation remains available.
 
 References: [OpenAI authentication](https://developers.openai.com/plugins/build/auth), [MCP authorization](https://modelcontextprotocol.io/specification/latest/basic/authorization).

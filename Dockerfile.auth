@@ -1,0 +1,29 @@
+FROM node:22-bookworm-slim AS build
+
+WORKDIR /workspace
+
+RUN corepack enable && corepack prepare pnpm@10.34.5 --activate
+
+COPY package.json pnpm-lock.yaml pnpm-workspace.yaml tsconfig.base.json ./
+COPY auth ./auth
+
+RUN pnpm install --frozen-lockfile
+RUN pnpm --filter @tetherplane/auth build
+
+FROM node:22-bookworm-slim AS runtime
+
+ENV NODE_ENV=production
+WORKDIR /app
+
+RUN groupadd --system tetherplane \
+ && useradd --system --gid tetherplane --home-dir /app --shell /usr/sbin/nologin tetherplane \
+ && mkdir -p /var/lib/tetherplane-auth \
+ && chown tetherplane:tetherplane /var/lib/tetherplane-auth
+
+COPY --from=build --chown=tetherplane:tetherplane /workspace /app
+
+USER tetherplane
+VOLUME ["/var/lib/tetherplane-auth"]
+EXPOSE 8790
+
+ENTRYPOINT ["node", "auth/dist/cli.js"]

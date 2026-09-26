@@ -25,9 +25,10 @@ From the repository root:
 
     pnpm.cmd install
     pnpm.cmd --filter @tetherplane/relay build
+    pnpm.cmd --filter @tetherplane/auth build
     cargo build -p tetherd --release
 
-The relay executable is relay/dist/cli.js. The package also exposes the tether-relay binary entry point.
+The relay executable is relay/dist/cli.js. The package also exposes the tether-relay binary entry point. The optional self-hosted authorization server is auth/dist/cli.js and exposes the tether-auth binary entry point.
 
 
 ## Production relay container
@@ -86,7 +87,7 @@ Example auth metadata:
 
 Set the referenced environment variable using the secret-management mechanism appropriate for the host. Do not put the token value into the JSON file, Git history, service unit, or command-line arguments.
 
-For production OAuth/OIDC, place the relay behind a reviewed authorization layer or implement the ClientAuthenticator interface for the chosen identity provider. Static bearer configuration is intended for controlled self-host deployments and development, not as a substitute for a full identity platform.
+For production OAuth/OIDC, use a conforming external provider or Tetherplane's reference self-hosted `tether-auth` service. Static bearer configuration is intended for controlled self-host deployments and development, not as a substitute for OAuth identity. The self-hosted authorization-server deployment, persistence, backup, and rotation procedures are documented in [Self-hosting the Tetherplane Authorization Server](self-host-auth.md).
 
 ## TLS
 
@@ -242,4 +243,4 @@ No relay is required for local operation.
 
 ## ChatGPT OAuth
 
-The built-in OIDC resource-server integration and provider setup are documented in [ChatGPT OAuth edge](chatgpt-oauth.md). Static development authentication remains available.
+The relay's OIDC resource-server integration and client-facing setup are documented in [ChatGPT OAuth edge](chatgpt-oauth.md). Tetherplane can use either an external conforming authorization server or the reference [self-hosted tether-auth service](self-host-auth.md). Static development authentication remains available.
