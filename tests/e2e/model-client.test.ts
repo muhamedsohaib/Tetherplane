@@ -12,6 +12,7 @@ import {
   ModelController,
   OpenAICompatibleModelClient,
 } from "@tetherplane/model-client";
+import { resolveTetherdPath } from "./helpers/resolve-tetherd-path.ts";
 
 type ModelAction = Record<string, unknown>;
 
@@ -90,8 +91,7 @@ test("generic model client drives tetherd directly without MCP", async () => {
   const stateDir = path.join(controlRoot, "state");
   const profilePath = path.join(controlRoot, "principal.json");
   const target = path.join(sandbox, "artifact.txt");
-  const executable = process.platform === "win32" ? "tetherd.exe" : "tetherd";
-  const tetherdPath = path.join(repoRoot, "target", "debug", executable);
+  const tetherdPath = resolveTetherdPath(repoRoot);
 
   await writeFile(
     profilePath,
@@ -230,8 +230,7 @@ test("read-only Contrarian principal cannot escalate through model output", asyn
   const stateDir = path.join(controlRoot, "state");
   const profilePath = path.join(controlRoot, "principal.json");
   const target = path.join(sandbox, "observed.txt");
-  const executable = process.platform === "win32" ? "tetherd.exe" : "tetherd";
-  const tetherdPath = path.join(repoRoot, "target", "debug", executable);
+  const tetherdPath = resolveTetherdPath(repoRoot);
 
   await writeFile(target, "seed\n", "utf8");
   await writeFile(

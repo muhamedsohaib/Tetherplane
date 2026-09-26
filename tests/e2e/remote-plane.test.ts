@@ -24,6 +24,7 @@ import {
   OidcClientAuthenticator,
   hashDeviceCredential,
 } from "@tetherplane/relay";
+import { resolveTetherdPath } from "./helpers/resolve-tetherd-path.ts";
 
 for (const authMode of ["static", "oidc"] as const) test(`${authMode} black-box remote plane preserves local authority across pairing routing reconnect idempotency and revocation`, async () => {
   const here = path.dirname(fileURLToPath(import.meta.url));
@@ -37,14 +38,7 @@ for (const authMode of ["static", "oidc"] as const) test(`${authMode} black-box 
   const relayState = path.join(temp, "relay-devices.json");
   const credentialFile = path.join(temp, "device-credential.txt");
   const principalFile = path.join(temp, "principal.json");
-  const executable =
-    process.platform === "win32" ? "tetherd.exe" : "tetherd";
-  const tetherdPath = path.join(
-    repoRoot,
-    "target",
-    "debug",
-    executable,
-  );
+  const tetherdPath = resolveTetherdPath(repoRoot);
   const deviceSecret =
     "remote-e2e-device-secret-32-characters-minimum";
 

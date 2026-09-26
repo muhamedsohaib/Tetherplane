@@ -1,4 +1,5 @@
 import { z } from "zod";
+import { CompositeClientAuthenticator } from "./auth/composite-auth.ts";
 import { OidcClientAuthenticator } from "./auth/oidc-auth.ts";
 import { StaticClientAuthenticator, type ClientAuthenticator } from "./auth/static-auth.ts";
 import type { OAuthResource } from "./auth/oauth-resource.ts";
@@ -241,7 +242,25 @@ export async function loadClientAuth(
   let parsed: unknown;
   try { parsed = JSON.parse(await readFile(configPath, "utf8")); }
   catch { throw new Error("Unable to read relay auth configuration JSON"); }
-  if (parsed && typeof parsed === "object" && "oidc" in parsed) {
+  if (!parsed || typeof parsed !== "object" || Array.isArray(parsed)) {
+    throw new Error("relay auth config must be a JSON object");
+  }
+  const record = parsed as Record<string, unknown>;
+  const allowedTop = new Set(["clients", "oidc"]);
+  for (const key of Object.keys(record)) {
+    if (!allowedTop.has(key)) {
+      throw new Error(`unsupported relay auth config field: ${key}`);
+    }
+  }
+  const hasClients = "clients" in record;
+  const hasOidc = "oidc" in record;
+  if (!hasClients && !hasOidc) {
+    throw new Error("relay auth config requires clients and/or oidc");
+  }
+  if (hasClients && !hasOidc) {
+    return { authenticator: new StaticClientAuthenticator(await loadStaticClientCredentials(configPath, environment)) };
+  }
+  if (hasOidc && !hasClients) {
     const result = oidcConfigSchema.safeParse(parsed);
     if (!result.success) throw new Error("Invalid OIDC auth configuration");
     const oidc = result.data.oidc;
@@ -250,5 +269,15 @@ export async function loadClientAuth(
       oauth: { resource: oidc.audience, issuer: oidc.issuer, scopes: oidc.scopes },
     };
   }
-  return { authenticator: new StaticClientAuthenticator(await loadStaticClientCredentials(configPath, environment)) };
+  const oidcResult = oidcConfigSchema.safeParse({ oidc: record.oidc });
+  if (!oidcResult.success) throw new Error("Invalid OIDC auth configuration");
+  const staticCredentials = await loadStaticClientCredentials(configPath, environment);
+  const oidc = oidcResult.data.oidc;
+  return {
+    authenticator: new CompositeClientAuthenticator({
+      staticCredentials,
+      oidcOptions: oidc,
+    }),
+    oauth: { resource: oidc.audience, issuer: oidc.issuer, scopes: oidc.scopes },
+  };
 }

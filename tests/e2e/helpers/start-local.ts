@@ -7,6 +7,8 @@ import { fileURLToPath } from "node:url";
 import { Client } from "@modelcontextprotocol/sdk/client/index.js";
 import { StdioClientTransport } from "@modelcontextprotocol/sdk/client/stdio.js";
 
+import { resolveTetherdPath } from "./resolve-tetherd-path.ts";
+
 function findRepoRoot(startDir: string): string {
   let current = startDir;
   while (current !== path.dirname(current)) {
@@ -53,9 +55,7 @@ export async function startLocalCompact(
     path.join(os.tmpdir(), "tetherplane-e2e-control-"),
   );
   const executable = process.platform === "win32" ? "tetherd.exe" : "tetherd";
-  const tetherdPath =
-    options.tetherdPath ??
-    path.join(repoRoot, "target", "debug", executable);
+  const tetherdPath = resolveTetherdPath(repoRoot, options.tetherdPath);
   const adapterPath = path.join(
     repoRoot,
     "adapters",

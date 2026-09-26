@@ -1,0 +1,58 @@
+{
+  "$schema": "https://opencode.ai/config.json",
+  // Copy the section you need into opencode.json / opencode.jsonc.
+  // Do NOT commit real tokens. See docs/opencode.md.
+  "mcp": {
+    // Option A (recommended for the machine OpenCode runs on):
+    // local Tetherplane authority over stdio. Replace the paths with the
+    // real checkout location and the directories you explicitly allow.
+    "tetherplane-local": {
+      "type": "local",
+      "command": [
+        "node",
+        "C:\\Users\\Sohaib\\source\\Tetherplane\\adapters\\compact-mcp\\dist\\stdio-server.js",
+        "--tetherd",
+        "C:\\Users\\Sohaib\\source\\Tetherplane\\target\\debug\\tetherd.exe",
+        "--allow",
+        "C:\\path\\you\\explicitly\\allow"
+      ],
+      "enabled": true
+    },
+    // Option B (multi-machine): Streamable HTTP through tether-relay.
+    // The relay must already be paired with the target devices.
+    // Set TETHERPLANE_MCP_URL and TETHERPLANE_CLIENT_TOKEN in the
+    // environment before launching OpenCode. oauth:false disables
+    // OpenCode's automatic OAuth discovery because this relay uses
+    // static bearer credentials, not dynamic client registration.
+    "tetherplane-relay": {
+      "type": "remote",
+      "url": "{env:TETHERPLANE_MCP_URL}",
+      "enabled": false,
+      "oauth": false,
+      "headers": {
+        "Authorization": "Bearer {env:TETHERPLANE_CLIENT_TOKEN}"
+      }
+    }
+  },
+  // RTX model routing: OpenCode talks to RTX-hosted Ollama through a
+  // provider-neutral OpenAI-compatible endpoint. Replace RTX-HOST with the
+  // real hostname and the model ids with values from `ollama list` on RTX.
+  // Models can be swapped here without touching Tetherplane.
+  "provider": {
+    "rtx-ollama": {
+      "npm": "@ai-sdk/openai-compatible",
+      "name": "RTX Ollama",
+      "options": {
+        "baseURL": "http://RTX-HOST:11434/v1"
+      },
+      "models": {
+        "rtx-coding": {
+          "name": "RTX coding model"
+        },
+        "rtx-reasoning": {
+          "name": "RTX reasoning model"
+        }
+      }
+    }
+  }
+}

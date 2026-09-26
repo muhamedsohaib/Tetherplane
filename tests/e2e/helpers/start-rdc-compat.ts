@@ -7,6 +7,8 @@ import { fileURLToPath } from "node:url";
 import { Client } from "@modelcontextprotocol/sdk/client/index.js";
 import { StdioClientTransport } from "@modelcontextprotocol/sdk/client/stdio.js";
 
+import { resolveTetherdPath } from "./resolve-tetherd-path.ts";
+
 function findRepoRoot(startDir: string): string {
   let current = startDir;
   while (current !== path.dirname(current)) {
@@ -27,20 +29,13 @@ export type RdcCompatHarness = {
   close(): Promise<void>;
 };
 
-export async function startRdcCompat(): Promise<RdcCompatHarness> {
+export async function startRdcCompat(options: { tetherdPath?: string } = {}): Promise<RdcCompatHarness> {
   const here = path.dirname(fileURLToPath(import.meta.url));
   const repoRoot = findRepoRoot(here);
   const root = await mkdtemp(
     path.join(os.tmpdir(), "tetherplane-rdc-e2e-"),
   );
-  const executable =
-    process.platform === "win32" ? "tetherd.exe" : "tetherd";
-  const tetherdPath = path.join(
-    repoRoot,
-    "target",
-    "debug",
-    executable,
-  );
+  const tetherdPath = resolveTetherdPath(repoRoot, options.tetherdPath);
   const adapterPath = path.join(
     repoRoot,
     "adapters",

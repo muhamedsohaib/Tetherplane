@@ -29,6 +29,9 @@ export class OidcClientAuthenticator implements ClientAuthenticator {
       if ([binding.subject, binding.clientId, binding.accountId, binding.principalId].some(v => typeof v !== "string" || !v.trim())) {
         throw new Error("OIDC identity binding fields must be non-empty strings");
       }
+      if ([binding.subject, binding.clientId].some(v => v === "*" || v.includes("*"))) {
+        throw new Error("OIDC identity binding must not use wildcard subject or clientId");
+      }
       const id = JSON.stringify([binding.subject, binding.clientId]);
       if (seen.has(id)) throw new Error("duplicate OIDC identity binding");
       seen.add(id);
