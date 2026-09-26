@@ -1,3 +1,5 @@
+use std::time::Duration;
+
 use serde_json::json;
 use tether_browser_provider::{BrowserBridgeConfig, BrowserProvider};
 use tether_core::{Actor, ActorKind, CapabilityProvider, InvocationEnvelope, ResponseMode};
@@ -255,4 +257,51 @@ async fn provider_recovers_after_bridge_restart_on_same_loopback_address() {
     assert_eq!(recovered.data["available"], true);
     assert_eq!(recovered.data["recovered"], true);
     restarted.await.unwrap();
+}
+
+
+#[tokio::test]
+async fn startup_retry_attaches_when_loopback_bridge_becomes_ready_shortly_after_launch() {
+    let reservation = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
+    let address = reservation.local_addr().unwrap();
+    drop(reservation);
+
+    let delayed = tokio::spawn(async move {
+        tokio::time::sleep(Duration::from_millis(120)).await;
+        let listener = TcpListener::bind(address).await.unwrap();
+        let (stream, _) = listener.accept().await.unwrap();
+        let (read, mut write) = stream.into_split();
+        let mut lines = BufReader::new(read).lines();
+        let request: serde_json::Value =
+            serde_json::from_str(&lines.next_line().await.unwrap().unwrap()).unwrap();
+        assert_eq!(request["type"], "handshake");
+        let response = json!({
+            "request_id": "handshake",
+            "status": "success",
+            "data": {
+                "protocol_version": "1.0",
+                "operations": ["status", "pages"]
+            },
+            "verification": "not_applicable"
+        });
+        write
+            .write_all(format!("{response}\n").as_bytes())
+            .await
+            .unwrap();
+    });
+
+    let provider = BrowserProvider::connect_with_retry(
+        BrowserBridgeConfig {
+            address: address.to_string(),
+            token: None,
+            timeout_ms: 250,
+        },
+        8,
+        Duration::from_millis(40),
+    )
+    .await
+    .unwrap();
+
+    assert!(provider.operations().contains(&"pages".to_owned()));
+    delayed.await.unwrap();
 }
