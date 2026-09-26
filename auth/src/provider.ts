@@ -7,6 +7,9 @@ import {
 import {
   createTetherAuthConfiguration,
 } from "./config.ts";
+import {
+  findTetherAuthAccount,
+} from "./account.ts";
 
 export type TetherAuthProviderInput = {
   issuer: string;
@@ -56,11 +59,8 @@ export function createTetherAuthProvider(
     issueRefreshToken() {
       return true;
     },
-    async findAccount() {
-      // Account discovery remains closed until device-assisted
-      // interactions prove a paired Tetherplane account.
-      return undefined;
-    },
+    findAccount:
+      findTetherAuthAccount,
     features: {
       ...policy.features,
       revocation: {
