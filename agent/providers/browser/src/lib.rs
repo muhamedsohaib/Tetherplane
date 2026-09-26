@@ -11,7 +11,7 @@ use tether_core::{
 };
 use tokio::io::{AsyncBufReadExt, AsyncWriteExt, BufReader};
 use tokio::net::TcpStream;
-use tokio::time::timeout;
+use tokio::time::{sleep, timeout};
 
 #[derive(Clone, Debug)]
 pub struct BrowserBridgeConfig {
@@ -64,6 +64,41 @@ impl BrowserProvider {
             .map(ToOwned::to_owned)
             .collect::<Vec<_>>();
         Ok(Self { config, operations })
+    }
+
+    /// Retries transient loopback connection failures during startup.
+    ///
+    /// Non-transient authentication, validation, and protocol failures are returned immediately.
+    ///
+    /// # Errors
+    ///
+    /// Returns the first non-transient error, the final transient error after all attempts, or an
+    /// invalid-arguments error when no attempts are requested.
+    pub async fn connect_with_retry(
+        config: BrowserBridgeConfig,
+        attempts: u32,
+        retry_delay: Duration,
+    ) -> Result<Self, CapabilityError> {
+        if attempts == 0 {
+            return Err(invalid("browser bridge startup attempts must be greater than zero"));
+        }
+
+        let mut last_error = None;
+        for attempt in 0..attempts {
+            match Self::connect(config.clone()).await {
+                Ok(provider) => return Ok(provider),
+                Err(error)
+                    if matches!(error.code, ErrorCode::Disconnected | ErrorCode::Timeout)
+                        && attempt + 1 < attempts =>
+                {
+                    last_error = Some(error);
+                    sleep(retry_delay).await;
+                }
+                Err(error) => return Err(error),
+            }
+        }
+
+        Err(last_error.expect("retry loop with attempts > 0 must record a transient error"))
     }
 
     #[must_use]
