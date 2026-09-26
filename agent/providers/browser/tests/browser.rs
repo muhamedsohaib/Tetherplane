@@ -259,7 +259,6 @@ async fn provider_recovers_after_bridge_restart_on_same_loopback_address() {
     restarted.await.unwrap();
 }
 
-
 #[tokio::test]
 async fn startup_retry_attaches_when_loopback_bridge_becomes_ready_shortly_after_launch() {
     let reservation = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
