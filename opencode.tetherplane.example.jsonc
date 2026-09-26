@@ -2,8 +2,12 @@
   "$schema": "https://opencode.ai/config.json",
   // Copy the section you need into opencode.json / opencode.jsonc.
   // Do NOT commit real tokens. See docs/opencode.md.
+  // Live production relay: https://vaulter.tailf65eba.ts.net:10000/mcp
+  // Production OIDC: Auth0 Native client cddeYEWkobslw55zl2dFXkG8RZq1Yr8Y,
+  // audience https://limits-goals-drove-subsidiary.trycloudflare.com/mcp,
+  // scope tetherplane:access.
   "mcp": {
-    // Option A (recommended for the machine OpenCode runs on):
+    // Option A (optional/local path):
     // local Tetherplane authority over stdio. Replace the paths with the
     // real checkout location and the directories you explicitly allow.
     "tetherplane-local": {
@@ -18,13 +22,33 @@
       ],
       "enabled": true
     },
-    // Option B (multi-machine): Streamable HTTP through tether-relay.
-    // The relay must already be paired with the target devices.
-    // Set TETHERPLANE_MCP_URL and TETHERPLANE_CLIENT_TOKEN in the
-    // environment before launching OpenCode. oauth:false disables
-    // OpenCode's automatic OAuth discovery because this relay uses
-    // static bearer credentials, not dynamic client registration.
+    // Option B (recommended remote production path):
+    // OIDC/hybrid auth through the VAULTER relay. OAuth discovery is left
+    // enabled so OpenCode reads
+    // /.well-known/oauth-protected-resource, performs PKCE, and prompts for
+    // browser login (`opencode mcp auth tetherplane-relay`). No static bearer
+    // header belongs on this entry. Tokens are stored by OpenCode in
+    // mcp-auth.json, never here.
     "tetherplane-relay": {
+      "type": "remote",
+      "url": "https://vaulter.tailf65eba.ts.net:10000/mcp",
+      "enabled": false,
+      // Pre-registered production client. Required because the relay forbids
+      // wildcard/dynamic clients and only accepts explicitly bound
+      // subject/client pairs. Omit this block to try pure discovery first;
+      // keep it when OpenCode would otherwise attempt dynamic registration.
+      "oauth": {
+        "clientId": "cddeYEWkobslw55zl2dFXkG8RZq1Yr8Y",
+        "scope": "tetherplane:access"
+      }
+    },
+    // Option C (controlled self-host fallback only):
+    // Streamable HTTP with static bearer. The relay must already be paired
+    // with the target devices. Set TETHERPLANE_MCP_URL and
+    // TETHERPLANE_CLIENT_TOKEN in the environment before launching OpenCode.
+    // oauth:false disables OpenCode's automatic OAuth discovery because this
+    // entry uses static bearer credentials, not OIDC.
+    "tetherplane-relay-static": {
       "type": "remote",
       "url": "{env:TETHERPLANE_MCP_URL}",
       "enabled": false,
