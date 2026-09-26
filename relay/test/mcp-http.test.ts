@@ -57,6 +57,12 @@ test("authenticated Streamable HTTP exposes exactly six compact tools and routes
       clientId: "client-a",
       principalId: "human:account-a",
     },
+    {
+      token: "client-token-b",
+      accountId: "account-a",
+      clientId: "client-b",
+      principalId: "human:account-a",
+    },
   ]);
   const gateway = new RemoteMcpHttpGateway({
     router,
@@ -110,6 +116,28 @@ test("authenticated Streamable HTTP exposes exactly six compact tools and routes
       id: "client-a",
       kind: "ai_client",
     });
+
+    assert.ok(transport.sessionId);
+    const hijack = await fetch(
+      `http://127.0.0.1:${address.port}/mcp`,
+      {
+        method: "POST",
+        headers: {
+          authorization: "Bearer client-token-b",
+          "mcp-session-id": transport.sessionId,
+          "content-type": "application/json",
+          accept: "application/json, text/event-stream",
+        },
+        body: JSON.stringify({
+          jsonrpc: "2.0",
+          id: 42,
+          method: "tools/list",
+          params: {},
+        }),
+      },
+    );
+    assert.equal(hijack.status, 403);
+    assert.equal(observed.length, 1);
   } finally {
     await client.close().catch(() => undefined);
     await gateway.close();
