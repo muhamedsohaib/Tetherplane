@@ -118,6 +118,22 @@ test("opencode local client contract: six tools, discovery, safe execution, deni
     assert.equal(denied.isError, true);
     assert.equal(errorCode(denied), "permission_denied");
 
+    const capabilities = structured(
+      await call(local.client, "device", { op: "capabilities", args: {} }),
+    );
+    const providers = capabilities.providers as Array<
+      Record<string, unknown>
+    >;
+    const desktopProvider = providers.find(
+      (provider) => provider.namespace === "desktop",
+    );
+    assert.ok(
+      desktopProvider,
+      "device capabilities must advertise a desktop provider record",
+    );
+    assert.equal(typeof desktopProvider.available, "boolean");
+    assert.ok(Array.isArray(desktopProvider.operations));
+
     const leaseDenied = await call(local.client, "desktop", {
       op: "foreground_lease_acquire",
       args: {
@@ -128,7 +144,6 @@ test("opencode local client contract: six tools, discovery, safe execution, deni
       },
     });
     assert.equal(leaseDenied.isError, true);
-    assert.equal(errorCode(leaseDenied), "permission_denied");
 
     const pointerDenied = await call(local.client, "desktop", {
       op: "physical_pointer_move",
@@ -140,7 +155,19 @@ test("opencode local client contract: six tools, discovery, safe execution, deni
       },
     });
     assert.equal(pointerDenied.isError, true);
-    assert.equal(errorCode(pointerDenied), "foreground_lease_required");
+
+    if (desktopProvider.available === true) {
+      assert.ok(
+        (desktopProvider.operations as unknown[]).length > 0,
+        "an available desktop provider must advertise operations",
+      );
+      assert.equal(errorCode(leaseDenied), "permission_denied");
+      assert.equal(errorCode(pointerDenied), "foreground_lease_required");
+    } else {
+      assert.deepEqual(desktopProvider.operations, []);
+      assert.equal(errorCode(leaseDenied), "capability_unavailable");
+      assert.equal(errorCode(pointerDenied), "capability_unavailable");
+    }
   } finally {
     await local.close();
   }
