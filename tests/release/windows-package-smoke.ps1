@@ -48,7 +48,7 @@ try {
     }
 
     $manifestPath = Join-Path $stage "manifest.json"
-    & node -e 'JSON.parse(require("fs").readFileSync(process.argv[1], "utf8"));' $manifestPath
+    & node -e "JSON.parse(require('fs').readFileSync(process.argv[1], 'utf8'));" $manifestPath
     if ($LASTEXITCODE -ne 0) {
         throw "packaged manifest.json is not directly parseable UTF-8 JSON"
     }
