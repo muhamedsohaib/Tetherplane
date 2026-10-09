@@ -180,12 +180,7 @@ $ops=@{
             $secretFile=Join-Path $script:stateDir 'bridge-token.secret'
             Assert-Cutback (Test-Path -LiteralPath $secretFile -PathType Leaf) 'Existing bridge credential unavailable.'
             $secret=([IO.File]::ReadAllText($secretFile)).Trim()
-            Assert-Cutback ($secret -match '^[A-Za-z0-9_-]{60,}
-}
-$result=Invoke-StagedCutbackTransaction -Operations $ops
-if ($result -cne 's4u_restored') {throw 'Unexpected cutback state.'}
-Write-Output 'STAGED CUTBACK VERIFIED: original S4U v1 task and independent postcheck healthy.'
-) 'Existing bridge credential invalid.'
+            Assert-Cutback ($secret -match '^[A-Za-z0-9_-]{60,}$') 'Existing bridge credential invalid.'
             $node=(Get-Command node.exe -ErrorAction Stop).Source
             $prior=[Environment]::GetEnvironmentVariable('TETHERPLANE_AUTH_BRIDGE_TOKEN','Process')
             try {
