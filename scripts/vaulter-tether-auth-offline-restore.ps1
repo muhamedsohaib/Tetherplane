@@ -220,7 +220,10 @@ function Get-OfflineTaskSnapshot([switch]$AllowRunning) {
     }
 }
 function Assert-PortVacant {
-    $listeners = @(Get-NetTCPConnection -LocalPort 8790 -State Listen -ErrorAction SilentlyContinue)
+    # Enumerate with terminating errors, then filter the port. No matches
+    # means vacant; an enumeration failure is NOT interpreted as vacant.
+    $listeners = @(Get-NetTCPConnection -State Listen -ErrorAction Stop |
+        Where-Object { $_.LocalPort -eq 8790 })
     Assert-Offline ($listeners.Count -eq 0) 'Auth listener is present; offline recovery cannot touch a running service.'
 }
 function Assert-OfflineBaseline([string]$Version) {
