@@ -176,6 +176,28 @@ This discovers the running relay's exact (nonsecret) launch-file paths, checks w
 
 The current `tether-auth` instance was launched by a one-time staging command and is **not yet verified restart-safe**. Keep auth login and token routes private until restart supervision and path-exception deployment are designed from the running environment. A successful JWKS-only public canary does not mean the authorization server is production-ready.
 
+## Readiness evidence after public JWKS canary
+
+The user ran the Vaulter read-only cutover readiness script after updating to commit `4ae6d81`. Observed results:
+
+- Relay and authorization server were healthy on loopback `8788` and `8790`.
+- The Funnel root and `/jwks` mounts remained unchanged.
+- The current relay's `--auth-config` and `--state-file` paths were both found; the present relay issuer is Auth0, and its OAuth audience matches the public `/mcp` resource.
+- The registry contained **4 non-revoked paired records**, with a matching account ID in an existing OIDC identity binding.
+- Neither the relay (PID 5904) nor the staged authorization server (PID 960) was directly associated with a Windows service.
+- The Windows Task Scheduler query found **2 named Tetherplane candidate tasks**, but the task actions/triggers and whether either process is supervised were not yet inspected.
+- **No actual online device or completed device-assisted approval was proven.** The stable pairing record alone is not enough to switch the identity provider.
+
+Next **read-only** command on Vaulter to classify scheduled tasks without disclosing task command lines, task identities, bridge credentials, JWTs, or relay device credentials:
+
+~~~powershell
+$repo = Join-Path $env:USERPROFILE "source\Tetherplane-auth-stage"
+git -C $repo pull --ff-only
+& (Join-Path $repo "scripts\vaulter-tether-auth-supervision-preflight.ps1")
+~~~
+
+Do not configure a second task or a Windows service until existing task roles, trigger type, execution time limit, account-logon mode, and restart settings have been inspected. Some scheduler tasks only launch at interactive logon, and some have a default maximum execution time unsuitable for a persistent auth server. The diagnostic does not restart either running process.
+
 ## Phase 2 — Publish only verified auth paths
 
 1. Capture a safe Tailscale route configuration backup before changing any Funnel mount.
