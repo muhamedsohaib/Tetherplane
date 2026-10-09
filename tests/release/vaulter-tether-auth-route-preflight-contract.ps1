@@ -33,6 +33,11 @@ foreach ($required in @(
         throw "Routing preflight missing mandatory check: $required"
     }
 }
+# Optional OIDC endpoint fields may not be advertised. StrictMode forbids
+# unguarded references to missing fields, so probe the property bag first.
+if (-not $source.Contains('$metadata.PSObject.Properties[$field]')) {
+    throw 'Optional OAuth metadata fields must be read safely under StrictMode.'
+}
 $commands = @($ast.FindAll({
     param($node)
     $node -is [System.Management.Automation.Language.CommandAst]
