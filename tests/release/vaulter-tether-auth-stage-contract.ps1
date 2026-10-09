@@ -92,4 +92,13 @@ try {
     if (Test-Path $fixture) { Remove-Item $fixture -Recurse -Force }
 }
 
+# Relay imports the generated protocol runtime; stage it before relay tests.
+$protoBuild = "Invoke-WorkspaceCommand -Arguments @('--filter', '@tetherplane/protocol', 'build')"
+$relayTest = "Invoke-WorkspaceCommand -Arguments @('--filter', '@tetherplane/relay', 'test')"
+if (-not $source.Contains($protoBuild) -or
+    $source.IndexOf($protoBuild, [StringComparison]::Ordinal) -gt
+    $source.IndexOf($relayTest, [StringComparison]::Ordinal)) {
+    throw 'Protocol runtime must be built before relay tests during staging.'
+}
+
 Write-Output 'Windows PowerShell staging syntax and safety guard checks passed.'
