@@ -224,7 +224,7 @@ Write-Output 'STAGED CUTBACK VERIFIED: original S4U v1 task and independent post
                     }
                     $temporaryProof=Join-Path $script:stateDir ('cutback-proof-' + [Guid]::NewGuid().ToString('N') + '.tmp')
                     $evidence=Join-Path $script:stateDir ('cutback-old-proof-' + [Guid]::NewGuid().ToString('N') + '.tmp')
-                    [IO.File]::WriteAllText($temporaryProof,($record | ConvertTo-Json -Compress),(New-Object Text.UTF8Encoding($false)))
+                    [IO.File]::WriteAllText($temporaryProof,($record | ConvertTo-Json -Compress),([Text.UTF8Encoding]::new($false)))
                     Set-Acl -LiteralPath $temporaryProof -AclObject (Get-Acl -LiteralPath $script:protectedRunner -ErrorAction Stop) -ErrorAction Stop
                     [IO.File]::Replace($temporaryProof,$script:proofPath,$evidence)
                 }
