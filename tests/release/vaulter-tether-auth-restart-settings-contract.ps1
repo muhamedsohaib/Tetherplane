@@ -158,6 +158,11 @@ foreach ($case in @(
         throw 'Out-of-range restart count must never be written back as rollback.'
     }
     if (($fixture.Events -join ',') -notmatch 'VerifyRestored
+        throw 'Invalid-count failure must independently verify whether the original definition survived.'
+    }
+}
+
+Write-Output 'Restart-settings repair, XML-only delta, and rollback contracts passed.'
 ) {
         throw 'Invalid-count failure must independently verify whether the original definition survived.'
     }
