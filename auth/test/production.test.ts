@@ -89,15 +89,30 @@ test("production auth service composes SQLite, device-login bridge, provider, an
       metadata.code_challenge_methods_supported,
       ["S256"],
     );
-    // Enforce the same public issuer-origin contract as the Vaulter stage:
-    // a successful local provider must advertise publicly routable endpoints.
+    // A loopback test request has an HTTP origin, but the public HTTPS
+    // discovery request arrives through a trusted same-host reverse proxy.
+    // Simulate only the forwarded origin; never expose the listener itself.
+    const proxiedDiscovery = await fetch(
+      `${service.address.url}/.well-known/openid-configuration`,
+      {
+        headers: {
+          "x-forwarded-host": new URL(deployment.issuer).host,
+          "x-forwarded-proto": "https",
+        },
+      },
+    );
+    assert.equal(proxiedDiscovery.status, 200);
+    const proxiedMetadata =
+      await proxiedDiscovery.json() as Record<string, unknown>;
+    assert.equal(proxiedMetadata.issuer, deployment.issuer);
+
     for (const field of [
       "authorization_endpoint",
       "token_endpoint",
       "jwks_uri",
       "registration_endpoint",
     ]) {
-      const value = metadata[field];
+      const value = proxiedMetadata[field];
       assert.ok(
         typeof value === "string" &&
           value.startsWith(deployment.issuer),
