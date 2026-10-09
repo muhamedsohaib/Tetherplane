@@ -105,6 +105,14 @@ jobs:
         if: runner.os == 'Windows'
         shell: powershell
         run: ./tests/release/vaulter-tether-auth-restart-diagnostic-contract.ps1
+      - name: Offline auth rescue safety contract (PowerShell 7)
+        if: runner.os == 'Windows'
+        shell: pwsh
+        run: ./tests/release/vaulter-tether-auth-offline-restore-contract.ps1
+      - name: Offline auth rescue safety contract (Windows PowerShell 5.1)
+        if: runner.os == 'Windows'
+        shell: powershell
+        run: ./tests/release/vaulter-tether-auth-offline-restore-contract.ps1
       - name: Runner upgrade and rollback contract (PowerShell 7)
         if: runner.os == 'Windows'
         shell: pwsh
