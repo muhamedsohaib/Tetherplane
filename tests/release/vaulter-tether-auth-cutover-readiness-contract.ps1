@@ -70,4 +70,23 @@ if ((Get-FlagPath $sample '--auth-config') -ne $expectedConfig -or
 if ($null -ne (Get-FlagPath 'node relay.js' '--auth-config')) {
     throw 'Missing relay flag must not be guessed.'
 }
+
+# These are rooted-ish strings that are not fully-qualified Windows paths.
+# Windows PowerShell 5.1 does not provide [IO.Path]::IsPathFullyQualified.
+foreach ($invalidPath in @(
+    'auth.json',
+    '.\auth.json',
+    'C:relative\auth.json',
+    '\Users\relative\auth.json'
+)) {
+    $commandLine = ('node relay.js --auth-config "{0}"' -f $invalidPath)
+    if ($null -ne (Get-FlagPath $commandLine '--auth-config')) {
+        throw 'Relative Windows path was incorrectly treated as fully qualified.'
+    }
+}
+$uncPath = '\\vaulter\auth-state\auth.json'
+if ((Get-FlagPath ('node relay.js --auth-config "{0}"' -f $uncPath) '--auth-config') -ne $uncPath) {
+    throw 'Fully-qualified UNC paths must remain supported.'
+}
+
 Write-Output 'Read-only Vaulter cutover readiness contract passed.'
