@@ -382,7 +382,7 @@ async fn list_system_marks_discovered_processes_as_human_or_external() {
         .unwrap();
     let processes = listed.data["processes"].as_array().unwrap();
 
-    assert!(!processes.is_empty());
+    assert_ne!(processes.as_slice(), []);
     assert!(
         processes
             .iter()
