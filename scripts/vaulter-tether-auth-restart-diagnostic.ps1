@@ -5,7 +5,7 @@
   Requires the independently verified running S4U auth task. Reports only
   restart settings, a numeric last-task result, and a redacted recent
   TaskScheduler/Operational event timeline. It never displays EventXml,
-  EventRecord.Message, process command lines, TaskUserId, or credentials.
+  raw task event messages, process command lines, TaskUserId, or credentials.
   Never changes a process, service, task or Tailscale configuration.
 #>
 [CmdletBinding()]
