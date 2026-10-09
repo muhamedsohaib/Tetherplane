@@ -42,6 +42,7 @@ $wrapper = $parsed.Find({
 if ($null -eq $wrapper) { throw 'pnpm wrapper function is absent.' }
 Invoke-Expression $wrapper.Extent.Text
 $script:PnpmCommand = (Get-Command cmd.exe -ErrorAction Stop).Source
+$script:PnpmPrefix = @()
 $output = @(Invoke-WorkspaceCommand -Arguments @('/d', '/c', 'echo', 'argument-one', 'argument-two'))
 if ((($output -join [Environment]::NewLine).Trim()) -ne 'argument-one argument-two') {
     throw 'pnpm wrapper dropped an argument.'
