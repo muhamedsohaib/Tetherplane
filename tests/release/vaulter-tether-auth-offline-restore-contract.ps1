@@ -43,7 +43,7 @@ if ($source -match 'Start-ScheduledTask -TaskName (?!\$script:taskName)') {
 }
 # The preflight must not depend on local auth readyz/postcheck. A working
 # auth endpoint cannot be a prerequisite for recovery from its outage.
-$defaultBlock = $source.Substring(0,$source.IndexOf("if ($RestoreV1)"))
+$defaultBlock = $source.Substring(0,$source.IndexOf('if ($RestoreV1)'))
 if ($defaultBlock -match 'Invoke-RestMethod|readyz|SUPERVISED AUTH POSTCHECK PASS') {
     throw 'Offline restore has an accidental healthy-listener prerequisite.'
 }
