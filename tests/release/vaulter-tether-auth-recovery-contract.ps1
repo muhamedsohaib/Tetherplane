@@ -129,4 +129,17 @@ try {
 if (($baselineFail.Events -join ',') -cne 'VerifyBaseline') {
     throw 'No mutations or recovery operations are allowed when baseline verification fails.'
 }
+# Never revive an unsupervised staged server while the S4U task remains
+# enabled: a later automatic restart could race it for port 8790.
+$restoreAst = $ast.Find({
+    param($node)
+    $node -is [System.Management.Automation.Language.FunctionDefinitionAst] -and
+    $node.Name -eq 'Restore-StagedAuth'
+}, $true)
+if ($null -eq $restoreAst) { throw 'Missing guarded stage restoration.' }
+$restoreSource = $restoreAst.Extent.Text
+if ($restoreSource -notmatch [regex]::Escape("Assert-Recovery ((Get-Task).State -eq 'Disabled')")) {
+    throw 'Fallback must verify the S4U startup task is disabled before relaunching stage.'
+}
+
 Write-Output 'Guarded supervised auth restart transaction and rollback contracts passed.'
