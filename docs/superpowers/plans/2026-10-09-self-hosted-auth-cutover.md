@@ -1,7 +1,7 @@
 # Self-hosted tether-auth cutover — Vaulter
 
 **Date:** 2026-10-09  
-**Status:** S4U instance refresh verified on Vaulter (task-owned auth PID 6672 replaced by PID 3304), with valid RestartCount=10. Prior process-crash rehearsal required manual recovery. Automatic failure recovery, unattended reboot, OAuth cutover, and authenticated ChatGPT acceptance remain pending. Auth0 remains active.  
+**Status:** S4U instance refresh verified on Vaulter with valid RestartCount=10. A subsequent controlled process-crash rehearsal again FAILED automatic restart and recovered only after manual task restart (healthy task-owned PID 6996). Root cause remains unproven; reboot, OAuth cutover, and authenticated ChatGPT acceptance remain pending. Auth0 remains active.  
 **Baseline:** `main` at `5feee084eb24bfd4831ab42840bb5f10dafc8113`.  
 **Target:** Vaulter for the relay and authorization server; canonical source remains GitHub and Leno.  
 **Objective:** Replace the external Auth0 authorization server with the repository's own `tether-auth`, while retaining the existing public MCP URL, six-tool catalog, device routing, and local Policy Broker. No purchase or external messaging is required.
@@ -387,6 +387,18 @@ $repo = Join-Path $env:USERPROFILE 'source\Tetherplane-auth-stage'
 
 The restored task should report policy Count=10 / PT1M in both CIM and exported XML. Automatic failure recovery and unattended reboot remain independent gates. Keep the established Auth0 relay and public/private routes intact.
 
+## 2026-10-09 — Automatic restart failed after corrected supervisor refresh
+
+On Vaulter feature checkout `8116bef`, read-only supervisor checks passed with task-owned auth listener PID `3304`, running S4U task, RestartCount `10`, RestartInterval `PT1M`, healthy relay and retained Auth0 metadata, and consistent public/local JWKS.
+
+The operator then ran the separately authorized `scripts/vaulter-tether-auth-recovery-rehearsal.ps1 -Exercise`. During its silent automatic-recovery wait, an independent PowerShell session observed the task `Running`, enabled, result `0x00041301`, and a new ready auth listener PID `6996`. The independent `vaulter-tether-auth-supervised-postcheck.ps1` confirmed this new process was S4U task-owned, auth/relay healthy, Auth0 unchanged, JWKS consistent, and all four private routes preserved.
+
+The original exercise ultimately reported exactly: `Automatic restart FAILED; manual task restart verified with unchanged Auth0 and public signing keys.` This definitively FAILS the automatic-restart acceptance gate; the healthy PID `6996` was manual recovery, not evidence of Task Scheduler failure recovery. Do not misclassify it as automatic.
+
+Task Scheduler Operational history was disabled, empty or inaccessible, and the original rehearsal sampled neither the prior PowerShell runner liveness nor the task result during the automatic wait. The unresolved hypotheses include a parent process that remained active after Node termination, a parent exit not reported as a failure, or a Task Scheduler retry that did not occur. No individual cause has been established.
+
+Next, add a bounded, redacted automatic-wait observation showing original task parent alive/exited, task state, numeric scheduler result, and listener status; preserve existing verified manual recovery and all secret-redaction constraints. First obtain a failing Windows PowerShell 5.1/7 regression test, then implement, prove CI green, and review the exact live preflight. Do not repeat fault injection before a new maintenance window. Keep the existing Auth0 relay, Funnel routing, signing state and device registry unchanged.
+
 ## Phase 2 — Publish only verified auth paths
 
 1. Capture a safe Tailscale route configuration backup before changing any Funnel mount.
@@ -430,4 +442,4 @@ The restored task should report policy Count=10 / PT1M in both CIM and exported 
 
 - Desktop Commander is quota-blocked; do not retry it.
 - Vaulter's installed Tetherplane source/build location, process manager, Node/pnpm status, auth-port availability, and paired-device approval availability are not yet observed.
-- Local auth, public JWKS, S4U supervision, valid registered restart policy, and refreshed task-owned auth PID 3304 are now verified. Automatic failure restart remains unverified; the prior crash test required manual recovery. Reboot recovery, device-assisted approval, identity cutover, and authenticated ChatGPT six-tool acceptance remain unverified.
+- Local auth, public JWKS, S4U supervision, repaired restart settings and controlled supervisor refresh are verified. A repeat live process-crash test conclusively failed automatic restart and succeeded only through manual recovery (task-owned PID 6996). Root cause, reboot recovery, device-assisted approval, identity cutover and authenticated ChatGPT six-tool acceptance remain unresolved.
