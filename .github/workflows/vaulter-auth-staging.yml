@@ -57,3 +57,11 @@ jobs:
         if: runner.os == 'Windows'
         shell: powershell
         run: ./tests/release/vaulter-tether-auth-cutover-readiness-contract.ps1
+      - name: Read-only task supervision contract in PowerShell 7
+        if: runner.os == 'Windows'
+        shell: pwsh
+        run: ./tests/release/vaulter-tether-auth-supervision-contract.ps1
+      - name: Read-only task supervision contract in PowerShell 5.1
+        if: runner.os == 'Windows'
+        shell: powershell
+        run: ./tests/release/vaulter-tether-auth-supervision-contract.ps1
