@@ -7,12 +7,16 @@ on:
       - "scripts/vaulter-tether-auth-*.mjs"
       - "scripts/vaulter-tether-auth-*.ps1"
       - "tests/release/vaulter-tether-auth-*"
+      - "auth/test/production.test.ts"
+      - "auth/src/runtime.ts"
   pull_request:
     paths:
       - ".github/workflows/vaulter-auth-staging.yml"
       - "scripts/vaulter-tether-auth-*.mjs"
       - "scripts/vaulter-tether-auth-*.ps1"
       - "tests/release/vaulter-tether-auth-*"
+      - "auth/test/production.test.ts"
+      - "auth/src/runtime.ts"
 
 jobs:
   stage-check:
