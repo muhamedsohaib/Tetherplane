@@ -38,7 +38,7 @@ foreach ($bad in @('Register-ScheduledTask','Unregister-ScheduledTask','New-Sche
     'Invoke-Expression','Write-Host')) {
     if ($commands -contains $bad) { throw "Unexpected unsafe command $bad" }
 }
-if ($source -match '(?im)Write-(?:Output|Host|Warning).*?(?:Arguments|Principal|CommandLine|BridgeToken|JWKS|OuterXml)') {
+if ($source -match '(?im)^\s*Write-(?:Output|Host|Warning)\s+.*\$(?:\w+\.)?(?:Arguments|Principal|CommandLine|BridgeToken|JWKS|OuterXml|baselineXml)\b') {
     throw 'Do not print task action arguments, identity, exported XML or private materials.'
 }
 foreach ($name in @('Test-RestartCountRange','Test-OnlyRestartCountChanged',
