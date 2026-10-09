@@ -79,6 +79,16 @@ A separate source-only rescue tool, `scripts/vaulter-tether-auth-offline-restore
 
 An unexpected concurrency change must fail closed. **No offline restore, task re-enable, recovery start or v2 activation has been invoked on Vaulter.** Read-only Vaulter preflight at `d9aa6e6` passed with on-disk runner v2, original v1 backup verified, task Running, auth PID `8748`, and unchanged Auth0 relay/JWKS/four private ports. The new disabled-state support is code-only until a fresh live preflight and operator approval.
 
+### Guarded activation fallback — source-only implementation
+
+`-RefreshSupervisor` now invokes the independent offline-rescue **default read-only preflight** before any disruption when the installed file is verified v2. It then rotates only the named S4U task, using the original guarded PID/parent ownership checks and independent Auth0/JWKS/relay/port acceptance.
+
+If the new v2 task and the existing manual task retry both fail, the transaction first disables and stops the named task, verifies port `8790` is vacant, and attempts the three separately verified recovery operations in order: `-RestoreV1`, `-EnableV1Task`, `-StartV1Task`. It accepts this as `v1_restored` **only after** exact v1 source verification, current S4U task ownership, healthy local/public authorization, unchanged JWKS, Auth0 and task retry policy. The operator-facing result must explicitly say the v2 refresh failed; v1 restoration is NOT v2 acceptance.
+
+If original v1 restoration also fails, the existing staged-auth fallback remains the last resort. That fallback disables the named task and attempts to preserve the authorization service, but it cannot be called v2 or v1 S4U recovery. Any failed staged verification or unverified rollback remains a hard stop. A staged listener holding port `8790` may require a **separately authorized, ownership-verified** migration back to S4U later; the offline rescue refuses to stop unknown or staged processes automatically.
+
+The updated refresh behavior is backed by PowerShell 5.1/7 transaction fixtures including original-v1 recovery success and staged fallback after v1 failure. **No `-RefreshSupervisor`, offline restore, staged quiesce or crash exercise has been executed on Vaulter in this engineering phase.** Controlled live activation still requires a maintenance window and explicit operator authorization.
+
 ## Verification and rollout gates
 
 ### Gate A — code and isolated simulation
