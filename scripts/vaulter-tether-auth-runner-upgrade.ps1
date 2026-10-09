@@ -157,8 +157,19 @@ function Invoke-RunnerAtomicReplace {
         if ($after.Sddl -cne $beforeSddl) {
             Set-Acl -LiteralPath $path -AclObject $beforeAcl -ErrorAction Stop
         }
-        if ((Get-Acl -LiteralPath $path -ErrorAction Stop).Sddl -cne $beforeSddl) {
-            throw 'Protected runner file ACL differs after replacement.'
+        $verifiedAcl = Get-Acl -LiteralPath $path -ErrorAction Stop
+        if ($verifiedAcl.Sddl -cne $beforeSddl) {
+            # Diagnostic flags ONLY: never print account names or SDDL.
+            $sections = [Security.AccessControl.AccessControlSections]
+            $accessEqual = ($verifiedAcl.GetSecurityDescriptorSddlForm($sections::Access) -ceq
+                $beforeAcl.GetSecurityDescriptorSddlForm($sections::Access))
+            $ownerEqual = ($verifiedAcl.GetSecurityDescriptorSddlForm($sections::Owner) -ceq
+                $beforeAcl.GetSecurityDescriptorSddlForm($sections::Owner))
+            $groupEqual = ($verifiedAcl.GetSecurityDescriptorSddlForm($sections::Group) -ceq
+                $beforeAcl.GetSecurityDescriptorSddlForm($sections::Group))
+            $kind = if ($path -ceq $TargetPath) { 'installed' } else { 'backup' }
+            throw ('Protected runner ACL mismatch: file={0}; access_equal={1}; owner_equal={2}; group_equal={3}; protected={4}' -f
+                $kind,$accessEqual,$ownerEqual,$groupEqual,$verifiedAcl.AreAccessRulesProtected)
         }
     }
 }
