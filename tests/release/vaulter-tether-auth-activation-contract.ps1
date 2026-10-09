@@ -168,4 +168,51 @@ try {
     if ($_.Exception.Message -eq 'Private key fields must be rejected.') { throw }
 }
 
+# Identity regression: ScheduledTasks may normalize a registered user from
+# DOMAIN\name into a SID or an alternate account spelling. Compare canonical
+# Windows SIDs; never relax ownership to an unchecked account-name suffix.
+$identityHelperAst = $ast.Find({
+    param($node)
+    $node -is [System.Management.Automation.Language.FunctionDefinitionAst] -and
+    $node.Name -eq 'Test-TaskPrincipalIsCurrentUser'
+}, $true)
+if ($null -eq $identityHelperAst) {
+    throw 'Missing SID-based registered startup-task owner check.'
+}
+Invoke-Expression $identityHelperAst.Extent.Text
+
+$currentWindowsIdentity = [System.Security.Principal.WindowsIdentity]::GetCurrent()
+$expectedSid = $currentWindowsIdentity.User
+foreach ($principalRepresentation in @(
+    $expectedSid.Value,
+    $currentWindowsIdentity.Name,
+    $currentWindowsIdentity.Name.ToUpperInvariant()
+)) {
+    if (-not (Test-TaskPrincipalIsCurrentUser -TaskUserId $principalRepresentation -CurrentUserSid $expectedSid)) {
+        throw 'Registered task owner must match the current Windows security identifier, regardless of display format.'
+    }
+}
+$registeredPrincipal = New-ScheduledTaskPrincipal -UserId $currentWindowsIdentity.Name -LogonType S4U -RunLevel Limited
+if (-not (Test-TaskPrincipalIsCurrentUser -TaskUserId ([string]$registeredPrincipal.UserId) -CurrentUserSid $expectedSid)) {
+    throw 'Task Scheduler normalized user identity failed to match the actual current account.'
+}
+$differentSid = if ($expectedSid.Value -ceq 'S-1-5-18') { 'S-1-5-19' } else { 'S-1-5-18' }
+foreach ($other in @($differentSid, '', 'UNRESOLVABLE-OTHER-ACCOUNT', 'S-1-5-invalid')) {
+    if (Test-TaskPrincipalIsCurrentUser -TaskUserId $other -CurrentUserSid $expectedSid) {
+        throw 'A genuinely different, empty, or invalid task principal must be rejected.'
+    }
+}
+if ($src.Contains('[string]$task.Principal.UserId -ieq $windowsIdentity.Name')) {
+    throw 'Do not compare Windows task principal names directly; identity must use canonical SID.'
+}
+foreach ($specificFailure in @(
+    'Registered task is not disabled.',
+    'Registered task does not use S4U.',
+    'Registered task owner SID differs from current account or cannot be resolved.'
+)) {
+    if (-not $src.Contains($specificFailure)) {
+        throw "Task state, S4U and owner mismatch need independent diagnostics: $specificFailure"
+    }
+}
+
 Write-Output 'Guarded staged-auth activation and rollback contracts passed.'
