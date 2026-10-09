@@ -284,4 +284,9 @@ if ($vacantAst.Extent.Text -notmatch 'Get-NetTCPConnection -State Listen -ErrorA
     throw 'Offline recovery must reject TCP enumeration errors rather than treating them as port vacancy.'
 }
 
+if (-not $source.Contains('Get-Item -LiteralPath $script:stateDir -ErrorAction Stop') -or
+    -not $source.Contains('Protected auth directory may not be a reparse point.')) {
+    throw 'Offline restore must refuse state directories redirected through junctions or symlinks.'
+}
+
 Write-Output 'Offline v1 rescue task-state, atomic file, and rollback contracts passed.'
