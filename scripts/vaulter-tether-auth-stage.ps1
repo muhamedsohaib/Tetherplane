@@ -14,7 +14,8 @@ param(
     [string]$RepoRoot = (Split-Path -Parent $PSScriptRoot),
     [string]$PublicOrigin = 'https://vaulter.tailf65eba.ts.net',
     [string]$StateDirectory = (Join-Path $env:LOCALAPPDATA 'Tetherplane\tether-auth'),
-    [switch]$Stage
+    [switch]$Stage,
+    [switch]$ReuseExistingState
 )
 
 $ErrorActionPreference = 'Stop'
@@ -32,8 +33,8 @@ function Invoke-WorkspaceCommand([string[]]$Arguments) {
     }
 }
 
-function Test-HttpJson([string]$Url) {
-    Invoke-RestMethod -Uri $Url -TimeoutSec 10 -ErrorAction Stop
+function Test-HttpJson([string]$Url, [hashtable]$Headers = @{}) {
+    Invoke-RestMethod -Uri $Url -Headers $Headers -TimeoutSec 10 -ErrorAction Stop
 }
 
 # Only the -Stage phase installs this short-lived shim in the current process
@@ -66,6 +67,7 @@ function New-PnpmCorepackShim([string]$CorepackPath) {
 
 Assert-Stage ($env:OS -eq 'Windows_NT') 'This deployment script runs only on Windows.'
 Assert-Stage ($env:COMPUTERNAME -ieq 'vaulter') 'This deployment script may run only on Vaulter.'
+Assert-Stage (-not $ReuseExistingState -or $Stage) 'ReuseExistingState requires -Stage.'
 $RepoRoot = [IO.Path]::GetFullPath($RepoRoot)
 $StateDirectory = [IO.Path]::GetFullPath($StateDirectory)
 Assert-Stage (-not $StateDirectory.StartsWith(($RepoRoot.TrimEnd('\') + '\'), [StringComparison]::OrdinalIgnoreCase)) 'Authentication secrets must stay outside the source repository.'
@@ -183,42 +185,71 @@ try {
     }
 }
 
-Assert-Stage (-not (Test-Path -LiteralPath $StateDirectory)) 'Auth state directory already exists; refusing to change existing state or ACLs.'
-
-New-Item -Path $StateDirectory -ItemType Directory -Force | Out-Null
-$currentIdentity = [System.Security.Principal.WindowsIdentity]::GetCurrent()
-$acl = Get-Acl -LiteralPath $StateDirectory
-$acl.SetAccessRuleProtection($true, $false)
-$inherited = [System.Security.AccessControl.InheritanceFlags]::ContainerInherit -bor
-    [System.Security.AccessControl.InheritanceFlags]::ObjectInherit
-$rule = [System.Security.AccessControl.FileSystemAccessRule]::new(
-    $currentIdentity.User,
-    [System.Security.AccessControl.FileSystemRights]::FullControl,
-    $inherited,
-    [System.Security.AccessControl.PropagationFlags]::None,
-    [System.Security.AccessControl.AccessControlType]::Allow
-)
-$acl.AddAccessRule($rule)
-Set-Acl -LiteralPath $StateDirectory -AclObject $acl
-Assert-Stage ((Get-Acl -LiteralPath $StateDirectory).AreAccessRulesProtected) 'Unable to protect auth-state directory permissions.'
-
-& $node.Source (Join-Path $RepoRoot 'scripts\vaulter-tether-auth-material.mjs') --directory $StateDirectory
-Assert-Stage ($LASTEXITCODE -eq 0) 'Credential provisioning failed; relay and public routes were not changed.'
-
 $configFile = Join-Path $StateDirectory 'tether-auth-config.json'
-$config = [ordered]@{
-    issuer = "$PublicOrigin/"
-    resource = "$PublicOrigin/mcp"
-    databasePath = (Join-Path $StateDirectory 'provider.sqlite')
-    jwksFile = (Join-Path $StateDirectory 'tether-auth-jwks.json')
-    relay = [ordered]@{
-        url = 'http://127.0.0.1:8788'
-        bridgeTokenEnv = 'TETHERPLANE_AUTH_BRIDGE_TOKEN'
-        allowInsecureLocalhost = $true
+$signerFile = Join-Path $StateDirectory 'tether-auth-jwks.json'
+$bridgeFile = Join-Path $StateDirectory 'bridge-token.secret'
+$databaseFile = Join-Path $StateDirectory 'provider.sqlite'
+
+if ($ReuseExistingState) {
+    Assert-Stage (Test-Path -LiteralPath $StateDirectory -PathType Container) 'Existing auth state directory is unavailable.'
+    $existingAcl = Get-Acl -LiteralPath $StateDirectory
+    Assert-Stage ($existingAcl.AreAccessRulesProtected) 'Existing auth-state directory permissions are not protected.'
+    foreach ($requiredFile in @($configFile, $signerFile, $bridgeFile, $databaseFile)) {
+        Assert-Stage (Test-Path -LiteralPath $requiredFile -PathType Leaf) 'Existing signing material is unavailable or incomplete. Do not regenerate it.'
     }
+    $savedConfig = Get-Content -LiteralPath $configFile -Raw | ConvertFrom-Json
+    $configValid = (
+        ([string]$savedConfig.issuer -ceq "$PublicOrigin/") -and
+        ([string]$savedConfig.resource -ceq "$PublicOrigin/mcp") -and
+        ([string]$savedConfig.databasePath -ieq $databaseFile) -and
+        ([string]$savedConfig.jwksFile -ieq $signerFile) -and
+        ([string]$savedConfig.relay.url -ceq 'http://127.0.0.1:8788') -and
+        ([string]$savedConfig.relay.bridgeTokenEnv -ceq 'TETHERPLANE_AUTH_BRIDGE_TOKEN') -and
+        ($savedConfig.relay.allowInsecureLocalhost -eq $true)
+    )
+    Assert-Stage $configValid 'Existing OAuth configuration does not match the intended issuer, resource, state files, or loopback relay.'
+    $savedJwks = Get-Content -LiteralPath $signerFile -Raw | ConvertFrom-Json
+    Assert-Stage (@($savedJwks.keys).Count -gt 0) 'Existing signing material is unavailable.'
+    $savedBridge = ([IO.File]::ReadAllText($bridgeFile)).Trim()
+    Assert-Stage ($savedBridge -match '^[A-Za-z0-9_-]{60,}$') 'Existing bridge credential file is invalid.'
+    Write-Output 'Existing signer, bridge credential, config and SQLite state validated; reusing without rotation.'
+} else {
+    Assert-Stage (-not (Test-Path -LiteralPath $StateDirectory)) 'Auth state directory already exists; use -Stage -ReuseExistingState only after reviewing the previous staging failure.'
+
+    New-Item -Path $StateDirectory -ItemType Directory -Force | Out-Null
+    $currentIdentity = [System.Security.Principal.WindowsIdentity]::GetCurrent()
+    $acl = Get-Acl -LiteralPath $StateDirectory
+    $acl.SetAccessRuleProtection($true, $false)
+    $inherited = [System.Security.AccessControl.InheritanceFlags]::ContainerInherit -bor
+        [System.Security.AccessControl.InheritanceFlags]::ObjectInherit
+    $rule = [System.Security.AccessControl.FileSystemAccessRule]::new(
+        $currentIdentity.User,
+        [System.Security.AccessControl.FileSystemRights]::FullControl,
+        $inherited,
+        [System.Security.AccessControl.PropagationFlags]::None,
+        [System.Security.AccessControl.AccessControlType]::Allow
+    )
+    $acl.AddAccessRule($rule)
+    Set-Acl -LiteralPath $StateDirectory -AclObject $acl
+    Assert-Stage ((Get-Acl -LiteralPath $StateDirectory).AreAccessRulesProtected) 'Unable to protect auth-state directory permissions.'
+
+    & $node.Source (Join-Path $RepoRoot 'scripts\vaulter-tether-auth-material.mjs') --directory $StateDirectory
+    Assert-Stage ($LASTEXITCODE -eq 0) 'Credential provisioning failed; relay and public routes were not changed.'
+
+    $config = [ordered]@{
+        issuer = "$PublicOrigin/"
+        resource = "$PublicOrigin/mcp"
+        databasePath = $databaseFile
+        jwksFile = $signerFile
+        relay = [ordered]@{
+            url = 'http://127.0.0.1:8788'
+            bridgeTokenEnv = 'TETHERPLANE_AUTH_BRIDGE_TOKEN'
+            allowInsecureLocalhost = $true
+        }
+    }
+    $utf8NoBom = [System.Text.UTF8Encoding]::new($false)
+    [System.IO.File]::WriteAllText($configFile, ($config | ConvertTo-Json -Depth 8), $utf8NoBom)
 }
-$utf8NoBom = [System.Text.UTF8Encoding]::new($false)
-[System.IO.File]::WriteAllText($configFile, ($config | ConvertTo-Json -Depth 8), $utf8NoBom)
 
 $stdout = Join-Path $StateDirectory 'tether-auth.stdout.log'
 $stderr = Join-Path $StateDirectory 'tether-auth.stderr.log'
@@ -246,7 +277,13 @@ try {
     Assert-Stage ($health -and $health.status -eq 'ok') 'tether-auth did not become healthy.'
     $ready = Test-HttpJson 'http://127.0.0.1:8790/readyz'
     Assert-Stage ($ready.status -eq 'ready') 'tether-auth readiness probe failed.'
-    $metadata = Test-HttpJson 'http://127.0.0.1:8790/.well-known/openid-configuration'
+    # Proxy discovery must advertise canonical HTTPS endpoints, not localhost.
+    # Only this loopback listener is allowed to trust these forwarded headers.
+    $proxyHeaders = @{
+        'X-Forwarded-Proto' = 'https'
+        'X-Forwarded-Host' = $origin.Authority
+    }
+    $metadata = Test-HttpJson -Url 'http://127.0.0.1:8790/.well-known/openid-configuration' -Headers $proxyHeaders
     Assert-Stage ($metadata.issuer -ceq "$PublicOrigin/") 'Issuer mismatch.'
     Assert-Stage (@($metadata.code_challenge_methods_supported) -contains 'S256') 'PKCE S256 is not advertised.'
     Assert-Stage (@($metadata.scopes_supported) -contains 'offline_access') 'Refresh-token scope is not advertised.'
