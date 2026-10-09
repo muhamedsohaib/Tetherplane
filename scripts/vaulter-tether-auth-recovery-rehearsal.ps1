@@ -8,7 +8,7 @@
   Reboot recovery remains unverified until tested separately.
 #>
 [CmdletBinding()]
-param([switch]$Exercise)
+param([switch]$Exercise, [switch]$RefreshSupervisor)
 $ErrorActionPreference = 'Stop'
 Set-StrictMode -Version Latest
 
@@ -382,6 +382,7 @@ function Wait-StagedAuth([int]$Attempts=35) {
 }
 
 # Every source, identity and health gate runs before a deliberate process exit.
+Assert-Recovery (-not ($Exercise -and $RefreshSupervisor)) 'Select one action: -Exercise or -RefreshSupervisor.'
 Assert-Recovery ($env:OS -eq 'Windows_NT' -and
     $env:COMPUTERNAME -ieq 'vaulter') 'Restart rehearsal is restricted to Vaulter.'
 $script:nodeExecutable = (Get-Command node.exe -ErrorAction Stop).Source
@@ -423,13 +424,20 @@ $originalListener = Get-TaskOwnedListener
 Assert-Recovery ($null -ne $originalListener) 'No task-owned auth listener is running.'
 $script:originalPid = [int]$originalListener.ProcessId
 $script:originalCreationDate = $originalListener.CreationDate
+$script:originalParentPid = [int]$originalListener.ParentProcessId
+$parent = Get-CimInstance Win32_Process -Filter "ProcessId=$script:originalParentPid" -ErrorAction Stop
+Assert-Recovery ($null -ne $parent -and $parent.Name -ieq 'powershell.exe') 'Original task parent disappeared.'
+$script:originalParentCreationDate = $parent.CreationDate
+Assert-Recovery ([bool]$task.Settings.Enabled) 'S4U startup task must be enabled.'
 $script:baselineKeys = Get-PublicJwksFingerprint 'http://127.0.0.1:8790/jwks'
 Verify-SharedState
 
 if (-not $Exercise) {
-    Write-Output "RESTART REHEARSAL PREFLIGHT PASS: auth PID $script:originalPid, S4U task running, restart policy configured."
-    Write-Output 'No changes made. -Exercise will intentionally stop the verified auth Node process.'
-    return
+    if (-not $RefreshSupervisor) {
+        Write-Output "RESTART REHEARSAL PREFLIGHT PASS: auth PID $script:originalPid, S4U task running, restart policy configured."
+        Write-Output 'No changes made. -RefreshSupervisor rotates the named task instance; -Exercise tests crash recovery separately.'
+        return
+    }
 }
 
 $ops = @{
