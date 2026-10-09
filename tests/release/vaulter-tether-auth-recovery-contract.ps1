@@ -142,4 +142,38 @@ if ($restoreSource -notmatch [regex]::Escape("Assert-Recovery ((Get-Task).State 
     throw 'Fallback must verify the S4U startup task is disabled before relaunching stage.'
 }
 
+
+# A fault-injection gate must NOT accept the former out-of-schema count 999.
+# Exercise exact registered XML/CIM agreement without querying any real task.
+$restartPolicyAst = $ast.Find({
+    param($node)
+    $node -is [System.Management.Automation.Language.FunctionDefinitionAst] -and
+        $node.Name -eq 'Test-RegisteredRestartPolicy'
+}, $true)
+if ($null -eq $restartPolicyAst) {
+    throw 'Recovery preflight is missing its independent registered restart-policy gate.'
+}
+Invoke-Expression $restartPolicyAst.Extent.Text
+$validXml = '<Task><Settings><RestartOnFailure><Interval>PT1M</Interval><Count>10</Count></RestartOnFailure></Settings></Task>'
+$badXml = $validXml.Replace('<Count>10</Count>', '<Count>999</Count>')
+$badInterval = $validXml.Replace('<Interval>PT1M</Interval>', '<Interval>PT2M</Interval>')
+$validSettings = [pscustomobject]@{ RestartCount=10; RestartInterval='PT1M' }
+$cases = @(
+    @{ Name='repaired'; CIM=$validSettings; XML=$validXml; Expected=$true },
+    @{ Name='out-of-range-XML'; CIM=$validSettings; XML=$badXml; Expected=$false },
+    @{ Name='out-of-range-CIM'; CIM=([pscustomobject]@{RestartCount=999; RestartInterval='PT1M'}); XML=$validXml; Expected=$false },
+    @{ Name='wrong-interval-XML'; CIM=$validSettings; XML=$badInterval; Expected=$false },
+    @{ Name='wrong-interval-CIM'; CIM=([pscustomobject]@{RestartCount=10; RestartInterval='PT2M'}); XML=$validXml; Expected=$false },
+    @{ Name='missing-policy'; CIM=$validSettings; XML='<Task><Settings /></Task>'; Expected=$false }
+)
+foreach ($case in $cases) {
+    $actual = Test-RegisteredRestartPolicy -Settings $case.CIM -TaskXml $case.XML
+    if ([bool]$actual -ne [bool]$case.Expected) {
+        throw "Registered restart-policy gate failed fixture $($case.Name)."
+    }
+}
+if (-not $src.Contains('Test-RegisteredRestartPolicy -Settings $task.Settings -TaskXml')) {
+    throw 'Recovery script must invoke registered restart-policy gate before fault injection.'
+}
+
 Write-Output 'Guarded supervised auth restart transaction and rollback contracts passed.'
