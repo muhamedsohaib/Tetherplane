@@ -137,9 +137,9 @@ try {
     if ($_.Exception.Message -notmatch 'ROLLBACK UNVERIFIED') { throw }
 }
 
-# Persisted Count=999 is outside the documented Task Scheduler range. A
-# failed correction must never attempt to re-register that invalid value.
-# If no write occurred, a read-only original-definition check can prove it.
+
+# Persisted Count=999 is outside the documented Task Scheduler range.
+# On failure, never attempt to write that invalid count back.
 foreach ($case in @(
     @{ Failure='ApplyCount'; ReadbackFails=$false; Expected='NO CHANGE VERIFIED' },
     @{ Failure='VerifyAfter'; ReadbackFails=$true; Expected='ROLLBACK UNAVAILABLE' }
@@ -157,15 +157,8 @@ foreach ($case in @(
     if ($fixture.Events -ccontains 'RestorePrior') {
         throw 'Out-of-range restart count must never be written back as rollback.'
     }
-    if (($fixture.Events -join ',') -notmatch 'VerifyRestored
-        throw 'Invalid-count failure must independently verify whether the original definition survived.'
+    if (($fixture.Events -join ',') -notmatch 'VerifyRestored$') {
+        throw 'Invalid-count failure must independently verify the original definition.'
     }
 }
-
-Write-Output 'Restart-settings repair, XML-only delta, and rollback contracts passed.'
-) {
-        throw 'Invalid-count failure must independently verify whether the original definition survived.'
-    }
-}
-
 Write-Output 'Restart-settings repair, XML-only delta, and rollback contracts passed.'
