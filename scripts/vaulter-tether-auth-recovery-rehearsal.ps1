@@ -236,3 +236,114 @@ function Wait-StagedAuth([int]$Attempts=35) {
         }
     }
 }
+
+# Every source, identity and health gate runs before a deliberate process exit.
+Assert-Recovery ($env:OS -eq 'Windows_NT' -and
+    $env:COMPUTERNAME -ieq 'vaulter') 'Restart rehearsal is restricted to Vaulter.'
+$script:nodeExecutable = (Get-Command node.exe -ErrorAction Stop).Source
+Assert-Recovery (Test-Path -LiteralPath $script:postcheck -PathType Leaf) 'Independent auth postcheck is missing.'
+Assert-Recovery (Test-Path -LiteralPath $script:stateDir -PathType Container) 'Protected auth-state directory missing.'
+Assert-Recovery ((Get-Acl -LiteralPath $script:stateDir).AreAccessRulesProtected) 'Auth-state ACLs must be protected.'
+foreach ($file in @(
+    $script:authConfig, $script:protectedRunner,
+    (Join-Path $script:stateDir 'tether-auth-jwks.json'),
+    (Join-Path $script:stateDir 'provider.sqlite'),
+    (Join-Path $script:stateDir 'bridge-token.secret')
+)) {
+    Assert-Recovery (Test-Path -LiteralPath $file -PathType Leaf) 'A required protected auth runtime file is missing.'
+}
+$repoRunner = Join-Path $script:repoDir 'scripts\vaulter-tether-auth-startup-runner.ps1'
+Assert-Recovery (
+    (Get-FileHash -LiteralPath $repoRunner -Algorithm SHA256).Hash -ceq
+    (Get-FileHash -LiteralPath $script:protectedRunner -Algorithm SHA256).Hash
+) 'Protected S4U task runner differs from the tested source.'
+$task = Get-Task
+Assert-Recovery ($task.State -eq 'Running' -and
+    [string]$task.Principal.LogonType -ceq 'S4U') 'S4U task is not running.'
+Assert-Recovery (@($task.Triggers | Where-Object {
+    $_.CimClass.CimClassName -match 'BootTrigger$'
+}).Count -gt 0) 'Task is missing a boot trigger.'
+Assert-Recovery (
+    [int]$task.Settings.RestartCount -gt 0 -and
+    -not [string]::IsNullOrWhiteSpace([string]$task.Settings.RestartInterval)
+) 'Task RestartCount or RestartInterval is absent.'
+$taskActions = @($task.Actions)
+Assert-Recovery ($taskActions.Count -eq 1 -and
+    ([string]$taskActions[0].Arguments).Contains($script:protectedRunner) -and
+    ([string]$taskActions[0].Arguments).EndsWith(' -Serve', [StringComparison]::Ordinal)
+) 'Scheduled task action no longer executes the expected protected runner.'
+# This independent check validates user SID, S4U parent process, healthy OAuth
+# and relay, current Auth0 issuer, JWKS, Funnel, and private Tailscale ports.
+& $script:postcheck | Out-Null
+$originalListener = Get-TaskOwnedListener
+Assert-Recovery ($null -ne $originalListener) 'No task-owned auth listener is running.'
+$script:originalPid = [int]$originalListener.ProcessId
+$script:originalCreationDate = $originalListener.CreationDate
+$script:baselineKeys = Get-PublicJwksFingerprint 'http://127.0.0.1:8790/jwks'
+Verify-SharedState
+
+if (-not $Exercise) {
+    Write-Output "RESTART REHEARSAL PREFLIGHT PASS: auth PID $script:originalPid, S4U task running, restart policy configured."
+    Write-Output 'No changes made. -Exercise will intentionally stop the verified auth Node process.'
+    return
+}
+
+$ops = @{
+    VerifyBaseline = {
+        & $script:postcheck | Out-Null
+        Verify-SharedState
+    }
+    VerifyCrashTarget = {
+        $now = Get-TaskOwnedListener
+        Assert-Recovery (
+            $null -ne $now -and
+            $now.ProcessId -eq $script:originalPid -and
+            $now.CreationDate -eq $script:originalCreationDate -and
+            (Get-Task).State -eq 'Running'
+        ) 'Auth PID, creation time or task ownership changed before the crash rehearsal.'
+        $checked = Get-Process -Id $script:originalPid -ErrorAction Stop
+        Assert-Recovery ($checked.ProcessName -ieq 'node') 'Restart target no longer matches Node.js.'
+    }
+    CrashOwnedAuth = {
+        # Intentional failure injection: stop only the verified task-owned PID.
+        Stop-Process -Id $script:originalPid -ErrorAction Stop
+    }
+    WaitAutomatic = {
+        Wait-SupervisedAuth -PriorPid $script:originalPid -Attempts 75
+    }
+    StartTaskManually = {
+        # Manual recovery is reported as a failure of automatic restart.
+        Stop-TaskOwnedService
+        Wait-FreePort
+        Start-ScheduledTask -TaskName $script:taskName -ErrorAction Stop
+    }
+    WaitManual = {
+        Wait-SupervisedAuth -PriorPid $script:originalPid -Attempts 35
+    }
+    DisableTask = {
+        Disable-ScheduledTask -TaskName $script:taskName -ErrorAction Stop | Out-Null
+        Assert-Recovery ((Get-Task).State -eq 'Disabled') 'Could not disable the failed task.'
+    }
+    StopTask = {
+        Stop-TaskOwnedService
+    }
+    ClearOwnedListener = {
+        Wait-FreePort
+    }
+    RestoreStage = {
+        Restore-StagedAuth
+    }
+    VerifyStage = {
+        Wait-StagedAuth
+    }
+}
+$recoveryResult = Invoke-RestartRecoveryTransaction -Operations $ops
+if ($recoveryResult -ceq 'automatic') {
+    $replacement = Get-TaskOwnedListener
+    Write-Output "RESTART AUTOMATICALLY VERIFIED: oldPID=$script:originalPid, newPID=$($replacement.ProcessId), auth ready."
+} elseif ($recoveryResult -ceq 'manual_only') {
+    Write-Output 'Automatic restart FAILED; manual task restart verified with unchanged Auth0 and public signing keys.'
+} else {
+    throw 'Unexpected recovery rehearsal result.'
+}
+Write-Output 'Reboot recovery remains unverified. Process restart does not prove unattended startup.'
