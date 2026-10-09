@@ -175,3 +175,64 @@ function Wait-FreePort([int]$Attempts=20) {
     }
     throw 'Auth port 8790 remained occupied; refusing duplicate auth startup.'
 }
+
+function Stop-TaskOwnedService {
+    # Terminate only a Node instance whose current parent is our task runner.
+    $owned = Get-TaskOwnedListener
+    if ($null -ne $owned) {
+        $again = Get-TaskOwnedListener
+        Assert-Recovery ($null -ne $again -and
+            $again.ProcessId -eq $owned.ProcessId -and
+            $again.CreationDate -eq $owned.CreationDate) 'Auth target changed before manual shutdown.'
+        Stop-Process -Id $owned.ProcessId -ErrorAction Stop
+    }
+    if ((Get-Task).State -eq 'Running') {
+        Stop-ScheduledTask -TaskName $script:taskName -ErrorAction Stop
+    }
+}
+function Restore-StagedAuth {
+    Wait-FreePort
+    $secretFile = Join-Path $script:stateDir 'bridge-token.secret'
+    $secret = ([IO.File]::ReadAllText($secretFile)).Trim()
+    Assert-Recovery ($secret -match '^[A-Za-z0-9_-]{60,}$') 'Bridge secret cannot be recovered.'
+    $priorEnv = [Environment]::GetEnvironmentVariable('TETHERPLANE_AUTH_BRIDGE_TOKEN','Process')
+    try {
+        # The bridge credential appears only in the child process environment.
+        $env:TETHERPLANE_AUTH_BRIDGE_TOKEN = $secret
+        $nonce = [Guid]::NewGuid().ToString('N')
+        $stdout = Join-Path $script:stateDir ("tether-auth-recovery-$nonce.stdout.log")
+        $stderr = Join-Path $script:stateDir ("tether-auth-recovery-$nonce.stderr.log")
+        $args = 'auth/dist/cli.js --config "' + $script:authConfig +
+            '" --host 127.0.0.1 --port 8790 --allow-insecure-localhost'
+        $started = Start-Process -FilePath $script:nodeExecutable -ArgumentList $args -WorkingDirectory $script:repoDir -RedirectStandardOutput $stdout -RedirectStandardError $stderr -WindowStyle Hidden -PassThru -ErrorAction Stop
+        Assert-Recovery ($null -ne $started) 'Staged auth recovery did not start.'
+    } finally {
+        $secret = $null
+        if ($null -eq $priorEnv) {
+            Remove-Item Env:\TETHERPLANE_AUTH_BRIDGE_TOKEN -ErrorAction SilentlyContinue
+        } else {
+            $env:TETHERPLANE_AUTH_BRIDGE_TOKEN = $priorEnv
+        }
+    }
+}
+function Wait-StagedAuth([int]$Attempts=35) {
+    for ($i = 0; $i -lt $Attempts; $i++) {
+        Start-Sleep -Seconds 1
+        try {
+            Assert-Recovery ((Get-Task).State -eq 'Disabled') 'Failed S4U task is not disabled.'
+            $listener = Get-AuthPortProcess
+            if ($null -eq $listener) { continue }
+            $parent = Get-CimInstance Win32_Process -Filter "ProcessId=$($listener.ParentProcessId)" -ErrorAction Stop
+            if ($null -ne $parent -and
+                ([string]$parent.CommandLine).Contains($script:protectedRunner)) {
+                throw 'S4U task reappeared instead of the staged fallback.'
+            }
+            Verify-SharedState
+            return
+        } catch {
+            if ($i -eq ($Attempts - 1)) {
+                throw 'Staged auth rollback did not pass health and ownership verification.'
+            }
+        }
+    }
+}
