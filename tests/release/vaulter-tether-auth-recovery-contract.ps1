@@ -63,7 +63,7 @@ function New-RecoveryFixture([string[]]$FailSteps) {
     $events = New-Object 'System.Collections.Generic.List[string]'
     $operations = @{}
     foreach ($step in @(
-        'VerifyBaseline', 'CrashOwnedAuth', 'WaitAutomatic',
+        'VerifyBaseline', 'VerifyCrashTarget', 'CrashOwnedAuth', 'WaitAutomatic',
         'StartTaskManually', 'WaitManual',
         'DisableTask', 'StopTask', 'ClearOwnedListener',
         'RestoreStage', 'VerifyStage'
@@ -80,13 +80,13 @@ function New-RecoveryFixture([string[]]$FailSteps) {
 $automatic = New-RecoveryFixture @()
 $result = Invoke-RestartRecoveryTransaction -Operations $automatic.Operations
 if ($result -cne 'automatic' -or
-    ($automatic.Events -join ',') -cne 'VerifyBaseline,CrashOwnedAuth,WaitAutomatic') {
+    ($automatic.Events -join ',') -cne 'VerifyBaseline,VerifyCrashTarget,CrashOwnedAuth,WaitAutomatic') {
     throw 'Automatic restart must finish without manually disturbing task or restoring old service.'
 }
 $manual = New-RecoveryFixture @('WaitAutomatic')
 $result = Invoke-RestartRecoveryTransaction -Operations $manual.Operations
 if ($result -cne 'manual_only' -or
-    ($manual.Events -join ',') -cne 'VerifyBaseline,CrashOwnedAuth,WaitAutomatic,StartTaskManually,WaitManual') {
+    ($manual.Events -join ',') -cne 'VerifyBaseline,VerifyCrashTarget,CrashOwnedAuth,WaitAutomatic,StartTaskManually,WaitManual') {
     throw 'Manual task recovery must not be misrepresented as automatic recovery.'
 }
 $rolled = New-RecoveryFixture @('WaitAutomatic','WaitManual')
@@ -108,6 +108,17 @@ try {
     if ($_.Exception.Message -eq 'Unverified rollback returned success.') { throw }
     if ($_.Exception.Message -notmatch 'rollback unverified') { throw }
 }
+$targetFail = New-RecoveryFixture @('VerifyCrashTarget')
+try {
+    Invoke-RestartRecoveryTransaction -Operations $targetFail.Operations | Out-Null
+    throw 'Failed target guard unexpectedly passed.'
+} catch {
+    if ($_.Exception.Message -eq 'Failed target guard unexpectedly passed.') { throw }
+}
+if (($targetFail.Events -join ',') -cne 'VerifyBaseline,VerifyCrashTarget') {
+    throw 'A changed process must not be killed or trigger a recovery operation.'
+}
+
 $baselineFail = New-RecoveryFixture @('VerifyBaseline')
 try {
     Invoke-RestartRecoveryTransaction -Operations $baselineFail.Operations | Out-Null
