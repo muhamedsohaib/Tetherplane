@@ -226,6 +226,42 @@ git -C $repo pull --ff-only
 
 The intent is a **separate restart-safe auth process** under a principal with access to the protected SQLite/JWKS/bridge-secret files. Do not blindly reuse the currently running candidate task or install a duplicate scheduler task. A user-logon-triggered task does not establish unattended boot operation. The follow-on installer must never place any bridge token, private JWKS field, OAuth cookie/token or device secret in task action arguments, logs or Git.
 
+## Restart-safe auth supervision — staging design (2026-10-09)
+
+The updated Vaulter task preflight reported two existing, unclassified PowerShell-wrapper tasks:
+
+- Candidate 1: **running**, `logon` trigger, requires user session, `RestartCount=999`, start-when-available, unlimited runtime, Task Scheduler last result **running**.
+- Candidate 2: **ready**, `logon` trigger, requires user session, `RestartCount=0`, no start-when-available, limited runtime, Task Scheduler last result **nonzero-other**.
+
+Neither has been identified as the authorization server and neither runs on system startup. **Do not modify or reuse them based only on those names and status fields.**
+
+A deliberately separate `Tetherplane-TetherAuth-Startup` task can be staged without touching these tasks. It runs as the **existing signing-state owner** through Windows Task Scheduler S4U, with the lowest run level (not LocalSystem, no stored Windows password), a startup trigger, restart attempts, unlimited running time and singleton execution. The identity's batch-logon privilege, local file access, and local HTTP availability must be demonstrated on Vaulter first. S4U has documented limitations: no network credentials and no access to EFS-encrypted files. Do not infer working connectivity from a CI simulation.
+
+From the existing Vaulter PowerShell session after updating to the verified feature branch:
+
+~~~powershell
+$repo = Join-Path $env:USERPROFILE 'source\Tetherplane-auth-stage'
+git -C $repo pull --ff-only
+
+# 1. Read-only state and collision check.
+& (Join-Path $repo 'scripts\vaulter-tether-auth-autostart.ps1')
+
+# 2. Create/run/remove only a unique temporary S4U task.
+#    It verifies read permission to the existing JWKS, bridge-file and SQLite
+#    state, Node runtime compatibility, and both local health endpoints.
+& (Join-Path $repo 'scripts\vaulter-tether-auth-autostart.ps1') -Probe
+
+# 3. Only after successful S4U proof, repeat it and register a new DISABLED
+#    startup task (does not launch or stop either live Node process).
+& (Join-Path $repo 'scripts\vaulter-tether-auth-autostart.ps1') -Register
+~~~
+
+The permanent task executes a copy of `vaulter-tether-auth-startup-runner.ps1` located inside the existing ACL-protected auth-state directory, not a mutable PowerShell script path in the repository. Its task action includes **paths only**; the runner reads the current bridge secret directly from the protected file into its process environment at service start. No task action contains the bridge token or private JWKS contents.
+
+**Important:** Registration deliberately leaves the new task disabled to avoid competing with the healthy manually staged auth process at `127.0.0.1:8790`. The task therefore does **not yet provide live restart supervision**. Do not reboot and presume it will start until a separately implemented and tested activation/rollback procedure has stopped only the verified staged auth instance, enabled and started the task, and verified service continuity. Do not overwrite the 2 existing logon tasks, disable Auth0, or expand public OAuth routes during this stage.
+
+If `-Probe` fails due to S4U rights or local access, stop. Do not fall back to running the public authorization server as SYSTEM, weaken state-file ACLs, or put Windows account passwords/bridge credentials into task arguments. Record sanitized failure categories and assess an appropriate dedicated low-privilege service identity.
+
 ## Phase 2 — Publish only verified auth paths
 
 1. Capture a safe Tailscale route configuration backup before changing any Funnel mount.
