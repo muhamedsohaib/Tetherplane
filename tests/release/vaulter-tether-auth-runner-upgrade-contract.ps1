@@ -262,7 +262,15 @@ try {
     }
     [IO.File]::WriteAllText($proofFile,(ConvertTo-Json $evidence -Compress))
     if (-not (Test-FreshV2S4UProof -ProofPath $proofFile -ExpectedV2Hash $knownHash -NowUtc $referenceUtc)) {
-        throw 'Correct recent S4U proof must be accepted.'
+        $doc = Get-Content -LiteralPath $proofFile -Raw | ConvertFrom-Json
+        $parsedUtc = [datetimeoffset]::MinValue
+        $canParse = [datetimeoffset]::TryParse(([string]$doc.verified_utc), [ref]$parsedUtc)
+        throw ('Correct recent S4U proof must be accepted: hash_ok={0}; role_ok={1}; task_ok={2}; timestamp_ok={3}; age_ok={4}.' -f
+            (([string]$doc.v2_source_hash) -ceq $knownHash),
+            (([string]$doc.principal) -ceq 'S4U'),
+            (([string]$doc.task) -ceq 'Tetherplane-TetherAuth-Startup'),
+            $canParse,
+            ($canParse -and (($referenceUtc - $parsedUtc).TotalMinutes -ge -2) -and (($referenceUtc - $parsedUtc).TotalMinutes -le 90)))
     }
     if (Test-FreshV2S4UProof -ProofPath $proofFile -ExpectedV2Hash ('B' * 64) -NowUtc $referenceUtc) {
         throw 'Proof for a different candidate source may never authorize installation.'
