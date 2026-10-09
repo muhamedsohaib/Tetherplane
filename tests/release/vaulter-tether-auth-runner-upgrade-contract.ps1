@@ -171,10 +171,15 @@ try {
     $rollbackRecord = Join-Path $disk 'replaced.ps1'
     [IO.File]::WriteAllText($active, 'v1')
     [IO.File]::WriteAllText($candidate, 'v2')
+    $aclBefore = (Get-Acl -LiteralPath $active).Sddl
     Invoke-RunnerAtomicReplace -StagedPath $candidate -TargetPath $active -BackupPath $backup
     if ([IO.File]::ReadAllText($active) -cne 'v2' -or
         [IO.File]::ReadAllText($backup) -cne 'v1') {
         throw 'Atomic install did not retain v1 in the backup and v2 as active.'
+    }
+    if ((Get-Acl -LiteralPath $active).Sddl -cne $aclBefore -or
+        (Get-Acl -LiteralPath $backup).Sddl -cne $aclBefore) {
+        throw 'Atomic install changed the original protected runner ACL.'
     }
     [IO.File]::WriteAllText($candidate, 'untrusted')
     try {
@@ -213,6 +218,12 @@ if (-not $upgrade.Contains('Invoke-RunnerAtomicReplace -StagedPath')) {
 }
 if (-not $upgrade.Contains('cleanupApproved')) {
     throw 'Unverified rollback must preserve protected recovery evidence.'
+}
+
+if (-not $upgrade.Contains('function Assert-PrivateAcl') -or
+    -not $upgrade.Contains('Assert-PrivateAcl $script:protectedRunner') -or
+    -not $upgrade.Contains('Assert-PrivateAcl $script:v1Backup')) {
+    throw 'Protected installer must verify original ACL on installed and backed-up runner.'
 }
 
 Write-Output 'Protected v1/v2 runner identity and guarded install/restore contracts passed.'
