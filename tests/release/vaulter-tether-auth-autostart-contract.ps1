@@ -275,4 +275,8 @@ if (-not $registration.Contains('Test-TaskPrincipalMatchesUser -ExpectedIdentity
     throw 'ProbeV2 must check the exact existing task principal before creating the temporary task.'
 }
 
+$fastWorkflow = [IO.File]::ReadAllText((Join-Path $base '.github\workflows\vaulter-runner-upgrade-contract.yml'))
+if ([regex]::Matches($fastWorkflow, '"scripts/vaulter-tether-auth-autostart[.]ps1"').Count -ne 2) {
+    throw 'Fast Windows CI must exercise S4U registrar changes on both push and pull requests.'
+}
 Write-Output 'Guarded S4U autostart contracts passed.'
