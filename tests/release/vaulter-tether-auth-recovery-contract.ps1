@@ -22,7 +22,7 @@ foreach ($required in @(
     'ParentProcessId', 'CreationDate', 'Stop-Process',
     'Start-ScheduledTask', 'Stop-ScheduledTask', 'Disable-ScheduledTask',
     'Start-Process', 'RestartCount', 'RestartInterval', 'BootTrigger', 'S4U',
-    'AreAccessRulesProtected', 'Get-FileHash',
+    'AreAccessRulesProtected', 'Get-VerifiedRunnerVersion', 'vaulter-tether-auth-startup-runner-v2.ps1',
     'tether-auth-supervised-postcheck.ps1',
     '127.0.0.1:8790', '127.0.0.1:8788',
     'https://tetherplane-dev.eu.auth0.com/',
