@@ -95,4 +95,14 @@ foreach ($segment in @('bad"quote', "bad`nnewline")) {
         }
     }
 }
+# Cleanup failure must block promotion from a one-time probe to a startup task.
+foreach ($gate in @(
+    '$probeCleanupSucceeded = $false',
+    'Assert-Autostart $probeCleanupSucceeded'
+)) {
+    if (-not $registration.Contains($gate)) {
+        throw "S4U probe cleanup must fail closed before permanent registration: $gate"
+    }
+}
+
 Write-Output 'Guarded S4U autostart contracts passed.'
