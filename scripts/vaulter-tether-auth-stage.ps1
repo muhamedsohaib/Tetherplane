@@ -36,6 +36,34 @@ function Test-HttpJson([string]$Url) {
     Invoke-RestMethod -Uri $Url -TimeoutSec 10 -ErrorAction Stop
 }
 
+# Only the -Stage phase installs this short-lived shim in the current process
+# PATH. Package lifecycle scripts resolve "pnpm" through it instead of an
+# unrelated globally installed pnpm (e.g. 11.x).
+function New-PnpmCorepackShim([string]$CorepackPath) {
+    if (-not $CorepackPath -or $CorepackPath -match '["\r\n]' -or
+        -not (Test-Path -LiteralPath $CorepackPath -PathType Leaf)) {
+        throw 'Corepack path is missing or unsafe for a Windows command shim.'
+    }
+    $shimDirectory = Join-Path ([IO.Path]::GetTempPath()) (
+        'tetherplane-pnpm-' + [Guid]::NewGuid().ToString('N')
+    )
+    New-Item -Path $shimDirectory -ItemType Directory -ErrorAction Stop | Out-Null
+    try {
+        $launcher = '@echo off' + [Environment]::NewLine +
+            'call "' + $CorepackPath + '" pnpm %*' + [Environment]::NewLine +
+            'exit /b %errorlevel%' + [Environment]::NewLine
+        [IO.File]::WriteAllText(
+            (Join-Path $shimDirectory 'pnpm.cmd'),
+            $launcher,
+            [System.Text.Encoding]::ASCII
+        )
+        return $shimDirectory
+    } catch {
+        Remove-Item -LiteralPath $shimDirectory -Recurse -Force -ErrorAction SilentlyContinue
+        throw
+    }
+}
+
 Assert-Stage ($env:OS -eq 'Windows_NT') 'This deployment script runs only on Windows.'
 Assert-Stage ($env:COMPUTERNAME -ieq 'vaulter') 'This deployment script may run only on Vaulter.'
 $RepoRoot = [IO.Path]::GetFullPath($RepoRoot)
@@ -123,15 +151,35 @@ if (-not $Stage) {
 Assert-Stage ($changes.Count -eq 0) 'Working tree is not clean; refusing to stage from uncommitted source.'
 Assert-Stage ($branch -eq 'feature/tether-auth-vaulter-migration-20261009') 'Checkout the verified migration feature branch before staging.'
 
-Push-Location $RepoRoot
+$originalPath = $env:PATH
+$pnpmShimDirectory = $null
 try {
-    Invoke-WorkspaceCommand -Arguments @('install', '--frozen-lockfile')
-    Invoke-WorkspaceCommand -Arguments @('--filter', '@tetherplane/auth', 'build')
-    Invoke-WorkspaceCommand -Arguments @('--filter', '@tetherplane/auth', 'test')
-    Invoke-WorkspaceCommand -Arguments @('--filter', '@tetherplane/auth', 'typecheck')
-    Invoke-WorkspaceCommand -Arguments @('--filter', '@tetherplane/relay', 'test')
+    if ($script:PnpmPrefix.Count -gt 0) {
+        $pnpmShimDirectory = New-PnpmCorepackShim -CorepackPath $script:PnpmCommand
+        $env:PATH = "$pnpmShimDirectory;$originalPath"
+    }
+
+    Push-Location $RepoRoot
+    try {
+        if ($pnpmShimDirectory) {
+            # Match the CMD lookup used by nested package.json lifecycle steps.
+            $nestedVersion = @(& cmd.exe /d /c pnpm --version)
+            Assert-Stage ($LASTEXITCODE -eq 0 -and
+                (($nestedVersion -join '').Trim() -ceq $pinnedPnpm)) "Nested pnpm must resolve to $pinnedPnpm through Corepack."
+        }
+        Invoke-WorkspaceCommand -Arguments @('install', '--frozen-lockfile')
+        Invoke-WorkspaceCommand -Arguments @('--filter', '@tetherplane/auth', 'build')
+        Invoke-WorkspaceCommand -Arguments @('--filter', '@tetherplane/auth', 'test')
+        Invoke-WorkspaceCommand -Arguments @('--filter', '@tetherplane/auth', 'typecheck')
+        Invoke-WorkspaceCommand -Arguments @('--filter', '@tetherplane/relay', 'test')
+    } finally {
+        Pop-Location
+    }
 } finally {
-    Pop-Location
+    $env:PATH = $originalPath
+    if ($pnpmShimDirectory -and (Test-Path -LiteralPath $pnpmShimDirectory)) {
+        Remove-Item -LiteralPath $pnpmShimDirectory -Recurse -Force
+    }
 }
 
 Assert-Stage (-not (Test-Path -LiteralPath $StateDirectory)) 'Auth state directory already exists; refusing to change existing state or ACLs.'
