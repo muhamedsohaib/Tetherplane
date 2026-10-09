@@ -273,6 +273,8 @@ if ($RestoreV1 -and $StartV1Task) {
 Assert-Offline ($env:OS -ceq 'Windows_NT' -and
     $env:COMPUTERNAME -ieq 'vaulter') 'Offline auth restoration is restricted to Vaulter.'
 Assert-Offline (Test-Path -LiteralPath $script:stateDir -PathType Container) 'Protected auth directory unavailable.'
+$privateRoot = Get-Item -LiteralPath $script:stateDir -ErrorAction Stop
+Assert-Offline (-not ([bool]($privateRoot.Attributes -band [IO.FileAttributes]::ReparsePoint))) 'Protected auth directory may not be a reparse point.'
 Assert-Offline ((Get-Acl -LiteralPath $script:stateDir -ErrorAction Stop).AreAccessRulesProtected) 'Protected auth directory ACL is not isolated.'
 Assert-CheckoutSafe
 $installedVersion = Get-TrustedRunnerVersion
