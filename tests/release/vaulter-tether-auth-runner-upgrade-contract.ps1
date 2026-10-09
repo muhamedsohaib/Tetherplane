@@ -160,6 +160,13 @@ $swapFn = $ast.Find({
     $node.Name -eq 'Invoke-RunnerAtomicReplace'
 }, $true)
 if ($null -eq $swapFn) { throw 'Missing separately testable same-directory atomic file swap.' }
+$aclFn = $ast.Find({
+    param($node)
+    $node -is [System.Management.Automation.Language.FunctionDefinitionAst] -and
+    $node.Name -eq 'Test-RunnerAclEquivalent'
+}, $true)
+if ($null -eq $aclFn) { throw 'Missing effective ACL and owner equivalence gate.' }
+Invoke-Expression $aclFn.Extent.Text
 Invoke-Expression $swapFn.Extent.Text
 $disk = Join-Path ([IO.Path]::GetTempPath()) ('tp-atomic-runner-' + [guid]::NewGuid().ToString('N'))
 try {
@@ -171,16 +178,24 @@ try {
     $rollbackRecord = Join-Path $disk 'replaced.ps1'
     [IO.File]::WriteAllText($active, 'v1')
     [IO.File]::WriteAllText($candidate, 'v2')
-    $aclBefore = (Get-Acl -LiteralPath $active).Sddl
+    $aclBefore = Get-Acl -LiteralPath $active
     Invoke-RunnerAtomicReplace -StagedPath $candidate -TargetPath $active -BackupPath $backup
     if ([IO.File]::ReadAllText($active) -cne 'v2' -or
         [IO.File]::ReadAllText($backup) -cne 'v1') {
         throw 'Atomic install did not retain v1 in the backup and v2 as active.'
     }
-    if ((Get-Acl -LiteralPath $active).Sddl -cne $aclBefore -or
-        (Get-Acl -LiteralPath $backup).Sddl -cne $aclBefore) {
-        throw 'Atomic install changed the original protected runner ACL.'
+    if (-not (Test-RunnerAclEquivalent -Expected $aclBefore -Actual (Get-Acl -LiteralPath $active)) -or
+        -not (Test-RunnerAclEquivalent -Expected $aclBefore -Actual (Get-Acl -LiteralPath $backup))) {
+        throw 'Atomic install changed effective permissions, ACL protection or owner.'
     }
+
+    # A widened effective access rule or ownership change MUST fail.
+    $tampered = Get-Acl -LiteralPath $active
+    $tampered.SetAccessRuleProtection($true, $true)
+    if (Test-RunnerAclEquivalent -Expected $aclBefore -Actual $tampered) {
+        throw 'ACL protection changes must fail even if effective ACEs are identical.'
+    }
+
     [IO.File]::WriteAllText($candidate, 'untrusted')
     try {
         Invoke-RunnerAtomicReplace -StagedPath $candidate -TargetPath $active -BackupPath $backup
