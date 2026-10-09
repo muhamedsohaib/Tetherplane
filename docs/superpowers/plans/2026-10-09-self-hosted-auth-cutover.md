@@ -1,7 +1,7 @@
 # Self-hosted tether-auth cutover — Vaulter
 
 **Date:** 2026-10-09  
-**Status:** S4U handover and independent postcheck passed. Controlled process-crash exercise recovered only after manual task restart; automatic restart FAILED verification. Reboot, OAuth identity cutover, and ChatGPT acceptance remain pending. Auth0 remains active.  
+**Status:** S4U service healthy; invalid restart count corrected to 10 and independently verified on Vaulter. The prior process-crash rehearsal required manual recovery. A fresh task-instance refresh, automatic recovery, reboot, OAuth identity cutover and ChatGPT acceptance remain pending. Auth0 remains active.  
 **Baseline:** `main` at `5feee084eb24bfd4831ab42840bb5f10dafc8113`.  
 **Target:** Vaulter for the relay and authorization server; canonical source remains GitHub and Leno.  
 **Objective:** Replace the external Auth0 authorization server with the repository's own `tether-auth`, while retaining the existing public MCP URL, six-tool catalog, device routing, and local Policy Broker. No purchase or external messaging is required.
@@ -347,7 +347,7 @@ The script first reuses the independent supervised-auth postcheck, then reports 
 
 Correct the smallest demonstrated supervision fault using a new tested and reversible plan. A new live restart exercise is permitted only after fresh checks and a maintenance window; unattended reboot acceptance is a separate, later gate.
 
-## Registered restart policy corrected in source — on-device application pending
+## Registered restart policy correction — source and live evidence
 
 The Vaulter operator confirmed the restart policy from *both* read-only views: CIM `RestartCount=999`, `RestartInterval=PT1M`, and exported task XML `<Count>999</Count>`, `<Interval>PT1M</Interval>`. The task remained `Running` after manual recovery. Scheduler Operational history was disabled, empty, or unavailable. These findings establish an out-of-schema persisted configuration; they **do not prove** that this value alone caused the automatic restart failure.
 
@@ -358,6 +358,16 @@ Operational sequence: (1) pull the verified feature branch and run the new scrip
 Microsoft documents that modifying the registered task definition **does not alter the current running task instance**. Therefore, even if the task count is updated successfully, this does **not** establish that the running instance has adopted its recovery policy. Design and separately verify a controlled restart of the supervised *task instance* using ownership checks and an explicit rollback plan before repeating the fault-injection `-Exercise` test. Do not assume changing a definition heals the already running process.
 
 Do not change the relay issuer, remove Auth0, alter any Funnel mount, or reboot Vaulter during the configuration correction. A fresh live automatic-restart pass and an independent reboot recovery pass are required before the identity cutover.
+## Vaulter evidence — restart settings correction independently verified (2026-10-09)
+
+The Vaulter operator fast-forwarded the clean staging checkout to commit 8e2d2e9, reran read-only settings preflight, and deliberately applied the settings-only repair. It reported RestartCount 999 -> 10, interval PT1M, a protected original task-XML backup, and unchanged task-owned auth listener PID 6672. No relay or Funnel settings were changed.
+
+The independent supervised postcheck passed: S4U task-owned PID 6672, auth/relay health, original Auth0 issuer, unchanged public/local signing verification keys, Funnel root/JWKS and all four tailnet-only ports. The independent restart diagnostic confirmed count=10, interval=PT1M, task Running and last-result 0x00041301 (running), with last-run-local 2026-10-09 21:13:13. Task Scheduler Operational history remains unavailable.
+
+**Limitations:** This establishes the corrected registered definition, not a new task instance adopting the repaired policy. Automatic failure restart remains unverified and the previous crash rehearsal required manual recovery. Never equate a successful manual restart with automatic recovery.
+
+**Next maintenance gate:** After current feature-branch contracts and repository quality checks pass, run the read-only recovery-rehearsal preflight. The guarded -RefreshSupervisor mode deliberately rotates only the verified task-owned service and verifies its replacement plus unchanged public auth state; it is distinct from -Exercise, which deliberately kills the Node child to test automatic restart. Use a maintenance window for the refresh and then obtain a separate independent postcheck. Test automatic restart in another controlled exercise, then unattended reboot only with explicit authorization. Keep Auth0 active.
+
 ## Phase 2 — Publish only verified auth paths
 
 1. Capture a safe Tailscale route configuration backup before changing any Funnel mount.
@@ -401,4 +411,4 @@ Do not change the relay issuer, remove Auth0, alter any Funnel mount, or reboot 
 
 - Desktop Commander is quota-blocked; do not retry it.
 - Vaulter's installed Tetherplane source/build location, process manager, Node/pnpm status, auth-port availability, and paired-device approval availability are not yet observed.
-- Local auth, public JWKS, and the independent S4U supervisor postcheck are verified. Automatic process restart failed; manual task recovery passed. Reboot recovery, device approval, identity cutover and authenticated ChatGPT six-tool acceptance remain unverified.
+- Local auth, public JWKS, S4U supervision and valid registered restart settings are now independently verified. A fresh task instance and automatic restart are not yet live-verified; the prior crash test required manual recovery. Reboot recovery, device approval, identity cutover and authenticated ChatGPT six-tool acceptance remain unverified.
