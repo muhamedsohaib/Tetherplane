@@ -53,6 +53,7 @@ if ($defaultBlock -match 'Invoke-RestMethod|readyz|SUPERVISED AUTH POSTCHECK PAS
 
 foreach ($name in @(
     'Assert-OfflineTaskShape',
+    'Test-OfflinePrincipal',
     'Invoke-OfflineRestoreTransaction',
     'Invoke-OfflineStartTransaction',
     'Invoke-OfflineFileSwap',
@@ -202,4 +203,70 @@ try {
 } finally {
     if (Test-Path -LiteralPath $dir) { Remove-Item -LiteralPath $dir -Recurse -Force }
 }
+
+# The real Vaulter guard must reject an untrusted task principal even if the
+# task state and action look plausible.
+$identity = [Security.Principal.WindowsIdentity]::GetCurrent()
+if (-not (Test-OfflinePrincipal -Identity $identity -TaskUserId $identity.User.Value) -or
+    -not (Test-OfflinePrincipal -Identity $identity -TaskUserId $identity.Name)) {
+    throw 'Offline rescue must accept only exact account-name/SID equivalence.'
+}
+$other = if ($identity.User.Value -ceq 'S-1-5-18') { 'S-1-5-19' } else { 'S-1-5-18' }
+if (Test-OfflinePrincipal -Identity $identity -TaskUserId $other) {
+    throw 'Offline recovery must reject another task principal.'
+}
+if (Test-OfflinePrincipal -Identity $identity -TaskUserId 'definitely-not-an-account') {
+    throw 'Unknown S4U principals may not authorize offline recovery.'
+}
+$task.Principal.LogonType = 'S4U'
+$task.Settings.RestartCount = 999
+try {
+    Assert-OfflineTaskShape -Task $task -ProtectedRunnerPath $runner
+    throw 'Changed task retry count was accepted.'
+} catch {
+    if ($_.Exception.Message -eq 'Changed task retry count was accepted.') { throw }
+} finally { $task.Settings.RestartCount = 10 }
+$task.Triggers = @([pscustomobject]@{ CimClass=[pscustomobject]@{ CimClassName='MSFT_TaskLogonTrigger' } })
+try {
+    Assert-OfflineTaskShape -Task $task -ProtectedRunnerPath $runner
+    throw 'Removed boot trigger was accepted.'
+} catch {
+    if ($_.Exception.Message -eq 'Removed boot trigger was accepted.') { throw }
+}
+
+# Starting the existing task must be strictly opt-in. A fault at any stage
+# prevents declaring recovery success and must not start on failed preflight.
+foreach ($failPhase in @('VerifyReady','StartNamedTask','VerifyHealthy')) {
+    $trace = New-Object 'System.Collections.Generic.List[string]'
+    $ops = @{
+        VerifyReady = {
+            $trace.Add('preflight')
+            if ($failPhase -eq 'VerifyReady') { throw 'simulated bad offline task' }
+        }.GetNewClosure()
+        StartNamedTask = {
+            $trace.Add('start')
+            if ($failPhase -eq 'StartNamedTask') { throw 'simulated failed named start' }
+        }.GetNewClosure()
+        VerifyHealthy = {
+            $trace.Add('health')
+            if ($failPhase -eq 'VerifyHealthy') { throw 'simulated failed readiness' }
+        }.GetNewClosure()
+    }
+    try {
+        Invoke-OfflineStartTransaction -Operations $ops | Out-Null
+        throw 'A failed named task start was incorrectly reported healthy.'
+    } catch {
+        if ($_.Exception.Message -eq 'A failed named task start was incorrectly reported healthy.') { throw }
+    }
+    if ($failPhase -ceq 'VerifyReady' -and ($trace -join ',') -cne 'preflight') {
+        throw 'Preflight errors may never trigger task startup.'
+    }
+}
+$restoreStart = $source.IndexOf('if ($RestoreV1) {')
+$restoreEnd = $source.IndexOf('# Separate explicit recovery operation')
+if ($restoreStart -lt 0 -or $restoreEnd -le $restoreStart -or
+    $source.Substring($restoreStart,$restoreEnd-$restoreStart) -match 'Start-ScheduledTask') {
+    throw 'Offline v1 file restoration must never start a task implicitly.'
+}
+
 Write-Output 'Offline v1 rescue task-state, atomic file, and rollback contracts passed.'
