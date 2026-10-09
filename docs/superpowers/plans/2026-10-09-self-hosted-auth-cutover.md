@@ -317,6 +317,13 @@ This establishes a live handover but not recovery after reboot. Do not repeat th
 Next, after a fast-forward pull on the feature branch, run only the read-only independent checker `scripts/vaulter-tether-auth-supervised-postcheck.ps1` on Vaulter. It verifies parent-process supervision, Windows SID ownership, protected runner hash, loopback and public health, issuer/PKCE discovery, public signing-key consistency, Auth0 protected-resource identity, and existing public/private Funnel routes. Do not expose command lines, authentication secrets or private signing material in handoff output.
 
 After independent postcheck, a scoped restart test and a separate reboot-recovery gate remain. Neither is equivalent to final authenticated ChatGPT six-tool acceptance.
+## Independent supervised postcheck and restart-rehearsal gate
+
+Vaulter's read-only independent checker passed after the handover. It reported the S4U startup task **Running**, task-owned auth listener **PID 8940**, healthy auth and relay, unchanged Auth0 resource metadata, matching public/local JWKS, and unchanged four tailnet-only ports. No routes, processes, tasks or credentials were modified by this check.
+
+The next implementation gate is `scripts/vaulter-tether-auth-recovery-rehearsal.ps1`. Its default invocation is **read-only**. It checks the still-running S4U task, existing process ownership, the configured restart policy, protected state, signing verification keys, and public relay/Funnel health.
+
+An **explicit** `-Exercise` invocation would simulate a process failure by terminating only the verified task-owned Node auth PID, wait for Task Scheduler automatic recovery, and use manual task recovery or restore the previously staged auth process if necessary. This deliberate failure injection is not a reboot test. Do not use `-Exercise` without a successful fresh read-only preflight and readiness for a short auth-service interruption. Do not switch Auth0 or alter public routes during this gate.
 ## Phase 2 — Publish only verified auth paths
 
 1. Capture a safe Tailscale route configuration backup before changing any Funnel mount.
