@@ -11,7 +11,10 @@ if (-not (Test-Path -LiteralPath $scriptPath -PathType Leaf)) {
 $tokens = $null
 $errors = $null
 $ast = [System.Management.Automation.Language.Parser]::ParseFile($scriptPath,[ref]$tokens,[ref]$errors)
-if (@($errors).Count -ne 0) { throw 'Offline v1 restoration script has PowerShell syntax errors.' }
+if (@($errors).Count -ne 0) {
+    $issues = @($errors | ForEach-Object { 'line=' + $_.Extent.StartLineNumber + '; kind=' + $_.ErrorId })
+    throw ('Offline v1 restoration script has PowerShell syntax errors: ' + ($issues -join ' | '))
+}
 $source = [IO.File]::ReadAllText($scriptPath)
 foreach ($required in @(
     '[switch]$RestoreV1', '[switch]$StartV1Task',
