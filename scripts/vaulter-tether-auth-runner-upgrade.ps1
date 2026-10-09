@@ -168,8 +168,19 @@ function Invoke-RunnerAtomicReplace {
             $groupEqual = ($verifiedAcl.GetSecurityDescriptorSddlForm($sections::Group) -ceq
                 $beforeAcl.GetSecurityDescriptorSddlForm($sections::Group))
             $kind = if ($path -ceq $TargetPath) { 'installed' } else { 'backup' }
-            throw ('Protected runner ACL mismatch: file={0}; access_equal={1}; owner_equal={2}; group_equal={3}; protected={4}' -f
-                $kind,$accessEqual,$ownerEqual,$groupEqual,$verifiedAcl.AreAccessRulesProtected)
+            $beforeRules = @($beforeAcl.Access | ForEach-Object {
+                ([string]$_.IdentityReference.Value + '|' + [string]$_.FileSystemRights + '|' +
+                    [string]$_.AccessControlType + '|' + [string]$_.InheritanceFlags + '|' +
+                    [string]$_.PropagationFlags)
+            } | Sort-Object)
+            $afterRules = @($verifiedAcl.Access | ForEach-Object {
+                ([string]$_.IdentityReference.Value + '|' + [string]$_.FileSystemRights + '|' +
+                    [string]$_.AccessControlType + '|' + [string]$_.InheritanceFlags + '|' +
+                    [string]$_.PropagationFlags)
+            } | Sort-Object)
+            $semanticEqual = (($beforeRules -join ';') -ceq ($afterRules -join ';'))
+            throw ('Protected runner ACL mismatch: file={0}; access_equal={1}; effective_rules_equal={2}; owner_equal={3}; group_equal={4}; protected={5}' -f
+                $kind,$accessEqual,$semanticEqual,$ownerEqual,$groupEqual,$verifiedAcl.AreAccessRulesProtected)
         }
     }
 }
