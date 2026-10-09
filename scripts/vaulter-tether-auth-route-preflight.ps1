@@ -83,7 +83,8 @@ $fields = @(
     'device_authorization_endpoint'
 )
 foreach ($field in $fields) {
-    $value = [string]$metadata.$field
+    $property = $metadata.PSObject.Properties[$field]
+    $value = if ($null -eq $property) { '' } else { [string]$property.Value }
     if ([string]::IsNullOrWhiteSpace($value)) {
         if ($field -in @('authorization_endpoint', 'token_endpoint', 'jwks_uri', 'registration_endpoint')) {
             throw "Required OAuth endpoint $field is absent."
