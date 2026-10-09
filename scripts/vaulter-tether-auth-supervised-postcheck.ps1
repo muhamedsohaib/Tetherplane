@@ -19,6 +19,7 @@ $script:stateDir = Join-Path $env:LOCALAPPDATA 'Tetherplane\tether-auth'
 $script:repoRoot = Split-Path -Parent $PSScriptRoot
 $script:protectedRunner = Join-Path $script:stateDir 'tether-auth-startup-runner.ps1'
 $script:authConfig = Join-Path $script:stateDir 'tether-auth-config.json'
+. (Join-Path $PSScriptRoot 'vaulter-tether-auth-runner-integrity.ps1')
 
 function Assert-Postcheck([bool]$Condition, [string]$Reason) {
     if (-not $Condition) { throw $Reason }
@@ -109,14 +110,13 @@ Assert-Postcheck ($env:OS -eq 'Windows_NT' -and
     $env:COMPUTERNAME -ieq 'vaulter') 'Read-only auth inspection is restricted to Vaulter.'
 Assert-Postcheck (Test-Path -LiteralPath $script:stateDir -PathType Container) 'Protected auth directory missing.'
 Assert-Postcheck ((Get-Acl -LiteralPath $script:stateDir).AreAccessRulesProtected) 'Auth directory ACL is not protected.'
-$sourceRunner = Join-Path $script:repoRoot 'scripts\vaulter-tether-auth-startup-runner.ps1'
-foreach ($file in @($sourceRunner, $script:protectedRunner, $script:authConfig)) {
-    Assert-Postcheck (Test-Path -LiteralPath $file -PathType Leaf) 'Required public configuration or protected runner missing.'
-}
-Assert-Postcheck (
-    (Get-FileHash -LiteralPath $sourceRunner -Algorithm SHA256).Hash -ceq
-    (Get-FileHash -LiteralPath $script:protectedRunner -Algorithm SHA256).Hash
-) 'Installed protected task runner differs from the verified repository version.'
+$sourceRunnerV1 = Join-Path $script:repoRoot 'scripts\vaulter-tether-auth-startup-runner.ps1'
+$sourceRunnerV2 = Join-Path $script:repoRoot 'scripts\vaulter-tether-auth-startup-runner-v2.ps1'
+Assert-Postcheck (Test-Path -LiteralPath $script:authConfig -PathType Leaf) 'Protected auth configuration missing.'
+# Exactly one trusted repository version must match disk; this does not
+# independently identify which script an already-running parent loaded.
+$installedRunnerVersion = Get-VerifiedRunnerVersion -V1SourcePath $sourceRunnerV1 -V2SourcePath $sourceRunnerV2 -ProtectedRunnerPath $script:protectedRunner
+Assert-Postcheck ($installedRunnerVersion -cin @('v1','v2')) 'Runner identity is unrecognized.'
 
 $task = Get-ScheduledTask -TaskName $script:taskName -TaskPath '\' -ErrorAction Stop
 Assert-Postcheck ($task.State -eq 'Running') 'S4U auth startup task is not running.'
