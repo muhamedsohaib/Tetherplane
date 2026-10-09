@@ -1,0 +1,35 @@
+name: Vaulter auth staging verification
+
+on:
+  push:
+    paths:
+      - ".github/workflows/vaulter-auth-staging.yml"
+      - "scripts/vaulter-tether-auth-*.mjs"
+      - "scripts/vaulter-tether-auth-*.ps1"
+      - "tests/release/vaulter-tether-auth-*"
+  pull_request:
+    paths:
+      - ".github/workflows/vaulter-auth-staging.yml"
+      - "scripts/vaulter-tether-auth-*.mjs"
+      - "scripts/vaulter-tether-auth-*.ps1"
+      - "tests/release/vaulter-tether-auth-*"
+
+jobs:
+  stage-check:
+    name: staging contract (${{ matrix.os }})
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, windows-latest]
+    runs-on: ${{ matrix.os }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+      - name: Key material tests
+        run: node --test tests/release/vaulter-tether-auth-material.test.mjs
+      - name: PowerShell syntax and stage safety checks
+        if: runner.os == 'Windows'
+        shell: pwsh
+        run: ./tests/release/vaulter-tether-auth-stage-contract.ps1
