@@ -122,6 +122,37 @@ function Test-PrivateRunnerVersion([string]$Expected) {
     Assert-Upgrade ($actual -ceq $Expected) 'Protected runner bytes do not match expected trusted version.'
     Assert-PrivateAcl $script:protectedRunner
 }
+function Test-RunnerAclEquivalent {
+    [CmdletBinding()]
+    param(
+        [Parameter(Mandatory=$true)]$Expected,
+        [Parameter(Mandatory=$true)]$Actual
+    )
+    try {
+        if (([string]$Expected.Owner) -cne ([string]$Actual.Owner) -or
+            ([string]$Expected.Group) -cne ([string]$Actual.Group) -or
+            [bool]$Expected.AreAccessRulesProtected -ne [bool]$Actual.AreAccessRulesProtected) {
+            return $false
+        }
+        # Windows can reserialize inherited ACE flags when replacing a file,
+        # without changing its actual owner, permissions or inheritance policy.
+        # Compare effective ACE identities/rights/types/flags, not raw SDDL.
+        $beforeRules = @(foreach ($ace in @($Expected.Access)) {
+            [string]$ace.IdentityReference.Value + '|' + [string]$ace.FileSystemRights + '|' +
+                [string]$ace.AccessControlType + '|' + [string]$ace.InheritanceFlags + '|' +
+                [string]$ace.PropagationFlags
+        }) | Sort-Object
+        $afterRules = @(foreach ($ace in @($Actual.Access)) {
+            [string]$ace.IdentityReference.Value + '|' + [string]$ace.FileSystemRights + '|' +
+                [string]$ace.AccessControlType + '|' + [string]$ace.InheritanceFlags + '|' +
+                [string]$ace.PropagationFlags
+        }) | Sort-Object
+        return (($beforeRules -join ';') -ceq ($afterRules -join ';'))
+    } catch {
+        return $false
+    }
+}
+
 function Invoke-RunnerAtomicReplace {
     [CmdletBinding()]
     param(
@@ -147,47 +178,24 @@ function Invoke-RunnerAtomicReplace {
         }
     }
     $beforeAcl = Get-Acl -LiteralPath $TargetPath -ErrorAction Stop
-    $beforeSddl = $beforeAcl.Sddl
-    # The content swap is atomic, but Windows metadata may differ on either
-    # result. Copy and reverify original permissions, not just file hashes.
+    # Ensure staged bytes start with the same effective ACL as the trusted
+    # original. File.Replace is atomic for content, not ACL representation.
     Set-Acl -LiteralPath $StagedPath -AclObject $beforeAcl -ErrorAction Stop
     [IO.File]::Replace($StagedPath,$TargetPath,$BackupPath)
     foreach ($path in @($TargetPath,$BackupPath)) {
         $after = Get-Acl -LiteralPath $path -ErrorAction Stop
-        if ($after.Sddl -cne $beforeSddl) {
+        if (-not (Test-RunnerAclEquivalent -Expected $beforeAcl -Actual $after)) {
             Set-Acl -LiteralPath $path -AclObject $beforeAcl -ErrorAction Stop
         }
-        $verifiedAcl = Get-Acl -LiteralPath $path -ErrorAction Stop
-        if ($verifiedAcl.Sddl -cne $beforeSddl) {
-            # Diagnostic flags ONLY: never print account names or SDDL.
-            $sections = [Security.AccessControl.AccessControlSections]
-            $accessEqual = ($verifiedAcl.GetSecurityDescriptorSddlForm($sections::Access) -ceq
-                $beforeAcl.GetSecurityDescriptorSddlForm($sections::Access))
-            $ownerEqual = ($verifiedAcl.GetSecurityDescriptorSddlForm($sections::Owner) -ceq
-                $beforeAcl.GetSecurityDescriptorSddlForm($sections::Owner))
-            $groupEqual = ($verifiedAcl.GetSecurityDescriptorSddlForm($sections::Group) -ceq
-                $beforeAcl.GetSecurityDescriptorSddlForm($sections::Group))
-            $kind = if ($path -ceq $TargetPath) { 'installed' } else { 'backup' }
-            $beforeRules = @($beforeAcl.Access | ForEach-Object {
-                ([string]$_.IdentityReference.Value + '|' + [string]$_.FileSystemRights + '|' +
-                    [string]$_.AccessControlType + '|' + [string]$_.InheritanceFlags + '|' +
-                    [string]$_.PropagationFlags)
-            } | Sort-Object)
-            $afterRules = @($verifiedAcl.Access | ForEach-Object {
-                ([string]$_.IdentityReference.Value + '|' + [string]$_.FileSystemRights + '|' +
-                    [string]$_.AccessControlType + '|' + [string]$_.InheritanceFlags + '|' +
-                    [string]$_.PropagationFlags)
-            } | Sort-Object)
-            $semanticEqual = (($beforeRules -join ';') -ceq ($afterRules -join ';'))
-            throw ('Protected runner ACL mismatch: file={0}; access_equal={1}; effective_rules_equal={2}; owner_equal={3}; group_equal={4}; protected={5}' -f
-                $kind,$accessEqual,$semanticEqual,$ownerEqual,$groupEqual,$verifiedAcl.AreAccessRulesProtected)
+        if (-not (Test-RunnerAclEquivalent -Expected $beforeAcl -Actual (Get-Acl -LiteralPath $path -ErrorAction Stop))) {
+            throw 'Protected runner effective permissions or ownership changed during replacement.'
         }
     }
 }
 
 function Assert-PrivateAcl([string]$Path) {
-    $actual = (Get-Acl -LiteralPath $Path -ErrorAction Stop).Sddl
-    Assert-Upgrade ($actual -ceq $script:originalAcl.Sddl) 'Protected runner ACL differs from original.'
+    $actual = Get-Acl -LiteralPath $Path -ErrorAction Stop
+    Assert-Upgrade (Test-RunnerAclEquivalent -Expected $script:originalAcl -Actual $actual) 'Protected runner effective ACL or owner differs from original.'
 }
 function New-PrivateTemporaryPath {
     return (Join-Path $script:stateDir ('tether-auth-upgrade-' + [guid]::NewGuid().ToString('N') + '.tmp'))
