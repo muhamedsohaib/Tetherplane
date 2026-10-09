@@ -38,9 +38,10 @@ PowerShell 5.1 and 7 targeted tests now exercise real NTFS-like temporary file s
 
 ### Remaining pre-activation proof
 
-- Verify v2 protected-state and S4U permissions using a separate non-disruptive S4U probe under the intended principal. The original autostart `-Probe` script cannot be reused unchanged because it rejects an already registered permanent task.
-- Require a reviewed deployment maintenance window and independent verification of the protected backup, source hashes, task definition and auth PID. A successful file upgrade is not activation.
-- Execute controlled `-RefreshSupervisor` only after a validated v2 S4U probe and a rollback plan that can restore v1 and regain a healthy auth task. Reserve `-Exercise` and reboot for later, separately authorized windows.
+- **Code-level gate implemented:** `vaulter-tether-auth-autostart.ps1 -ProbeV2` uses a new one-time temporary S4U task to run the v2 `-Validate` path under the existing principal. The candidate checks S4U access to the existing registered task, protected files, Node runtime and local relay/auth endpoints. The temporary task and probe artifacts must be removed before it writes `tether-auth-runner-v2-probe.json` to the protected state directory. The proof records only the SHA-256 source hash, S4U/task labels and an ISO timestamp; the upgrader refuses v2 installation unless the exact hash matches and proof is fresh. This probe is **not read-only**, because it temporarily registers/removes an isolated probe task; it must be explicitly invoked by the Vaulter operator.
+- **Still unverified live:** The temporary S4U v2 probe, permission to inspect the existing Scheduled Task under S4U, source-hash proof in the actual protected directory, and installation of v2 are not yet tested on Vaulter. Code-only Windows PowerShell 5.1/7 contracts do not establish these live capabilities.
+- Require a reviewed deployment maintenance window and independent verification of protected backup, exact source hashes, task definition and original auth PID. A successful on-disk file upgrade is not activation.
+- Execute controlled `-RefreshSupervisor` only after a validated v2 S4U probe, passing upgrade postcheck, and a recovery plan that can restore v1 and regain a healthy auth task. Reserve `-Exercise` and reboot for later, separately authorized windows.
 
 ### Safe, read-only Vaulter check after CI is green
 
@@ -54,7 +55,7 @@ powershell.exe -NoProfile -ExecutionPolicy Bypass -File (Join-Path $repo 'script
 powershell.exe -NoProfile -ExecutionPolicy Bypass -File (Join-Path $repo 'scripts\vaulter-tether-auth-supervised-postcheck.ps1')
 ~~~
 
-Do **not** pass `-ApplyV2` or `-RestoreV1` during this preflight. The `-ApplyV2` operation intentionally changes an on-disk S4U script and remains blocked on live S4U permission proof.
+Do **not** pass `-ApplyV2` or `-RestoreV1` during this preflight. Both the protected-file upgrade and the isolated `-ProbeV2` temporary task require separate operator action, and their live acceptance has not happened. Neither should be combined with `-RefreshSupervisor` or `-Exercise`.
 
 ## Verification and rollout gates
 
@@ -93,6 +94,10 @@ Do **not** pass `-ApplyV2` or `-RestoreV1` during this preflight. The `-ApplyV2`
 - Independently test unattended reboot recovery only with explicit reboot approval.
 - Then separately verify online paired device, device-assisted OAuth login, path-specific Funnel mounts, PKCE/registration/refresh/revocation, relay issuer switch with rollback, authenticated six-tool ChatGPT acceptance and Policy Broker denials.
 - Retire Auth0 only after all live gates pass.
+
+### Read-only versus live modes
+
+The protected-file upgrader without switches only inspects source hashes, registered task and health. `-ProbeV2` temporarily registers, starts, and removes a separate task and writes a short-lived proof marker; it intentionally does not stop or change the permanent task. `-ApplyV2` modifies the protected on-disk runner but does not restart the existing instance, and `-RestoreV1` is a separate recovery action. Neither `-RefreshSupervisor` nor `-Exercise` is automatically authorized by the other modes. A reboot and the OAuth issuer cutover require their own approval and verification gates.
 
 ## Current stop conditions
 
