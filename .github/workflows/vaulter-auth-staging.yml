@@ -73,3 +73,11 @@ jobs:
         if: runner.os == 'Windows'
         shell: powershell
         run: ./tests/release/vaulter-tether-auth-autostart-contract.ps1
+      - name: Staged auth activation rollback contracts (PowerShell 7)
+        if: runner.os == 'Windows'
+        shell: pwsh
+        run: ./tests/release/vaulter-tether-auth-activation-contract.ps1
+      - name: Staged auth activation rollback contracts (Windows PowerShell 5.1)
+        if: runner.os == 'Windows'
+        shell: powershell
+        run: ./tests/release/vaulter-tether-auth-activation-contract.ps1
