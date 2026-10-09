@@ -115,7 +115,7 @@ Write-Output 'Existing Funnel configuration backed up in protected local auth-st
 
 $attempted = $false
 try {
-    # Never use tailscale serve or funnel reset: preserve public 443 and private ports.
+    # Preserve Funnel mode on 443; do not invoke any global route-clearing commands.
     $attempted = $true
     & $ts.Source funnel --bg --https=443 --set-path=/jwks http://127.0.0.1:8790/jwks
     Assert-Canary ($LASTEXITCODE -eq 0) 'Tailscale rejected the /jwks mount.'
