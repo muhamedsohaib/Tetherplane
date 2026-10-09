@@ -49,3 +49,7 @@ jobs:
         if: runner.os == 'Windows'
         shell: pwsh
         run: ./tests/release/vaulter-tether-auth-funnel-canary-contract.ps1
+      - name: Read-only cutover readiness contract
+        if: runner.os == 'Windows'
+        shell: pwsh
+        run: ./tests/release/vaulter-tether-auth-cutover-readiness-contract.ps1
