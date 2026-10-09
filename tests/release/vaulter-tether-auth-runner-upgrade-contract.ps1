@@ -241,4 +241,53 @@ if (-not $upgrade.Contains('function Assert-PrivateAcl') -or
     throw 'Protected installer must verify original ACL on installed and backed-up runner.'
 }
 
+
+# A v2 file install must fail closed without a fresh, exact-source S4U proof.
+$proofFn = $ast.Find({
+    param($node)
+    $node -is [System.Management.Automation.Language.FunctionDefinitionAst] -and
+    $node.Name -eq 'Test-FreshV2S4UProof'
+}, $true)
+if ($null -eq $proofFn) { throw 'Protected v2 install lacks fresh S4U proof validation.' }
+Invoke-Expression $proofFn.Extent.Text
+$proofFile = Join-Path ([IO.Path]::GetTempPath()) ('tp-v2-proof-' + [guid]::NewGuid().ToString('N') + '.json')
+try {
+    $referenceUtc = [datetimeoffset]::UtcNow
+    $knownHash = ('A' * 64)
+    $evidence = @{
+        v2_source_hash = $knownHash
+        verified_utc = $referenceUtc.AddMinutes(-5).ToString('o')
+        principal = 'S4U'
+        task = 'Tetherplane-TetherAuth-Startup'
+    }
+    [IO.File]::WriteAllText($proofFile,(ConvertTo-Json $evidence -Compress))
+    if (-not (Test-FreshV2S4UProof -ProofPath $proofFile -ExpectedV2Hash $knownHash -NowUtc $referenceUtc)) {
+        throw 'Correct recent S4U proof must be accepted.'
+    }
+    if (Test-FreshV2S4UProof -ProofPath $proofFile -ExpectedV2Hash ('B' * 64) -NowUtc $referenceUtc) {
+        throw 'Proof for a different candidate source may never authorize installation.'
+    }
+    $evidence.verified_utc = $referenceUtc.AddHours(-3).ToString('o')
+    [IO.File]::WriteAllText($proofFile,(ConvertTo-Json $evidence -Compress))
+    if (Test-FreshV2S4UProof -ProofPath $proofFile -ExpectedV2Hash $knownHash -NowUtc $referenceUtc) {
+        throw 'Stale S4U proof must be rejected.'
+    }
+    $evidence.verified_utc = $referenceUtc.AddHours(1).ToString('o')
+    [IO.File]::WriteAllText($proofFile,(ConvertTo-Json $evidence -Compress))
+    if (Test-FreshV2S4UProof -ProofPath $proofFile -ExpectedV2Hash $knownHash -NowUtc $referenceUtc) {
+        throw 'Future S4U proof must be rejected.'
+    }
+    $evidence.verified_utc = $referenceUtc.ToString('o')
+    $evidence.principal = 'Interactive'
+    [IO.File]::WriteAllText($proofFile,(ConvertTo-Json $evidence -Compress))
+    if (Test-FreshV2S4UProof -ProofPath $proofFile -ExpectedV2Hash $knownHash -NowUtc $referenceUtc) {
+        throw 'Interactive proof is not evidence of S4U access.'
+    }
+} finally {
+    Remove-Item -LiteralPath $proofFile -Force -ErrorAction SilentlyContinue
+}
+if (-not $upgrade.Contains('Test-FreshV2S4UProof -ProofPath')) {
+    throw 'ApplyV2 transaction must enforce fresh S4U proof before replacing any file.'
+}
+
 Write-Output 'Protected v1/v2 runner identity and guarded install/restore contracts passed.'
