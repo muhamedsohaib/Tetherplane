@@ -17,7 +17,7 @@ output="$(mktemp)"
 trap 'rm -f "$output"' EXIT
 
 for attempt in 1 2 3; do
-  if docker build --file "$dockerfile" --tag "$image_tag" . >"$output" 2>&1; then
+  if docker build --build-arg NODE_BASE_IMAGE=mirror.gcr.io/library/node:22-bookworm-slim --file "$dockerfile" --tag "$image_tag" . >"$output" 2>&1; then
     cat "$output"
     exit 0
   fi

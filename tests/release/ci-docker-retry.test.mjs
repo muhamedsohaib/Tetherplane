@@ -59,7 +59,7 @@ function exercise(mode, shouldSucceed, expectedCalls, expectedWaits) {
     assert.equal(calls.length, expectedCalls);
     assert.equal(delays.length, expectedWaits);
     for (const call of calls) {
-      assert.equal(call, 'build --file Dockerfile.relay --tag tetherplane-relay:ci .');
+      assert.equal(call, 'build --build-arg NODE_BASE_IMAGE=mirror.gcr.io/library/node:22-bookworm-slim --file Dockerfile.relay --tag tetherplane-relay:ci .');
     }
   } finally {
     rmSync(dir, { recursive: true, force: true });
