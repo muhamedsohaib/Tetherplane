@@ -99,14 +99,14 @@ function New-Fixture([string[]]$fail) {
     return @{ Ops=$ops; Events=$events }
 }
 $pass = New-Fixture @()
-if ((Invoke-GuardedSettingsCorrection -Operations $pass.Ops) -cne 'corrected' -or
+if ((Invoke-GuardedSettingsCorrection -Operations $pass.Ops -OriginalCount 10) -cne 'corrected' -or
     ($pass.Events -join ',') -cne 'VerifyBefore,BackupTask,ApplyCount,VerifyAfter') {
     throw 'Successful correction must back up, update, and verify exactly once.'
 }
 foreach ($precheck in @('VerifyBefore','BackupTask')) {
     $fixture = New-Fixture @($precheck)
     try {
-        Invoke-GuardedSettingsCorrection -Operations $fixture.Ops | Out-Null
+        Invoke-GuardedSettingsCorrection -Operations $fixture.Ops -OriginalCount 10 | Out-Null
         throw 'Unexpected success for unsafe precondition.'
     } catch {
         if ($_.Exception.Message -eq 'Unexpected success for unsafe precondition.') { throw }
@@ -118,7 +118,7 @@ foreach ($precheck in @('VerifyBefore','BackupTask')) {
 foreach ($failed in @('ApplyCount','VerifyAfter')) {
     $fixture = New-Fixture @($failed)
     try {
-        Invoke-GuardedSettingsCorrection -Operations $fixture.Ops | Out-Null
+        Invoke-GuardedSettingsCorrection -Operations $fixture.Ops -OriginalCount 10 | Out-Null
         throw 'Unexpected success after setting failure.'
     } catch {
         if ($_.Exception.Message -eq 'Unexpected success after setting failure.') { throw }
@@ -130,10 +130,37 @@ foreach ($failed in @('ApplyCount','VerifyAfter')) {
 }
 $unverified = New-Fixture @('VerifyAfter','VerifyRestored')
 try {
-    Invoke-GuardedSettingsCorrection -Operations $unverified.Ops | Out-Null
+    Invoke-GuardedSettingsCorrection -Operations $unverified.Ops -OriginalCount 10 | Out-Null
     throw 'Unexpected success after unverified rollback.'
 } catch {
     if ($_.Exception.Message -eq 'Unexpected success after unverified rollback.') { throw }
     if ($_.Exception.Message -notmatch 'ROLLBACK UNVERIFIED') { throw }
 }
+
+# Persisted Count=999 is outside the documented Task Scheduler range. A
+# failed correction must never attempt to re-register that invalid value.
+# If no write occurred, a read-only original-definition check can prove it.
+foreach ($case in @(
+    @{ Failure='ApplyCount'; ReadbackFails=$false; Expected='NO CHANGE VERIFIED' },
+    @{ Failure='VerifyAfter'; ReadbackFails=$true; Expected='ROLLBACK UNAVAILABLE' }
+)) {
+    $failed = @([string]$case.Failure)
+    if ($case.ReadbackFails) { $failed += 'VerifyRestored' }
+    $fixture = New-Fixture $failed
+    try {
+        Invoke-GuardedSettingsCorrection -Operations $fixture.Ops -OriginalCount 999 | Out-Null
+        throw 'Unexpected success for invalid-count rollback case.'
+    } catch {
+        if ($_.Exception.Message -eq 'Unexpected success for invalid-count rollback case.') { throw }
+        if ($_.Exception.Message -notmatch [string]$case.Expected) { throw }
+    }
+    if ($fixture.Events -ccontains 'RestorePrior') {
+        throw 'Out-of-range restart count must never be written back as rollback.'
+    }
+    if (($fixture.Events -join ',') -notmatch 'VerifyRestored
+) {
+        throw 'Invalid-count failure must independently verify whether the original definition survived.'
+    }
+}
+
 Write-Output 'Restart-settings repair, XML-only delta, and rollback contracts passed.'
