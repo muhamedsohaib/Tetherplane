@@ -65,6 +65,36 @@ function Invoke-RestartRecoveryTransaction {
         }
     }
 }
+function Test-RegisteredRestartPolicy {
+    [CmdletBinding()]
+    param(
+        [Parameter(Mandatory=$true)]$Settings,
+        [Parameter(Mandatory=$true)][string]$TaskXml
+    )
+    try {
+        # Compare both persisted Task Scheduler views without leaking task
+        # XML, which may contain action paths or account identity.
+        [xml]$registered = $TaskXml
+        $restart = $registered.SelectSingleNode(
+            "//*[local-name()='Settings']/*[local-name()='RestartOnFailure']"
+        )
+        if ($null -eq $restart) { return $false }
+        $countNode = $restart.SelectSingleNode("*[local-name()='Count']")
+        $intervalNode = $restart.SelectSingleNode("*[local-name()='Interval']")
+        if ($null -eq $countNode -or $null -eq $intervalNode) {
+            return $false
+        }
+        $xmlCount = [int]$countNode.InnerText
+        $cimCount = [int]$Settings.RestartCount
+        return (
+            $xmlCount -eq 10 -and
+            $cimCount -eq $xmlCount -and
+            ([string]$intervalNode.InnerText) -ceq 'PT1M' -and
+            ([string]$Settings.RestartInterval) -ceq 'PT1M'
+        )
+    } catch { return $false }
+}
+
 function Get-Task {
     Get-ScheduledTask -TaskName $script:taskName -TaskPath '\' -ErrorAction Stop
 }
@@ -264,10 +294,10 @@ Assert-Recovery ($task.State -eq 'Running' -and
 Assert-Recovery (@($task.Triggers | Where-Object {
     $_.CimClass.CimClassName -match 'BootTrigger$'
 }).Count -gt 0) 'Task is missing a boot trigger.'
+$registeredXml = [string](Export-ScheduledTask -TaskName $script:taskName -TaskPath '\' -ErrorAction Stop)
 Assert-Recovery (
-    [int]$task.Settings.RestartCount -gt 0 -and
-    -not [string]::IsNullOrWhiteSpace([string]$task.Settings.RestartInterval)
-) 'Task RestartCount or RestartInterval is absent.'
+    Test-RegisteredRestartPolicy -Settings $task.Settings -TaskXml $registeredXml
+) 'Registered restart policy must match repaired count=10, interval=PT1M in CIM and XML.'
 $taskActions = @($task.Actions)
 Assert-Recovery ($taskActions.Count -eq 1 -and
     ([string]$taskActions[0].Arguments).Contains($script:protectedRunner) -and
