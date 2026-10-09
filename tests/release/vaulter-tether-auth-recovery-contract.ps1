@@ -263,4 +263,44 @@ try {
     if ($_.Exception.Message -notmatch 'rollback unverified') { throw }
 }
 
+
+# Crash traces must distinguish a stuck original task parent from a failed
+# task completion before the test enters the manual-recovery fallback.
+$traceAst = $ast.Find({
+    param($node)
+    $node -is [System.Management.Automation.Language.FunctionDefinitionAst] -and
+        $node.Name -eq 'Format-RecoveryObservation'
+}, $true)
+if ($null -eq $traceAst) {
+    throw 'Missing redacted, testable restart-lifecycle observation formatter.'
+}
+Invoke-Expression $traceAst.Extent.Text
+$fixture = Format-RecoveryObservation -Phase 'automatic' -ElapsedSeconds 20 -ParentAlive $true -TaskState 'Running' -ResultCode '0x00041301' -ListenerState 'none'
+if ($fixture -cne 'RESTART TRACE: phase=automatic; elapsed_s=20; original_parent=alive; task=Running; scheduler_result=0x00041301; listener=none') {
+    throw 'Trace does not identify a still-running task parent after listener disappeared.'
+}
+$exited = Format-RecoveryObservation -Phase 'automatic' -ElapsedSeconds 40 -ParentAlive $false -TaskState 'Ready' -ResultCode '0x00000001' -ListenerState 'none'
+if ($exited -cne 'RESTART TRACE: phase=automatic; elapsed_s=40; original_parent=exited; task=Ready; scheduler_result=0x00000001; listener=none') {
+    throw 'Trace must distinguish a failed task completion from a stuck parent.'
+}
+$untrusted = Format-RecoveryObservation -Phase 'automatic;secret=sensitive' -ElapsedSeconds 60 -ParentAlive $false -TaskState "Running;token=secret" -ResultCode 'credentials' -ListenerState "new;credential=secret"
+if ($untrusted -match 'secret|sensitive|credentials' -or
+    $untrusted -notmatch 'phase=unknown;.*task=Unknown; scheduler_result=unknown; listener=unknown') {
+    throw 'Restart observations must never print uncontrolled strings.'
+}
+$waitAst = $ast.Find({
+    param($node)
+    $node -is [System.Management.Automation.Language.FunctionDefinitionAst] -and
+        $node.Name -eq 'Wait-SupervisedAuth'
+}, $true)
+if ($null -eq $waitAst -or
+    $waitAst.Extent.Text -notmatch 'Format-RecoveryObservation' -or
+    $waitAst.Extent.Text -notmatch 'Get-ScheduledTaskInfo' -or
+    $waitAst.Extent.Text -notmatch 'Write-Host') {
+    throw 'Automatic wait must emit bounded observations outside the result pipeline.'
+}
+if (-not $src.Contains('Wait-SupervisedAuth -PriorPid $script:originalPid -Attempts 75 -TraceAutomatic')) {
+    throw 'Automatic recovery phase must explicitly enable lifecycle tracing.'
+}
+
 Write-Output 'Guarded supervised auth restart transaction and rollback contracts passed.'
