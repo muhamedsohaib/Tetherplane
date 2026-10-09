@@ -13,6 +13,8 @@ on:
       - "tests/release/vaulter-tether-auth-runner-upgrade-contract.ps1"
       - "tests/release/vaulter-tether-auth-offline-restore-contract.ps1"
       - "tests/release/vaulter-tether-auth-recovery-contract.ps1"
+      - "scripts/vaulter-tether-auth-staged-cutback.ps1"
+      - "tests/release/vaulter-tether-auth-staged-cutback-contract.ps1"
       - "tests/release/vaulter-tether-auth-autostart-contract.ps1"
   pull_request:
     paths:
@@ -50,6 +52,12 @@ jobs:
       - name: Guarded supervisor refresh and v1 recovery contract (PowerShell 5.1)
         shell: powershell
         run: ./tests/release/vaulter-tether-auth-recovery-contract.ps1
+      - name: Ownership-verified staged cutback (PowerShell 7)
+        shell: pwsh
+        run: ./tests/release/vaulter-tether-auth-staged-cutback-contract.ps1
+      - name: Ownership-verified staged cutback (PowerShell 5.1)
+        shell: powershell
+        run: ./tests/release/vaulter-tether-auth-staged-cutback-contract.ps1
       - name: Exact runner hash and atomic upgrade contract (PowerShell 7)
         shell: pwsh
         run: ./tests/release/vaulter-tether-auth-runner-upgrade-contract.ps1
