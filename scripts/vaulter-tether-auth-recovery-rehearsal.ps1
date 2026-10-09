@@ -442,9 +442,28 @@ if (-not $Exercise) {
 
 if ($RefreshSupervisor) {
     $refreshOps = @{
-        VerifyBaseline = { throw 'not implemented: VerifyBaseline' }
-        VerifyTarget = { throw 'not implemented: VerifyTarget' }
-        QuiesceTask = { throw 'not implemented: QuiesceTask' }
+        VerifyBaseline = {
+            & $script:postcheck | Out-Null
+            Verify-SharedState
+            $current = Get-Task
+            $xml = [string](Export-ScheduledTask -TaskName $script:taskName -TaskPath '\' -ErrorAction Stop)
+            Assert-Recovery ($current.State -eq 'Running' -and
+                [bool]$current.Settings.Enabled -and
+                (Test-RegisteredRestartPolicy -Settings $current.Settings -TaskXml $xml)
+            ) 'Registered S4U task changed since preflight.'
+        }
+        VerifyTarget = {
+            $now = Get-TaskOwnedListener
+            Assert-Recovery ($null -ne $now -and
+                $now.ProcessId -eq $script:originalPid -and
+                $now.CreationDate -eq $script:originalCreationDate -and
+                $now.ParentProcessId -eq $script:originalParentPid
+            ) 'Owned listener changed before supervisor refresh.'
+        }
+        QuiesceTask = {
+            Disable-ScheduledTask -TaskName $script:taskName -TaskPath '\' -ErrorAction Stop | Out-Null
+            Assert-Recovery (-not [bool](Get-Task).Settings.Enabled) 'Task remains enabled; refusing stop.'
+        }
         StopOwnedTask = { throw 'not implemented: StopOwnedTask' }
         VerifyVacant = { throw 'not implemented: VerifyVacant' }
         ReenableTask = { throw 'not implemented: ReenableTask' }
