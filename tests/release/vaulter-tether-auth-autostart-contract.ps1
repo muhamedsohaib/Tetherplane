@@ -115,4 +115,109 @@ if ($requestedCount -lt 1 -or $requestedCount -gt 255) {
     throw 'New startup tasks must never register an out-of-schema restart count.'
 }
 
+
+# The live v1 task runner must stay byte-for-byte compatible until a separate
+# verified deployment. Stage a testable v2 candidate rather than modifying it.
+$v2Path = Join-Path $base 'scripts\vaulter-tether-auth-startup-runner-v2.ps1'
+if (-not (Test-Path -LiteralPath $v2Path -PathType Leaf)) {
+    throw 'Missing isolated v2 child-supervisor candidate (live runner must remain unchanged).'
+}
+$v2Tokens = $null
+$v2Errors = $null
+$v2Ast = [System.Management.Automation.Language.Parser]::ParseFile(
+    $v2Path, [ref]$v2Tokens, [ref]$v2Errors
+)
+if (@($v2Errors).Count -ne 0) { throw 'Candidate child-supervisor script does not parse.' }
+$v2 = [IO.File]::ReadAllText($v2Path)
+foreach ($guard in @(
+    '[switch]$Validate', '[switch]$Serve', 'ProbeResultFile',
+    'AreAccessRulesProtected', 'bridge-token.secret',
+    'TETHERPLANE_AUTH_BRIDGE_TOKEN', '127.0.0.1:8790',
+    '127.0.0.1:8788', '--allow-insecure-localhost',
+    'auth\dist\cli.js', 'Invoke-TetherAuthChildSupervisor',
+    'AssertPortVacant', 'RunChild', 'PauseBeforeRestart'
+)) {
+    if (-not $v2.Contains($guard)) {
+        throw "v2 supervisor candidate is missing protected contract: $guard"
+    }
+}
+if ($v2 -match '(?i)\b(?:Stop-Process|Register-ScheduledTask|Unregister-ScheduledTask|Set-ScheduledTask|gh auth token)\b' -or
+    $v2 -match '(?i)\b(?:tailscale funnel|tailscale serve|Set-Clipboard)\b' -or
+    $v2 -match '(?im)^\s*Write-(?:Output|Host|Error|Warning).*(?:bridgeToken|privateKey|CommandLine)') {
+    throw 'v2 runner cannot terminate other processes, mutate task/Funnel, or print secrets.'
+}
+$v2Fn = $v2Ast.Find({
+    param($node)
+    $node -is [System.Management.Automation.Language.FunctionDefinitionAst] -and
+    $node.Name -eq 'Invoke-TetherAuthChildSupervisor'
+}, $true)
+if ($null -eq $v2Fn) { throw 'v2 candidate has no isolated child supervisor.' }
+Invoke-Expression $v2Fn.Extent.Text
+
+function New-ChildSupervisorFixture([double[]]$Uptimes, [int[]]$ExitCodes, [string]$FailStep = '') {
+    $state = @{
+        Events = New-Object 'System.Collections.Generic.List[string]'
+        Index = 0
+        Uptimes = $Uptimes
+        ExitCodes = $ExitCodes
+        FailStep = $FailStep
+    }
+    $ops = @{
+        AssertPortVacant = {
+            $state.Events.Add('vacant')
+            if ($state.FailStep -ceq 'AssertPortVacant') { throw 'simulated occupied port' }
+        }.GetNewClosure()
+        RunChild = {
+            $state.Events.Add('run')
+            if ($state.FailStep -ceq 'RunChild') { throw 'simulated launch failure' }
+            $i = $state.Index
+            $state.Index++
+            [pscustomobject]@{ UptimeSeconds=$state.Uptimes[$i]; ExitCode=$state.ExitCodes[$i] }
+        }.GetNewClosure()
+        PauseBeforeRestart = {
+            param([int]$Seconds)
+            $state.Events.Add("wait:$Seconds")
+            if ($state.FailStep -ceq 'PauseBeforeRestart') { throw 'simulated backoff failure' }
+        }.GetNewClosure()
+    }
+    return @{ Ops=$ops; State=$state }
+}
+$short = New-ChildSupervisorFixture @(1,1,1,1) @(1,1,0,1)
+$shortResult = Invoke-TetherAuthChildSupervisor -Operations $short.Ops -MaxRunsForTest 4
+if ($shortResult -cne 'test_limit' -or
+    ($short.State.Events -join ',') -cne 'vacant,run,wait:1,vacant,run,wait:2,vacant,run,wait:4,vacant,run') {
+    throw 'Unexpected exits, including exit=0, must retry with bounded backoff and a port check.'
+}
+$longRun = New-ChildSupervisorFixture @(1,1,400,1) @(1,1,1,1)
+Invoke-TetherAuthChildSupervisor -Operations $longRun.Ops -MaxRunsForTest 4 | Out-Null
+if (($longRun.State.Events -join ',') -cne 'vacant,run,wait:1,vacant,run,wait:2,vacant,run,wait:1,vacant,run') {
+    throw 'Backoff must reset after an established long-running child exits.'
+}
+$cap = New-ChildSupervisorFixture @(1,1,1,1,1,1,1,1) @(1,1,1,1,1,1,1,1)
+Invoke-TetherAuthChildSupervisor -Operations $cap.Ops -MaxRunsForTest 8 | Out-Null
+if (($cap.State.Events -join ',') -notmatch 'wait:60,vacant,run
+) {
+    throw 'Restart delays must cap at 60 seconds while leaving the task runner alive.'
+}
+foreach ($step in @('AssertPortVacant','RunChild','PauseBeforeRestart')) {
+    $fault = New-ChildSupervisorFixture @(1,1) @(1,1) $step
+    try {
+        Invoke-TetherAuthChildSupervisor -Operations $fault.Ops -MaxRunsForTest 2 | Out-Null
+        throw 'Unexpected supervisor success after fault.'
+    } catch {
+        if ($_.Exception.Message -eq 'Unexpected supervisor success after fault.') { throw }
+    }
+    if ($step -ceq 'AssertPortVacant' -and $fault.State.Index -ne 0) {
+        throw 'An occupied auth port must block child launch rather than terminate another process.'
+    }
+}
+$invalid = New-ChildSupervisorFixture @(-1) @(1)
+try {
+    Invoke-TetherAuthChildSupervisor -Operations $invalid.Ops -MaxRunsForTest 1 | Out-Null
+    throw 'Supervisor accepted an invalid process lifetime.'
+} catch {
+    if ($_.Exception.Message -eq 'Supervisor accepted an invalid process lifetime.') { throw }
+}
+Write-Output 'Isolated v2 supervised child-restart, backoff, and no-collision contracts passed.'
+
 Write-Output 'Guarded S4U autostart contracts passed.'
