@@ -58,6 +58,7 @@ try {
             @('install', '--frozen-lockfile'),
             @('--filter', '@tetherplane/protocol', 'build'),
             @('--filter', '@tetherplane/auth', 'build'),
+            @('--filter', '@tetherplane/auth', 'test'),
             @('--filter', '@tetherplane/relay', 'test')
         )
         foreach ($argsList in $commands) {
