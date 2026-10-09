@@ -168,6 +168,7 @@ try {
                 (($nestedVersion -join '').Trim() -ceq $pinnedPnpm)) "Nested pnpm must resolve to $pinnedPnpm through Corepack."
         }
         Invoke-WorkspaceCommand -Arguments @('install', '--frozen-lockfile')
+        Invoke-WorkspaceCommand -Arguments @('--filter', '@tetherplane/protocol', 'build')
         Invoke-WorkspaceCommand -Arguments @('--filter', '@tetherplane/auth', 'build')
         Invoke-WorkspaceCommand -Arguments @('--filter', '@tetherplane/auth', 'test')
         Invoke-WorkspaceCommand -Arguments @('--filter', '@tetherplane/auth', 'typecheck')
