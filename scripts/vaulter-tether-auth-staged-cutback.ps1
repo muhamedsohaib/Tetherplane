@@ -89,11 +89,30 @@ function Get-ProvenStagedListener {
     Assert-Cutback ([int]$proc.ParentProcessId -eq [int]$proof.parentPid) 'Staged process parent changed.'
     return [pscustomobject]@{ProcessId=[int]$proc.ProcessId; CreationDate=[string]$proc.CreationDate; ParentProcessId=[int]$proc.ParentProcessId}
 }
+function Get-PublicKeyFingerprint([string]$Url) {
+    $keys=@((Invoke-RestMethod -Uri $Url -Method Get -TimeoutSec 12 -ErrorAction Stop).keys)
+    Assert-Cutback ($keys.Count -gt 0) 'Public signing keys are absent.'
+    $rows=@(foreach($key in $keys) {
+        foreach($private in @('d','p','q','dp','dq','qi','oth','k')) {
+            Assert-Cutback (-not ($key.PSObject.Properties.Name -contains $private)) 'Public key contains private material.'
+        }
+        Assert-Cutback ($key.kty -ceq 'RSA' -and $key.kid -and $key.n -and $key.e) 'Malformed public signing key.'
+        [string]$key.kid + '|' + [string]$key.kty + '|' + [string]$key.n + '|' + [string]$key.e
+    })
+    return (($rows | Sort-Object) -join ';')
+}
 function Assert-StagedHealth {
     $ready=Invoke-RestMethod -Uri 'http://127.0.0.1:8790/readyz' -TimeoutSec 12 -ErrorAction Stop
     Assert-Cutback ($ready.status -ceq 'ready') 'Staged auth not ready.'
     $relay=Invoke-RestMethod -Uri 'http://127.0.0.1:8788/healthz' -TimeoutSec 12 -ErrorAction Stop
-    Assert-Cutback ($relay.status -ceq 'ok') 'Relay is not healthy.'
+    $public=Invoke-RestMethod -Uri 'https://vaulter.tailf65eba.ts.net/healthz' -TimeoutSec 12 -ErrorAction Stop
+    Assert-Cutback ($relay.status -ceq 'ok' -and $public.status -ceq 'ok') 'Relay or public endpoint is not healthy.'
+    $resource=Invoke-RestMethod -Uri 'https://vaulter.tailf65eba.ts.net/.well-known/oauth-protected-resource/mcp' -TimeoutSec 12 -ErrorAction Stop
+    Assert-Cutback ($resource.resource -ceq 'https://vaulter.tailf65eba.ts.net/mcp' -and
+        @($resource.authorization_servers).Count -eq 1 -and
+        @($resource.authorization_servers)[0] -ceq 'https://tetherplane-dev.eu.auth0.com/') 'Auth0-backed relay resource metadata changed.'
+    Assert-Cutback ((Get-PublicKeyFingerprint 'http://127.0.0.1:8790/jwks') -ceq $script:baselineKeys -and
+        (Get-PublicKeyFingerprint 'https://vaulter.tailf65eba.ts.net/jwks') -ceq $script:baselineKeys) 'Public/local signing keys changed during cutback.'
 }
 Assert-Cutback ($env:OS -ceq 'Windows_NT' -and $env:COMPUTERNAME -ieq 'vaulter') 'Cutback restricted to Vaulter.'
 Assert-Cutback (Test-Path -LiteralPath $script:stateDir -PathType Container) 'Protected state missing.'
@@ -101,6 +120,7 @@ Assert-Cutback ((Get-Acl -LiteralPath $script:stateDir -ErrorAction Stop).AreAcc
 Assert-Cutback (Test-Path -LiteralPath $script:offlineRescue -PathType Leaf) 'Offline v1 rescue missing.'
 $script:baselineXml=Get-TaskSnapshot
 $script:owned=Get-ProvenStagedListener
+$script:baselineKeys=Get-PublicKeyFingerprint 'http://127.0.0.1:8790/jwks'
 Assert-StagedHealth
 & $script:offlineRescue | Out-Null
 if (-not $ApplyCutback) {
