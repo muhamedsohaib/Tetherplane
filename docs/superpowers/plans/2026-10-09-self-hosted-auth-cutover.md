@@ -128,6 +128,29 @@ It checks both loopback listeners, public and local relay health, public protect
 
 **Important Funnel rule:** The existing port 443 must remain in Funnel mode; using `tailscale serve` to reconfigure port 443 could make it tailnet-only. Do not run `tailscale funnel reset` or `tailscale funnel 443` to add auth routing. After a safe private backup of the exact current Serve/Funnel configuration, add only narrowly scoped `tailscale funnel --https=443 --set-path=...` mounts, validate actual installed-version path handling, and preserve existing `/` -> `127.0.0.1:8788`. At this point **no public OAuth mounts have been enabled**.
 
+## Phase 2A — JWKS-only public Funnel canary (2026-10-09)
+
+Vaulter read-only routing inspection passed with auth PID 960, relay PID 5904, all four private ports intact, canonical public issuer and unchanged Auth0 protected-resource metadata. The announced public OIDC endpoint paths were: `/auth`, `/token`, `/jwks`, `/reg`, `/token/revocation`, `/me` and `/session/end`.
+
+**Only the JWKS path is authorized for the first public test.** The `/jwks` response contains public verification keys, not private signing keys.
+
+~~~powershell
+$repo = Join-Path $env:USERPROFILE "source\Tetherplane-auth-stage"
+git -C $repo pull --ff-only
+
+# Confirm current relay/auth reachability and Funnel baseline, without changes:
+& (Join-Path $repo "scripts\vaulter-tether-auth-funnel-canary.ps1")
+
+# Only after the above passes: add the JWKS-only route and verify it.
+& (Join-Path $repo "scripts\vaulter-tether-auth-funnel-canary.ps1") -Apply
+~~~
+
+The apply phase writes the previous `tailscale funnel status --json` and human-readable routing status to protected local files under the already existing Tetherplane auth-state directory. It refuses to overwrite existing JWKS routing and requires the public MCP protected-resource issuer to remain Auth0. It invokes **only** `tailscale funnel --bg --https=443 --set-path=/jwks http://127.0.0.1:8790/jwks`, not a root-route replacement, `tailscale serve`, or a global reset.
+
+It then checks public `/jwks` against the loopback signing **public key** attributes, confirms no private JWKS properties, checks the existing public `/healthz`, `/readyz`, `/.well-known/oauth-protected-resource/mcp` and confirms the pre-existing four tailnet-only ports remain unchanged. If any verification fails, it removes only the newly mounted `/jwks` route and checks rollback. If the original root route is unexpectedly missing after rollback, stop and review the protected status backup rather than resetting Funnel.
+
+**Before publishing the rest of OAuth:** (1) verify the JWKS canary on the installed Tailscale version; (2) establish durable, restart-safe process supervision for `tether-auth`; (3) verify paired-device account-approval readiness and back up the relay's original process/registry launch config. The new public OAuth routes are `/auth`, `/token`, `/jwks`, `/reg`, `/me`, `/session`, `/interaction`, and narrow OIDC discovery mounts. `/auth/device-login` must be a more-specific mount to the existing relay: Tailscale ServeMux's matching can otherwise route device-login subpaths to the auth service. Never redirect the whole `/.well-known` or `/auth` prefix without preserving the protected-resource and device-login routes.
+
 ## Phase 2 — Publish only verified auth paths
 
 1. Capture a safe Tailscale route configuration backup before changing any Funnel mount.
