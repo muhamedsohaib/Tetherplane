@@ -19,6 +19,7 @@ $script:repoDir = Split-Path -Parent $PSScriptRoot
 $script:protectedRunner = Join-Path $script:stateDir 'tether-auth-startup-runner.ps1'
 $script:authConfig = Join-Path $script:stateDir 'tether-auth-config.json'
 $script:postcheck = Join-Path $PSScriptRoot 'vaulter-tether-auth-supervised-postcheck.ps1'
+. (Join-Path $PSScriptRoot 'vaulter-tether-auth-runner-integrity.ps1')
 
 function Assert-Recovery([bool]$Condition, [string]$Message) {
     if (-not $Condition) { throw $Message }
@@ -451,11 +452,12 @@ foreach ($file in @(
 )) {
     Assert-Recovery (Test-Path -LiteralPath $file -PathType Leaf) 'A required protected auth runtime file is missing.'
 }
-$repoRunner = Join-Path $script:repoDir 'scripts\vaulter-tether-auth-startup-runner.ps1'
-Assert-Recovery (
-    (Get-FileHash -LiteralPath $repoRunner -Algorithm SHA256).Hash -ceq
-    (Get-FileHash -LiteralPath $script:protectedRunner -Algorithm SHA256).Hash
-) 'Protected S4U task runner differs from the tested source.'
+$sourceRunnerV1 = Join-Path $script:repoDir 'scripts\vaulter-tether-auth-startup-runner.ps1'
+$sourceRunnerV2 = Join-Path $script:repoDir 'scripts\vaulter-tether-auth-startup-runner-v2.ps1'
+# The install on disk may be v1 or v2; both require an exact source match.
+# This alone is not proof that a running PowerShell parent loaded v2.
+$installedRunnerVersion = Get-VerifiedRunnerVersion -V1SourcePath $sourceRunnerV1 -V2SourcePath $sourceRunnerV2 -ProtectedRunnerPath $script:protectedRunner
+Assert-Recovery ($installedRunnerVersion -cin @('v1','v2')) 'Unexpected protected runner source.'
 $task = Get-Task
 Assert-Recovery ($task.State -eq 'Running' -and
     [string]$task.Principal.LogonType -ceq 'S4U') 'S4U task is not running.'
