@@ -27,6 +27,11 @@ foreach ($guard in @(
     }
 }
 
+# $PID is a read-only automatic PowerShell variable (case-insensitive).
+if ($source -match '(?im)^\s*\$pid\s*=') {
+    throw 'Readiness script must not assign to the automatic $PID variable.'
+}
+
 $commands = @($ast.FindAll({
     param($node)
     $node -is [System.Management.Automation.Language.CommandAst]
