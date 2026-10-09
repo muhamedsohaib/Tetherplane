@@ -17,15 +17,17 @@ if (@($errors).Count -ne 0) {
 }
 $source = [IO.File]::ReadAllText($scriptPath)
 foreach ($required in @(
-    '[switch]$RestoreV1', '[switch]$StartV1Task',
+    '[switch]$RestoreV1', '[switch]$StartV1Task', '[switch]$EnableV1Task',
     'Get-VerifiedRunnerVersion', 'Tetherplane-TetherAuth-Startup',
     'tether-auth-startup-runner.v1-backup.ps1',
     'AreAccessRulesProtected', 'S4U', 'RestartCount', 'RestartInterval',
     'Invoke-OfflineRestoreTransaction', 'Invoke-OfflineStartTransaction',
+    'Invoke-OfflineEnableTransaction', 'Test-EnabledTaskXmlTransition',
     'Assert-OfflineTaskShape', 'Invoke-OfflineFileSwap',
     'Get-NetTCPConnection', 'Get-FileHash', 'Get-ScheduledTask',
     'OFFLINE V1 PREFLIGHT', 'OFFLINE V1 RESTORE VERIFIED',
-    'OFFLINE V1 TASK START VERIFIED', 'ROLLBACK UNVERIFIED',
+    'OFFLINE V1 TASK START VERIFIED', 'V1 TASK REENABLED VERIFIED',
+    'ROLLBACK UNVERIFIED',
     'No changes made'
 )) {
     if (-not $source.Contains($required)) { throw "Missing offline recovery contract: $required" }
@@ -56,6 +58,8 @@ foreach ($name in @(
     'Test-OfflinePrincipal',
     'Invoke-OfflineRestoreTransaction',
     'Invoke-OfflineStartTransaction',
+    'Invoke-OfflineEnableTransaction',
+    'Test-EnabledTaskXmlTransition',
     'Invoke-OfflineFileSwap',
     'Test-OfflineAclEquivalent'
 )) {
@@ -287,6 +291,97 @@ if ($vacantAst.Extent.Text -notmatch 'Get-NetTCPConnection -State Listen -ErrorA
 if (-not $source.Contains('Get-Item -LiteralPath $script:stateDir -ErrorAction Stop') -or
     -not $source.Contains('Protected auth directory may not be a reparse point.')) {
     throw 'Offline restore must refuse state directories redirected through junctions or symlinks.'
+}
+
+
+# Staged-auth fallback can leave the named task DISABLED. File restoration
+# must be allowed in this offline state without implicitly enabling or
+# starting anything. Enabling must be a separate explicit operation.
+$task.Triggers = @([pscustomobject]@{ CimClass=[pscustomobject]@{ CimClassName='MSFT_TaskBootTrigger' } })
+$task.State = 'Disabled'
+$task.Settings.Enabled = $false
+Assert-OfflineTaskShape -Task $task -ProtectedRunnerPath $runner -AllowDisabled
+try {
+    Assert-OfflineTaskShape -Task $task -ProtectedRunnerPath $runner
+    throw 'Disabled task accepted without the explicit disabled-state guard.'
+} catch {
+    if ($_.Exception.Message -eq 'Disabled task accepted without the explicit disabled-state guard.') { throw }
+}
+$task.Settings.Enabled = $true
+try {
+    Assert-OfflineTaskShape -Task $task -ProtectedRunnerPath $runner -AllowDisabled
+    throw 'Disabled task with enabled settings was accepted.'
+} catch {
+    if ($_.Exception.Message -eq 'Disabled task with enabled settings was accepted.') { throw }
+}
+$task.Settings.Enabled = $false
+$task.State = 'Running'
+try {
+    Assert-OfflineTaskShape -Task $task -ProtectedRunnerPath $runner -AllowDisabled
+    throw 'Running task accepted by disabled restoration path.'
+} catch {
+    if ($_.Exception.Message -eq 'Running task accepted by disabled restoration path.') { throw }
+}
+$task.State = 'Ready'
+$task.Settings.Enabled = $true
+Assert-OfflineTaskShape -Task $task -ProtectedRunnerPath $runner
+
+# Comparing task definitions must allow ONLY the expected enabled flag
+# change. The S4U principal, action and boot triggers cannot change.
+$disabledXml = '<Task><Settings><Enabled>false</Enabled><RestartOnFailure><Interval>PT1M</Interval><Count>10</Count></RestartOnFailure></Settings><Principals><Principal><UserId>account</UserId><LogonType>S4U</LogonType></Principal></Principals><Actions><Exec><Command>powershell.exe</Command></Exec></Actions></Task>'
+$enabledXml = $disabledXml.Replace('<Enabled>false</Enabled>','<Enabled>true</Enabled>')
+if (-not (Test-EnabledTaskXmlTransition -BeforeXml $disabledXml -AfterXml $enabledXml)) {
+    throw 'Exact enabled-flag-only transition must pass.'
+}
+if (Test-EnabledTaskXmlTransition -BeforeXml $disabledXml -AfterXml ($enabledXml.Replace('S4U','Password'))) {
+    throw 'Enabling may not modify the task logon type.'
+}
+if (Test-EnabledTaskXmlTransition -BeforeXml $disabledXml -AfterXml ($enabledXml.Replace('powershell.exe','cmd.exe'))) {
+    throw 'Enabling may not modify the task action.'
+}
+if (Test-EnabledTaskXmlTransition -BeforeXml $enabledXml -AfterXml $disabledXml) {
+    throw 'Task enable proof must not accept an inverse transition.'
+}
+
+# The enable-only transaction must not start a task. Every step is
+# independently gated, and failed verification must not be reported success.
+$enableEvents = New-Object 'System.Collections.Generic.List[string]'
+$enableOps = @{
+    VerifyDisabled = { $enableEvents.Add('disabled') }.GetNewClosure()
+    EnableNamedTask = { $enableEvents.Add('enable') }.GetNewClosure()
+    VerifyReady = { $enableEvents.Add('ready') }.GetNewClosure()
+}
+if ((Invoke-OfflineEnableTransaction -Operations $enableOps) -cne 'enabled' -or
+    ($enableEvents -join ',') -cne 'disabled,enable,ready') {
+    throw 'Task reenable transaction must verify both before and after conditions.'
+}
+foreach ($failed in @('VerifyDisabled','EnableNamedTask','VerifyReady')) {
+    $trace = New-Object 'System.Collections.Generic.List[string]'
+    $ops = @{}
+    foreach ($step in @('VerifyDisabled','EnableNamedTask','VerifyReady')) {
+        $label = $step
+        $ops[$step] = {
+            $trace.Add($label)
+            if ($label -ceq $failed) { throw 'synthetic guarded enable failure' }
+        }.GetNewClosure()
+    }
+    try {
+        Invoke-OfflineEnableTransaction -Operations $ops | Out-Null
+        throw 'Failed task reenable was reported successful.'
+    } catch {
+        if ($_.Exception.Message -eq 'Failed task reenable was reported successful.') { throw }
+    }
+    if ($failed -ceq 'VerifyDisabled' -and $trace.Count -ne 1) {
+        throw 'Reenable must not change any task when its preflight fails.'
+    }
+}
+if (-not $source.Contains('Enable-ScheduledTask -TaskName $script:taskName -TaskPath') -or
+    $source -match 'Enable-ScheduledTask -TaskName (?!\$script:taskName)' -or
+    $source -match 'Disable-ScheduledTask') {
+    throw 'Only the approved named task may be reenabled; never disable other tasks.'
+}
+if ($source -notmatch 'if \(\$EnableV1Task\)') {
+    throw 'Disabled task recovery requires an explicit mutually exclusive enable mode.'
 }
 
 Write-Output 'Offline v1 rescue task-state, atomic file, and rollback contracts passed.'
