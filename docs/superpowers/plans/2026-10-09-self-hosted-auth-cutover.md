@@ -1,7 +1,7 @@
 # Self-hosted tether-auth cutover — Vaulter
 
 **Date:** 2026-10-09  
-**Status:** Staged plan, not deployed or approved as verified.  
+**Status:** Local `tether-auth`, public `/jwks` canary, S4U validation and disabled startup task verified on Vaulter; Auth0 relay still active. Live supervised activation and final identity cutover remain pending.  
 **Baseline:** `main` at `5feee084eb24bfd4831ab42840bb5f10dafc8113`.  
 **Target:** Vaulter for the relay and authorization server; canonical source remains GitHub and Leno.  
 **Objective:** Replace the external Auth0 authorization server with the repository's own `tether-auth`, while retaining the existing public MCP URL, six-tool catalog, device routing, and local Policy Broker. No purchase or external messaging is required.
@@ -262,6 +262,34 @@ The permanent task executes a copy of `vaulter-tether-auth-startup-runner.ps1` l
 
 If `-Probe` fails due to S4U rights or local access, stop. Do not fall back to running the public authorization server as SYSTEM, weaken state-file ACLs, or put Windows account passwords/bridge credentials into task arguments. Record sanitized failure categories and assess an appropriate dedicated low-privilege service identity.
 
+## Disabled S4U startup registration accepted — 2026-10-09
+
+Vaulter completed the real registration flow successfully against the existing owner account and protected auth-state directory. Evidence supplied by the operator:
+
+- Repeated `-Probe` passed protected file access, Node.js runtime and both local service endpoints.
+- `-Register` passed its own fresh S4U probe, created the new task, and reported it registered **disabled** with the requested startup trigger and restart settings.
+- Independent `Get-ScheduledTask -TaskName "Tetherplane-TetherAuth-Startup"` returned `State=Disabled` and `LogonType=S4U`.
+- The original auth service at `127.0.0.1:8790`, Auth0 relay at `127.0.0.1:8788`, Funnel `/jwks` canary and two human logon wrapper tasks were not modified.
+- This is evidence that a permanent scheduler definition exists, **not** that scheduled auth has ever started or survived a reboot.
+
+The new `scripts/vaulter-tether-auth-activate.ps1` defaults to read-only checks. It verifies the uniquely registered task configuration, original staging auth process identity/command-line metadata, copied protected runner hash, unchanged public JWKS, relay issuer, and Funnel roots. In `-Activate` mode only, the handover stops the verified original staging process, enables and starts the newly registered auth task, verifies the task-owned replacement process and OAuth availability, and attempts a narrow rollback to the original staged service if necessary. Its generic status messages do not include task account names, process command lines, tokens or JWKS secrets.
+
+Use a **two-step operational gate**. First gather safe preflight output and inspect it; do not jump to activation in the same step:
+
+~~~powershell
+$repo = Join-Path $env:USERPROFILE "source\Tetherplane-auth-stage"
+git -C $repo pull --ff-only
+& (Join-Path $repo "scripts\vaulter-tether-auth-activate.ps1")
+~~~
+
+Only after the preflight succeeds and its planned downtime/rollback have been accepted:
+
+~~~powershell
+& (Join-Path $repo "scripts\vaulter-tether-auth-activate.ps1") -Activate
+~~~
+
+The handover includes a brief service restart on port 8790. Its automated rollback relies on file-backed credentials and the current local configuration remaining readable and valid. Do **not** reboot or switch the relay issuer during this gate. After successful handover, unattended **reboot recovery** remains unproven until separately demonstrated; a running Scheduled Task alone is not a restart test.
+
 ## Phase 2 — Publish only verified auth paths
 
 1. Capture a safe Tailscale route configuration backup before changing any Funnel mount.
@@ -305,4 +333,4 @@ If `-Probe` fails due to S4U rights or local access, stop. Do not fall back to r
 
 - Desktop Commander is quota-blocked; do not retry it.
 - Vaulter's installed Tetherplane source/build location, process manager, Node/pnpm status, auth-port availability, and paired-device approval availability are not yet observed.
-- There is no verified live self-hosted authorization service or ChatGPT acceptance run yet.
+- Local `tether-auth` and public JWKS are verified, but the supervised startup task is still disabled pending activation; ChatGPT's authenticated six-tool acceptance remains unverified.
