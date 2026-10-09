@@ -1,7 +1,7 @@
 # Self-hosted tether-auth cutover — Vaulter
 
 **Date:** 2026-10-09  
-**Status:** Live S4U supervised-auth handover and public JWKS verified on Vaulter; independent postcheck and reboot recovery unverified. Auth0 remains active; identity cutover and ChatGPT tool acceptance pending.  
+**Status:** S4U handover and independent postcheck passed. Controlled process-crash exercise recovered only after manual task restart; automatic restart FAILED verification. Reboot, OAuth identity cutover, and ChatGPT acceptance remain pending. Auth0 remains active.  
 **Baseline:** `main` at `5feee084eb24bfd4831ab42840bb5f10dafc8113`.  
 **Target:** Vaulter for the relay and authorization server; canonical source remains GitHub and Leno.  
 **Objective:** Replace the external Auth0 authorization server with the repository's own `tether-auth`, while retaining the existing public MCP URL, six-tool catalog, device routing, and local Policy Broker. No purchase or external messaging is required.
@@ -324,6 +324,29 @@ Vaulter's read-only independent checker passed after the handover. It reported t
 The next implementation gate is `scripts/vaulter-tether-auth-recovery-rehearsal.ps1`. Its default invocation is **read-only**. It checks the still-running S4U task, existing process ownership, the configured restart policy, protected state, signing verification keys, and public relay/Funnel health.
 
 An **explicit** `-Exercise` invocation would simulate a process failure by terminating only the verified task-owned Node auth PID, wait for Task Scheduler automatic recovery, and use manual task recovery or restore the previously staged auth process if necessary. This deliberate failure injection is not a reboot test. Do not use `-Exercise` without a successful fresh read-only preflight and readiness for a short auth-service interruption. Do not switch Auth0 or alter public routes during this gate.
+## 2026-10-09 — Failed automatic restart, manual recovery verified
+
+The Vaulter operator ran the restart rehearsal against the S4U task-owned auth listener after its read-only preflight passed at PID 8940. The deliberate failure-injection run reported:
+
+> Automatic restart FAILED; manual task restart verified with unchanged Auth0 and public signing keys.
+> Reboot recovery remains unverified.
+
+**Interpretation:** The manually restarted `tether-auth` passed ownership, health and public-key checks. Automatic restart did **not** pass during the bounded wait. The new PID was not reported. Neither unattended reboot startup nor scheduler self-healing is demonstrated. Do not label this installation production-ready, change the relay issuer, disable Auth0, or rerun the crash simulation before identifying the failure.
+
+One potential configuration discrepancy was found in the registered-task creation source: the task was created with `RestartCount=999`, while Microsoft's Task Scheduler XML `RestartOnFailure/Count` field is an unsigned byte with maximum value 255. This is **not yet established as the root cause**: inspect the actual task settings and TaskScheduler/Operational events first. Another hypothesis is that Task Scheduler observed its PowerShell parent as successful or still running and therefore did not schedule a restart. A child Node process failure is not necessarily equivalent to failure of the scheduled PowerShell action.
+
+Next read-only gate (never prints scheduler raw event messages, task account, action arguments, or bridge credentials):
+
+~~~powershell
+$repo = Join-Path $env:USERPROFILE "source\Tetherplane-auth-stage"
+git -C $repo pull --ff-only
+& (Join-Path $repo "scripts\vaulter-tether-auth-restart-diagnostic.ps1")
+~~~
+
+The script first reuses the independent supervised-auth postcheck, then reports the task's *actual* `RestartCount`, `RestartInterval`, last result and bounded task-matched Operational event IDs, timestamps, and numeric result codes. No tasks, services, processes or Tailscale routes are modified. If task history is disabled or inaccessible, it reports the evidence gap without enabling event logging or weakening permissions.
+
+Correct the smallest demonstrated supervision fault using a new tested and reversible plan. A new live restart exercise is permitted only after fresh checks and a maintenance window; unattended reboot acceptance is a separate, later gate.
+
 ## Phase 2 — Publish only verified auth paths
 
 1. Capture a safe Tailscale route configuration backup before changing any Funnel mount.
@@ -367,4 +390,4 @@ An **explicit** `-Exercise` invocation would simulate a process failure by termi
 
 - Desktop Commander is quota-blocked; do not retry it.
 - Vaulter's installed Tetherplane source/build location, process manager, Node/pnpm status, auth-port availability, and paired-device approval availability are not yet observed.
-- Local `tether-auth`, public JWKS, and the live S4U handover are verified. Independent supervisor postcheck, reboot recovery, and authenticated ChatGPT six-tool acceptance remain unverified.
+- Local auth, public JWKS, and the independent S4U supervisor postcheck are verified. Automatic process restart failed; manual task recovery passed. Reboot recovery, device approval, identity cutover and authenticated ChatGPT six-tool acceptance remain unverified.
