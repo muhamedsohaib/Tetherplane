@@ -464,11 +464,31 @@ if ($RefreshSupervisor) {
             Disable-ScheduledTask -TaskName $script:taskName -TaskPath '\' -ErrorAction Stop | Out-Null
             Assert-Recovery (-not [bool](Get-Task).Settings.Enabled) 'Task remains enabled; refusing stop.'
         }
-        StopOwnedTask = { throw 'not implemented: StopOwnedTask' }
-        VerifyVacant = { throw 'not implemented: VerifyVacant' }
-        ReenableTask = { throw 'not implemented: ReenableTask' }
-        StartTask = { throw 'not implemented: StartTask' }
-        VerifyNewTask = { throw 'not implemented: VerifyNewTask' }
+        StopOwnedTask = {
+            Stop-OriginalSupervisorInstance
+        }
+        VerifyVacant = {
+            Wait-VacantSupervisor
+            Assert-Recovery (-not [bool](Get-Task).Settings.Enabled) 'Task re-enabled during quiesce.'
+        }
+        ReenableTask = {
+            Enable-ScheduledTask -TaskName $script:taskName -TaskPath '\' -ErrorAction Stop | Out-Null
+            Assert-Recovery ([bool](Get-Task).Settings.Enabled) 'Task did not re-enable.'
+        }
+        StartTask = {
+            $listeners = @(Get-NetTCPConnection -State Listen -LocalPort 8790 -ErrorAction SilentlyContinue)
+            Assert-Recovery ($listeners.Count -eq 0) 'Port 8790 occupied; refusing duplicate task.'
+            Start-ScheduledTask -TaskName $script:taskName -TaskPath '\' -ErrorAction Stop
+        }
+        VerifyNewTask = {
+            Wait-SupervisedAuth -PriorPid $script:originalPid -Attempts 35
+            Verify-SharedState
+            $current = Get-Task
+            $xml = [string](Export-ScheduledTask -TaskName $script:taskName -TaskPath '\' -ErrorAction Stop)
+            Assert-Recovery ([bool]$current.Settings.Enabled -and
+                (Test-RegisteredRestartPolicy -Settings $current.Settings -TaskXml $xml)
+            ) 'Replacement instance did not preserve repaired policy.'
+        }
         RestoreTask = { throw 'not implemented: RestoreTask' }
         VerifyRecoveredTask = { throw 'not implemented: VerifyRecoveredTask' }
         DisableTask = { throw 'not implemented: DisableTask' }
