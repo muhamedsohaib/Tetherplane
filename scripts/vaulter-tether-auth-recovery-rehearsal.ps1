@@ -382,7 +382,9 @@ function Wait-StagedAuth([int]$Attempts=35) {
 }
 
 # Every source, identity and health gate runs before a deliberate process exit.
-Assert-Recovery (-not ($Exercise -and $RefreshSupervisor)) 'Select one action: -Exercise or -RefreshSupervisor.'
+if ($Exercise -and $RefreshSupervisor) {
+    throw 'Select only one disruptive action: -Exercise or -RefreshSupervisor.'
+}
 Assert-Recovery ($env:OS -eq 'Windows_NT' -and
     $env:COMPUTERNAME -ieq 'vaulter') 'Restart rehearsal is restricted to Vaulter.'
 $script:nodeExecutable = (Get-Command node.exe -ErrorAction Stop).Source
