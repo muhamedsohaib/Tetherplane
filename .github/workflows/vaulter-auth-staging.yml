@@ -33,3 +33,7 @@ jobs:
         if: runner.os == 'Windows'
         shell: pwsh
         run: ./tests/release/vaulter-tether-auth-stage-contract.ps1
+      - name: Real relay pretest with competing pnpm on Windows
+        if: runner.os == 'Windows'
+        shell: pwsh
+        run: ./tests/release/vaulter-tether-auth-nested-pnpm-integration.ps1
