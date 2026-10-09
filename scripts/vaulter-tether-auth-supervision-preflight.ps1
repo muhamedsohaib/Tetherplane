@@ -12,6 +12,52 @@ param()
 $ErrorActionPreference = 'Stop'
 Set-StrictMode -Version Latest
 
+function Get-TaskLauncherKind($Task) {
+    # Inspect executable basenames only. Never expose Execute or Arguments.
+    $classes = @(
+        foreach ($action in @($Task.Actions)) {
+            $executable = ([string]$action.Execute).Trim('"', ' ')
+            if (-not $executable) { continue }
+            $leaf = [IO.Path]::GetFileName($executable).ToLowerInvariant()
+            switch ($leaf) {
+                { $_ -in @('powershell.exe', 'pwsh.exe', 'powershell', 'pwsh') } {
+                    'powershell-wrapper'
+                    break
+                }
+                { $_ -in @('cmd.exe', 'cmd') } {
+                    'cmd-wrapper'
+                    break
+                }
+                { $_ -in @('node.exe', 'node') } {
+                    'node-direct'
+                    break
+                }
+                { $_ -in @('wscript.exe', 'cscript.exe') } {
+                    'windows-script-wrapper'
+                    break
+                }
+                default {
+                    if ($leaf -match '\.ps1$') { 'powershell-wrapper' }
+                    elseif ($leaf -match '\.(?:bat|cmd)$') { 'cmd-wrapper' }
+                    else { 'other-executable' }
+                }
+            }
+        }
+    )
+    if ($classes.Count -eq 0) { return 'unknown' }
+    return (($classes | Sort-Object -Unique) -join ',')
+}
+
+function Get-TaskResultSummary([int64]$Value) {
+    # Normal Task Scheduler operational status values can be nonzero.
+    if ($Value -eq 0) { return 'success-or-never-run' }
+    if ($Value -eq [int64]0x00041301) { return 'running' }
+    if ($Value -eq [int64]0x00041303) { return 'not-yet-run' }
+    if ($Value -eq [int64]0x00041302) { return 'disabled' }
+    if ($Value -eq [int64]0x00041306) { return 'terminated' }
+    return 'nonzero-other'
+}
+
 function Get-TaskRole($Task) {
     # Never return or print action data: these may include credentials.
     $actionText = (@($Task.Actions | ForEach-Object {
@@ -51,8 +97,11 @@ function Get-TaskLogonSummary($Task) {
     if ($null -eq $Task -or $null -eq $Task.Principal) { return 'unknown' }
     $logon = [string]$Task.Principal.LogonType
     switch ($logon) {
+        'Interactive' { return 'requires-user-session' }
         'InteractiveToken' { return 'requires-user-session' }
+        'InteractiveOrPassword' { return 'may-require-user-session' }
         'InteractiveTokenOrPassword' { return 'may-require-user-session' }
+        'Group' { return 'group-identity' }
         'ServiceAccount' { return 'service-logon' }
         'S4U' { return 'noninteractive-s4u' }
         'Password' { return 'noninteractive-stored-logon' }
@@ -82,13 +131,14 @@ Write-Output "Listener processes: relay PID $($relayProcess.ProcessId), auth PID
 
 $tasks = @(Get-ScheduledTask -ErrorAction Stop | Where-Object {
     $_.TaskName -match '(?i)tetherplane|tether-auth|tether-relay'
-})
+} | Sort-Object TaskPath, TaskName)
 Write-Output "Named Tetherplane scheduled-task candidates: $($tasks.Count)"
 
 $index = 0
 foreach ($task in $tasks) {
     $index += 1
     $kind = Get-TaskRole $task
+    $launcherKind = Get-TaskLauncherKind $task
     $triggers = Get-TaskTriggerSummary $task
     $logon = Get-TaskLogonSummary $task
     $isEnabled = [string]($task.State -ne 'Disabled')
@@ -119,15 +169,14 @@ foreach ($task in $tasks) {
     $lastResult = 'unavailable'
     try {
         $info = Get-ScheduledTaskInfo -TaskName $task.TaskName -TaskPath $task.TaskPath -ErrorAction Stop
-        $lastResult = if ([int64]$info.LastTaskResult -eq 0) { 'success-or-never-run' }
-                      else { 'nonzero' }
+        $lastResult = Get-TaskResultSummary ([int64]$info.LastTaskResult)
     } catch {
         $lastResult = 'unavailable'
     }
 
     # No task names, action strings, command lines or user identities are shown.
-    Write-Output ("Candidate {0}: role={1}; state={2}; enabled={3}; triggers={4}; logon={5}" -f
-        $index, $kind, $state, $isEnabled, $triggers, $logon)
+    Write-Output ("Candidate {0}: role={1}; launcherKind={2}; state={3}; enabled={4}; triggers={5}; logon={6}" -f
+        $index, $kind, $launcherKind, $state, $isEnabled, $triggers, $logon)
     Write-Output ("Candidate {0}: restartCount={1}; startWhenAvailable={2}; executionTimeLimit={3}; lastResult={4}" -f
         $index, $restartCount, $startWhenAvailable, $executionLimit, $lastResult)
 }
