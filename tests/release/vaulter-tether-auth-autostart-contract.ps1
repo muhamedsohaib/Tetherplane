@@ -195,8 +195,7 @@ if (($longRun.State.Events -join ',') -cne 'vacant,run,wait:1,vacant,run,wait:2,
 }
 $cap = New-ChildSupervisorFixture @(1,1,1,1,1,1,1,1) @(1,1,1,1,1,1,1,1)
 Invoke-TetherAuthChildSupervisor -Operations $cap.Ops -MaxRunsForTest 8 | Out-Null
-if (($cap.State.Events -join ',') -notmatch 'wait:60,vacant,run
-) {
+if (($cap.State.Events -join ',') -notlike '*wait:60,vacant,run') {
     throw 'Restart delays must cap at 60 seconds while leaving the task runner alive.'
 }
 foreach ($step in @('AssertPortVacant','RunChild','PauseBeforeRestart')) {
