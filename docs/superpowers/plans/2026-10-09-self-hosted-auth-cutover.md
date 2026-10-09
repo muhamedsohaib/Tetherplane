@@ -308,6 +308,15 @@ git -C $repo pull --ff-only
 
 The intended message is `Auth handover preflight PASS` followed by `No changes made`. Do not use `-Activate` until that live preflight has passed and the scoped handover/rollback has been reviewed.
 
+## 2026-10-09 — Supervised auth activation evidence
+
+Vaulter operator completed the guarded S4U handover. The previously staged Node auth process was PID 960; the newly task-owned listener was reported as PID 8940. The activation script reported the startup task running, auth/public JWKS unchanged, and the Auth0 relay unchanged. Its rollback branch was not invoked.
+
+This establishes a live handover but not recovery after reboot. Do not repeat the activation operation: its entry gate requires the task to be disabled. Do not restart Vaulter or change the relay issuer yet.
+
+Next, after a fast-forward pull on the feature branch, run only the read-only independent checker `scripts/vaulter-tether-auth-supervised-postcheck.ps1` on Vaulter. It verifies parent-process supervision, Windows SID ownership, protected runner hash, loopback and public health, issuer/PKCE discovery, public signing-key consistency, Auth0 protected-resource identity, and existing public/private Funnel routes. Do not expose command lines, authentication secrets or private signing material in handoff output.
+
+After independent postcheck, a scoped restart test and a separate reboot-recovery gate remain. Neither is equivalent to final authenticated ChatGPT six-tool acceptance.
 ## Phase 2 — Publish only verified auth paths
 
 1. Capture a safe Tailscale route configuration backup before changing any Funnel mount.
