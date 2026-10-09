@@ -4,7 +4,7 @@ $path = Join-Path $PSScriptRoot '..\..\scripts\vaulter-tether-auth-staged-cutbac
 if (-not (Test-Path -LiteralPath $path -PathType Leaf)) { throw 'RED: staged cutback script missing.' }
 $tokens = $null; $errors = $null
 $ast = [Management.Automation.Language.Parser]::ParseFile((Resolve-Path $path).Path,[ref]$tokens,[ref]$errors)
-if (@($errors).Count) { throw 'Staged cutback must parse under Windows PowerShell.' }
+if (@($errors).Count) { throw ('Staged cutback parse errors: ' + ((@($errors) | ForEach-Object { 'line ' + $_.Extent.StartLineNumber + ': ' + $_.Message }) -join '; ')) }
 $source = [IO.File]::ReadAllText((Resolve-Path $path).Path)
 foreach ($required in @('ApplyCutback','Get-NetTCPConnection','CreationDate','ParentProcessId',
   'Get-ScheduledTask','Disabled','Tetherplane-TetherAuth-Startup','Stop-Process',
