@@ -279,4 +279,32 @@ $fastWorkflow = [IO.File]::ReadAllText((Join-Path $base '.github\workflows\vault
 if ([regex]::Matches($fastWorkflow, '"scripts/vaulter-tether-auth-autostart[.]ps1"').Count -ne 2) {
     throw 'Fast Windows CI must exercise S4U registrar changes on both push and pull requests.'
 }
+
+# Exercise the real -File parameter binder on CI, where the platform guard
+# must run before any S4U task or protected auth state can be changed.
+if ($env:COMPUTERNAME -ine 'vaulter') {
+    $shellExe = Join-Path $PSHOME $(if ($PSVersionTable.PSVersion.Major -ge 7) { 'pwsh.exe' } else { 'powershell.exe' })
+    $unique = [guid]::NewGuid().ToString('N')
+    $stdoutFile = Join-Path ([IO.Path]::GetTempPath()) ("tp-autostart-bind-$unique.stdout")
+    $stderrFile = Join-Path ([IO.Path]::GetTempPath()) ("tp-autostart-bind-$unique.stderr")
+    try {
+        $argsLine = '-NoLogo -NoProfile -NonInteractive -ExecutionPolicy Bypass -File "' + $registrationPath + '" -ProbeV2'
+        $child = Start-Process -FilePath $shellExe -ArgumentList $argsLine -Wait -PassThru -RedirectStandardOutput $stdoutFile -RedirectStandardError $stderrFile -ErrorAction Stop
+        $diagnostic = [IO.File]::ReadAllText($stderrFile)
+        if ($child.ExitCode -eq 0 -or
+            $diagnostic -notmatch 'Autostart registration is restricted to Vaulter') {
+            throw 'Autostart -File -ProbeV2 must reach the Vaulter platform guard without a RepoRoot parameter-binding exception.'
+        }
+        if ($diagnostic -match 'Split-Path|ParameterArgumentValidationError|Cannot bind argument') {
+            throw 'Autostart still evaluates an unavailable script-root variable at parameter binding.'
+        }
+    } finally {
+        foreach ($p in @($stdoutFile,$stderrFile)) {
+            if (Test-Path -LiteralPath $p -PathType Leaf) {
+                Remove-Item -LiteralPath $p -Force -ErrorAction SilentlyContinue
+            }
+        }
+    }
+}
+
 Write-Output 'Guarded S4U autostart contracts passed.'
