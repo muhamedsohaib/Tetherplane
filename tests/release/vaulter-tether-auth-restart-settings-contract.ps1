@@ -77,6 +77,14 @@ if (Test-OnlyRestartCountChanged -BeforeXml $before -AfterXml $wrongPrincipal -O
     throw 'Task owner changes must be rejected.'
 }
 
+# The real ScheduledTasks CIM settings object must permit an in-memory
+# RestartCount edit. This never registers or modifies any scheduled task.
+$prototype = New-ScheduledTaskSettingsSet -RestartCount 3 -RestartInterval (New-TimeSpan -Minutes 1)
+$prototype.RestartCount = 10
+if ([int]$prototype.RestartCount -ne 10) {
+    throw 'ScheduledTasks CIM RestartCount property could not be edited in memory.'
+}
+
 function New-Fixture([string[]]$fail) {
     $events = New-Object 'System.Collections.Generic.List[string]'
     $ops = @{}
