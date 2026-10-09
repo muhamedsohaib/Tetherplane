@@ -13,6 +13,7 @@ param(
     [string]$RepoRoot = (Split-Path -Parent $PSScriptRoot),
     [string]$StateDirectory = (Join-Path $env:LOCALAPPDATA 'Tetherplane\tether-auth'),
     [switch]$Probe,
+    [switch]$ProbeV2,
     [switch]$Register
 )
 
@@ -63,10 +64,13 @@ Assert-Autostart (
     $env:OS -eq 'Windows_NT' -and $env:COMPUTERNAME -ieq 'vaulter'
 ) 'Autostart registration is restricted to Vaulter.'
 Assert-Autostart (-not ($Probe -and $Register)) 'Select only one mode: -Probe or -Register.'
+Assert-Autostart (-not ($ProbeV2 -and ($Probe -or $Register))) 'V2 S4U probe cannot register a permanent task.'
 
 $RepoRoot = [IO.Path]::GetFullPath($RepoRoot)
 $StateDirectory = [IO.Path]::GetFullPath($StateDirectory)
-$sourceRunner = Join-Path $RepoRoot 'scripts\vaulter-tether-auth-startup-runner.ps1'
+$sourceRunnerV1 = Join-Path $RepoRoot 'scripts\vaulter-tether-auth-startup-runner.ps1'
+$sourceRunnerV2 = Join-Path $RepoRoot 'scripts\vaulter-tether-auth-startup-runner-v2.ps1'
+$sourceRunner = if ($ProbeV2) { $sourceRunnerV2 } else { $sourceRunnerV1 }
 $permanentRunner = Join-Path $StateDirectory 'tether-auth-startup-runner.ps1'
 
 Assert-Autostart (Test-Path -LiteralPath $sourceRunner -PathType Leaf) 'Verified startup runner is missing.'
@@ -83,17 +87,35 @@ Assert-Autostart (
 ) 'Relay and staged auth must be healthy before probing unattended startup.'
 
 $existingTask = @(Get-ScheduledTask -TaskName $taskName -ErrorAction SilentlyContinue)
-Assert-Autostart ($existingTask.Count -eq 0) 'Permanent auth autostart task already exists; task already exists, do not overwrite.'
+if ($ProbeV2) {
+    Assert-Autostart ($existingTask.Count -eq 1 -and
+        $existingTask[0].State -eq 'Running' -and
+        [string]$existingTask[0].Principal.LogonType -ceq 'S4U') 'V2 probe requires the existing healthy S4U startup task.'
+    . (Join-Path $PSScriptRoot 'vaulter-tether-auth-runner-integrity.ps1')
+    $installedVersion = Get-VerifiedRunnerVersion -V1SourcePath $sourceRunnerV1 -V2SourcePath $sourceRunnerV2 -ProtectedRunnerPath $permanentRunner
+    Assert-Autostart ($installedVersion -ceq 'v1') 'V2 probe expects an unchanged installed v1 baseline.'
+    & (Join-Path $PSScriptRoot 'vaulter-tether-auth-supervised-postcheck.ps1') | Out-Null
+    $git = (Get-Command git.exe -ErrorAction Stop).Source
+    $head = [string](& $git -C $RepoRoot rev-parse HEAD)
+    $remote = [string](& $git -C $RepoRoot rev-parse 'refs/remotes/origin/feature/tether-auth-vaulter-migration-20261009')
+    Assert-Autostart ($LASTEXITCODE -eq 0 -and $head.Trim() -ceq $remote.Trim()) 'V2 source must match the fetched feature revision.'
+    $dirty = @(& $git -C $RepoRoot status --porcelain --untracked-files=no)
+    Assert-Autostart ($LASTEXITCODE -eq 0 -and $dirty.Count -eq 0) 'V2 source must come from a clean checkout.'
+} else {
+    Assert-Autostart ($existingTask.Count -eq 0) 'Permanent auth autostart task already exists; task already exists, do not overwrite.'
+}
 
 $node = Get-Command node.exe -ErrorAction Stop
 $powerShell = Join-Path $env:SystemRoot 'System32\WindowsPowerShell\v1.0\powershell.exe'
 Assert-Autostart (Test-Path -LiteralPath $powerShell -PathType Leaf) 'Windows PowerShell 5.1 executable missing.'
 
 if (-not $Probe -and -not $Register) {
-    Write-Output 'Auth autostart preflight: PASS. No permanent changes made.'
-    Write-Output 'Use -Probe to check S4U account/state/loopback access without registering a persistent task.'
-    Write-Output 'Use -Register only after the S4U probe has passed.'
-    return
+    if (-not $ProbeV2) {
+        Write-Output 'Auth autostart preflight: PASS. No permanent changes made.'
+        Write-Output 'Use -Probe to check S4U access before first registration; use -ProbeV2 to validate v2 under the EXISTING task principal.'
+        Write-Output 'Use -Register only after the S4U probe has passed.'
+        return
+    }
 }
 
 # S4U does not persist a user password, and the task uses the current
@@ -155,6 +177,22 @@ try {
 }
 Assert-Autostart $probeCleanupSucceeded 'Temporary S4U probe task was not removed. Refusing permanent registration.'
 Write-Output 'S4U probe verified protected state access, Node.js runtime, and both loopback services.'
+
+if ($ProbeV2) {
+    # Only after successful task cleanup, record a short-lived proof with
+    # nonsecret source SHA-256 and verification timestamp in protected state.
+    $proofPath = Join-Path $StateDirectory 'tether-auth-runner-v2-probe.json'
+    $proof = [ordered]@{
+        v2_source_hash = (Get-FileHash -LiteralPath $sourceRunnerV2 -Algorithm SHA256).Hash
+        verified_utc = [datetime]::UtcNow.ToString('o')
+        principal = 'S4U'
+        task = $taskName
+    }
+    [IO.File]::WriteAllText($proofPath, (ConvertTo-Json -InputObject $proof -Compress), [Text.Encoding]::UTF8)
+    Assert-Autostart (Test-Path -LiteralPath $proofPath -PathType Leaf) 'Protected S4U v2 proof not saved.'
+    Write-Output 'S4U v2 probe verified. Existing task, auth listener, relay, and public routes remain unchanged.'
+    return
+}
 
 if (-not $Register) {
     Write-Output 'No permanent changes made. Existing auth and relay services remain running.'
