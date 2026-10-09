@@ -41,3 +41,7 @@ jobs:
         if: runner.os == 'Windows'
         shell: pwsh
         run: ./tests/release/vaulter-tether-auth-nested-pnpm-integration.ps1
+      - name: Vaulter OAuth route preflight contract
+        if: runner.os == 'Windows'
+        shell: pwsh
+        run: ./tests/release/vaulter-tether-auth-route-preflight-contract.ps1
