@@ -247,4 +247,32 @@ if ($v2 -notmatch '(?s)if \(\$Validate\).*?Get-ScheduledTask' -or
     throw 'The v2 S4U probe must validate the registered task access under S4U.'
 }
 
+
+# The one-time v2 probe must execute as the SAME Windows SID as the
+# persistent task. Matching only "LogonType=S4U" does not prove this.
+$principalFunc = $ast.Find({
+    param($node)
+    $node -is [System.Management.Automation.Language.FunctionDefinitionAst] -and
+    $node.Name -eq 'Test-TaskPrincipalMatchesUser'
+}, $true)
+if ($null -eq $principalFunc) {
+    throw 'S4U v2 probe must compare the registered task user SID with the probing identity.'
+}
+Invoke-Expression $principalFunc.Extent.Text
+$currentUser = [Security.Principal.WindowsIdentity]::GetCurrent()
+if (-not (Test-TaskPrincipalMatchesUser -ExpectedIdentity $currentUser -TaskUserId $currentUser.User.Value) -or
+    -not (Test-TaskPrincipalMatchesUser -ExpectedIdentity $currentUser -TaskUserId $currentUser.Name)) {
+    throw 'S4U principal matching must accept both Windows SID and account-name representations.'
+}
+$otherSid = if ($currentUser.User.Value -ceq 'S-1-5-18') { 'S-1-5-19' } else { 'S-1-5-18' }
+if (Test-TaskPrincipalMatchesUser -ExpectedIdentity $currentUser -TaskUserId $otherSid) {
+    throw 'Different S4U task principal must not authorize v2 permission proof.'
+}
+if (Test-TaskPrincipalMatchesUser -ExpectedIdentity $currentUser -TaskUserId 'not-a-valid-task-identity') {
+    throw 'Unresolvable S4U principal must fail closed.'
+}
+if (-not $registration.Contains('Test-TaskPrincipalMatchesUser -ExpectedIdentity $windowsIdentity -TaskUserId $existingTask[0].Principal.UserId')) {
+    throw 'ProbeV2 must check the exact existing task principal before creating the temporary task.'
+}
+
 Write-Output 'Guarded S4U autostart contracts passed.'
