@@ -9,11 +9,20 @@ $source = [IO.File]::ReadAllText((Resolve-Path $path).Path)
 foreach ($required in @('ApplyCutback','Get-NetTCPConnection','CreationDate','ParentProcessId',
   'Get-ScheduledTask','Disabled','Tetherplane-TetherAuth-Startup','Stop-Process',
   'vaulter-tether-auth-offline-restore.ps1','-RestoreV1','-EnableV1Task','-StartV1Task',
-  'Invoke-StagedCutbackTransaction','ROLLBACK UNVERIFIED','No changes made')) {
+  'Invoke-StagedCutbackTransaction','ROLLBACK UNVERIFIED','No changes made',
+  'tether-auth-owned-staged-fallback.json','Get-PublicKeyFingerprint',
+  'https://tetherplane-dev.eu.auth0.com/','baselineKeys')) {
   if (-not $source.Contains($required)) { throw "Missing cutback safeguard: $required" }
 }
 foreach ($forbidden in @('Stop-Process -Name','Unregister-ScheduledTask','Register-ScheduledTask','gh auth token')) {
   if ($source.Contains($forbidden)) { throw "Forbidden cutback operation: $forbidden" }
+}
+$recoveryPath=Join-Path $PSScriptRoot '..\..\scripts\vaulter-tether-auth-recovery-rehearsal.ps1'
+$recovery=[IO.File]::ReadAllText((Resolve-Path -LiteralPath $recoveryPath).Path)
+foreach($required in @('tether-auth-owned-staged-fallback.json',
+ 'tether-auth-owned-stage/v1','startedStagePid','CreationDate','ConvertTo-Json',
+ 'Set-Acl','File]::Replace')) {
+ if (-not $recovery.Contains($required)) {throw "Recovery lacks protected owned-stage evidence: $required"}
 }
 $f = $ast.Find({param($n) $n -is [Management.Automation.Language.FunctionDefinitionAst] -and
   $n.Name -eq 'Invoke-StagedCutbackTransaction'},$true)
