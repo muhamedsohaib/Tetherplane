@@ -360,4 +360,4 @@ After independent postcheck, a scoped restart test and a separate reboot-recover
 
 - Desktop Commander is quota-blocked; do not retry it.
 - Vaulter's installed Tetherplane source/build location, process manager, Node/pnpm status, auth-port availability, and paired-device approval availability are not yet observed.
-- Local `tether-auth` and public JWKS are verified, but the supervised startup task is still disabled pending activation; ChatGPT's authenticated six-tool acceptance remains unverified.
+- Local `tether-auth`, public JWKS, and the live S4U handover are verified. Independent supervisor postcheck, reboot recovery, and authenticated ChatGPT six-tool acceptance remain unverified.
