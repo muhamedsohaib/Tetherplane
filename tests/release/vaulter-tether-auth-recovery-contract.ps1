@@ -176,4 +176,91 @@ if (-not $src.Contains('Test-RegisteredRestartPolicy -Settings $task.Settings -T
     throw 'Recovery script must invoke registered restart-policy gate before fault injection.'
 }
 
+
+# Supervisor instance refresh is a separate, explicitly enabled transaction.
+# Its default must remain read-only; it must not misreport manual recovery as a refresh.
+foreach ($required in @(
+    '[switch]$RefreshSupervisor', 'if ($Exercise -and $RefreshSupervisor)',
+    'Invoke-GuardedSupervisorRefresh', 'Settings.Enabled',
+    'Stop-ScheduledTask', 'Enable-ScheduledTask',
+    'SUPERVISOR INSTANCE REFRESH VERIFIED', 'SUPERVISOR REFRESH FAILED',
+    'original listener PID', 'public signing keys',
+    'Task instance restart does not prove automatic recovery'
+)) {
+    if (-not $src.Contains($required)) {
+        throw "Supervisor refresh missing required safety marker: $required"
+    }
+}
+$refreshAst = $ast.Find({
+    param($node)
+    $node -is [System.Management.Automation.Language.FunctionDefinitionAst] -and
+        $node.Name -eq 'Invoke-GuardedSupervisorRefresh'
+}, $true)
+if ($null -eq $refreshAst) { throw 'Missing standalone supervisor-refresh transaction.' }
+Invoke-Expression $refreshAst.Extent.Text
+
+function New-RefreshFixture([string[]]$Failures) {
+    $events = New-Object 'System.Collections.Generic.List[string]'
+    $ops = @{}
+    foreach ($step in @(
+        'VerifyBaseline', 'VerifyTarget', 'QuiesceTask', 'StopOwnedTask',
+        'VerifyVacant', 'ReenableTask', 'StartTask', 'VerifyNewTask',
+        'RestoreTask', 'VerifyRecoveredTask',
+        'DisableTask', 'StopTask', 'ClearListener', 'RestoreStage', 'VerifyStage'
+    )) {
+        $name = $step
+        $ops[$step] = {
+            $events.Add($name)
+            if ($Failures -ccontains $name) { throw 'simulated supervisor refresh failure' }
+        }.GetNewClosure()
+    }
+    return @{ Operations=$ops; Events=$events }
+}
+
+$refresh = New-RefreshFixture @()
+if ((Invoke-GuardedSupervisorRefresh -Operations $refresh.Operations) -cne 'refreshed' -or
+    ($refresh.Events -join ',') -cne 'VerifyBaseline,VerifyTarget,QuiesceTask,StopOwnedTask,VerifyVacant,ReenableTask,StartTask,VerifyNewTask') {
+    throw 'Successful refresh must quiesce once, stop the owned instance, start and verify a new instance.'
+}
+
+foreach ($failed in @('VerifyBaseline', 'VerifyTarget')) {
+    $fixture = New-RefreshFixture @($failed)
+    try {
+        Invoke-GuardedSupervisorRefresh -Operations $fixture.Operations | Out-Null
+        throw 'Unexpected success after refresh precondition failed.'
+    } catch {
+        if ($_.Exception.Message -eq 'Unexpected success after refresh precondition failed.') { throw }
+    }
+    if ($fixture.Events -ccontains 'QuiesceTask' -or $fixture.Events -ccontains 'StopOwnedTask') {
+        throw 'Preflight failure must not modify or stop the original supervisor.'
+    }
+}
+foreach ($failed in @('QuiesceTask','StopOwnedTask','VerifyVacant','ReenableTask','StartTask','VerifyNewTask')) {
+    $fixture = New-RefreshFixture @($failed)
+    $result = Invoke-GuardedSupervisorRefresh -Operations $fixture.Operations
+    if ($result -cne 'manually_restored' -or
+        ($fixture.Events -join ',') -notmatch 'RestoreTask,VerifyRecoveredTask$') {
+        throw 'Failed refresh must verify manual task recovery without claiming success.'
+    }
+}
+$fallback = New-RefreshFixture @('VerifyNewTask','VerifyRecoveredTask')
+try {
+    Invoke-GuardedSupervisorRefresh -Operations $fallback.Operations | Out-Null
+    throw 'Fallback to the staged authorization server must not be called a successful refresh.'
+} catch {
+    if ($_.Exception.Message -eq 'Fallback to the staged authorization server must not be called a successful refresh.') { throw }
+    if ($_.Exception.Message -notmatch 'staged auth restored') { throw }
+}
+if (($fallback.Events -join ',') -notmatch 'DisableTask,StopTask,ClearListener,RestoreStage,VerifyStage$') {
+    throw 'Failed task recovery must disable the task and verify stage before reporting fallback.'
+}
+$unverified = New-RefreshFixture @('VerifyNewTask','VerifyRecoveredTask','VerifyStage')
+try {
+    Invoke-GuardedSupervisorRefresh -Operations $unverified.Operations | Out-Null
+    throw 'Rollback failure must never return success.'
+} catch {
+    if ($_.Exception.Message -eq 'Rollback failure must never return success.') { throw }
+    if ($_.Exception.Message -notmatch 'rollback unverified') { throw }
+}
+
 Write-Output 'Guarded supervised auth restart transaction and rollback contracts passed.'
