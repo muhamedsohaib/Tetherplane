@@ -198,6 +198,34 @@ git -C $repo pull --ff-only
 
 Do not configure a second task or a Windows service until existing task roles, trigger type, execution time limit, account-logon mode, and restart settings have been inspected. Some scheduler tasks only launch at interactive logon, and some have a default maximum execution time unsuitable for a persistent auth server. The diagnostic does not restart either running process.
 
+## Vaulter logon-task evidence — 2026-10-09
+
+The user ran `vaulter-tether-auth-supervision-preflight.ps1` after commit `1e08c69`. Both loopback Node listeners were present (relay PID 5904, auth PID 960), and the two Tetherplane-named Scheduled Task candidates reported:
+
+| Observation | Candidate 1 | Candidate 2 |
+| --- | --- | --- |
+| Task state | Running | Ready |
+| Enabled | Yes | Yes |
+| Trigger | logon | logon |
+| Role recognized in task action | unclassified | unclassified |
+| RestartCount | 999 | 0 |
+| StartWhenAvailable | True | False |
+| ExecutionTimeLimit | unlimited | limited |
+| LastTaskResult | nonzero (not yet interpreted) | nonzero (not yet interpreted) |
+| LogonType | unknown (old inspector did not handle all CIM enum values) | unknown |
+
+Neither task is confirmed to launch the relay or the staged auth process, and neither includes a reported boot trigger. **Do not interpret `lastResult=nonzero` as an error without examining Task Scheduler status codes**; `0x41301`, for instance, is a normal running status.
+
+The inspector has been updated to classify launchers without exposing task arguments, recognize ScheduledTasks principal logon enums, and distinguish normal nonzero task-result statuses. Run the updated read-only inspector before choosing a deployment identity or changing scheduling:
+
+~~~powershell
+$repo = Join-Path $env:USERPROFILE "source\Tetherplane-auth-stage"
+git -C $repo pull --ff-only
+& (Join-Path $repo "scripts\vaulter-tether-auth-supervision-preflight.ps1")
+~~~
+
+The intent is a **separate restart-safe auth process** under a principal with access to the protected SQLite/JWKS/bridge-secret files. Do not blindly reuse the currently running candidate task or install a duplicate scheduler task. A user-logon-triggered task does not establish unattended boot operation. The follow-on installer must never place any bridge token, private JWKS field, OAuth cookie/token or device secret in task action arguments, logs or Git.
+
 ## Phase 2 — Publish only verified auth paths
 
 1. Capture a safe Tailscale route configuration backup before changing any Funnel mount.
