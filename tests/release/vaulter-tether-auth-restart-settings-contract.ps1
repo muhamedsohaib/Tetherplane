@@ -41,7 +41,7 @@ foreach ($bad in @('Register-ScheduledTask','Unregister-ScheduledTask','New-Sche
 if ($source -match '(?im)^\s*Write-(?:Output|Host|Warning)\s+.*\$(?:\w+\.)?(?:Arguments|Principal|CommandLine|BridgeToken|JWKS|OuterXml|baselineXml)\b') {
     throw 'Do not print task action arguments, identity, exported XML or private materials.'
 }
-foreach ($name in @('Test-RestartCountRange','Test-OnlyRestartCountChanged',
+foreach ($name in @('Get-RestartNode','Test-RestartCountRange','Test-OnlyRestartCountChanged',
     'Invoke-GuardedSettingsCorrection')) {
     $found = $ast.Find({
         param($node)
