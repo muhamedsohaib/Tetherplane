@@ -310,6 +310,8 @@ $ops = @{
         Assert-Activation ($null -ne $current -and
             $current.ProcessId -eq $script:stagedPid -and
             $current.CreationDate -eq $script:stageCreationDate) 'Staging process changed before activation; refusing to stop an unrelated process.'
+        $processCheck = Get-Process -Id $script:stagedPid -ErrorAction Stop
+        Assert-Activation ($processCheck.ProcessName -ieq 'node') 'Staged process is no longer the expected Node.js process.'
         Stop-Process -Id $script:stagedPid -ErrorAction Stop
         for ($i=0; $i -lt 20; $i++) {
             Start-Sleep -Milliseconds 500
