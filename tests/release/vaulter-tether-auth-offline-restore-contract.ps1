@@ -48,21 +48,20 @@ if ($defaultBlock -match 'Invoke-RestMethod|readyz|SUPERVISED AUTH POSTCHECK PAS
     throw 'Offline restore has an accidental healthy-listener prerequisite.'
 }
 
-function Get-PureFunction([string]$Name) {
-    $fn = $ast.Find({
-        param($n)
-        $n -is [System.Management.Automation.Language.FunctionDefinitionAst] -and $n.Name -ceq $Name
-    },$true)
-    if ($null -eq $fn) { throw "Missing independently testable offline recovery function: $Name" }
-    Invoke-Expression $fn.Extent.Text
-}
 foreach ($name in @(
     'Assert-OfflineTaskShape',
     'Invoke-OfflineRestoreTransaction',
     'Invoke-OfflineStartTransaction',
     'Invoke-OfflineFileSwap',
     'Test-OfflineAclEquivalent'
-)) { Get-PureFunction $name }
+)) {
+    $fn = $ast.Find({
+        param($n)
+        $n -is [System.Management.Automation.Language.FunctionDefinitionAst] -and $n.Name -ceq $name
+    },$true)
+    if ($null -eq $fn) { throw "Missing independently testable offline recovery function: $name" }
+    Invoke-Expression $fn.Extent.Text
+}
 
 $runner = 'C:\ProtectedAuth\tether-auth-startup-runner.ps1'
 $task = [pscustomobject]@{
