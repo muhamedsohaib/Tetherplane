@@ -1,7 +1,7 @@
 # Self-hosted tether-auth cutover — Vaulter
 
 **Date:** 2026-10-09  
-**Status:** S4U service healthy; invalid restart count corrected to 10 and independently verified on Vaulter. The prior process-crash rehearsal required manual recovery. A fresh task-instance refresh, automatic recovery, reboot, OAuth identity cutover and ChatGPT acceptance remain pending. Auth0 remains active.  
+**Status:** S4U instance refresh verified on Vaulter (task-owned auth PID 6672 replaced by PID 3304), with valid RestartCount=10. Prior process-crash rehearsal required manual recovery. Automatic failure recovery, unattended reboot, OAuth cutover, and authenticated ChatGPT acceptance remain pending. Auth0 remains active.  
 **Baseline:** `main` at `5feee084eb24bfd4831ab42840bb5f10dafc8113`.  
 **Target:** Vaulter for the relay and authorization server; canonical source remains GitHub and Leno.  
 **Objective:** Replace the external Auth0 authorization server with the repository's own `tether-auth`, while retaining the existing public MCP URL, six-tool catalog, device routing, and local Policy Broker. No purchase or external messaging is required.
@@ -368,6 +368,25 @@ The independent supervised postcheck passed: S4U task-owned PID 6672, auth/relay
 
 **Next maintenance gate:** After current feature-branch contracts and repository quality checks pass, run the read-only recovery-rehearsal preflight. The guarded -RefreshSupervisor mode deliberately rotates only the verified task-owned service and verifies its replacement plus unchanged public auth state; it is distinct from -Exercise, which deliberately kills the Node child to test automatic restart. Use a maintenance window for the refresh and then obtain a separate independent postcheck. Test automatic restart in another controlled exercise, then unattended reboot only with explicit authorization. Keep Auth0 active.
 
+## 2026-10-09 — Supervisor-instance refresh verified on Vaulter
+
+The Vaulter operator fast-forwarded the clean staging checkout to feature commit `237aa92`. The default recovery-rehearsal preflight passed with task-owned auth PID `6672` and reported no changes made.
+
+The separate `scripts/vaulter-tether-auth-recovery-rehearsal.ps1 -RefreshSupervisor` operation returned `SUPERVISOR INSTANCE REFRESH VERIFIED`: old listener PID `6672`, replacement listener PID `3304`. Its internal postcheck verified task ownership, auth readiness, retained Auth0 relay, unchanged public signing verification keys, and preserved protected Funnel routes. The operation was a controlled supervisor refresh, not a crash or unattended reboot rehearsal.
+
+**Remaining gates:** Independently repeat read-only supervised postcheck, restart diagnostic and recovery preflight on the new instance, then schedule a separate fault-injection `-Exercise` only during a suitable maintenance window. Record automatic recovery only if `RESTART AUTOMATICALLY VERIFIED` appears; `manual task restart verified` indicates automatic recovery failed. Do not alter Auth0, protected Funnel routes or private auth state.
+
+Recommended read-only Vaulter commands (without displaying secrets, process arguments or task XML):
+
+~~~powershell
+$repo = Join-Path $env:USERPROFILE 'source\Tetherplane-auth-stage'
+& (Join-Path $repo 'scripts\vaulter-tether-auth-supervised-postcheck.ps1')
+& (Join-Path $repo 'scripts\vaulter-tether-auth-restart-diagnostic.ps1')
+& (Join-Path $repo 'scripts\vaulter-tether-auth-recovery-rehearsal.ps1')
+~~~
+
+The restored task should report policy Count=10 / PT1M in both CIM and exported XML. Automatic failure recovery and unattended reboot remain independent gates. Keep the established Auth0 relay and public/private routes intact.
+
 ## Phase 2 — Publish only verified auth paths
 
 1. Capture a safe Tailscale route configuration backup before changing any Funnel mount.
@@ -411,4 +430,4 @@ The independent supervised postcheck passed: S4U task-owned PID 6672, auth/relay
 
 - Desktop Commander is quota-blocked; do not retry it.
 - Vaulter's installed Tetherplane source/build location, process manager, Node/pnpm status, auth-port availability, and paired-device approval availability are not yet observed.
-- Local auth, public JWKS, S4U supervision and valid registered restart settings are now independently verified. A fresh task instance and automatic restart are not yet live-verified; the prior crash test required manual recovery. Reboot recovery, device approval, identity cutover and authenticated ChatGPT six-tool acceptance remain unverified.
+- Local auth, public JWKS, S4U supervision, valid registered restart policy, and refreshed task-owned auth PID 3304 are now verified. Automatic failure restart remains unverified; the prior crash test required manual recovery. Reboot recovery, device-assisted approval, identity cutover, and authenticated ChatGPT six-tool acceptance remain unverified.
