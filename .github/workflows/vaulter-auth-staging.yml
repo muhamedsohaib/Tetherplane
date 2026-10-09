@@ -65,3 +65,11 @@ jobs:
         if: runner.os == 'Windows'
         shell: powershell
         run: ./tests/release/vaulter-tether-auth-supervision-contract.ps1
+      - name: S4U startup registration safety contracts (PowerShell 7)
+        if: runner.os == 'Windows'
+        shell: pwsh
+        run: ./tests/release/vaulter-tether-auth-autostart-contract.ps1
+      - name: S4U startup registration safety contracts (Windows PowerShell 5.1)
+        if: runner.os == 'Windows'
+        shell: powershell
+        run: ./tests/release/vaulter-tether-auth-autostart-contract.ps1
