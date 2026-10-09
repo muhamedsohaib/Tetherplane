@@ -101,4 +101,19 @@ if (-not $source.Contains($protoBuild) -or
     throw 'Protocol runtime must be built before relay tests during staging.'
 }
 
+# A failed stage may leave valid signing/SQLite state. Preserve and reuse it.
+foreach ($required in @(
+    '[switch]$ReuseExistingState',
+    'if ($ReuseExistingState)',
+    'Existing OAuth configuration does not match',
+    'Existing signing material is unavailable',
+    'Proxy discovery',
+    'X-Forwarded-Proto',
+    'X-Forwarded-Host'
+)) {
+    if (-not $source.Contains($required)) {
+        throw "Staging cannot safely resume with local public HTTPS metadata: $required"
+    }
+}
+
 Write-Output 'Windows PowerShell staging syntax and safety guard checks passed.'
