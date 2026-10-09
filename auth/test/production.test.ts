@@ -89,6 +89,21 @@ test("production auth service composes SQLite, device-login bridge, provider, an
       metadata.code_challenge_methods_supported,
       ["S256"],
     );
+    // Enforce the same public issuer-origin contract as the Vaulter stage:
+    // a successful local provider must advertise publicly routable endpoints.
+    for (const field of [
+      "authorization_endpoint",
+      "token_endpoint",
+      "jwks_uri",
+      "registration_endpoint",
+    ]) {
+      const value = metadata[field];
+      assert.ok(
+        typeof value === "string" &&
+          value.startsWith(deployment.issuer),
+        `OIDC metadata ${field} must be under ${deployment.issuer}; received ${JSON.stringify(value)}`,
+      );
+    }
   } finally {
     await service.close();
     await service.closed;
