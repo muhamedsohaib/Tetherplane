@@ -284,11 +284,12 @@ Assert-Activation (
 $staged = Get-AuthListener
 Assert-Activation ($null -ne $staged) 'Existing staged auth listener is unavailable.'
 $script:stagedPid = [int]$staged.ProcessId
-$stageCreationDate = $staged.CreationDate
+$script:stageCreationDate = $staged.CreationDate
 
 $script:baselineFingerprint = Get-PublicJwksFingerprint 'http://127.0.0.1:8790/jwks'
 VerifyExistingAuth
-$funnel = @(& (Get-Command tailscale.exe -ErrorAction Stop).Source funnel status)
+$ts = Get-Command tailscale.exe -ErrorAction Stop
+$funnel = @(& $ts.Source funnel status)
 Assert-Activation ($LASTEXITCODE -eq 0) 'Cannot read current Funnel routing.'
 $funnelText = $funnel -join [Environment]::NewLine
 Assert-Activation (
@@ -308,14 +309,14 @@ $ops = @{
         $current = Get-AuthListener
         Assert-Activation ($null -ne $current -and
             $current.ProcessId -eq $script:stagedPid -and
-            $current.CreationDate -eq $stageCreationDate) 'Staging process changed before activation; refusing to stop an unrelated process.'
+            $current.CreationDate -eq $script:stageCreationDate) 'Staging process changed before activation; refusing to stop an unrelated process.'
         Stop-Process -Id $script:stagedPid -ErrorAction Stop
         for ($i=0; $i -lt 20; $i++) {
             Start-Sleep -Milliseconds 500
             if ($null -eq (Get-AuthListener)) { return }
         }
         throw 'Original staged auth did not release port 8790.'
-    }.GetNewClosure()
+    }
     EnableTask = {
         Enable-ScheduledTask -TaskName $script:taskName -ErrorAction Stop | Out-Null
         Assert-Activation ((Get-TaskState).State -ne 'Disabled') 'Task remained disabled.'
