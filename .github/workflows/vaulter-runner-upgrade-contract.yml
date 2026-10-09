@@ -1,0 +1,32 @@
+name: Vaulter protected runner contract
+
+on:
+  push:
+    paths:
+      - ".github/workflows/vaulter-runner-upgrade-contract.yml"
+      - "scripts/vaulter-tether-auth-runner-integrity.ps1"
+      - "scripts/vaulter-tether-auth-runner-upgrade.ps1"
+      - "scripts/vaulter-tether-auth-supervised-postcheck.ps1"
+      - "scripts/vaulter-tether-auth-recovery-rehearsal.ps1"
+      - "tests/release/vaulter-tether-auth-runner-upgrade-contract.ps1"
+  pull_request:
+    paths:
+      - ".github/workflows/vaulter-runner-upgrade-contract.yml"
+      - "scripts/vaulter-tether-auth-runner-integrity.ps1"
+      - "scripts/vaulter-tether-auth-runner-upgrade.ps1"
+      - "scripts/vaulter-tether-auth-supervised-postcheck.ps1"
+      - "scripts/vaulter-tether-auth-recovery-rehearsal.ps1"
+      - "tests/release/vaulter-tether-auth-runner-upgrade-contract.ps1"
+
+jobs:
+  contract:
+    runs-on: windows-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        shell: [pwsh, powershell]
+    steps:
+      - uses: actions/checkout@v4
+      - name: Exact runner hash and atomic upgrade contract
+        shell: ${{ matrix.shell }}
+        run: ./tests/release/vaulter-tether-auth-runner-upgrade-contract.ps1
