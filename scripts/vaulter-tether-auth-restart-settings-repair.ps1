@@ -136,6 +136,7 @@ Assert-Repair ($task.State -eq 'Running' -and
     [string]$task.Principal.LogonType -ceq 'S4U') 'S4U task must be running.'
 Assert-Repair ($before.Interval -ceq 'PT1M') 'Restart interval changed unexpectedly.'
 Assert-Repair ([int]$beforeSettings.RestartCount -eq $before.Count) 'Task XML and CIM restart counts disagree.'
+Assert-Repair ([string]$beforeSettings.RestartInterval -ceq $before.Interval) 'Task XML and CIM restart intervals disagree.'
 $script:baselinePid = Get-AuthPid
 Verify-TaskHealthy
 
