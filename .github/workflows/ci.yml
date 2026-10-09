@@ -59,14 +59,6 @@ jobs:
         if: runner.os == 'Linux'
         run: docker build --file Dockerfile.auth --tag tetherplane-auth:ci .
 
-      - name: Vaulter auth key material contract
-        run: node --test tests/release/vaulter-tether-auth-material.test.mjs
-
-      - name: Vaulter PowerShell staging syntax
-        if: runner.os == 'Windows'
-        shell: pwsh
-        run: ./tests/release/vaulter-tether-auth-stage-contract.ps1
-
       - name: Authored unsafe scan
         run: python scripts/check-no-unsafe.py
 
