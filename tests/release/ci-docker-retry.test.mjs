@@ -75,3 +75,14 @@ test('persistent registry 504 fails after three attempts', () => {
 test('non-registry Docker build failure is not retried', () => {
   exercise('compile-error', false, 1, 0);
 });
+
+
+test('CI uses an explicit Node mirror and preserves the default official production base', () => {
+  for (const file of ['Dockerfile.relay', 'Dockerfile.auth']) {
+    const dockerfile = readFileSync(resolve(file), 'utf8');
+    assert.match(dockerfile, /^ARG NODE_BASE_IMAGE=node:22-bookworm-slim$/m, file);
+    assert.equal([...dockerfile.matchAll(/^FROM \$\{NODE_BASE_IMAGE\} AS (?:build|runtime)$/gm)].length, 2, file);
+  }
+  const script = readFileSync(runner, 'utf8');
+  assert.match(script, /--build-arg NODE_BASE_IMAGE=mirror\.gcr\.io\/library\/node:22-bookworm-slim/);
+});
