@@ -58,6 +58,24 @@ The first script invocation is read-only and confirms repo identity, relay healt
 
 If port 8790 is occupied, the checkout is dirty, the protected state directory already exists, dependencies/tests fail, or local metadata is invalid, the script stops. It never rotates existing signing keys. It does not output credentials. After local staging, verify a safe process supervisor and backups before proceeding with public mounts or modifying the existing relay.
 
+## Recovering a previously started local auth stage
+
+If the test/build phase passed and the stage stopped at an OIDC metadata assertion after printing "Key material staged", **keep the original signing key, bridge credential, SQLite state, and configuration**. The loopback-only auth process is stopped by the error handler, but these persistent files are deliberately retained. Do not rerun plain -Stage and do not delete or replace those files.
+
+After fetching the verified migration branch on Vaulter and checking that port 8790 is free:
+
+~~~powershell
+$repo = Join-Path $env:USERPROFILE "source\Tetherplane-auth-stage"
+git -C $repo pull --ff-only
+& (Join-Path $repo "scripts\vaulter-tether-auth-stage.ps1") -Stage -ReuseExistingState
+~~~
+
+The resume mode validates the existing private files, configuration, SQLite database and protected state directory. It fails closed if any required state is missing or inconsistent, and never regenerates the RSA signer or bridge credential. It re-runs the auth and relay tests, restarts the private loopback service, and validates proxied HTTPS OAuth metadata using only X-Forwarded-Host and X-Forwarded-Proto supplied to the loopback HTTP listener. Direct HTTP health checks remain separate from public-origin discovery checks.
+
+The underlying OIDC provider's discovery endpoints may legitimately show http://127.0.0.1:<port>/auth if queried directly by an unproxied localhost client. The **trusted loopback proxy mode** must advertise the canonical public HTTPS origin for OAuth authorization, token, JWKS and registration URLs. That is the acceptance check. Do not replace this gate with a general relaxation of HTTPS or issuer matching.
+
+All public Funnel mounting and relay OIDC issuer changes are **later phases** and must remain unchanged until the resumed stage finishes successfully.
+
 ## Required cutover gate
 
 Before switching from Auth0, independently verify that a paired Tetherplane device is online and can approve the device-login proof, and inspect the existing relay's actual launch configuration and state-file path. Never infer these from port 8788 alone. Do **not** perform the public routing or relay cutover if this proof is unavailable. ChatGPT connector acceptance remains a separate final gate.
