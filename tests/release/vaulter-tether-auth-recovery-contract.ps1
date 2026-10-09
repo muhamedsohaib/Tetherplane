@@ -280,7 +280,7 @@ foreach ($required in @(
         throw "Guarded refresh has no verified offline v1 rescue before staged fallback: $required"
     }
 }
-if ($src -notmatch '(?s)if \(\$installedRunnerVersion -ceq .v2.\).*?\& \$script:offlineRescue') {
+if ($src -notmatch '(?s)if \(\$RefreshSupervisor -and \$installedRunnerVersion -ceq .v2.\).*?\& \$script:offlineRescue') {
     throw 'Activation must preflight offline v1 rescue before any supervisor disruption.'
 }
 
