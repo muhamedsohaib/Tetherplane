@@ -106,4 +106,66 @@ try {
 if ($rollbackMessage -notmatch 'rollback unverified') {
     throw 'Failed rollback must report incomplete recovery instead of success.'
 }
+# Production parsers must recognize the real CLI shape of the manually staged
+# instance, and must never mistake a different config for an owned auth process.
+foreach ($helper in @('Assert-Activation','Get-FlagValue','Get-AuthListener','Get-PublicJwksFingerprint')) {
+    $functionAst = $ast.Find({
+        param($node)
+        $node -is [System.Management.Automation.Language.FunctionDefinitionAst] -and
+        $node.Name -eq $helper
+    }.GetNewClosure(), $true)
+    if ($null -eq $functionAst) { throw "Missing runtime guard helper $helper" }
+    Invoke-Expression $functionAst.Extent.Text
+}
+
+$script:authConfig = 'C:\protected state\tether-auth-config.json'
+$script:mockProcessCommandLine = '"C:\Program Files\nodejs\node.exe" auth/dist/cli.js --config "C:\protected state\tether-auth-config.json" --host 127.0.0.1 --port 8790 --allow-insecure-localhost'
+function Get-NetTCPConnection {
+    [CmdletBinding()]
+    param([int]$LocalPort,[string]$State)
+    return [pscustomobject]@{ OwningProcess = 9321; LocalAddress = '127.0.0.1' }
+}
+function Get-CimInstance {
+    [CmdletBinding()]
+    param([Parameter(Position=0)][string]$ClassName,[string]$Filter)
+    return [pscustomobject]@{
+        ProcessId = 9321
+        ParentProcessId = 42
+        Name = 'node.exe'
+        CommandLine = $script:mockProcessCommandLine
+        CreationDate = [datetime]'2026-10-09'
+    }
+}
+$parsedProcess = Get-AuthListener
+if ($null -eq $parsedProcess -or $parsedProcess.ProcessId -ne 9321 -or
+    $parsedProcess.PSObject.Properties.Name -contains 'CommandLine') {
+    throw 'Only the expected owned auth process may be recognized and its raw launch arguments must stay private.'
+}
+$script:mockProcessCommandLine = $script:mockProcessCommandLine.Replace('tether-auth-config.json','other-config.json')
+try {
+    Get-AuthListener | Out-Null
+    throw 'A process with a different config must not be considered owned.'
+} catch {
+    if ($_.Exception.Message -eq 'A process with a different config must not be considered owned.') {
+        throw
+    }
+}
+$script:mockPublicKey = [pscustomobject]@{ kid='public-1'; kty='RSA'; n='opaque-public-n'; e='AQAB' }
+function Get-Json {
+    [CmdletBinding()]
+    param([string]$Url)
+    return [pscustomobject]@{ keys = @($script:mockPublicKey) }
+}
+$publicFingerprint = Get-PublicJwksFingerprint 'http://127.0.0.1:8790/jwks'
+if ($publicFingerprint -cne 'public-1|RSA|opaque-public-n|AQAB') {
+    throw 'Public JWKS verification fingerprint is malformed.'
+}
+$script:mockPublicKey | Add-Member -NotePropertyName d -NotePropertyValue 'simulated-private-field'
+try {
+    Get-PublicJwksFingerprint 'http://127.0.0.1:8790/jwks' | Out-Null
+    throw 'Private key fields must be rejected.'
+} catch {
+    if ($_.Exception.Message -eq 'Private key fields must be rejected.') { throw }
+}
+
 Write-Output 'Guarded staged-auth activation and rollback contracts passed.'
