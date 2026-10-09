@@ -69,7 +69,7 @@ function Test-FreshV2S4UProof {
             [string]$proof.principal -cne 'S4U' -or
             [string]$proof.task -cne 'Tetherplane-TetherAuth-Startup') { return $false }
         $timestamp = [datetimeoffset]::ParseExact(
-            ([string]$proof.verified_utc), 'o',
+            ([string]$proof.verified_utc), 'yyyy-MM-ddTHH:mm:ss.fffffffzzz',
             [Globalization.CultureInfo]::InvariantCulture,
             [Globalization.DateTimeStyles]::None
         )
