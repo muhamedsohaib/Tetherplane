@@ -106,7 +106,7 @@ foreach ($gate in @(
 }
 
 # Task Scheduler XML RestartOnFailure/Count is limited to 1..255.
-$matchesCount = [regex]::Matches($registration, '-RestartCount\\s+(\\d+)')
+$matchesCount = [regex]::Matches($registration, '-RestartCount\s+(\d+)')
 if ($matchesCount.Count -ne 1) {
     throw 'Startup task definition must set one explicit RestartCount.'
 }
