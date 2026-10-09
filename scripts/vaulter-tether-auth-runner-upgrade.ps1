@@ -54,6 +54,30 @@ function Invoke-RunnerUpgradeTransaction {
         throw 'RUNNER FILE REPLACEMENT FAILED; ROLLED BACK original protected runner. Do not rotate the S4U task.'
     }
 }
+function Test-FreshV2S4UProof {
+    [CmdletBinding()]
+    param(
+        [Parameter(Mandatory=$true)][string]$ProofPath,
+        [Parameter(Mandatory=$true)][string]$ExpectedV2Hash,
+        [Parameter(Mandatory=$true)][datetimeoffset]$NowUtc
+    )
+    try {
+        if (-not (Test-Path -LiteralPath $ProofPath -PathType Leaf) -or
+            $ExpectedV2Hash -cnotmatch '^[A-F0-9]{64}$') { return $false }
+        $proof = Get-Content -LiteralPath $ProofPath -Raw -ErrorAction Stop | ConvertFrom-Json -ErrorAction Stop
+        if ([string]$proof.v2_source_hash -cne $ExpectedV2Hash -or
+            [string]$proof.principal -cne 'S4U' -or
+            [string]$proof.task -cne 'Tetherplane-TetherAuth-Startup') { return $false }
+        $timestamp = [datetimeoffset]::ParseExact(
+            ([string]$proof.verified_utc), 'o',
+            [Globalization.CultureInfo]::InvariantCulture,
+            [Globalization.DateTimeStyles]::None
+        )
+        $age = ($NowUtc.ToUniversalTime() - $timestamp.ToUniversalTime()).TotalMinutes
+        return ($age -ge -2 -and $age -le 90)
+    } catch { return $false }
+}
+
 function Get-SourceHash([string]$Path) {
     return (Get-FileHash -LiteralPath $Path -Algorithm SHA256 -ErrorAction Stop).Hash
 }
@@ -257,6 +281,8 @@ $script:restoreEvidence = $null
 $script:replaceEvidence = $null
 if ($ApplyV2) {
     Assert-Upgrade ($script:baselineVersion -ceq 'v1') 'Upgrade requires the original installed v1 runner.'
+    $v2ProbeProof = Join-Path $script:stateDir 'tether-auth-runner-v2-probe.json'
+    Assert-Upgrade (Test-FreshV2S4UProof -ProofPath $v2ProbeProof -ExpectedV2Hash (Get-SourceHash $script:sourceV2) -NowUtc ([datetimeoffset]::UtcNow)) 'Recent matching S4U v2 proof required before protected runner replacement.'
     Assert-Upgrade (-not (Test-Path -LiteralPath $script:v1Backup)) 'Private v1 backup already exists; refusing to overwrite it.'
     $source = $script:sourceV2
     $targetVersion = 'v2'
