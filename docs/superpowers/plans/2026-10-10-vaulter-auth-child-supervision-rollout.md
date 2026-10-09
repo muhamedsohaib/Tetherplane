@@ -26,6 +26,36 @@ The candidate retains the existing protected signing keys, bridge credential, is
 
 This model leaves the Windows Scheduled Task responsible for startup and process ownership, while its child restarts become a responsibility of the protected runner. It is a **proposed architecture change** and requires a separate controlled live deployment decision.
 
+## Protected runner upgrade tooling — source-only
+
+The feature branch now contains a read-only-by-default upgrade script, `scripts/vaulter-tether-auth-runner-upgrade.ps1`, plus `scripts/vaulter-tether-auth-runner-integrity.ps1`. The independent supervised postcheck and crash-recovery preflight use the same exact SHA-256 v1/v2 source identity check. The registered S4U task action, original v1 source runner, protected live runner and active service remain unchanged.
+
+The upgrader verifies a clean fetched feature checkout, original task state and definition, unchanged task-owned listener PID/creation time, protected state directory, and existing Auth0/JWKS/Funnel health. `-ApplyV2` (explicit) backs up the original installed v1 into `tether-auth-startup-runner.v1-backup.ps1` in the protected auth directory, then uses a same-directory Windows atomic file replacement to install the known v2 bytes. It compares owner, group, effective DACL rights/types and inheritance policy on both installed and backup files, rather than falsely requiring identical Windows-inherited SDDL serialization. Failures attempt verified restoration; unverified rollback leaves private recovery evidence and stops.
+
+`-RestoreV1` (explicit, separate) uses the exact protected v1 backup and restores only the on-disk runner. Neither mode stops an auth process, restarts a Scheduled Task, changes credentials, overwrites an existing v1 backup, or changes Tailscale/Funnel/relay routes. Disk-version verification **does not prove which version an already-running PowerShell parent loaded**; a later, separately controlled task-instance refresh is mandatory.
+
+PowerShell 5.1 and 7 targeted tests now exercise real NTFS-like temporary file swap and rollback (not only mocks), untrusted runner hash rejection, ACL-equivalence checks, backup overwrite refusal, cross-directory rejection, and transaction failure handling. The full Windows/Ubuntu repository quality gates must pass at the exact implementation revision before any live apply is considered.
+
+### Remaining pre-activation proof
+
+- Verify v2 protected-state and S4U permissions using a separate non-disruptive S4U probe under the intended principal. The original autostart `-Probe` script cannot be reused unchanged because it rejects an already registered permanent task.
+- Require a reviewed deployment maintenance window and independent verification of the protected backup, source hashes, task definition and auth PID. A successful file upgrade is not activation.
+- Execute controlled `-RefreshSupervisor` only after a validated v2 S4U probe and a rollback plan that can restore v1 and regain a healthy auth task. Reserve `-Exercise` and reboot for later, separately authorized windows.
+
+### Safe, read-only Vaulter check after CI is green
+
+~~~powershell
+$repo = Join-Path $env:USERPROFILE 'source\Tetherplane-auth-stage'
+git -C $repo status --short
+git -C $repo branch --show-current
+git -C $repo pull --ff-only
+git -C $repo rev-parse --short HEAD
+powershell.exe -NoProfile -ExecutionPolicy Bypass -File (Join-Path $repo 'scripts\vaulter-tether-auth-runner-upgrade.ps1')
+powershell.exe -NoProfile -ExecutionPolicy Bypass -File (Join-Path $repo 'scripts\vaulter-tether-auth-supervised-postcheck.ps1')
+~~~
+
+Do **not** pass `-ApplyV2` or `-RestoreV1` during this preflight. The `-ApplyV2` operation intentionally changes an on-disk S4U script and remains blocked on live S4U permission proof.
+
 ## Verification and rollout gates
 
 ### Gate A — code and isolated simulation
