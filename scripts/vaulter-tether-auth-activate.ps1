@@ -58,7 +58,7 @@ function Invoke-GuardedAuthHandover {
         if (-not $rollbackComplete) {
             throw 'Auth activation failed; rollback unverified. Do not reboot or modify Funnel/relay. Inspect protected local state and task status.'
         }
-        throw 'Auth activation failed; staged tether-auth was restored and rollback verified.'
+        throw 'Auth activation failed; staged tether-auth was rolled back and recovery verified.'
     }
 }
 
