@@ -290,6 +290,24 @@ Only after the preflight succeeds and its planned downtime/rollback have been ac
 
 The handover includes a brief service restart on port 8790. Its automated rollback relies on file-backed credentials and the current local configuration remaining readable and valid. Do **not** reboot or switch the relay issuer during this gate. After successful handover, unattended **reboot recovery** remains unproven until separately demonstrated; a running Scheduled Task alone is not a restart test.
 
+## Windows task principal normalization — read-only preflight fix
+
+After installing the disabled S4U task, the first read-only activation preflight on Vaulter stopped at the combined guard: "Registered task is not disabled or does not match the S4U state owner." Independent prior task inspection had reported `State=Disabled` and `LogonType=S4U`, so Windows account identity formatting is the leading diagnosis. The preflight stopped **before** stopping the manually staged auth process, enabling the task, or changing the relay/Funnel.
+
+The activation script now treats task-state, logon-type, and owner checks as **three separate assertions**. Instead of comparing `Principal.UserId` directly to a Windows display name, the owner guard resolves a task SID or NTAccount to a Windows SID and compares it to the current Windows identity SID. Invalid or different principals fail closed; task usernames and SID values are not logged.
+
+The committed Windows PowerShell 5.1 and PowerShell 7 tests cover name/SID equivalence, a normalized S4U principal object, and rejection of foreign or invalid SIDs.
+
+**Next gate: read-only preflight only** after syncing the feature branch on Vaulter. If any different error arises, do not activate:
+
+~~~powershell
+$repo = Join-Path $env:USERPROFILE "source\Tetherplane-auth-stage"
+git -C $repo pull --ff-only
+& (Join-Path $repo "scripts\vaulter-tether-auth-activate.ps1")
+~~~
+
+The intended message is `Auth handover preflight PASS` followed by `No changes made`. Do not use `-Activate` until that live preflight has passed and the scoped handover/rollback has been reviewed.
+
 ## Phase 2 — Publish only verified auth paths
 
 1. Capture a safe Tailscale route configuration backup before changing any Funnel mount.
