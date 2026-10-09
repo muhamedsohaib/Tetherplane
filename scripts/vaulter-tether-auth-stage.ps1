@@ -87,11 +87,11 @@ Assert-Stage ($branch -eq 'feature/tether-auth-vaulter-migration-20261009') 'Che
 
 Push-Location $RepoRoot
 try {
-    Invoke-WorkspaceCommand @('install', '--frozen-lockfile')
-    Invoke-WorkspaceCommand @('--filter', '@tetherplane/auth', 'build')
-    Invoke-WorkspaceCommand @('--filter', '@tetherplane/auth', 'test')
-    Invoke-WorkspaceCommand @('--filter', '@tetherplane/auth', 'typecheck')
-    Invoke-WorkspaceCommand @('--filter', '@tetherplane/relay', 'test')
+    Invoke-WorkspaceCommand -Arguments @('install', '--frozen-lockfile')
+    Invoke-WorkspaceCommand -Arguments @('--filter', '@tetherplane/auth', 'build')
+    Invoke-WorkspaceCommand -Arguments @('--filter', '@tetherplane/auth', 'test')
+    Invoke-WorkspaceCommand -Arguments @('--filter', '@tetherplane/auth', 'typecheck')
+    Invoke-WorkspaceCommand -Arguments @('--filter', '@tetherplane/relay', 'test')
 } finally {
     Pop-Location
 }
