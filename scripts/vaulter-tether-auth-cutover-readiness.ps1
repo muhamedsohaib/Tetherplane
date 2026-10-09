@@ -24,8 +24,17 @@ function Get-FlagPath([string]$CommandLine, [string]$Flag) {
     if (-not $found.Success) { return $null }
     $raw = if ($found.Groups[1].Success) { $found.Groups[1].Value }
            else { $found.Groups[2].Value }
-    if (-not [IO.Path]::IsPathFullyQualified($raw)) { return $null }
-    return [IO.Path]::GetFullPath($raw)
+    # Windows PowerShell 5.1 (.NET Framework) has no IsPathFullyQualified.
+    # IsPathRooted is insufficient: it also accepts drive-relative C:file paths.
+    # Accept only drive-rooted paths or complete UNC server/share paths.
+    if ($raw -notmatch '^(?:[A-Za-z]:[\\/]|\\\\[^\\/]+[\\/][^\\/]+(?:[\\/]|$))') {
+        return $null
+    }
+    try {
+        return [IO.Path]::GetFullPath($raw)
+    } catch {
+        return $null
+    }
 }
 
 function Get-LoopbackProcess([int]$Port) {
