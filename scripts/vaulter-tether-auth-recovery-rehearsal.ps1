@@ -263,6 +263,76 @@ function Stop-TaskOwnedService {
         Stop-ScheduledTask -TaskName $script:taskName -ErrorAction Stop
     }
 }
+function Wait-HealthyTask([int]$Attempts=35) {
+    for ($i=0; $i -lt $Attempts; $i++) {
+        try {
+            $owned = Get-TaskOwnedListener
+            $task = Get-Task
+            if ($null -ne $owned -and $task.State -eq 'Running' -and
+                [bool]$task.Settings.Enabled -and
+                (Get-Json 'http://127.0.0.1:8790/readyz').status -ceq 'ready') {
+                & $script:postcheck | Out-Null
+                Verify-SharedState
+                $xml = [string](Export-ScheduledTask -TaskName $script:taskName -TaskPath '\' -ErrorAction Stop)
+                Assert-Recovery (Test-RegisteredRestartPolicy -Settings $task.Settings -TaskXml $xml) 'Restart policy changed while recovering task.'
+                return
+            }
+        } catch { }
+        Start-Sleep -Seconds 2
+    }
+    throw 'Task did not recover as a healthy S4U-owned auth instance.'
+}
+function Wait-VacantSupervisor([int]$Attempts=30) {
+    for ($i=0; $i -lt $Attempts; $i++) {
+        $listeners = @(Get-NetTCPConnection -State Listen -LocalPort 8790 -ErrorAction SilentlyContinue)
+        $parent = Get-CimInstance Win32_Process -Filter "ProcessId=$script:originalParentPid" -ErrorAction SilentlyContinue
+        if ($listeners.Count -eq 0 -and
+            ($null -eq $parent -or $parent.CreationDate -ne $script:originalParentCreationDate)) {
+            return
+        }
+        Start-Sleep -Milliseconds 500
+    }
+    throw 'Old supervisor or port 8790 is still active; refusing to start another task.'
+}
+function Stop-OriginalSupervisorInstance {
+    Assert-Recovery (-not [bool](Get-Task).Settings.Enabled) 'Task must be disabled before rotation.'
+    $owned = Get-TaskOwnedListener
+    Assert-Recovery (
+        $null -ne $owned -and
+        $owned.ProcessId -eq $script:originalPid -and
+        $owned.CreationDate -eq $script:originalCreationDate -and
+        $owned.ParentProcessId -eq $script:originalParentPid
+    ) 'Original owned listener changed; refusing task stop.'
+    Stop-ScheduledTask -TaskName $script:taskName -TaskPath '\' -ErrorAction Stop | Out-Null
+    # Stopping the PowerShell task may orphan the original Node child.
+    # Never terminate a newly arriving or unrecognized listener.
+    $leftover = Get-AuthPortProcess
+    if ($null -ne $leftover) {
+        Assert-Recovery ($leftover.ProcessId -eq $script:originalPid -and
+            $leftover.CreationDate -eq $script:originalCreationDate) 'Listener identity changed; refusing process termination.'
+        $target = Get-Process -Id $script:originalPid -ErrorAction Stop
+        Assert-Recovery ($target.ProcessName -ieq 'node') 'Expected auth child changed identity.'
+        Stop-Process -Id $script:originalPid -ErrorAction Stop
+    }
+}
+function Restore-SupervisedTask {
+    if (-not [bool](Get-Task).Settings.Enabled) {
+        Enable-ScheduledTask -TaskName $script:taskName -TaskPath '\' -ErrorAction Stop | Out-Null
+    }
+    Assert-Recovery ([bool](Get-Task).Settings.Enabled) 'Task could not be enabled during recovery.'
+    $listener = Get-AuthPortProcess
+    if ($null -ne $listener) {
+        Assert-Recovery ($null -ne (Get-TaskOwnedListener)) 'Unexpected listener; refusing duplicate startup.'
+        return
+    }
+    # Clear a stale task instance that holds the IgnoreNew execution slot.
+    if ((Get-Task).State -eq 'Running') {
+        Stop-ScheduledTask -TaskName $script:taskName -TaskPath '\' -ErrorAction Stop | Out-Null
+        Wait-FreePort
+    }
+    Start-ScheduledTask -TaskName $script:taskName -TaskPath '\' -ErrorAction Stop
+}
+
 function Restore-StagedAuth {
     Assert-Recovery ((Get-Task).State -eq 'Disabled') 'Refusing staged rollback while the supervisor task is enabled.'
     Wait-FreePort
