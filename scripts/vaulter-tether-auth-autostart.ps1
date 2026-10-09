@@ -10,7 +10,7 @@
 #>
 [CmdletBinding()]
 param(
-    [string]$RepoRoot = (Split-Path -Parent $PSScriptRoot),
+    [string]$RepoRoot,
     [string]$StateDirectory = (Join-Path $env:LOCALAPPDATA 'Tetherplane\tether-auth'),
     [switch]$Probe,
     [switch]$ProbeV2,
@@ -88,6 +88,12 @@ Assert-Autostart (
 Assert-Autostart (-not ($Probe -and $Register)) 'Select only one mode: -Probe or -Register.'
 Assert-Autostart (-not ($ProbeV2 -and ($Probe -or $Register))) 'V2 S4U probe cannot register a permanent task.'
 
+if ([string]::IsNullOrWhiteSpace($RepoRoot)) {
+    # -File parameter defaults run before $PSScriptRoot is initialized.
+    # Resolve the default only after entering the script body.
+    Assert-Autostart (-not [string]::IsNullOrWhiteSpace($PSScriptRoot)) 'Cannot locate autostart script directory.'
+    $RepoRoot = Join-Path -Path $PSScriptRoot -ChildPath '..'
+}
 $RepoRoot = [IO.Path]::GetFullPath($RepoRoot)
 $StateDirectory = [IO.Path]::GetFullPath($StateDirectory)
 $sourceRunnerV1 = Join-Path $RepoRoot 'scripts\vaulter-tether-auth-startup-runner.ps1'
