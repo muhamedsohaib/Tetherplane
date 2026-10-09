@@ -179,12 +179,14 @@ Assert-Autostart $probeCleanupSucceeded 'Temporary S4U probe task was not remove
 Write-Output 'S4U probe verified protected state access, Node.js runtime, and both loopback services.'
 
 if ($ProbeV2) {
+    Assert-Autostart (-not (Test-Path -LiteralPath $probeRunner) -and
+        -not (Test-Path -LiteralPath $probeResult)) 'Temporary S4U probe files remain; refusing to issue v2 proof.'
     # Only after successful task cleanup, record a short-lived proof with
     # nonsecret source SHA-256 and verification timestamp in protected state.
     $proofPath = Join-Path $StateDirectory 'tether-auth-runner-v2-probe.json'
     $proof = [ordered]@{
         v2_source_hash = (Get-FileHash -LiteralPath $sourceRunnerV2 -Algorithm SHA256).Hash
-        verified_utc = [datetime]::UtcNow.ToString('o')
+        verified_utc = [datetimeoffset]::UtcNow.ToString('o')
         principal = 'S4U'
         task = $taskName
     }
