@@ -121,6 +121,33 @@ function Test-PrivateRunnerVersion([string]$Expected) {
     $actual = Get-VerifiedRunnerVersion -V1SourcePath $script:sourceV1 -V2SourcePath $script:sourceV2 -ProtectedRunnerPath $script:protectedRunner
     Assert-Upgrade ($actual -ceq $Expected) 'Protected runner bytes do not match expected trusted version.'
 }
+function Invoke-RunnerAtomicReplace {
+    [CmdletBinding()]
+    param(
+        [Parameter(Mandatory=$true)][string]$StagedPath,
+        [Parameter(Mandatory=$true)][string]$TargetPath,
+        [Parameter(Mandatory=$true)][string]$BackupPath
+    )
+    # All three paths must share one directory on a single local volume.
+    # Existing backups are NEVER overwritten or silently discarded.
+    $folder = [IO.Path]::GetDirectoryName([IO.Path]::GetFullPath($TargetPath))
+    foreach ($path in @($StagedPath,$BackupPath)) {
+        $other = [IO.Path]::GetDirectoryName([IO.Path]::GetFullPath($path))
+        if ($other -ine $folder) { throw 'Runner swap paths must share one directory.' }
+    }
+    if (Test-Path -LiteralPath $BackupPath) { throw 'Protected runner backup already exists.' }
+    foreach ($path in @($StagedPath,$TargetPath)) {
+        if (-not (Test-Path -LiteralPath $path -PathType Leaf)) {
+            throw 'Atomic replacement source or target file missing.'
+        }
+        $attributes = (Get-Item -LiteralPath $path -ErrorAction Stop).Attributes
+        if ([bool]($attributes -band [IO.FileAttributes]::ReparsePoint)) {
+            throw 'Runner file may not be a reparse point.'
+        }
+    }
+    [IO.File]::Replace($StagedPath,$TargetPath,$BackupPath)
+}
+
 function New-PrivateTemporaryPath {
     return (Join-Path $script:stateDir ('tether-auth-upgrade-' + [guid]::NewGuid().ToString('N') + '.tmp'))
 }
@@ -151,7 +178,7 @@ function Restore-BaselineFile {
     Set-Acl -LiteralPath $script:restoreTemp -AclObject $script:originalAcl -ErrorAction Stop
     Assert-Upgrade ((Get-SourceHash $script:restoreTemp) -ceq (Get-SourceHash $trustedSource)) 'Recovery candidate differs from trusted source.'
     $script:restoreEvidence = New-PrivateTemporaryPath
-    [IO.File]::Replace($script:restoreTemp, $script:protectedRunner, $script:restoreEvidence)
+    Invoke-RunnerAtomicReplace -StagedPath $script:restoreTemp -TargetPath $script:protectedRunner -BackupPath $script:restoreEvidence
 }
 
 if ($ApplyV2 -and $RestoreV1) {
@@ -210,7 +237,7 @@ $ops = @{
             $snapshot.ListenerCreated -eq $script:baseline.ListenerCreated) 'Task or auth listener changed before atomic replacement.'
         # Same-directory atomic replacement, with v1 source retained
         # under the existing ACL-protected auth-state directory.
-        [IO.File]::Replace($script:prepared, $script:protectedRunner, $backupTarget)
+        Invoke-RunnerAtomicReplace -StagedPath $script:prepared -TargetPath $script:protectedRunner -BackupPath $backupTarget
     }
     VerifyTarget = {
         Test-PrivateRunnerVersion $targetVersion
@@ -229,19 +256,28 @@ $ops = @{
         Verify-UnchangedService
     }
 }
+$script:cleanupApproved = $false
 try {
     $result = Invoke-RunnerUpgradeTransaction -Operations $ops
     Assert-Upgrade ($result -ceq 'verified') 'Unexpected protected-runner upgrade result.'
+    $script:cleanupApproved = $true
     if ($ApplyV2) {
         Write-Output 'RUNNER FILE UPGRADE VERIFIED: exact v2 bytes installed, v1 privately backed up, live task/PID unchanged.'
     } else {
         Write-Output 'RUNNER FILE RESTORE VERIFIED: exact v1 bytes installed; live task/PID unchanged.'
     }
     Write-Output 'Running supervisor version and child restart behavior are UNVERIFIED until a separate controlled task refresh.'
+} catch {
+    # Preserve all private candidate and replacement evidence if actual
+    # rollback was not independently verified.
+    if ($_.Exception.Message -match 'ROLLED BACK') { $script:cleanupApproved = $true }
+    throw
 } finally {
-    foreach ($temp in @($script:prepared, $script:restoreTemp, $script:replaceEvidence, $script:restoreEvidence)) {
-        if ($temp -and (Test-Path -LiteralPath $temp -PathType Leaf)) {
-            Remove-Item -LiteralPath $temp -Force -ErrorAction SilentlyContinue
+    if ($script:cleanupApproved) {
+        foreach ($temp in @($script:prepared, $script:restoreTemp, $script:replaceEvidence, $script:restoreEvidence)) {
+            if ($temp -and (Test-Path -LiteralPath $temp -PathType Leaf)) {
+                Remove-Item -LiteralPath $temp -Force -ErrorAction SilentlyContinue
+            }
         }
     }
 }
