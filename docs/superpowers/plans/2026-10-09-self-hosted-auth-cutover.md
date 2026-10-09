@@ -112,6 +112,22 @@ Before switching from Auth0, independently verify that a paired Tetherplane devi
 
 **Stop:** If any protocol metadata, provider build, account-approval prerequisite or signing-key condition fails, preserve Auth0 and leave Funnel unchanged.
 
+## Verified Vaulter local staging checkpoint — 2026-10-09
+
+The user ran `-Stage -ReuseExistingState` on Vaulter after updating to feature-branch commit `5c2e24d`. **17/17 self-hosted auth tests and 72/72 relay tests passed**, and the script returned `tether-auth LOCAL STAGE VERIFIED` on `127.0.0.1:8790`. Existing signing material, bridge credential and SQLite state were reused without rotation. The Auth0 relay on `127.0.0.1:8788` and public Funnel routes remain unchanged. The reported auth process PID was `960` at that moment; **do not rely on the PID remaining stable**.
+
+Before making any Tailscale route change, run this **read-only** routing diagnostic from the Vaulter PowerShell session:
+
+~~~powershell
+$repo = Join-Path $env:USERPROFILE 'source\Tetherplane-auth-stage'
+git -C $repo pull --ff-only
+& (Join-Path $repo 'scripts\vaulter-tether-auth-route-preflight.ps1')
+~~~
+
+It checks both loopback listeners, public and local relay health, public protected-resource metadata, HTTPS-proxied OIDC discovery endpoint paths and current Funnel mappings. Do not paste credentials, JWTs, raw JWKS files, raw Windows process command lines, or complete environment dumps. The diagnostic contains no writes or process disruption.
+
+**Important Funnel rule:** The existing port 443 must remain in Funnel mode; using `tailscale serve` to reconfigure port 443 could make it tailnet-only. Do not run `tailscale funnel reset` or `tailscale funnel 443` to add auth routing. After a safe private backup of the exact current Serve/Funnel configuration, add only narrowly scoped `tailscale funnel --https=443 --set-path=...` mounts, validate actual installed-version path handling, and preserve existing `/` -> `127.0.0.1:8788`. At this point **no public OAuth mounts have been enabled**.
+
 ## Phase 2 — Publish only verified auth paths
 
 1. Capture a safe Tailscale route configuration backup before changing any Funnel mount.
