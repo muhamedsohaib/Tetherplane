@@ -97,7 +97,7 @@ try {
 } catch {
     if ($_.Exception.Message -eq 'Unexpected task action was accepted.') { throw }
 }
-$task.Actions[0].Arguments = '-File "'+$runner+'" -Serve'
+$task.Actions[0].Arguments = '-NoLogo -File "'+$runner+'" -Serve'
 $task.Principal.LogonType = 'Password'
 try {
     Assert-OfflineTaskShape -Task $task -ProtectedRunnerPath $runner
