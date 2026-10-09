@@ -53,3 +53,7 @@ jobs:
         if: runner.os == 'Windows'
         shell: pwsh
         run: ./tests/release/vaulter-tether-auth-cutover-readiness-contract.ps1
+      - name: Read-only cutover readiness on Windows PowerShell 5.1
+        if: runner.os == 'Windows'
+        shell: powershell
+        run: ./tests/release/vaulter-tether-auth-cutover-readiness-contract.ps1
