@@ -25,6 +25,28 @@ function Assert-Autostart([bool]$Condition, [string]$Message) {
     if (-not $Condition) { throw $Message }
 }
 
+function Test-TaskPrincipalMatchesUser {
+    [CmdletBinding()]
+    param(
+        [Parameter(Mandatory=$true)][Security.Principal.WindowsIdentity]$ExpectedIdentity,
+        [Parameter(Mandatory=$true)][string]$TaskUserId
+    )
+    try {
+        if ([string]::IsNullOrWhiteSpace($TaskUserId) -or
+            $null -eq $ExpectedIdentity.User) { return $false }
+        # Task Scheduler may persist either a SID or account name.
+        # Resolve both to SIDs and refuse mismatched or unknown users.
+        $sid = if ($TaskUserId -match '^S-\d+(?:-\d+)+$') {
+            ([Security.Principal.SecurityIdentifier]::new($TaskUserId)).Value
+        } else {
+            ([Security.Principal.NTAccount]::new($TaskUserId)).Translate(
+                [Security.Principal.SecurityIdentifier]
+            ).Value
+        }
+        return ($sid -ceq $ExpectedIdentity.User.Value)
+    } catch { return $false }
+}
+
 function Get-ActionArguments {
     [CmdletBinding()]
     param(
@@ -94,6 +116,9 @@ if ($ProbeV2) {
     . (Join-Path $PSScriptRoot 'vaulter-tether-auth-runner-integrity.ps1')
     $installedVersion = Get-VerifiedRunnerVersion -V1SourcePath $sourceRunnerV1 -V2SourcePath $sourceRunnerV2 -ProtectedRunnerPath $permanentRunner
     Assert-Autostart ($installedVersion -ceq 'v1') 'V2 probe expects an unchanged installed v1 baseline.'
+    # Another S4U account is NOT proof of this protected task's file access.
+    $windowsIdentity = [Security.Principal.WindowsIdentity]::GetCurrent()
+    Assert-Autostart (Test-TaskPrincipalMatchesUser -ExpectedIdentity $windowsIdentity -TaskUserId $existingTask[0].Principal.UserId) 'V2 probe account differs from registered task principal.'
     & (Join-Path $PSScriptRoot 'vaulter-tether-auth-supervised-postcheck.ps1') | Out-Null
     $git = (Get-Command git.exe -ErrorAction Stop).Source
     $head = [string](& $git -C $RepoRoot rev-parse HEAD)
