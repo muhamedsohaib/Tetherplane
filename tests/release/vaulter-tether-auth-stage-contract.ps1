@@ -56,4 +56,40 @@ $prefixed = @(Invoke-WorkspaceCommand -Arguments @('argument-one', 'argument-two
 if ((($prefixed -join [Environment]::NewLine).Trim()) -ne 'pnpm argument-one argument-two') {
     throw 'pnpm wrapper dropped Corepack prefix or command arguments.'
 }
+# Behavioral regression for nested `pnpm` calls from package lifecycle scripts.
+# The child launcher must route through the same Corepack pnpm version even
+# when a different pnpm.cmd already exists in the machine PATH.
+$shimAst = $parsed.Find({
+    param($astNode)
+    $astNode -is [System.Management.Automation.Language.FunctionDefinitionAst] -and
+    $astNode.Name -eq 'New-PnpmCorepackShim'
+}, $true)
+if ($null -eq $shimAst) { throw 'Missing isolated Corepack shim for nested pnpm calls.' }
+Invoke-Expression $shimAst.Extent.Text
+$fixture = Join-Path $env:TEMP ('tetherplane-pnpm-shim-test-' + [Guid]::NewGuid().ToString('N'))
+New-Item -Path $fixture -ItemType Directory -ErrorAction Stop | Out-Null
+$oldPath = $env:PATH
+$shimDirectory = $null
+try {
+    $corepackMock = Join-Path $fixture 'corepack.cmd'
+    $mockBody = '@echo off' + [Environment]::NewLine +
+        'echo [%1] [%2] [%3]' + [Environment]::NewLine
+    [IO.File]::WriteAllText($corepackMock, $mockBody)
+    $shimDirectory = New-PnpmCorepackShim -CorepackPath $corepackMock
+    if (-not (Test-Path (Join-Path $shimDirectory 'pnpm.cmd'))) {
+        throw 'Corepack shim failed to create pnpm.cmd.'
+    }
+    $env:PATH = "$shimDirectory;$oldPath"
+    $nested = @(& cmd.exe /d /c pnpm --version)
+    if ($LASTEXITCODE -ne 0 -or (($nested -join ' ').Trim()) -ne '[pnpm] [--version] []') {
+        throw "Nested pnpm was not delegated to Corepack: $($nested -join ' ')"
+    }
+} finally {
+    $env:PATH = $oldPath
+    if ($shimDirectory -and (Test-Path $shimDirectory)) {
+        Remove-Item $shimDirectory -Recurse -Force
+    }
+    if (Test-Path $fixture) { Remove-Item $fixture -Recurse -Force }
+}
+
 Write-Output 'Windows PowerShell staging syntax and safety guard checks passed.'
