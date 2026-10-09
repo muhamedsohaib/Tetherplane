@@ -489,13 +489,28 @@ if ($RefreshSupervisor) {
                 (Test-RegisteredRestartPolicy -Settings $current.Settings -TaskXml $xml)
             ) 'Replacement instance did not preserve repaired policy.'
         }
-        RestoreTask = { throw 'not implemented: RestoreTask' }
-        VerifyRecoveredTask = { throw 'not implemented: VerifyRecoveredTask' }
-        DisableTask = { throw 'not implemented: DisableTask' }
-        StopTask = { throw 'not implemented: StopTask' }
-        ClearListener = { throw 'not implemented: ClearListener' }
-        RestoreStage = { throw 'not implemented: RestoreStage' }
-        VerifyStage = { throw 'not implemented: VerifyStage' }
+        RestoreTask = {
+            Restore-SupervisedTask
+        }
+        VerifyRecoveredTask = {
+            Wait-HealthyTask
+        }
+        DisableTask = {
+            Disable-ScheduledTask -TaskName $script:taskName -TaskPath '\' -ErrorAction Stop | Out-Null
+            Assert-Recovery (-not [bool](Get-Task).Settings.Enabled) 'Failed supervisor could not be disabled.'
+        }
+        StopTask = {
+            Stop-TaskOwnedService
+        }
+        ClearListener = {
+            Wait-FreePort
+        }
+        RestoreStage = {
+            Restore-StagedAuth
+        }
+        VerifyStage = {
+            Wait-StagedAuth
+        }
     }
     $refreshStatus = Invoke-GuardedSupervisorRefresh -Operations $refreshOps
     if ($refreshStatus -ceq 'refreshed') {
