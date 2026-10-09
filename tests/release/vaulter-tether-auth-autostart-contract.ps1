@@ -219,4 +219,32 @@ try {
 }
 Write-Output 'Isolated v2 supervised child-restart, backoff, and no-collision contracts passed.'
 
+
+# Existing permanent S4U task cannot be replaced or deregistered for a v2
+# probe. Only a separate, one-time task under the same principal is allowed.
+foreach ($required in @(
+    '[switch]$ProbeV2', 'if ($ProbeV2)', 
+    'vaulter-tether-auth-startup-runner-v2.ps1',
+    'tether-auth-runner-v2-probe.json',
+    'Get-VerifiedRunnerVersion', 'v2_source_hash',
+    'verified_utc', 'ProbeV2', 'S4U v2 probe verified'
+)) {
+    if (-not $registration.Contains($required)) {
+        throw "Missing isolated v2 S4U proof gate: $required"
+    }
+}
+if (-not $registration.Contains('Assert-Autostart (-not ($ProbeV2 -and ($Probe -or $Register)))')) {
+    throw 'V2 S4U proof must not be combined with permanent task registration.'
+}
+if ($registration -notmatch '(?s)if \(\$ProbeV2\).*?Get-ScheduledTask' -or
+    $registration -notmatch '(?s)if \(\$ProbeV2\).*?Get-VerifiedRunnerVersion') {
+    throw 'V2 probe must prove an existing, supervised task and trusted runner.'
+}
+if ($runner -match 'v2-only-marker') { throw 'v1 protected runner must not be modified.' }
+$v2 = [IO.File]::ReadAllText((Join-Path $base 'scripts\vaulter-tether-auth-startup-runner-v2.ps1'))
+if ($v2 -notmatch '(?s)if \(\$Validate\).*?Get-ScheduledTask' -or
+    $v2 -notmatch '(?s)if \(\$Validate\).*?S4U') {
+    throw 'The v2 S4U probe must validate the registered task access under S4U.'
+}
+
 Write-Output 'Guarded S4U autostart contracts passed.'
