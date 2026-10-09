@@ -53,8 +53,8 @@ foreach ($danger in @(
     }
 }
 if ($registration -match '(?i)\b-RunLevel\s+Highest\b' -or
-    $registration -match '(?i)\bSYSTEM\b' -or
-    $registration -match '(?i)\b-LogonType\s+Password\b') {
+    $registration -match '(?im)New-ScheduledTaskPrincipal.*-UserId\s+[''"]?(?:NT AUTHORITY\\)?SYSTEM\b' -or
+    $registration -match '(?i)\b-LogonType\s+(?:Password|ServiceAccount)\b') {
     throw 'Autostart must not request elevation, SYSTEM, or a stored password.'
 }
 if ($registration -notmatch '(?m)if \(-not \$Probe -and -not \$Register\)') {
