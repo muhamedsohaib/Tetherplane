@@ -192,8 +192,9 @@ function Get-TrustedRunnerVersion {
     $sourceHash = (Get-FileHash -LiteralPath $script:sourceV1 -Algorithm SHA256 -ErrorAction Stop).Hash
     Assert-Offline ($backupHash -ceq $sourceHash) 'Private v1 backup no longer matches the trusted source.'
     $acl = Get-Acl -LiteralPath $script:protectedRunner -ErrorAction Stop
-    Assert-Offline (Test-OfflineAclEquivalent -Expected $acl -Actual
-        (Get-Acl -LiteralPath $script:v1Backup -ErrorAction Stop)) 'Private v1 backup ACL differs from installed runner.'
+    $backupAcl = Get-Acl -LiteralPath $script:v1Backup -ErrorAction Stop
+    $aclMatches = Test-OfflineAclEquivalent -Expected $acl -Actual $backupAcl
+    Assert-Offline $aclMatches 'Private v1 backup ACL differs from installed runner.'
     return (Get-VerifiedRunnerVersion -V1SourcePath $script:sourceV1 -V2SourcePath $script:sourceV2 -ProtectedRunnerPath $script:protectedRunner)
 }
 function Assert-CheckoutSafe {
