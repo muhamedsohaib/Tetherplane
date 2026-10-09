@@ -7,10 +7,6 @@ $activationPath = Join-Path $PSScriptRoot '..\..\scripts\vaulter-tether-auth-act
 if (-not (Test-Path -LiteralPath $activationPath -PathType Leaf)) {
     throw 'Missing guarded Vaulter auth activation script.'
 }
-$ast = [System.Management.Automation.Language.Parser]::ParseFile(
-    (Resolve-Path -LiteralPath $activationPath).Path,
-    [ref]$null, [ref]$null
-)
 $tokens = $null
 $errors = $null
 $ast = [System.Management.Automation.Language.Parser]::ParseFile(
@@ -98,14 +94,7 @@ foreach ($step in @('StopStage', 'EnableTask', 'StartTask', 'VerifyNew')) {
     }
 }
 $rollbackFailure = New-OperationFixture 'VerifyRestore'
-$rollbackMessage = ''
-try {
-    Invoke-GuardedAuthHandover -Operations $rollbackFailure.ops | Out-Null
-    throw 'Rollback failure unexpectedly succeeded.'
-} catch {
-    $rollbackMessage = $_.Exception.Message
-}
-# The fixture with VerifyRestore failure needs a primary error; fake it via VerifyNew.
+# Inject a primary verification failure and a separate rollback verification failure.
 $rollbackFailure.ops['VerifyNew'] = { throw 'fixture verification failure' }
 $rollbackMessage = ''
 try {
