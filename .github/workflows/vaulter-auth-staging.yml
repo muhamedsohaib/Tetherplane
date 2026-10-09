@@ -97,3 +97,11 @@ jobs:
         if: runner.os == 'Windows'
         shell: powershell
         run: ./tests/release/vaulter-tether-auth-recovery-contract.ps1
+      - name: Read-only auth restart diagnostics contract (PowerShell 7)
+        if: runner.os == 'Windows'
+        shell: pwsh
+        run: ./tests/release/vaulter-tether-auth-restart-diagnostic-contract.ps1
+      - name: Read-only auth restart diagnostics contract (Windows PowerShell 5.1)
+        if: runner.os == 'Windows'
+        shell: powershell
+        run: ./tests/release/vaulter-tether-auth-restart-diagnostic-contract.ps1
