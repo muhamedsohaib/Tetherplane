@@ -347,6 +347,17 @@ The script first reuses the independent supervised-auth postcheck, then reports 
 
 Correct the smallest demonstrated supervision fault using a new tested and reversible plan. A new live restart exercise is permitted only after fresh checks and a maintenance window; unattended reboot acceptance is a separate, later gate.
 
+## Registered restart policy corrected in source — on-device application pending
+
+The Vaulter operator confirmed the restart policy from *both* read-only views: CIM `RestartCount=999`, `RestartInterval=PT1M`, and exported task XML `<Count>999</Count>`, `<Interval>PT1M</Interval>`. The task remained `Running` after manual recovery. Scheduler Operational history was disabled, empty, or unavailable. These findings establish an out-of-schema persisted configuration; they **do not prove** that this value alone caused the automatic restart failure.
+
+The feature branch now defines a valid **10 attempts at 1-minute intervals** for newly registered tasks. Existing task settings are untouched by that source change. The separate `scripts/vaulter-tether-auth-restart-settings-repair.ps1` uses an explicit `-Apply` mode to repair only the currently registered task's count. Default mode is read-only: it verifies the exact registered S4U task, private-state ACL, live task-owned auth service, Auth0 metadata, public JWKS, protected runner, and all Tailscale ports; it also cross-checks exported XML against CIM restart settings.
+
+Operational sequence: (1) pull the verified feature branch and run the new script with no flags; (2) inspect the preflight output; (3) in a separately approved maintenance step, use `-Apply` to persist the count 10 through `Set-ScheduledTask -Settings` without unregistering the task or changing its action, identity, or triggers; (4) verify the XML changed only in `<Count>`, the process PID is unchanged, and private task-definition backup was stored under the protected auth state. The script attempts to restore the previous settings on failure and clearly reports `ROLLBACK UNVERIFIED` if restoration cannot be proven. Never copy the protected XML backup into chat or Git.
+
+Microsoft documents that modifying the registered task definition **does not alter the current running task instance**. Therefore, even if the task count is updated successfully, this does **not** establish that the running instance has adopted its recovery policy. Design and separately verify a controlled restart of the supervised *task instance* using ownership checks and an explicit rollback plan before repeating the fault-injection `-Exercise` test. Do not assume changing a definition heals the already running process.
+
+Do not change the relay issuer, remove Auth0, alter any Funnel mount, or reboot Vaulter during the configuration correction. A fresh live automatic-restart pass and an independent reboot recovery pass are required before the identity cutover.
 ## Phase 2 — Publish only verified auth paths
 
 1. Capture a safe Tailscale route configuration backup before changing any Funnel mount.
