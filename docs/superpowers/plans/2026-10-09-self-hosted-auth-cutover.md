@@ -151,6 +151,31 @@ It then checks public `/jwks` against the loopback signing **public key** attrib
 
 **Before publishing the rest of OAuth:** (1) verify the JWKS canary on the installed Tailscale version; (2) establish durable, restart-safe process supervision for `tether-auth`; (3) verify paired-device account-approval readiness and back up the relay's original process/registry launch config. The new public OAuth routes are `/auth`, `/token`, `/jwks`, `/reg`, `/me`, `/session`, `/interaction`, and narrow OIDC discovery mounts. `/auth/device-login` must be a more-specific mount to the existing relay: Tailscale ServeMux's matching can otherwise route device-login subpaths to the auth service. Never redirect the whole `/.well-known` or `/auth` prefix without preserving the protected-resource and device-login routes.
 
+## JWKS canary accepted — 2026-10-09
+
+Vaulter confirmed the `-Apply` canary using the actual installed Tailscale Funnel. The user-provided run reported:
+
+- Original 443 Funnel root remained `/ -> http://127.0.0.1:8788`.
+- Public `/jwks` proxies to `http://127.0.0.1:8790/jwks`.
+- The public JWKS public-key members match the local authorization-server public keys.
+- Public MCP health and the Auth0 protected-resource issuer remained unchanged.
+- Existing tailnet-only ports `10000`, `8443`, `9443`, and `9445` remained unchanged.
+- A protected on-Vaulter backup of the original Funnel configuration was created.
+
+**Do not run the global `tailscale funnel --https=443 off` suggestion from the CLI output**: it could disable the entire public port, not just the canary mount. If the JWKS canary must be removed, use only `tailscale funnel --https=443 --set-path=/jwks off` after checking its preexisting state.
+
+The next migration gate is the **read-only** process/device readiness inspection:
+
+~~~powershell
+$repo = Join-Path $env:USERPROFILE "source\Tetherplane-auth-stage"
+git -C $repo pull --ff-only
+& (Join-Path $repo "scripts\vaulter-tether-auth-cutover-readiness.ps1")
+~~~
+
+This discovers the running relay's exact (nonsecret) launch-file paths, checks whether the paired-device registry can be located, and reports whether the auth process has a direct service association or a candidate Windows Scheduled Task. It never prints command lines, bearer values, account IDs, credentials, registry hashes or private JWKS fields. **A paired record does not establish that its device is currently online.** Device-assisted login approval must be tested separately before the relay issuer switch.
+
+The current `tether-auth` instance was launched by a one-time staging command and is **not yet verified restart-safe**. Keep auth login and token routes private until restart supervision and path-exception deployment are designed from the running environment. A successful JWKS-only public canary does not mean the authorization server is production-ready.
+
 ## Phase 2 — Publish only verified auth paths
 
 1. Capture a safe Tailscale route configuration backup before changing any Funnel mount.
