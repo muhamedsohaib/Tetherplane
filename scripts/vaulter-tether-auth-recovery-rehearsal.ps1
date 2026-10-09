@@ -191,6 +191,7 @@ function Stop-TaskOwnedService {
     }
 }
 function Restore-StagedAuth {
+    Assert-Recovery ((Get-Task).State -eq 'Disabled') 'Refusing staged rollback while the supervisor task is enabled.'
     Wait-FreePort
     $secretFile = Join-Path $script:stateDir 'bridge-token.secret'
     $secret = ([IO.File]::ReadAllText($secretFile)).Trim()
