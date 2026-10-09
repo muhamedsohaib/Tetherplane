@@ -151,4 +151,68 @@ try {
     if ($_.Exception.Message -eq 'Unverified rollback was reported as success.') { throw }
     if ($_.Exception.Message -notmatch 'ROLLBACK UNVERIFIED') { throw }
 }
+
+# Windows File.Replace must be tested against actual temporary files rather
+# than trusted solely to mocked transaction callbacks.
+$swapFn = $ast.Find({
+    param($node)
+    $node -is [System.Management.Automation.Language.FunctionDefinitionAst] -and
+    $node.Name -eq 'Invoke-RunnerAtomicReplace'
+}, $true)
+if ($null -eq $swapFn) { throw 'Missing separately testable same-directory atomic file swap.' }
+Invoke-Expression $swapFn.Extent.Text
+$disk = Join-Path ([IO.Path]::GetTempPath()) ('tp-atomic-runner-' + [guid]::NewGuid().ToString('N'))
+try {
+    New-Item -ItemType Directory -Path $disk -ErrorAction Stop | Out-Null
+    $active = Join-Path $disk 'active.ps1'
+    $candidate = Join-Path $disk 'candidate.tmp'
+    $backup = Join-Path $disk 'backup.ps1'
+    $restore = Join-Path $disk 'restore.tmp'
+    $rollbackRecord = Join-Path $disk 'replaced.ps1'
+    [IO.File]::WriteAllText($active, 'v1')
+    [IO.File]::WriteAllText($candidate, 'v2')
+    Invoke-RunnerAtomicReplace -StagedPath $candidate -TargetPath $active -BackupPath $backup
+    if ([IO.File]::ReadAllText($active) -cne 'v2' -or
+        [IO.File]::ReadAllText($backup) -cne 'v1') {
+        throw 'Atomic install did not retain v1 in the backup and v2 as active.'
+    }
+    [IO.File]::WriteAllText($candidate, 'untrusted')
+    try {
+        Invoke-RunnerAtomicReplace -StagedPath $candidate -TargetPath $active -BackupPath $backup
+        throw 'Atomic install overwrote the original protected backup.'
+    } catch {
+        if ($_.Exception.Message -eq 'Atomic install overwrote the original protected backup.') { throw }
+    }
+    if ([IO.File]::ReadAllText($active) -cne 'v2' -or
+        [IO.File]::ReadAllText($backup) -cne 'v1') {
+        throw 'Conflicting backup must fail before any mutation.'
+    }
+    [IO.File]::WriteAllText($restore, 'v1')
+    Invoke-RunnerAtomicReplace -StagedPath $restore -TargetPath $active -BackupPath $rollbackRecord
+    if ([IO.File]::ReadAllText($active) -cne 'v1' -or
+        [IO.File]::ReadAllText($rollbackRecord) -cne 'v2') {
+        throw 'Atomic restoration must preserve previous candidate in its private evidence file.'
+    }
+    $foreign = Join-Path ([IO.Path]::GetTempPath()) ('tp-foreign-' + [guid]::NewGuid().ToString('N') + '.tmp')
+    [IO.File]::WriteAllText($foreign, 'other')
+    try {
+        Invoke-RunnerAtomicReplace -StagedPath $foreign -TargetPath $active -BackupPath (Join-Path $disk 'unexpected.ps1')
+        throw 'File swap accepted a cross-directory candidate.'
+    } catch {
+        if ($_.Exception.Message -eq 'File swap accepted a cross-directory candidate.') { throw }
+    } finally {
+        Remove-Item -LiteralPath $foreign -Force -ErrorAction SilentlyContinue
+    }
+} finally {
+    if (Test-Path -LiteralPath $disk) {
+        Remove-Item -LiteralPath $disk -Recurse -Force -ErrorAction Stop
+    }
+}
+if (-not $upgrade.Contains('Invoke-RunnerAtomicReplace -StagedPath')) {
+    throw 'Live upgrade must invoke the tested atomic swap, not a separate untested implementation.'
+}
+if (-not $upgrade.Contains('cleanupApproved')) {
+    throw 'Unverified rollback must preserve protected recovery evidence.'
+}
+
 Write-Output 'Protected v1/v2 runner identity and guarded install/restore contracts passed.'
