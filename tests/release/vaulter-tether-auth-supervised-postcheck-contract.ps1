@@ -18,7 +18,7 @@ foreach ($required in @(
     'COMPUTERNAME', 'vaulter',
     'Tetherplane-TetherAuth-Startup', 'Get-ScheduledTask', 'Running',
     'S4U', 'BootTrigger', 'RestartCount', 'AreAccessRulesProtected',
-    'Get-FileHash', 'Win32_Process', 'Get-CimInstance', 'Get-NetTCPConnection',
+    'Get-VerifiedRunnerVersion', 'vaulter-tether-auth-startup-runner-v2.ps1', 'Win32_Process', 'Get-CimInstance', 'Get-NetTCPConnection',
     'ParentProcessId', 'CommandLine', '-Serve', 'tether-auth-startup-runner.ps1',
     '127.0.0.1', '8788', '8790', 'jwks', 'readyz',
     'authorization_servers', 'https://tetherplane-dev.eu.auth0.com/',
