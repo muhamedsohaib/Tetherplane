@@ -153,12 +153,22 @@ function Test-TaskPrincipalIsCurrentUser {
         return $false
     }
 
-    # Windows Task Scheduler may return a SID rather than the DOMAIN\user
-    # account label originally supplied to New-ScheduledTaskPrincipal.
-    # Resolve both forms to the same immutable Windows identity before
-    # authorizing any process termination, without printing either value.
+    # Task Scheduler may return a Windows SID rather than the account label
+    # originally registered. Authorize only the matching Windows identity.
     try {
-        if ($TaskUserId -match '^S-\d-\d+(?:-\d+)+
+        if ($TaskUserId -match '^S-\d-\d+(?:-\d+)+$') {
+            $taskSid = [System.Security.Principal.SecurityIdentifier]::new($TaskUserId)
+        } else {
+            $taskAccount = [System.Security.Principal.NTAccount]::new($TaskUserId)
+            $taskSid = $taskAccount.Translate([System.Security.Principal.SecurityIdentifier])
+        }
+        return ([string]$taskSid.Value -ceq [string]$CurrentUserSid.Value)
+    } catch {
+        # Unmapped or invalid principal identities always fail closed.
+        return $false
+    }
+}
+
 function VerifySupervisedAuth {
     $listener = Get-AuthListener
     Assert-Activation ($null -ne $listener -and
@@ -283,227 +293,6 @@ Assert-Activation ([string]$task.Principal.LogonType -ceq 'S4U') 'Registered tas
 Assert-Activation (
     Test-TaskPrincipalIsCurrentUser -TaskUserId ([string]$task.Principal.UserId) -CurrentUserSid $windowsIdentity.User
 ) 'Registered task owner SID differs from current account or cannot be resolved.'
-Assert-Activation (@($task.Triggers | Where-Object {
-    $_.CimClass.CimClassName -match 'BootTrigger$'
-}).Count -gt 0) 'Registered task has no system-startup trigger.'
-Assert-Activation ($task.Settings.RestartCount -gt 0) 'Registered task lacks restart policy.'
-Assert-Activation (@($task.Actions).Count -eq 1) 'Registered task must have exactly one action.'
-$taskAction = @($task.Actions)[0]
-$expectedPowerShell = Join-Path $env:SystemRoot 'System32\WindowsPowerShell\v1.0\powershell.exe'
-Assert-Activation ([string]$taskAction.Execute -ieq $expectedPowerShell) 'Task does not use the pinned Windows PowerShell executable.'
-$commandLine = [string]$taskAction.Arguments
-Assert-Activation (
-    $commandLine.Contains(' -File "' + $script:protectedRunner + '"') -and
-    $commandLine.Contains(' -StateDirectory "' + $script:stateDir + '"') -and
-    $commandLine.Contains(' -RepoRoot "' + $script:repoDir + '"') -and
-    $commandLine.Contains(' -NodeExecutable "' + $script:nodeExecutable + '"') -and
-    $commandLine.EndsWith(' -Serve', [StringComparison]::Ordinal)
-) 'Registered task action differs from expected protected runner.'
-
-$staged = Get-AuthListener
-Assert-Activation ($null -ne $staged) 'Existing staged auth listener is unavailable.'
-$script:stagedPid = [int]$staged.ProcessId
-$script:stageCreationDate = $staged.CreationDate
-
-$script:baselineFingerprint = Get-PublicJwksFingerprint 'http://127.0.0.1:8790/jwks'
-VerifyExistingAuth
-$ts = Get-Command tailscale.exe -ErrorAction Stop
-$funnel = @(& $ts.Source funnel status)
-Assert-Activation ($LASTEXITCODE -eq 0) 'Cannot read current Funnel routing.'
-$funnelText = $funnel -join [Environment]::NewLine
-Assert-Activation (
-    $funnelText.Contains("$origin (Funnel on)") -and
-    $funnelText.Contains('|-- / proxy http://127.0.0.1:8788') -and
-    $funnelText.Contains('/jwks proxy http://127.0.0.1:8790/jwks')
-) 'Baseline Funnel routes have changed.'
-
-if (-not $Activate) {
-    Write-Output "Auth handover preflight PASS: staged PID $script:stagedPid, S4U task disabled; public JWKS unchanged."
-    Write-Output 'No changes made. Use -Activate only for a guarded scheduled-task handover.'
-    return
-}
-
-$ops = @{
-    StopStage = {
-        $current = Get-AuthListener
-        Assert-Activation ($null -ne $current -and
-            $current.ProcessId -eq $script:stagedPid -and
-            $current.CreationDate -eq $script:stageCreationDate) 'Staging process changed before activation; refusing to stop an unrelated process.'
-        $processCheck = Get-Process -Id $script:stagedPid -ErrorAction Stop
-        Assert-Activation ($processCheck.ProcessName -ieq 'node') 'Staged process is no longer the expected Node.js process.'
-        Stop-Process -Id $script:stagedPid -ErrorAction Stop
-        for ($i=0; $i -lt 20; $i++) {
-            Start-Sleep -Milliseconds 500
-            if ($null -eq (Get-AuthListener)) { return }
-        }
-        throw 'Original staged auth did not release port 8790.'
-    }
-    EnableTask = {
-        Enable-ScheduledTask -TaskName $script:taskName -ErrorAction Stop | Out-Null
-        Assert-Activation ((Get-TaskState).State -ne 'Disabled') 'Task remained disabled.'
-    }
-    StartTask = {
-        Start-ScheduledTask -TaskName $script:taskName -ErrorAction Stop
-    }
-    VerifyNew = {
-        Wait-VerifiedAuth { VerifySupervisedAuth }
-    }
-    StopTask = {
-        Stop-TaskOwnedAuth
-    }
-    DisableTask = {
-        Disable-ScheduledTask -TaskName $script:taskName -ErrorAction Stop | Out-Null
-        Assert-Activation ((Get-TaskState).State -eq 'Disabled') 'Could not disable auth startup task.'
-    }
-    RestoreStage = {
-        Restore-StagedAuth
-    }
-    VerifyRestore = {
-        Wait-VerifiedAuth { VerifyRestoredAuth }
-    }
-}
-
-$status = Invoke-GuardedAuthHandover -Operations $ops
-Assert-Activation ($status -ceq 'activated') 'Unexpected handover result.'
-$finalListener = Get-AuthListener
-Write-Output "AUTH SUPERVISION ACTIVE: task=$taskName, listenerPID=$($finalListener.ProcessId), S4U startup task running."
-Write-Output 'Local/public JWKS and Auth0 relay are unchanged. No identities or secrets printed.'
-Write-Output 'A restart/reboot recovery test is still required before declaring unattended startup fully verified.'
-) {
-            $taskSid = [System.Security.Principal.SecurityIdentifier]::new($TaskUserId)
-        } else {
-            $taskAccount = [System.Security.Principal.NTAccount]::new($TaskUserId)
-            $taskSid = $taskAccount.Translate([System.Security.Principal.SecurityIdentifier])
-        }
-        return ([string]$taskSid.Value -ceq [string]$CurrentUserSid.Value)
-    } catch {
-        # Fail closed on invalid, unmapped or inaccessible task identities.
-        return $false
-    }
-}
-
-function VerifySupervisedAuth {
-    $listener = Get-AuthListener
-    Assert-Activation ($null -ne $listener -and
-        $listener.ProcessId -ne $script:stagedPid) 'Scheduled auth listener was not replaced.'
-    $parent = Get-CimInstance Win32_Process -Filter "ProcessId=$($listener.ParentProcessId)" -ErrorAction Stop
-    Assert-Activation ($null -ne $parent -and $parent.Name -ieq 'powershell.exe') 'Scheduled auth process has an unexpected parent.'
-    Assert-Activation (
-        ([string]$parent.CommandLine).Contains($script:protectedRunner) -and
-        ([string]$parent.CommandLine).Contains(' -Serve')
-    ) 'Auth listener is not a child of the registered protected startup runner.'
-    Assert-Activation ((Get-TaskState).State -eq 'Running') 'Startup task is not running.'
-    VerifyExistingAuth
-}
-
-function VerifyRestoredAuth {
-    Assert-Activation ((Get-TaskState).State -eq 'Disabled') 'Startup task is not disabled following rollback.'
-    $listener = Get-AuthListener
-    Assert-Activation ($null -ne $listener) 'Staged auth listener not restored.'
-    VerifyExistingAuth
-}
-
-function Stop-TaskOwnedAuth {
-    # The task may have started even if Start-ScheduledTask reported an error.
-    $runningTask = Get-TaskState
-    if ($runningTask.State -eq 'Running') {
-        Stop-ScheduledTask -TaskName $script:taskName -ErrorAction Stop
-    }
-    Start-Sleep -Milliseconds 500
-    $listener = Get-AuthListener
-    if ($null -eq $listener -or $listener.ProcessId -eq $script:stagedPid) { return }
-
-    # Only terminate a Node process still demonstrably launched by OUR task.
-    $parent = Get-CimInstance Win32_Process -Filter "ProcessId=$($listener.ParentProcessId)" -ErrorAction SilentlyContinue
-    if ($null -ne $parent -and $parent.Name -ieq 'powershell.exe' -and
-        ([string]$parent.CommandLine).Contains($script:protectedRunner) -and
-        ([string]$parent.CommandLine).Contains(' -Serve')) {
-        Stop-Process -Id $listener.ProcessId -ErrorAction Stop
-        Start-Sleep -Milliseconds 500
-    }
-    $remaining = Get-AuthListener
-    Assert-Activation ($null -eq $remaining -or $remaining.ProcessId -eq $script:stagedPid) 'Scheduled auth process still owns loopback port; rollback cannot safely replace it.'
-}
-
-function Restore-StagedAuth {
-    $listener = Get-AuthListener
-    if ($null -ne $listener) {
-        Assert-Activation ($listener.ProcessId -eq $script:stagedPid) 'Unexpected listener blocks stage restoration.'
-        return
-    }
-    $secretFile = Join-Path $script:stateDir 'bridge-token.secret'
-    $token = ([IO.File]::ReadAllText($secretFile)).Trim()
-    Assert-Activation ($token -match '^[A-Za-z0-9_-]{60,}$') 'Protected bridge credential cannot be loaded.'
-    $original = [Environment]::GetEnvironmentVariable('TETHERPLANE_AUTH_BRIDGE_TOKEN','Process')
-    try {
-        $env:TETHERPLANE_AUTH_BRIDGE_TOKEN = $token
-        $logId = [Guid]::NewGuid().ToString('N')
-        $stdout = Join-Path $script:stateDir ("tether-auth-recovery-$logId.stdout.log")
-        $stderr = Join-Path $script:stateDir ("tether-auth-recovery-$logId.stderr.log")
-        $argumentText = 'auth/dist/cli.js --config "' + $script:authConfig +
-            '" --host 127.0.0.1 --port 8790 --allow-insecure-localhost'
-        $newProcess = Start-Process -FilePath $script:nodeExecutable -ArgumentList $argumentText -WorkingDirectory $script:repoDir -RedirectStandardOutput $stdout -RedirectStandardError $stderr -WindowStyle Hidden -PassThru -ErrorAction Stop
-        Assert-Activation ($null -ne $newProcess) 'Could not relaunch original staged auth.'
-    } finally {
-        if ($null -eq $original) {
-            Remove-Item Env:\TETHERPLANE_AUTH_BRIDGE_TOKEN -ErrorAction SilentlyContinue
-        } else {
-            $env:TETHERPLANE_AUTH_BRIDGE_TOKEN = $original
-        }
-        $token = $null
-    }
-}
-
-function Wait-VerifiedAuth([scriptblock]$Verify, [int]$MaxAttempts = 35) {
-    for ($i = 0; $i -lt $MaxAttempts; $i++) {
-        Start-Sleep -Seconds 1
-        try {
-            & $Verify
-            return
-        } catch {
-            if ($i -eq ($MaxAttempts-1)) {
-                throw 'Auth did not pass ownership/health verification within the deadline.'
-            }
-        }
-    }
-}
-
-Assert-Activation ($env:OS -eq 'Windows_NT' -and
-    $env:COMPUTERNAME -ieq 'vaulter') 'Auth activation runs only on Vaulter.'
-$script:repoDir = [IO.Path]::GetFullPath($RepoRoot)
-$script:stateDir = [IO.Path]::GetFullPath($StateDirectory)
-$script:authConfig = Join-Path $script:stateDir 'tether-auth-config.json'
-$script:protectedRunner = Join-Path $script:stateDir 'tether-auth-startup-runner.ps1'
-$sourceRunner = Join-Path $script:repoDir 'scripts\vaulter-tether-auth-startup-runner.ps1'
-$script:nodeExecutable = (Get-Command node.exe -ErrorAction Stop).Source
-
-Assert-Activation (Test-Path -LiteralPath $script:stateDir -PathType Container) 'Protected auth-state directory missing.'
-Assert-Activation ((Get-Acl -LiteralPath $script:stateDir).AreAccessRulesProtected) 'Auth state ACL is not protected.'
-foreach ($file in @($script:authConfig, $script:protectedRunner, $sourceRunner,
-        (Join-Path $script:stateDir 'bridge-token.secret'),
-        (Join-Path $script:stateDir 'provider.sqlite'),
-        (Join-Path $script:stateDir 'tether-auth-jwks.json'))) {
-    Assert-Activation (Test-Path -LiteralPath $file -PathType Leaf) 'Required auth-state or startup-runner file missing.'
-}
-Assert-Activation (
-    (Get-FileHash -LiteralPath $sourceRunner -Algorithm SHA256).Hash -ceq
-    (Get-FileHash -LiteralPath $script:protectedRunner -Algorithm SHA256).Hash
-) 'Protected startup runner differs from registered and verified source.'
-$config = Get-Content -LiteralPath $script:authConfig -Raw | ConvertFrom-Json
-Assert-Activation (
-    $config.issuer -ceq "$origin/" -and
-    $config.resource -ceq "$origin/mcp" -and
-    $config.relay.url -ceq 'http://127.0.0.1:8788' -and
-    $config.relay.bridgeTokenEnv -ceq 'TETHERPLANE_AUTH_BRIDGE_TOKEN' -and
-    $config.databasePath -ieq (Join-Path $script:stateDir 'provider.sqlite') -and
-    $config.jwksFile -ieq (Join-Path $script:stateDir 'tether-auth-jwks.json')
-) 'Existing auth deployment metadata is not the expected Vaulter configuration.'
-
-$task = Get-TaskState
-$windowsIdentity = [System.Security.Principal.WindowsIdentity]::GetCurrent()
-Assert-Activation ($task.State -eq 'Disabled' -and
-    [string]$task.Principal.LogonType -ceq 'S4U' -and
-    [string]$task.Principal.UserId -ieq $windowsIdentity.Name) 'Registered task is not disabled or does not match the S4U state owner.'
 Assert-Activation (@($task.Triggers | Where-Object {
     $_.CimClass.CimClassName -match 'BootTrigger$'
 }).Count -gt 0) 'Registered task has no system-startup trigger.'
