@@ -176,7 +176,7 @@ try {
     $args = Get-ActionArguments -RunnerPath $permanentRunner -StateDirectory $StateDirectory -RepoRoot $RepoRoot -NodeExecutable $node.Source -Mode Serve
     $action = New-ScheduledTaskAction -Execute $powerShell -Argument $args -WorkingDirectory $RepoRoot
     $boot = New-ScheduledTaskTrigger -AtStartup
-    $settings = New-ScheduledTaskSettingsSet -Disable -StartWhenAvailable -RestartCount 999 -RestartInterval (New-TimeSpan -Minutes 1) -ExecutionTimeLimit ([TimeSpan]::Zero) -MultipleInstances IgnoreNew -AllowStartIfOnBatteries -DontStopIfGoingOnBatteries
+    $settings = New-ScheduledTaskSettingsSet -Disable -StartWhenAvailable -RestartCount 10 -RestartInterval (New-TimeSpan -Minutes 1) -ExecutionTimeLimit ([TimeSpan]::Zero) -MultipleInstances IgnoreNew -AllowStartIfOnBatteries -DontStopIfGoingOnBatteries
 
     Register-ScheduledTask -TaskName $taskName -Principal $principal -Action $action -Trigger $boot -Settings $settings -ErrorAction Stop | Out-Null
     $registered = $true
