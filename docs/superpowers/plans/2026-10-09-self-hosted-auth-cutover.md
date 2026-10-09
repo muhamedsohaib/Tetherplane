@@ -1,7 +1,7 @@
 # Self-hosted tether-auth cutover — Vaulter
 
 **Date:** 2026-10-09  
-**Status:** Local `tether-auth`, public `/jwks` canary, S4U validation and disabled startup task verified on Vaulter; Auth0 relay still active. Live supervised activation and final identity cutover remain pending.  
+**Status:** Live S4U supervised-auth handover and public JWKS verified on Vaulter; independent postcheck and reboot recovery unverified. Auth0 remains active; identity cutover and ChatGPT tool acceptance pending.  
 **Baseline:** `main` at `5feee084eb24bfd4831ab42840bb5f10dafc8113`.  
 **Target:** Vaulter for the relay and authorization server; canonical source remains GitHub and Leno.  
 **Objective:** Replace the external Auth0 authorization server with the repository's own `tether-auth`, while retaining the existing public MCP URL, six-tool catalog, device routing, and local Policy Broker. No purchase or external messaging is required.
