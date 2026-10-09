@@ -105,3 +105,11 @@ jobs:
         if: runner.os == 'Windows'
         shell: powershell
         run: ./tests/release/vaulter-tether-auth-restart-diagnostic-contract.ps1
+      - name: Restart count repair contract (PowerShell 7)
+        if: runner.os == 'Windows'
+        shell: pwsh
+        run: ./tests/release/vaulter-tether-auth-restart-settings-contract.ps1
+      - name: Restart count repair contract (Windows PowerShell 5.1)
+        if: runner.os == 'Windows'
+        shell: powershell
+        run: ./tests/release/vaulter-tether-auth-restart-settings-contract.ps1
