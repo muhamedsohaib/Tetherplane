@@ -65,6 +65,49 @@ function Invoke-RestartRecoveryTransaction {
         }
     }
 }
+function Invoke-GuardedSupervisorRefresh {
+    [CmdletBinding()]
+    param([Parameter(Mandatory=$true)][hashtable]$Operations)
+    foreach ($name in @(
+        'VerifyBaseline','VerifyTarget','QuiesceTask','StopOwnedTask',
+        'VerifyVacant','ReenableTask','StartTask','VerifyNewTask',
+        'RestoreTask','VerifyRecoveredTask',
+        'DisableTask','StopTask','ClearListener','RestoreStage','VerifyStage'
+    )) {
+        if (-not $Operations.ContainsKey($name) -or
+            -not ($Operations[$name] -is [scriptblock])) {
+            throw 'Supervisor refresh operation missing.'
+        }
+    }
+    & $Operations['VerifyBaseline']
+    & $Operations['VerifyTarget']
+    try {
+        foreach ($name in @(
+            'QuiesceTask','StopOwnedTask','VerifyVacant',
+            'ReenableTask','StartTask','VerifyNewTask'
+        )) { & $Operations[$name] }
+        return 'refreshed'
+    } catch {
+        try {
+            & $Operations['RestoreTask']
+            & $Operations['VerifyRecoveredTask']
+            return 'manually_restored'
+        } catch {
+            $verified = $true
+            foreach ($name in @(
+                'DisableTask','StopTask','ClearListener','RestoreStage','VerifyStage'
+            )) {
+                try { & $Operations[$name] }
+                catch { $verified = $false }
+            }
+            if (-not $verified) {
+                throw 'SUPERVISOR REFRESH FAILED; rollback unverified. Do not reboot or change relay/Funnel.'
+            }
+            throw 'SUPERVISOR REFRESH FAILED; staged auth restored and rollback verified.'
+        }
+    }
+}
+
 function Test-RegisteredRestartPolicy {
     [CmdletBinding()]
     param(
