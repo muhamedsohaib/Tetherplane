@@ -105,4 +105,14 @@ foreach ($gate in @(
     }
 }
 
+# Task Scheduler XML RestartOnFailure/Count is limited to 1..255.
+$matchesCount = [regex]::Matches($registration, '-RestartCount\\s+(\\d+)')
+if ($matchesCount.Count -ne 1) {
+    throw 'Startup task definition must set one explicit RestartCount.'
+}
+$requestedCount = [int]$matchesCount[0].Groups[1].Value
+if ($requestedCount -lt 1 -or $requestedCount -gt 255) {
+    throw 'New startup tasks must never register an out-of-schema restart count.'
+}
+
 Write-Output 'Guarded S4U autostart contracts passed.'
