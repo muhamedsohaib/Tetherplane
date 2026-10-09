@@ -73,7 +73,8 @@ function Invoke-GuardedSupervisorRefresh {
         'VerifyBaseline','VerifyTarget','QuiesceTask','StopOwnedTask',
         'VerifyVacant','ReenableTask','StartTask','VerifyNewTask',
         'RestoreTask','VerifyRecoveredTask',
-        'DisableTask','StopTask','ClearListener','RestoreStage','VerifyStage'
+        'DisableTask','StopTask','ClearListener',
+        'RecoverOriginalV1','VerifyRecoveredV1','RestoreStage','VerifyStage'
     )) {
         if (-not $Operations.ContainsKey($name) -or
             -not ($Operations[$name] -is [scriptblock])) {
@@ -94,17 +95,28 @@ function Invoke-GuardedSupervisorRefresh {
             & $Operations['VerifyRecoveredTask']
             return 'manually_restored'
         } catch {
-            $verified = $true
-            foreach ($name in @(
-                'DisableTask','StopTask','ClearListener','RestoreStage','VerifyStage'
-            )) {
-                try { & $Operations[$name] }
-                catch { $verified = $false }
+            # First recover the exact protected v1 task. A healthy staged
+            # fallback remains available if original v1 recovery fails.
+            try {
+                foreach ($name in @(
+                    'DisableTask','StopTask','ClearListener',
+                    'RecoverOriginalV1','VerifyRecoveredV1'
+                )) { & $Operations[$name] }
+                return 'v1_restored'
+            } catch {
+                $verified = $true
+                foreach ($name in @(
+                    'DisableTask','StopTask','ClearListener',
+                    'RestoreStage','VerifyStage'
+                )) {
+                    try { & $Operations[$name] }
+                    catch { $verified = $false }
+                }
+                if (-not $verified) {
+                    throw 'SUPERVISOR REFRESH FAILED; rollback unverified. Do not reboot or change relay/Funnel.'
+                }
+                throw 'SUPERVISOR REFRESH FAILED; staged auth restored and rollback verified.'
             }
-            if (-not $verified) {
-                throw 'SUPERVISOR REFRESH FAILED; rollback unverified. Do not reboot or change relay/Funnel.'
-            }
-            throw 'SUPERVISOR REFRESH FAILED; staged auth restored and rollback verified.'
         }
     }
 }
@@ -458,6 +470,13 @@ $sourceRunnerV2 = Join-Path $script:repoDir 'scripts\vaulter-tether-auth-startup
 # This alone is not proof that a running PowerShell parent loaded v2.
 $installedRunnerVersion = Get-VerifiedRunnerVersion -V1SourcePath $sourceRunnerV1 -V2SourcePath $sourceRunnerV2 -ProtectedRunnerPath $script:protectedRunner
 Assert-Recovery ($installedRunnerVersion -cin @('v1','v2')) 'Unexpected protected runner source.'
+$script:offlineRescue = Join-Path $PSScriptRoot 'vaulter-tether-auth-offline-restore.ps1'
+if ($RefreshSupervisor -and $installedRunnerVersion -ceq 'v2') {
+    # Fail closed BEFORE service disruption if the exact original backup,
+    # local git revision, S4U task and ACL cannot pass independent preflight.
+    Assert-Recovery (Test-Path -LiteralPath $script:offlineRescue -PathType Leaf) 'Offline original-v1 rescue unavailable.'
+    & $script:offlineRescue | Out-Null
+}
 $task = Get-Task
 Assert-Recovery ($task.State -eq 'Running' -and
     [string]$task.Principal.LogonType -ceq 'S4U') 'S4U task is not running.'
@@ -551,6 +570,37 @@ if ($RefreshSupervisor) {
         VerifyRecoveredTask = {
             Wait-HealthyTask
         }
+        RecoverOriginalV1 = {
+            Assert-Recovery ($installedRunnerVersion -ceq 'v2') 'Verified v1 rollback is only available after v2 activation.'
+            $taskBeforeRestore = Get-Task
+            Assert-Recovery ($taskBeforeRestore.State -eq 'Disabled' -and
+                -not [bool]$taskBeforeRestore.Settings.Enabled) 'Original S4U task was not safely disabled.'
+            $listeners = @(Get-NetTCPConnection -State Listen -ErrorAction Stop |
+                Where-Object { $_.LocalPort -eq 8790 })
+            Assert-Recovery ($listeners.Count -eq 0) 'Port 8790 is not vacant before original v1 rollback.'
+            # Three explicit, separately checked recovery actions. None
+            # touches human-origin resources or task registration fields.
+            & $script:offlineRescue -RestoreV1 | Out-Null
+            & $script:offlineRescue -EnableV1Task | Out-Null
+            & $script:offlineRescue -StartV1Task | Out-Null
+        }
+        VerifyRecoveredV1 = {
+            $restored = Get-VerifiedRunnerVersion -V1SourcePath $sourceRunnerV1 -V2SourcePath $sourceRunnerV2 -ProtectedRunnerPath $script:protectedRunner
+            Assert-Recovery ($restored -ceq 'v1') 'Recovered task does not use exact original v1 file bytes.'
+            & $script:postcheck | Out-Null
+            Verify-SharedState
+            $taskNow = Get-Task
+            $xml = [string](Export-ScheduledTask -TaskName $script:taskName -TaskPath '\' -ErrorAction Stop)
+            $listener = Get-TaskOwnedListener
+            Assert-Recovery ($taskNow.State -eq 'Running' -and
+                [bool]$taskNow.Settings.Enabled -and
+                [string]$taskNow.Principal.LogonType -ceq 'S4U' -and
+                (Test-RegisteredRestartPolicy -Settings $taskNow.Settings -TaskXml $xml) -and
+                $null -ne $listener -and
+                ($listener.ProcessId -ne $script:originalPid -or
+                    $listener.CreationDate -ne $script:originalCreationDate)
+            ) 'Original v1 S4U task did not recover with verified ownership, state and policy.'
+        }
         DisableTask = {
             Disable-ScheduledTask -TaskName $script:taskName -TaskPath '\' -ErrorAction Stop | Out-Null
             Assert-Recovery (-not [bool](Get-Task).Settings.Enabled) 'Failed supervisor could not be disabled.'
@@ -575,6 +625,8 @@ if ($RefreshSupervisor) {
         Write-Output 'Original Auth0 relay, protected routes and public signing keys unchanged.'
     } elseif ($refreshStatus -ceq 'manually_restored') {
         Write-Output 'SUPERVISOR REFRESH FAILED; healthy task manually restored. Do not run -Exercise.'
+    } elseif ($refreshStatus -ceq 'v1_restored') {
+        Write-Output 'SUPERVISOR REFRESH FAILED; verified original v1 task restored. Do not run -Exercise.'
     } else {
         throw 'Unexpected supervisor refresh result.'
     }
