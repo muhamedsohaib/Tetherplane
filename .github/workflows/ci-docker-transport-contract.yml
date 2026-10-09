@@ -1,0 +1,21 @@
+name: CI Docker registry transport contract
+
+on:
+  push:
+    paths:
+      - "scripts/ci-docker-build.sh"
+      - "tests/release/ci-docker-retry.test.mjs"
+      - ".github/workflows/ci-docker-transport-contract.yml"
+  pull_request:
+    paths:
+      - "scripts/ci-docker-build.sh"
+      - "tests/release/ci-docker-retry.test.mjs"
+      - ".github/workflows/ci-docker-transport-contract.yml"
+
+jobs:
+  transport:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Retry only Docker registry transport failures
+        run: node --test tests/release/ci-docker-retry.test.mjs
