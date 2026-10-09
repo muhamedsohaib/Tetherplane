@@ -1,7 +1,7 @@
 # Self-hosted tether-auth cutover — Vaulter
 
 **Date:** 2026-10-09  
-**Status:** S4U instance refresh verified on Vaulter with valid RestartCount=10. A subsequent controlled process-crash rehearsal again FAILED automatic restart and recovered only after manual task restart (healthy task-owned PID 6996). Root cause remains unproven; reboot, OAuth cutover, and authenticated ChatGPT acceptance remain pending. Auth0 remains active.  
+**Status:** Valid S4U restart settings and controlled supervisor refresh verified. An earlier crash rehearsal FAILED automatic restart and needed manual recovery. A later traced exercise showed task Ready/exit=1 without restart through 115 seconds; independently healthy task-owned PID 8748 was observed afterward, but the final exercise verdict was not provided. Root cause, reboot, OAuth cutover and authenticated ChatGPT acceptance remain pending. Auth0 remains active.  
 **Baseline:** `main` at `5feee084eb24bfd4831ab42840bb5f10dafc8113`.  
 **Target:** Vaulter for the relay and authorization server; canonical source remains GitHub and Leno.  
 **Objective:** Replace the external Auth0 authorization server with the repository's own `tether-auth`, while retaining the existing public MCP URL, six-tool catalog, device routing, and local Policy Broker. No purchase or external messaging is required.
@@ -399,6 +399,14 @@ Task Scheduler Operational history was disabled, empty or inaccessible, and the 
 
 Next, add a bounded, redacted automatic-wait observation showing original task parent alive/exited, task state, numeric scheduler result, and listener status; preserve existing verified manual recovery and all secret-redaction constraints. First obtain a failing Windows PowerShell 5.1/7 regression test, then implement, prove CI green, and review the exact live preflight. Do not repeat fault injection before a new maintenance window. Keep the existing Auth0 relay, Funnel routing, signing state and device registry unchanged.
 
+## 2026-10-10 — Additional restart trace and isolated v2 development
+
+The operator's later diagnostic exercise reported: original PowerShell parent alive briefly, then exited; Scheduled Task state Ready and result 0x00000001, with no port-8790 listener at approximately 1, 29, 58, 85 and 115 seconds. An independent subsequent supervised postcheck passed with new task-owned listener PID 8748 and unchanged Auth0, JWKS, relay health and four private routes. The final automatic-versus-manual status line for that specific run was not supplied; do not infer it from PID alone.
+
+A separate candidate script, scripts/vaulter-tether-auth-startup-runner-v2.ps1, is being developed with mocked Windows PowerShell restart/backoff tests. This is NOT the protected runner installed on Vaulter and does NOT imply completed automatic recovery. The original v1 source, protected task action and existing service remain unchanged.
+
+See docs/superpowers/plans/2026-10-10-vaulter-auth-child-supervision-rollout.md for the reviewed deployment/rollback and acceptance framework. Before live adoption: pass full CI, implement version-aware protected-file/hash checks and guarded installation, verify S4U permissions and obtain a controlled maintenance authorization.
+
 ## Phase 2 — Publish only verified auth paths
 
 1. Capture a safe Tailscale route configuration backup before changing any Funnel mount.
@@ -442,4 +450,4 @@ Next, add a bounded, redacted automatic-wait observation showing original task p
 
 - Desktop Commander is quota-blocked; do not retry it.
 - Vaulter's installed Tetherplane source/build location, process manager, Node/pnpm status, auth-port availability, and paired-device approval availability are not yet observed.
-- Local auth, public JWKS, S4U supervision, repaired restart settings and controlled supervisor refresh are verified. A repeat live process-crash test conclusively failed automatic restart and succeeded only through manual recovery (task-owned PID 6996). Root cause, reboot recovery, device-assisted approval, identity cutover and authenticated ChatGPT six-tool acceptance remain unresolved.
+- Local auth, public JWKS, S4U supervision and repaired restart settings are verified. Prior automatic recovery failed (manual recovery PID 6996); a later exercise observed Ready/exit=1 and no listener through 115 seconds, followed by healthy task-owned PID 8748, without the run's final automatic/manual verdict. Candidate v2 child supervision is source-only; protected v1 runner remains installed. Root cause, unattended boot recovery, device-assisted approval, issuer cutover and authenticated six-tool ChatGPT acceptance remain unresolved.
