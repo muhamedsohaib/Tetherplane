@@ -398,6 +398,7 @@ function Restore-SupervisedTask {
     Start-ScheduledTask -TaskName $script:taskName -TaskPath '\' -ErrorAction Stop
 }
 
+$script:startedStagePid = $null
 function Restore-StagedAuth {
     Assert-Recovery ((Get-Task).State -eq 'Disabled') 'Refusing staged rollback while the supervisor task is enabled.'
     Wait-FreePort
@@ -415,6 +416,7 @@ function Restore-StagedAuth {
             '" --host 127.0.0.1 --port 8790 --allow-insecure-localhost'
         $started = Start-Process -FilePath $script:nodeExecutable -ArgumentList $args -WorkingDirectory $script:repoDir -RedirectStandardOutput $stdout -RedirectStandardError $stderr -WindowStyle Hidden -PassThru -ErrorAction Stop
         Assert-Recovery ($null -ne $started) 'Staged auth recovery did not start.'
+        $script:startedStagePid = [int]$started.Id
     } finally {
         $secret = $null
         if ($null -eq $priorEnv) {
@@ -436,7 +438,36 @@ function Wait-StagedAuth([int]$Attempts=35) {
                 ([string]$parent.CommandLine).Contains($script:protectedRunner)) {
                 throw 'S4U task reappeared instead of the staged fallback.'
             }
+            Assert-Recovery ($null -ne $script:startedStagePid -and
+                [int]$listener.ProcessId -eq [int]$script:startedStagePid) 'Staged listener was not launched by this recovery.'
             Verify-SharedState
+            # Record only verified process identity; never log protected arguments,
+            # credentials or signer state. The protected ACL is inherited explicitly.
+            $record = [ordered]@{
+                schema = 'tether-auth-owned-stage/v1'
+                port = 8790
+                pid = [int]$listener.ProcessId
+                parentPid = [int]$listener.ParentProcessId
+                creationDate = [string]$listener.CreationDate
+            }
+            $proofPath = Join-Path $script:stateDir 'tether-auth-owned-staged-fallback.json'
+            $temporaryProof = Join-Path $script:stateDir ('staged-proof-' + [Guid]::NewGuid().ToString('N') + '.tmp')
+            $utf8 = New-Object System.Text.UTF8Encoding($false)
+            try {
+                [IO.File]::WriteAllText($temporaryProof, ($record | ConvertTo-Json -Compress), $utf8)
+                Set-Acl -LiteralPath $temporaryProof -AclObject (Get-Acl -LiteralPath $script:protectedRunner -ErrorAction Stop) -ErrorAction Stop
+                if (Test-Path -LiteralPath $proofPath -PathType Leaf) {
+                    # Keep overwrite atomic on Windows; do not touch unrelated evidence.
+                    $priorProof = Join-Path $script:stateDir ('staged-proof-old-' + [Guid]::NewGuid().ToString('N') + '.tmp')
+                    [IO.File]::Replace($temporaryProof,$proofPath,$priorProof)
+                } else {
+                    Move-Item -LiteralPath $temporaryProof -Destination $proofPath -ErrorAction Stop
+                }
+            } finally {
+                if (Test-Path -LiteralPath $temporaryProof) {
+                    Remove-Item -LiteralPath $temporaryProof -Force -ErrorAction SilentlyContinue
+                }
+            }
             return
         } catch {
             if ($i -eq ($Attempts - 1)) {
