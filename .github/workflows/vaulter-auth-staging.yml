@@ -45,3 +45,7 @@ jobs:
         if: runner.os == 'Windows'
         shell: pwsh
         run: ./tests/release/vaulter-tether-auth-route-preflight-contract.ps1
+      - name: Reversible Funnel JWKS canary contract
+        if: runner.os == 'Windows'
+        shell: pwsh
+        run: ./tests/release/vaulter-tether-auth-funnel-canary-contract.ps1
