@@ -49,7 +49,7 @@ if ($source -match '(?im)^\s*\$pid\s*=') {
 }
 
 # Extract helpers into this test scope to exercise Windows PowerShell 5.1 behavior.
-foreach ($helper in @('Get-TaskRole', 'Get-TaskTriggerSummary', 'Get-TaskLogonSummary')) {
+foreach ($helper in @('Get-TaskRole', 'Get-TaskTriggerSummary', 'Get-TaskLogonSummary', 'Get-TaskLauncherKind', 'Get-TaskResultSummary')) {
     $func = $ast.Find({
         param($node)
         $node -is [System.Management.Automation.Language.FunctionDefinitionAst] -and
@@ -90,4 +90,56 @@ if ((Get-TaskLogonSummary $interactiveTask) -ne 'requires-user-session' -or
     (Get-TaskLogonSummary $systemTask) -ne 'service-logon') {
     throw 'Scheduled task login requirements must be disclosed without usernames.'
 }
+# ScheduledTasks CIM enum uses "Interactive" and "InteractiveOrPassword";
+# Task Scheduler XML may use the legacy "InteractiveToken" spellings.
+$logonCases = @(
+    @('Interactive', 'requires-user-session'),
+    @('InteractiveOrPassword', 'may-require-user-session'),
+    @('Group', 'group-identity'),
+    @('None', 'unknown'),
+    @('InteractiveToken', 'requires-user-session'),
+    @('InteractiveTokenOrPassword', 'may-require-user-session')
+)
+foreach ($case in $logonCases) {
+    $fake = [pscustomobject]@{
+        Principal = [pscustomobject]@{ LogonType = $case[0] }
+    }
+    if ((Get-TaskLogonSummary $fake) -ne $case[1]) {
+        throw "LogonType $($case[0]) was classified incorrectly."
+    }
+}
+$wrappedPowerShell = [pscustomobject]@{
+    Actions = @([pscustomobject]@{
+        Execute = 'C:\Windows\System32\WindowsPowerShell\v1.0\powershell.exe'
+        Arguments = '-NoProfile -File "C:\private\wrapper.ps1"'
+    })
+}
+$wrappedCmd = [pscustomobject]@{
+    Actions = @([pscustomobject]@{
+        Execute = 'C:\Windows\System32\cmd.exe'
+        Arguments = '/c "C:\private\wrapper.cmd"'
+    })
+}
+if ((Get-TaskLauncherKind $wrappedPowerShell) -ne 'powershell-wrapper' -or
+    (Get-TaskLauncherKind $wrappedCmd) -ne 'cmd-wrapper' -or
+    (Get-TaskLauncherKind $authTask) -ne 'node-direct') {
+    throw 'Task launcher classification must identify wrappers without printing arguments.'
+}
+# Nonzero Task Scheduler codes include normal running / not-yet-run states.
+foreach ($case in @(
+    @(0, 'success-or-never-run'),
+    @(0x00041301, 'running'),
+    @(0x00041303, 'not-yet-run'),
+    @(0x00041302, 'disabled'),
+    @(0x00041306, 'terminated'),
+    @(1, 'nonzero-other')
+)) {
+    if ((Get-TaskResultSummary $case[0]) -ne $case[1]) {
+        throw "Task Scheduler result code $($case[0]) was classified incorrectly."
+    }
+}
+if (-not $source.Contains('launcherKind=')) {
+    throw 'Launcher kind must be included in redacted diagnostic output.'
+}
+
 Write-Output 'Read-only supervised-task classification tests passed.'
