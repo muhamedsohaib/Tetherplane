@@ -57,6 +57,25 @@ powershell.exe -NoProfile -ExecutionPolicy Bypass -File (Join-Path $repo 'script
 
 Do **not** pass `-ApplyV2` or `-RestoreV1` during this preflight. Both the protected-file upgrade and the isolated `-ProbeV2` temporary task require separate operator action, and their live acceptance has not happened. Neither should be combined with `-RefreshSupervisor` or `-Exercise`.
 
+## Protected v2 installation verified on Vaulter (operator report)
+
+The operator ran `-ProbeV2` successfully on Vaulter at feature revision `97b0643`; the temporary S4U task validated protected-state access, Node runtime and both loopback services. Subsequent independent postcheck showed existing task-owned listener PID `8748` and unchanged Auth0 issuer, public signing keys, healthy relay, and all four private Tailscale ports.
+
+The operator then ran `scripts/vaulter-tether-auth-runner-upgrade.ps1 -ApplyV2`. That procedure reported `RUNNER FILE UPGRADE VERIFIED`. Independent file-hash comparisons confirmed the installed protected runner equals the v2 repository source and that `tether-auth-startup-runner.v1-backup.ps1` matches the unmodified v1 source. The auth listener PID remained `8748`; a final read-only installer preflight reported `protected_runner=v2; task=Running`.
+
+**Disk v2 installed is NOT v2 activated.** The running task-owned PowerShell process retains the previously loaded v1 implementation until an intentional task-instance refresh. The v2 restart loop and unattended reboot are still unverified. Do not claim automatic recovery based on the file upgrade.
+
+## Offline rollback gap and guarded rescue candidate
+
+During activation review, the original `-RestoreV1` mode was found to require an already healthy running auth task. It cannot safely be relied on if a v2 activation leaves the task `Ready` with no port-8790 listener. That gap blocked task refresh and crash injection.
+
+A **separate candidate** `scripts/vaulter-tether-auth-offline-restore.ps1` is now in development. Its default mode reports sanitized installed-runner/task state and makes no changes. It deliberately avoids healthy-listener or `readyz` requirements. Two mutually exclusive explicit operations are planned:
+
+- `-RestoreV1`: only while the exact registered S4U task is `Ready`, enabled, with expected boot trigger, restart policy and protected-file action; the current operator must match its Windows SID and **no** listener may occupy port `8790`. Verify the original protected v1 backup SHA-256 and ACL, replace only protected runner bytes atomically, and verify the v1 result while the task remains stopped. Preserve private evidence if rollback cannot be proven; never overwrite the original backup.
+- `-StartV1Task`: only in a separate explicit call, with exact v1 bytes already installed, known task still `Ready`, and port `8790` vacant. Start only `Tetherplane-TetherAuth-Startup` and require an independent supervised health postcheck before claiming success. It cannot terminate any task or process, register a task, or modify Funnel.
+
+An unexpected concurrency change must fail closed rather than overwrite a running task. This is source-only engineering: **no offline restore or recovery start has been invoked on Vaulter**. The operator must not run `-RestoreV1`, `-StartV1Task`, `-RefreshSupervisor`, or `-Exercise` based solely on code-level tests.
+
 ## Verification and rollout gates
 
 ### Gate A — code and isolated simulation
