@@ -206,7 +206,8 @@ function New-RefreshFixture([string[]]$Failures) {
         'VerifyBaseline', 'VerifyTarget', 'QuiesceTask', 'StopOwnedTask',
         'VerifyVacant', 'ReenableTask', 'StartTask', 'VerifyNewTask',
         'RestoreTask', 'VerifyRecoveredTask',
-        'DisableTask', 'StopTask', 'ClearListener', 'RestoreStage', 'VerifyStage'
+        'DisableTask', 'StopTask', 'ClearListener',
+        'RecoverOriginalV1', 'VerifyRecoveredV1', 'RestoreStage', 'VerifyStage'
     )) {
         $name = $step
         $ops[$step] = {
@@ -243,24 +244,44 @@ foreach ($failed in @('QuiesceTask','StopOwnedTask','VerifyVacant','ReenableTask
         throw 'Failed refresh must verify manual task recovery without claiming success.'
     }
 }
-$fallback = New-RefreshFixture @('VerifyNewTask','VerifyRecoveredTask')
-try {
-    Invoke-GuardedSupervisorRefresh -Operations $fallback.Operations | Out-Null
-    throw 'Fallback to the staged authorization server must not be called a successful refresh.'
-} catch {
-    if ($_.Exception.Message -eq 'Fallback to the staged authorization server must not be called a successful refresh.') { throw }
-    if ($_.Exception.Message -notmatch 'staged auth restored') { throw }
+$recoverV1 = New-RefreshFixture @('VerifyNewTask','VerifyRecoveredTask')
+if ((Invoke-GuardedSupervisorRefresh -Operations $recoverV1.Operations) -cne 'v1_restored' -or
+    ($recoverV1.Events -join ',') -notmatch 'DisableTask,StopTask,ClearListener,RecoverOriginalV1,VerifyRecoveredV1$' -or
+    $recoverV1.Events -ccontains 'RestoreStage') {
+    throw 'Failed v2 and manual recovery must restore verified v1 before staged fallback.'
 }
-if (($fallback.Events -join ',') -notmatch 'DisableTask,StopTask,ClearListener,RestoreStage,VerifyStage$') {
-    throw 'Failed task recovery must disable the task and verify stage before reporting fallback.'
+foreach ($failedV1 in @('RecoverOriginalV1','VerifyRecoveredV1')) {
+    $fallback = New-RefreshFixture @('VerifyNewTask','VerifyRecoveredTask',$failedV1)
+    try {
+        Invoke-GuardedSupervisorRefresh -Operations $fallback.Operations | Out-Null
+        throw 'Fallback to staged auth may never be called a successful refresh.'
+    } catch {
+        if ($_.Exception.Message -eq 'Fallback to staged auth may never be called a successful refresh.') { throw }
+        if ($_.Exception.Message -notmatch 'staged auth restored') { throw }
+    }
+    if (($fallback.Events -join ',') -notmatch 'DisableTask,StopTask,ClearListener,RestoreStage,VerifyStage$') {
+        throw 'Failed verified-v1 task recovery must still recover staged auth.'
+    }
 }
-$unverified = New-RefreshFixture @('VerifyNewTask','VerifyRecoveredTask','VerifyStage')
+$unverified = New-RefreshFixture @('VerifyNewTask','VerifyRecoveredTask','RecoverOriginalV1','VerifyStage')
 try {
     Invoke-GuardedSupervisorRefresh -Operations $unverified.Operations | Out-Null
     throw 'Rollback failure must never return success.'
 } catch {
     if ($_.Exception.Message -eq 'Rollback failure must never return success.') { throw }
     if ($_.Exception.Message -notmatch 'rollback unverified') { throw }
+}
+foreach ($required in @(
+    'RecoverOriginalV1', 'VerifyRecoveredV1', 'v1_restored',
+    'SUPERVISOR REFRESH FAILED; verified original v1 task restored',
+    '$script:offlineRescue', '-RestoreV1', '-EnableV1Task', '-StartV1Task'
+)) {
+    if (-not $src.Contains($required)) {
+        throw "Guarded refresh has no verified offline v1 rescue before staged fallback: $required"
+    }
+}
+if ($src -notmatch '(?s)if \(\$installedRunnerVersion -ceq .v2.\).*?\& \$script:offlineRescue') {
+    throw 'Activation must preflight offline v1 rescue before any supervisor disruption.'
 }
 
 
