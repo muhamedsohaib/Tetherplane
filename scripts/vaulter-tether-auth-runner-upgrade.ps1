@@ -120,6 +120,7 @@ function Test-PrivateRunnerVersion([string]$Expected) {
     Assert-PrivateFile $script:protectedRunner
     $actual = Get-VerifiedRunnerVersion -V1SourcePath $script:sourceV1 -V2SourcePath $script:sourceV2 -ProtectedRunnerPath $script:protectedRunner
     Assert-Upgrade ($actual -ceq $Expected) 'Protected runner bytes do not match expected trusted version.'
+    Assert-PrivateAcl $script:protectedRunner
 }
 function Invoke-RunnerAtomicReplace {
     [CmdletBinding()]
@@ -145,9 +146,27 @@ function Invoke-RunnerAtomicReplace {
             throw 'Runner file may not be a reparse point.'
         }
     }
+    $beforeAcl = Get-Acl -LiteralPath $TargetPath -ErrorAction Stop
+    $beforeSddl = $beforeAcl.Sddl
+    # The content swap is atomic, but Windows metadata may differ on either
+    # result. Copy and reverify original permissions, not just file hashes.
+    Set-Acl -LiteralPath $StagedPath -AclObject $beforeAcl -ErrorAction Stop
     [IO.File]::Replace($StagedPath,$TargetPath,$BackupPath)
+    foreach ($path in @($TargetPath,$BackupPath)) {
+        $after = Get-Acl -LiteralPath $path -ErrorAction Stop
+        if ($after.Sddl -cne $beforeSddl) {
+            Set-Acl -LiteralPath $path -AclObject $beforeAcl -ErrorAction Stop
+        }
+        if ((Get-Acl -LiteralPath $path -ErrorAction Stop).Sddl -cne $beforeSddl) {
+            throw 'Protected runner file ACL differs after replacement.'
+        }
+    }
 }
 
+function Assert-PrivateAcl([string]$Path) {
+    $actual = (Get-Acl -LiteralPath $Path -ErrorAction Stop).Sddl
+    Assert-Upgrade ($actual -ceq $script:originalAcl.Sddl) 'Protected runner ACL differs from original.'
+}
 function New-PrivateTemporaryPath {
     return (Join-Path $script:stateDir ('tether-auth-upgrade-' + [guid]::NewGuid().ToString('N') + '.tmp'))
 }
@@ -245,6 +264,7 @@ $ops = @{
             Assert-PrivateFile $script:v1Backup
             Assert-Upgrade ((Get-SourceHash $script:v1Backup) -ceq
                 (Get-SourceHash $script:sourceV1)) 'Protected v1 backup could not be verified.'
+            Assert-PrivateAcl $script:v1Backup
         }
         Verify-UnchangedService
     }
