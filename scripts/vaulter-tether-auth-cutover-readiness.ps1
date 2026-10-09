@@ -117,14 +117,14 @@ Write-Output 'Device online status: offline/unverified by this read-only inspect
 # A process listening right now is not evidence of persistence across reboot.
 foreach ($entry in @(@('relay', $relay), @('tether-auth', $auth))) {
     $name = [string]$entry[0]
-    $pid = [int]$entry[1].ProcessId
-    $services = @(Get-CimInstance Win32_Service -Filter "ProcessId=$pid" -ErrorAction SilentlyContinue)
+    $listeningProcessId = [int]$entry[1].ProcessId
+    $services = @(Get-CimInstance Win32_Service -Filter "ProcessId=$listeningProcessId" -ErrorAction SilentlyContinue)
     $serviceLabel = if ($services.Count -gt 0) {
         'direct Windows service'
     } else {
         'no direct service association'
     }
-    Write-Output ("{0} PID {1} supervisor: {2}" -f $name, $pid, $serviceLabel)
+    Write-Output ("{0} PID {1} supervisor: {2}" -f $name, $listeningProcessId, $serviceLabel)
 }
 $scheduledCmd = Get-Command Get-ScheduledTask -ErrorAction SilentlyContinue
 if ($scheduledCmd) {
