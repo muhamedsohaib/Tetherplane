@@ -9,7 +9,7 @@
   The original protected v1 backup is never overwritten or deleted.
 #>
 [CmdletBinding()]
-param([switch]$RestoreV1, [switch]$StartV1Task)
+param([switch]$RestoreV1, [switch]$EnableV1Task, [switch]$StartV1Task)
 
 $ErrorActionPreference = 'Stop'
 Set-StrictMode -Version Latest
@@ -32,13 +32,17 @@ function Assert-OfflineTaskShape {
     param(
         [Parameter(Mandatory=$true)]$Task,
         [Parameter(Mandatory=$true)][string]$ProtectedRunnerPath,
-        [switch]$AllowRunning
+        [switch]$AllowRunning,
+        [switch]$AllowDisabled
     )
-    $allowedStates = if ($AllowRunning) { @('Ready','Running') } else { @('Ready') }
+    $allowedStates = @('Ready')
+    if ($AllowRunning) { $allowedStates += 'Running' }
+    if ($AllowDisabled) { $allowedStates += 'Disabled' }
     if (@($allowedStates) -cnotcontains ([string]$Task.State)) {
         throw 'Named S4U task is not in the required non-running Ready state.'
     }
-    if (-not [bool]$Task.Settings.Enabled -or
+    $shouldBeEnabled = ([string]$Task.State) -cne 'Disabled'
+    if ([bool]$Task.Settings.Enabled -ne $shouldBeEnabled -or
         [int]$Task.Settings.RestartCount -ne 10 -or
         [string]$Task.Settings.RestartInterval -cne 'PT1M' -or
         [string]$Task.Principal.LogonType -cne 'S4U') {
@@ -162,6 +166,42 @@ function Invoke-OfflineRestoreTransaction {
         throw 'OFFLINE RESTORE FAILED; ROLLED BACK verified original v2 runner. Do not start the task.'
     }
 }
+function Invoke-OfflineEnableTransaction {
+    [CmdletBinding()]
+    param([Parameter(Mandatory=$true)][hashtable]$Operations)
+    foreach ($name in @('VerifyDisabled','EnableNamedTask','VerifyReady')) {
+        if (-not $Operations.ContainsKey($name) -or
+            -not ($Operations[$name] -is [scriptblock])) {
+            throw 'Offline task enable operations are incomplete.'
+        }
+    }
+    & $Operations['VerifyDisabled']
+    & $Operations['EnableNamedTask']
+    & $Operations['VerifyReady']
+    return 'enabled'
+}
+function Test-EnabledTaskXmlTransition {
+    [CmdletBinding()]
+    param(
+        [Parameter(Mandatory=$true)][string]$BeforeXml,
+        [Parameter(Mandatory=$true)][string]$AfterXml
+    )
+    try {
+        [xml]$before = $BeforeXml
+        [xml]$after = $AfterXml
+        $xpath = "//*[local-name()='Settings']/*[local-name()='Enabled']"
+        $oldFlag = $before.SelectSingleNode($xpath)
+        $newFlag = $after.SelectSingleNode($xpath)
+        if ($null -eq $oldFlag -or $null -eq $newFlag -or
+            $oldFlag.InnerText -cne 'false' -or
+            $newFlag.InnerText -cne 'true') { return $false }
+        # Compare complete task XML after normalizing only the approved
+        # Enabled=false -> true flag. Never print action/principal XML.
+        $newFlag.InnerText = $oldFlag.InnerText
+        return ($before.OuterXml -ceq $after.OuterXml)
+    } catch { return $false }
+}
+
 function Invoke-OfflineStartTransaction {
     [CmdletBinding()]
     param([Parameter(Mandatory=$true)][hashtable]$Operations)
@@ -209,9 +249,9 @@ function Assert-CheckoutSafe {
     $fetched = [string](& $git -C $script:repoRoot rev-parse 'refs/remotes/origin/feature/tether-auth-vaulter-migration-20261009')
     Assert-Offline ($LASTEXITCODE -eq 0 -and $head.Trim() -ceq $fetched.Trim()) 'Checkout and fetched feature branch differ.'
 }
-function Get-OfflineTaskSnapshot([switch]$AllowRunning) {
+function Get-OfflineTaskSnapshot([switch]$AllowRunning, [switch]$AllowDisabled) {
     $task = Get-ScheduledTask -TaskName $script:taskName -TaskPath '\' -ErrorAction Stop
-    Assert-OfflineTaskShape -Task $task -ProtectedRunnerPath $script:protectedRunner -AllowRunning:$AllowRunning
+    Assert-OfflineTaskShape -Task $task -ProtectedRunnerPath $script:protectedRunner -AllowRunning:$AllowRunning -AllowDisabled:$AllowDisabled
     $current = [Security.Principal.WindowsIdentity]::GetCurrent()
     Assert-Offline (Test-OfflinePrincipal -Identity $current -TaskUserId ([string]$task.Principal.UserId)) 'Task S4U principal differs from current authorized operator.'
     return [pscustomobject]@{
@@ -227,9 +267,9 @@ function Assert-PortVacant {
     Assert-Offline ($listeners.Count -eq 0) 'Auth listener is present; offline recovery cannot touch a running service.'
 }
 function Assert-OfflineBaseline([string]$Version) {
-    $now = Get-OfflineTaskSnapshot
+    $now = Get-OfflineTaskSnapshot -AllowDisabled
     Assert-Offline ($now.TaskXml -ceq $script:baseline.TaskXml -and
-        $now.State -ceq 'Ready') 'Named S4U task changed during offline restoration.'
+        $now.State -ceq $script:baseline.State) 'Named S4U task changed during offline restoration.'
     Assert-PortVacant
     $actual = Get-TrustedRunnerVersion
     Assert-Offline ($actual -ceq $Version) 'Protected runner version changed concurrently.'
@@ -251,7 +291,7 @@ function Restore-OriginalV2 {
     $current = $null
     try { $current = Get-TrustedRunnerVersion } catch { }
     if ($current -ceq 'v2') { return }
-    $snapshot = Get-OfflineTaskSnapshot
+    $snapshot = Get-OfflineTaskSnapshot -AllowDisabled
     Assert-Offline ($snapshot.TaskXml -ceq $script:baseline.TaskXml) 'Task changed; offline rollback requires manual review.'
     Assert-PortVacant
     $script:rollbackStage = New-OfflinePrivatePath
@@ -270,6 +310,9 @@ function Restore-OriginalV2 {
 if ($RestoreV1 -and $StartV1Task) {
     throw 'Select only one explicit offline operation: -RestoreV1 or -StartV1Task.'
 }
+if ($EnableV1Task -and ($RestoreV1 -or $StartV1Task)) {
+    throw 'Select only one offline operation: restore v1, enable its task, or start it.'
+}
 Assert-Offline ($env:OS -ceq 'Windows_NT' -and
     $env:COMPUTERNAME -ieq 'vaulter') 'Offline auth restoration is restricted to Vaulter.'
 Assert-Offline (Test-Path -LiteralPath $script:stateDir -PathType Container) 'Protected auth directory unavailable.'
@@ -280,15 +323,40 @@ Assert-CheckoutSafe
 $installedVersion = Get-TrustedRunnerVersion
 $script:originalAcl = Get-Acl -LiteralPath $script:protectedRunner -ErrorAction Stop
 
-if (-not $RestoreV1 -and -not $StartV1Task) {
-    $snapshot = Get-OfflineTaskSnapshot -AllowRunning
+if (-not $RestoreV1 -and -not $EnableV1Task -and -not $StartV1Task) {
+    $snapshot = Get-OfflineTaskSnapshot -AllowRunning -AllowDisabled
     Write-Output ("OFFLINE V1 PREFLIGHT: installed_runner={0}; task={1}; backup=verified." -f $installedVersion,$snapshot.State)
-    Write-Output 'No changes made. Offline v1 file restoration requires task Ready with no listener; explicit -StartV1Task is separate.'
+    Write-Output 'No changes made. Offline v1 restoration requires task Ready or Disabled and a vacant port; -EnableV1Task and -StartV1Task are separate explicit steps.'
     return
 }
 
-$script:baseline = Get-OfflineTaskSnapshot
+$script:baseline = Get-OfflineTaskSnapshot -AllowDisabled
 Assert-PortVacant
+if ($EnableV1Task) {
+    Assert-Offline ($installedVersion -ceq 'v1' -and
+        $script:baseline.State -ceq 'Disabled') 'EnableV1Task requires exact original v1 bytes and a disabled S4U task.'
+    $enableOps = @{
+        VerifyDisabled = {
+            Assert-OfflineBaseline 'v1'
+            Assert-Offline ($script:baseline.State -ceq 'Disabled') 'Task is not disabled.'
+        }
+        EnableNamedTask = {
+            Assert-OfflineBaseline 'v1'
+            Enable-ScheduledTask -TaskName $script:taskName -TaskPath '\' -ErrorAction Stop | Out-Null
+        }
+        VerifyReady = {
+            $now = Get-OfflineTaskSnapshot
+            Assert-Offline ($now.State -ceq 'Ready' -and
+                (Test-EnabledTaskXmlTransition -BeforeXml $script:baseline.TaskXml -AfterXml $now.TaskXml)) 'Task definition changed beyond the Enabled flag or task is not Ready.'
+            Assert-PortVacant
+            Assert-Offline ((Get-TrustedRunnerVersion) -ceq 'v1') 'Protected v1 runner changed during task reenable.'
+        }
+    }
+    $enabled = Invoke-OfflineEnableTransaction -Operations $enableOps
+    Assert-Offline ($enabled -ceq 'enabled') 'Task enable transaction did not verify.'
+    Write-Output 'V1 TASK REENABLED VERIFIED: exact named S4U task Ready, unchanged definition except Enabled flag; no task started.'
+    return
+}
 if ($RestoreV1) {
     Assert-Offline ($installedVersion -ceq 'v2') 'Offline restore requires the installed, exact v2 runner.'
     $script:prepared = $null
@@ -304,8 +372,9 @@ if ($RestoreV1) {
             Invoke-OfflineFileSwap -StagedPath $script:prepared -TargetPath $script:protectedRunner -EvidencePath $script:replacedV2
         }
         VerifyV1 = {
-            $now = Get-OfflineTaskSnapshot
-            Assert-Offline ($now.TaskXml -ceq $script:baseline.TaskXml) 'Task changed during v1 restoration.'
+            $now = Get-OfflineTaskSnapshot -AllowDisabled
+            Assert-Offline ($now.TaskXml -ceq $script:baseline.TaskXml -and
+                $now.State -ceq $script:baseline.State) 'Task changed during v1 restoration.'
             Assert-PortVacant
             Assert-Offline ((Get-TrustedRunnerVersion) -ceq 'v1') 'Offline v1 runner or protected backup failed verification.'
         }
@@ -316,7 +385,7 @@ if ($RestoreV1) {
         $result = Invoke-OfflineRestoreTransaction -Operations $ops
         Assert-Offline ($result -ceq 'restored') 'Unexpected offline restore transaction result.'
         $script:cleanupApproved = $true
-        Write-Output 'OFFLINE V1 RESTORE VERIFIED: exact v1 bytes installed; original v1 backup preserved; named task still Ready.'
+        Write-Output ("OFFLINE V1 RESTORE VERIFIED: exact v1 bytes installed; original v1 backup preserved; task remains {0}." -f $script:baseline.State)
         Write-Output 'No task was started. Run -StartV1Task separately only after reviewing restoration evidence.'
     } catch {
         if ($_.Exception.Message -match 'ROLLED BACK') { $script:cleanupApproved = $true }
@@ -335,7 +404,8 @@ if ($RestoreV1) {
 
 # Separate explicit recovery operation: only the existing, verified named
 # S4U task may be started, and only after its v1 bytes are already installed.
-Assert-Offline ($installedVersion -ceq 'v1') 'StartV1Task requires previously verified v1 bytes on disk.'
+Assert-Offline ($installedVersion -ceq 'v1' -and
+    $script:baseline.State -ceq 'Ready') 'StartV1Task requires verified v1 bytes and a separately enabled Ready task.'
 Assert-Offline (Test-Path -LiteralPath $script:postcheck -PathType Leaf) 'Independent auth postcheck unavailable.'
 $startOps = @{
     VerifyReady = { Assert-OfflineBaseline 'v1' }
