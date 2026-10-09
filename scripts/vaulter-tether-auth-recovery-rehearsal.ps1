@@ -223,6 +223,382 @@ function Verify-SharedState {
         (Get-PublicJwksFingerprint "$script:origin/jwks") -ceq $script:baselineKeys
     ) 'Local/public JWKS changed.'
 }
+function Format-RecoveryObservation {
+    [CmdletBinding()]
+    param([string]$Phase,[int]$ElapsedSeconds,[bool]$ParentAlive,[string]$TaskState,[string]$ResultCode,[string]$ListenerState)
+    $safePhase = if (@('automatic','manual') -ccontains $Phase) { $Phase } else { 'unknown' }
+    $safeTask = if (@('Running','Ready','Queued','Disabled','Unknown') -ccontains $TaskState) { $TaskState } else { 'Unknown' }
+    $safeResult = if ($ResultCode -cmatch '^0x[0-9A-F]{8}
+    for ($i = 0; $i -lt $Attempts; $i++) {
+        try {
+            $listener = Get-TaskOwnedListener
+            if ($null -ne $listener -and $listener.ProcessId -ne $PriorPid -and
+                (Get-Task).State -eq 'Running') {
+                $ready = Get-Json 'http://127.0.0.1:8790/readyz'
+                if ($ready.status -ceq 'ready') {
+                    & $script:postcheck | Out-Null
+                    return
+                }
+            }
+        } catch { }
+        Start-Sleep -Seconds 2
+    }
+    throw 'Scheduled auth restart did not pass independent health and ownership checks.'
+}
+function Wait-FreePort([int]$Attempts=20) {
+    for ($i = 0; $i -lt $Attempts; $i++) {
+        $ports = @(Get-NetTCPConnection -State Listen -LocalPort 8790 -ErrorAction SilentlyContinue)
+        if ($ports.Count -eq 0) { return }
+        Start-Sleep -Milliseconds 500
+    }
+    throw 'Auth port 8790 remained occupied; refusing duplicate auth startup.'
+}
+
+function Stop-TaskOwnedService {
+    # Terminate only a Node instance whose current parent is our task runner.
+    $owned = Get-TaskOwnedListener
+    if ($null -ne $owned) {
+        $again = Get-TaskOwnedListener
+        Assert-Recovery ($null -ne $again -and
+            $again.ProcessId -eq $owned.ProcessId -and
+            $again.CreationDate -eq $owned.CreationDate) 'Auth target changed before manual shutdown.'
+        Stop-Process -Id $owned.ProcessId -ErrorAction Stop
+    }
+    if ((Get-Task).State -eq 'Running') {
+        Stop-ScheduledTask -TaskName $script:taskName -ErrorAction Stop
+    }
+}
+function Wait-HealthyTask([int]$Attempts=35) {
+    for ($i=0; $i -lt $Attempts; $i++) {
+        try {
+            $owned = Get-TaskOwnedListener
+            $task = Get-Task
+            if ($null -ne $owned -and $task.State -eq 'Running' -and
+                [bool]$task.Settings.Enabled -and
+                (Get-Json 'http://127.0.0.1:8790/readyz').status -ceq 'ready') {
+                & $script:postcheck | Out-Null
+                Verify-SharedState
+                $xml = [string](Export-ScheduledTask -TaskName $script:taskName -TaskPath '\' -ErrorAction Stop)
+                Assert-Recovery (Test-RegisteredRestartPolicy -Settings $task.Settings -TaskXml $xml) 'Restart policy changed while recovering task.'
+                return
+            }
+        } catch { }
+        Start-Sleep -Seconds 2
+    }
+    throw 'Task did not recover as a healthy S4U-owned auth instance.'
+}
+function Wait-VacantSupervisor([int]$Attempts=30) {
+    for ($i=0; $i -lt $Attempts; $i++) {
+        $listeners = @(Get-NetTCPConnection -State Listen -LocalPort 8790 -ErrorAction SilentlyContinue)
+        $parent = Get-CimInstance Win32_Process -Filter "ProcessId=$script:originalParentPid" -ErrorAction SilentlyContinue
+        if ($listeners.Count -eq 0 -and
+            ($null -eq $parent -or $parent.CreationDate -ne $script:originalParentCreationDate)) {
+            return
+        }
+        Start-Sleep -Milliseconds 500
+    }
+    throw 'Old supervisor or port 8790 is still active; refusing to start another task.'
+}
+function Stop-OriginalSupervisorInstance {
+    Assert-Recovery (-not [bool](Get-Task).Settings.Enabled) 'Task must be disabled before rotation.'
+    $owned = Get-TaskOwnedListener
+    Assert-Recovery (
+        $null -ne $owned -and
+        $owned.ProcessId -eq $script:originalPid -and
+        $owned.CreationDate -eq $script:originalCreationDate -and
+        $owned.ParentProcessId -eq $script:originalParentPid
+    ) 'Original owned listener changed; refusing task stop.'
+    Stop-ScheduledTask -TaskName $script:taskName -TaskPath '\' -ErrorAction Stop | Out-Null
+    # Stopping the PowerShell task may orphan the original Node child.
+    # Never terminate a newly arriving or unrecognized listener.
+    $leftover = Get-AuthPortProcess
+    if ($null -ne $leftover) {
+        Assert-Recovery ($leftover.ProcessId -eq $script:originalPid -and
+            $leftover.CreationDate -eq $script:originalCreationDate) 'Listener identity changed; refusing process termination.'
+        $target = Get-Process -Id $script:originalPid -ErrorAction Stop
+        Assert-Recovery ($target.ProcessName -ieq 'node') 'Expected auth child changed identity.'
+        Stop-Process -Id $script:originalPid -ErrorAction Stop
+    }
+}
+function Restore-SupervisedTask {
+    if (-not [bool](Get-Task).Settings.Enabled) {
+        Enable-ScheduledTask -TaskName $script:taskName -TaskPath '\' -ErrorAction Stop | Out-Null
+    }
+    Assert-Recovery ([bool](Get-Task).Settings.Enabled) 'Task could not be enabled during recovery.'
+    $listener = Get-AuthPortProcess
+    if ($null -ne $listener) {
+        Assert-Recovery ($null -ne (Get-TaskOwnedListener)) 'Unexpected listener; refusing duplicate startup.'
+        return
+    }
+    # Clear a stale task instance that holds the IgnoreNew execution slot.
+    if ((Get-Task).State -eq 'Running') {
+        Stop-ScheduledTask -TaskName $script:taskName -TaskPath '\' -ErrorAction Stop | Out-Null
+        Wait-FreePort
+    }
+    Start-ScheduledTask -TaskName $script:taskName -TaskPath '\' -ErrorAction Stop
+}
+
+function Restore-StagedAuth {
+    Assert-Recovery ((Get-Task).State -eq 'Disabled') 'Refusing staged rollback while the supervisor task is enabled.'
+    Wait-FreePort
+    $secretFile = Join-Path $script:stateDir 'bridge-token.secret'
+    $secret = ([IO.File]::ReadAllText($secretFile)).Trim()
+    Assert-Recovery ($secret -match '^[A-Za-z0-9_-]{60,}$') 'Bridge secret cannot be recovered.'
+    $priorEnv = [Environment]::GetEnvironmentVariable('TETHERPLANE_AUTH_BRIDGE_TOKEN','Process')
+    try {
+        # The bridge credential appears only in the child process environment.
+        $env:TETHERPLANE_AUTH_BRIDGE_TOKEN = $secret
+        $nonce = [Guid]::NewGuid().ToString('N')
+        $stdout = Join-Path $script:stateDir ("tether-auth-recovery-$nonce.stdout.log")
+        $stderr = Join-Path $script:stateDir ("tether-auth-recovery-$nonce.stderr.log")
+        $args = 'auth/dist/cli.js --config "' + $script:authConfig +
+            '" --host 127.0.0.1 --port 8790 --allow-insecure-localhost'
+        $started = Start-Process -FilePath $script:nodeExecutable -ArgumentList $args -WorkingDirectory $script:repoDir -RedirectStandardOutput $stdout -RedirectStandardError $stderr -WindowStyle Hidden -PassThru -ErrorAction Stop
+        Assert-Recovery ($null -ne $started) 'Staged auth recovery did not start.'
+    } finally {
+        $secret = $null
+        if ($null -eq $priorEnv) {
+            Remove-Item Env:\TETHERPLANE_AUTH_BRIDGE_TOKEN -ErrorAction SilentlyContinue
+        } else {
+            $env:TETHERPLANE_AUTH_BRIDGE_TOKEN = $priorEnv
+        }
+    }
+}
+function Wait-StagedAuth([int]$Attempts=35) {
+    for ($i = 0; $i -lt $Attempts; $i++) {
+        Start-Sleep -Seconds 1
+        try {
+            Assert-Recovery ((Get-Task).State -eq 'Disabled') 'Failed S4U task is not disabled.'
+            $listener = Get-AuthPortProcess
+            if ($null -eq $listener) { continue }
+            $parent = Get-CimInstance Win32_Process -Filter "ProcessId=$($listener.ParentProcessId)" -ErrorAction Stop
+            if ($null -ne $parent -and
+                ([string]$parent.CommandLine).Contains($script:protectedRunner)) {
+                throw 'S4U task reappeared instead of the staged fallback.'
+            }
+            Verify-SharedState
+            return
+        } catch {
+            if ($i -eq ($Attempts - 1)) {
+                throw 'Staged auth rollback did not pass health and ownership verification.'
+            }
+        }
+    }
+}
+
+# Every source, identity and health gate runs before a deliberate process exit.
+if ($Exercise -and $RefreshSupervisor) {
+    throw 'Select only one disruptive action: -Exercise or -RefreshSupervisor.'
+}
+Assert-Recovery ($env:OS -eq 'Windows_NT' -and
+    $env:COMPUTERNAME -ieq 'vaulter') 'Restart rehearsal is restricted to Vaulter.'
+$script:nodeExecutable = (Get-Command node.exe -ErrorAction Stop).Source
+Assert-Recovery (Test-Path -LiteralPath $script:postcheck -PathType Leaf) 'Independent auth postcheck is missing.'
+Assert-Recovery (Test-Path -LiteralPath $script:stateDir -PathType Container) 'Protected auth-state directory missing.'
+Assert-Recovery ((Get-Acl -LiteralPath $script:stateDir).AreAccessRulesProtected) 'Auth-state ACLs must be protected.'
+foreach ($file in @(
+    $script:authConfig, $script:protectedRunner,
+    (Join-Path $script:stateDir 'tether-auth-jwks.json'),
+    (Join-Path $script:stateDir 'provider.sqlite'),
+    (Join-Path $script:stateDir 'bridge-token.secret')
+)) {
+    Assert-Recovery (Test-Path -LiteralPath $file -PathType Leaf) 'A required protected auth runtime file is missing.'
+}
+$repoRunner = Join-Path $script:repoDir 'scripts\vaulter-tether-auth-startup-runner.ps1'
+Assert-Recovery (
+    (Get-FileHash -LiteralPath $repoRunner -Algorithm SHA256).Hash -ceq
+    (Get-FileHash -LiteralPath $script:protectedRunner -Algorithm SHA256).Hash
+) 'Protected S4U task runner differs from the tested source.'
+$task = Get-Task
+Assert-Recovery ($task.State -eq 'Running' -and
+    [string]$task.Principal.LogonType -ceq 'S4U') 'S4U task is not running.'
+Assert-Recovery (@($task.Triggers | Where-Object {
+    $_.CimClass.CimClassName -match 'BootTrigger$'
+}).Count -gt 0) 'Task is missing a boot trigger.'
+$registeredXml = [string](Export-ScheduledTask -TaskName $script:taskName -TaskPath '\' -ErrorAction Stop)
+Assert-Recovery (
+    Test-RegisteredRestartPolicy -Settings $task.Settings -TaskXml $registeredXml
+) 'Registered restart policy must match repaired count=10, interval=PT1M in CIM and XML.'
+$taskActions = @($task.Actions)
+Assert-Recovery ($taskActions.Count -eq 1 -and
+    ([string]$taskActions[0].Arguments).Contains($script:protectedRunner) -and
+    ([string]$taskActions[0].Arguments).EndsWith(' -Serve', [StringComparison]::Ordinal)
+) 'Scheduled task action no longer executes the expected protected runner.'
+# This independent check validates user SID, S4U parent process, healthy OAuth
+# and relay, current Auth0 issuer, JWKS, Funnel, and private Tailscale ports.
+& $script:postcheck | Out-Null
+$originalListener = Get-TaskOwnedListener
+Assert-Recovery ($null -ne $originalListener) 'No task-owned auth listener is running.'
+$script:originalPid = [int]$originalListener.ProcessId
+$script:originalCreationDate = $originalListener.CreationDate
+$script:originalParentPid = [int]$originalListener.ParentProcessId
+$parent = Get-CimInstance Win32_Process -Filter "ProcessId=$script:originalParentPid" -ErrorAction Stop
+Assert-Recovery ($null -ne $parent -and $parent.Name -ieq 'powershell.exe') 'Original task parent disappeared.'
+$script:originalParentCreationDate = $parent.CreationDate
+Assert-Recovery ([bool]$task.Settings.Enabled) 'S4U startup task must be enabled.'
+$script:baselineKeys = Get-PublicJwksFingerprint 'http://127.0.0.1:8790/jwks'
+Verify-SharedState
+
+if (-not $Exercise) {
+    if (-not $RefreshSupervisor) {
+        Write-Output "RESTART REHEARSAL PREFLIGHT PASS: auth PID $script:originalPid, S4U task running, restart policy configured."
+        Write-Output 'No changes made. -RefreshSupervisor rotates the named task instance; -Exercise tests crash recovery separately.'
+        return
+    }
+}
+
+if ($RefreshSupervisor) {
+    $refreshOps = @{
+        VerifyBaseline = {
+            & $script:postcheck | Out-Null
+            Verify-SharedState
+            $current = Get-Task
+            $xml = [string](Export-ScheduledTask -TaskName $script:taskName -TaskPath '\' -ErrorAction Stop)
+            Assert-Recovery ($current.State -eq 'Running' -and
+                [bool]$current.Settings.Enabled -and
+                (Test-RegisteredRestartPolicy -Settings $current.Settings -TaskXml $xml)
+            ) 'Registered S4U task changed since preflight.'
+        }
+        VerifyTarget = {
+            $now = Get-TaskOwnedListener
+            Assert-Recovery ($null -ne $now -and
+                $now.ProcessId -eq $script:originalPid -and
+                $now.CreationDate -eq $script:originalCreationDate -and
+                $now.ParentProcessId -eq $script:originalParentPid
+            ) 'Owned listener changed before supervisor refresh.'
+        }
+        QuiesceTask = {
+            Disable-ScheduledTask -TaskName $script:taskName -TaskPath '\' -ErrorAction Stop | Out-Null
+            Assert-Recovery (-not [bool](Get-Task).Settings.Enabled) 'Task remains enabled; refusing stop.'
+        }
+        StopOwnedTask = {
+            Stop-OriginalSupervisorInstance
+        }
+        VerifyVacant = {
+            Wait-VacantSupervisor
+            Assert-Recovery (-not [bool](Get-Task).Settings.Enabled) 'Task re-enabled during quiesce.'
+        }
+        ReenableTask = {
+            Enable-ScheduledTask -TaskName $script:taskName -TaskPath '\' -ErrorAction Stop | Out-Null
+            Assert-Recovery ([bool](Get-Task).Settings.Enabled) 'Task did not re-enable.'
+        }
+        StartTask = {
+            $listeners = @(Get-NetTCPConnection -State Listen -LocalPort 8790 -ErrorAction SilentlyContinue)
+            Assert-Recovery ($listeners.Count -eq 0) 'Port 8790 occupied; refusing duplicate task.'
+            Start-ScheduledTask -TaskName $script:taskName -TaskPath '\' -ErrorAction Stop
+        }
+        VerifyNewTask = {
+            Wait-SupervisedAuth -PriorPid $script:originalPid -Attempts 35
+            Verify-SharedState
+            $current = Get-Task
+            $xml = [string](Export-ScheduledTask -TaskName $script:taskName -TaskPath '\' -ErrorAction Stop)
+            Assert-Recovery ([bool]$current.Settings.Enabled -and
+                (Test-RegisteredRestartPolicy -Settings $current.Settings -TaskXml $xml)
+            ) 'Replacement instance did not preserve repaired policy.'
+        }
+        RestoreTask = {
+            Restore-SupervisedTask
+        }
+        VerifyRecoveredTask = {
+            Wait-HealthyTask
+        }
+        DisableTask = {
+            Disable-ScheduledTask -TaskName $script:taskName -TaskPath '\' -ErrorAction Stop | Out-Null
+            Assert-Recovery (-not [bool](Get-Task).Settings.Enabled) 'Failed supervisor could not be disabled.'
+        }
+        StopTask = {
+            Stop-TaskOwnedService
+        }
+        ClearListener = {
+            Wait-FreePort
+        }
+        RestoreStage = {
+            Restore-StagedAuth
+        }
+        VerifyStage = {
+            Wait-StagedAuth
+        }
+    }
+    $refreshStatus = Invoke-GuardedSupervisorRefresh -Operations $refreshOps
+    if ($refreshStatus -ceq 'refreshed') {
+        $replacement = Get-TaskOwnedListener
+        Write-Output "SUPERVISOR INSTANCE REFRESH VERIFIED: original listener PID=$script:originalPid, replacement PID=$($replacement.ProcessId)."
+        Write-Output 'Original Auth0 relay, protected routes and public signing keys unchanged.'
+    } elseif ($refreshStatus -ceq 'manually_restored') {
+        Write-Output 'SUPERVISOR REFRESH FAILED; healthy task manually restored. Do not run -Exercise.'
+    } else {
+        throw 'Unexpected supervisor refresh result.'
+    }
+    Write-Output 'Task instance restart does not prove automatic recovery. Reboot recovery remains unverified.'
+    return
+}
+
+$ops = @{
+    VerifyBaseline = {
+        & $script:postcheck | Out-Null
+        Verify-SharedState
+    }
+    VerifyCrashTarget = {
+        $now = Get-TaskOwnedListener
+        Assert-Recovery (
+            $null -ne $now -and
+            $now.ProcessId -eq $script:originalPid -and
+            $now.CreationDate -eq $script:originalCreationDate -and
+            (Get-Task).State -eq 'Running'
+        ) 'Auth PID, creation time or task ownership changed before the crash rehearsal.'
+        $checked = Get-Process -Id $script:originalPid -ErrorAction Stop
+        Assert-Recovery ($checked.ProcessName -ieq 'node') 'Restart target no longer matches Node.js.'
+    }
+    CrashOwnedAuth = {
+        # Intentional failure injection: stop only the verified task-owned PID.
+        Stop-Process -Id $script:originalPid -ErrorAction Stop
+    }
+    WaitAutomatic = {
+        Wait-SupervisedAuth -PriorPid $script:originalPid -Attempts 75
+    }
+    StartTaskManually = {
+        # Manual recovery is reported as a failure of automatic restart.
+        Stop-TaskOwnedService
+        Wait-FreePort
+        Start-ScheduledTask -TaskName $script:taskName -ErrorAction Stop
+    }
+    WaitManual = {
+        Wait-SupervisedAuth -PriorPid $script:originalPid -Attempts 35
+    }
+    DisableTask = {
+        Disable-ScheduledTask -TaskName $script:taskName -ErrorAction Stop | Out-Null
+        Assert-Recovery ((Get-Task).State -eq 'Disabled') 'Could not disable the failed task.'
+    }
+    StopTask = {
+        Stop-TaskOwnedService
+    }
+    ClearOwnedListener = {
+        Wait-FreePort
+    }
+    RestoreStage = {
+        Restore-StagedAuth
+    }
+    VerifyStage = {
+        Wait-StagedAuth
+    }
+}
+$recoveryResult = Invoke-RestartRecoveryTransaction -Operations $ops
+if ($recoveryResult -ceq 'automatic') {
+    $replacement = Get-TaskOwnedListener
+    Write-Output "RESTART AUTOMATICALLY VERIFIED: oldPID=$script:originalPid, newPID=$($replacement.ProcessId), auth ready."
+} elseif ($recoveryResult -ceq 'manual_only') {
+    Write-Output 'Automatic restart FAILED; manual task restart verified with unchanged Auth0 and public signing keys.'
+} else {
+    throw 'Unexpected recovery rehearsal result.'
+}
+Write-Output 'Reboot recovery remains unverified. Process restart does not prove unattended startup.'
+) { $ResultCode } else { 'unknown' }
+    $safeListener = if (@('none','original','replacement','unknown') -ccontains $ListenerState) { $ListenerState } else { 'unknown' }
+    $safeSeconds = [Math]::Max(0,[Math]::Min($ElapsedSeconds,3600))
+    $parentState = if ($ParentAlive) { 'alive' } else { 'exited' }
+    return ('RESTART TRACE: phase={0}; elapsed_s={1}; original_parent={2}; task={3}; scheduler_result={4}; listener={5}' -f $safePhase,$safeSeconds,$parentState,$safeTask,$safeResult,$safeListener)
+}
+
 function Wait-SupervisedAuth([int]$PriorPid, [int]$Attempts) {
     for ($i = 0; $i -lt $Attempts; $i++) {
         try {
