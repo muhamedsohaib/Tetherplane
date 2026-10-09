@@ -441,7 +441,35 @@ if (-not $Exercise) {
 }
 
 if ($RefreshSupervisor) {
-    throw 'Supervisor refresh runtime not configured.'
+    $refreshOps = @{
+        VerifyBaseline = { throw 'not implemented: VerifyBaseline' }
+        VerifyTarget = { throw 'not implemented: VerifyTarget' }
+        QuiesceTask = { throw 'not implemented: QuiesceTask' }
+        StopOwnedTask = { throw 'not implemented: StopOwnedTask' }
+        VerifyVacant = { throw 'not implemented: VerifyVacant' }
+        ReenableTask = { throw 'not implemented: ReenableTask' }
+        StartTask = { throw 'not implemented: StartTask' }
+        VerifyNewTask = { throw 'not implemented: VerifyNewTask' }
+        RestoreTask = { throw 'not implemented: RestoreTask' }
+        VerifyRecoveredTask = { throw 'not implemented: VerifyRecoveredTask' }
+        DisableTask = { throw 'not implemented: DisableTask' }
+        StopTask = { throw 'not implemented: StopTask' }
+        ClearListener = { throw 'not implemented: ClearListener' }
+        RestoreStage = { throw 'not implemented: RestoreStage' }
+        VerifyStage = { throw 'not implemented: VerifyStage' }
+    }
+    $refreshStatus = Invoke-GuardedSupervisorRefresh -Operations $refreshOps
+    if ($refreshStatus -ceq 'refreshed') {
+        $replacement = Get-TaskOwnedListener
+        Write-Output "SUPERVISOR INSTANCE REFRESH VERIFIED: original listener PID=$script:originalPid, replacement PID=$($replacement.ProcessId)."
+        Write-Output 'Original Auth0 relay, protected routes and public signing keys unchanged.'
+    } elseif ($refreshStatus -ceq 'manually_restored') {
+        Write-Output 'SUPERVISOR REFRESH FAILED; healthy task manually restored. Do not run -Exercise.'
+    } else {
+        throw 'Unexpected supervisor refresh result.'
+    }
+    Write-Output 'Task instance restart does not prove automatic recovery. Reboot recovery remains unverified.'
+    return
 }
 
 $ops = @{
