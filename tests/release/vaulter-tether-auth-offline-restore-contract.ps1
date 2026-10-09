@@ -269,4 +269,19 @@ if ($restoreStart -lt 0 -or $restoreEnd -le $restoreStart -or
     throw 'Offline v1 file restoration must never start a task implicitly.'
 }
 
+
+# An inability to enumerate TCP listeners is NOT evidence of a vacant port.
+# Query all listeners with ErrorAction Stop, then filter LocalPort=8790.
+$vacantAst = $ast.Find({
+    param($n)
+    $n -is [System.Management.Automation.Language.FunctionDefinitionAst] -and
+        $n.Name -ceq 'Assert-PortVacant'
+},$true)
+if ($null -eq $vacantAst) { throw 'Missing independently testable fail-closed port-vacancy gate.' }
+if ($vacantAst.Extent.Text -notmatch 'Get-NetTCPConnection -State Listen -ErrorAction Stop' -or
+    $vacantAst.Extent.Text -notmatch 'LocalPort -eq 8790' -or
+    $vacantAst.Extent.Text -match 'SilentlyContinue') {
+    throw 'Offline recovery must reject TCP enumeration errors rather than treating them as port vacancy.'
+}
+
 Write-Output 'Offline v1 rescue task-state, atomic file, and rollback contracts passed.'
