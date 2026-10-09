@@ -440,6 +440,10 @@ if (-not $Exercise) {
     }
 }
 
+if ($RefreshSupervisor) {
+    throw 'Supervisor refresh runtime not configured.'
+}
+
 $ops = @{
     VerifyBaseline = {
         & $script:postcheck | Out-Null
