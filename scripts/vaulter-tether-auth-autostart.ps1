@@ -107,6 +107,7 @@ $probeName = "Tetherplane-TetherAuth-S4U-Probe-$id"
 $probeRunner = Join-Path $StateDirectory ("s4u-probe-$id.ps1")
 $probeResult = Join-Path $StateDirectory ("s4u-probe-$id.result")
 $probeRegistered = $false
+$probeCleanupSucceeded = $true
 
 try {
     Assert-Autostart (-not (Test-Path -LiteralPath $probeRunner) -and -not (Test-Path -LiteralPath $probeResult)) 'Probe files already exist.'
@@ -134,8 +135,17 @@ try {
 } finally {
     if ($probeRegistered) {
         try { Stop-ScheduledTask -TaskName $probeName -ErrorAction SilentlyContinue } catch { }
-        try { Unregister-ScheduledTask -TaskName $probeName -Confirm:$false -ErrorAction Stop }
-        catch { Write-Warning 'Temporary S4U probe task cleanup needs local review.' }
+        try {
+            Unregister-ScheduledTask -TaskName $probeName -Confirm:$false -ErrorAction Stop
+            $remains = @(Get-ScheduledTask -TaskName $probeName -ErrorAction SilentlyContinue)
+            if ($remains.Count -gt 0) {
+                $probeCleanupSucceeded = $false
+                Write-Warning 'Temporary S4U probe task is still registered; stop before permanent installation.'
+            }
+        } catch {
+            $probeCleanupSucceeded = $false
+            Write-Warning 'Temporary S4U probe task cleanup needs local review.'
+        }
     }
     foreach ($scratch in @($probeResult, $probeRunner)) {
         if (Test-Path -LiteralPath $scratch -PathType Leaf) {
@@ -143,6 +153,7 @@ try {
         }
     }
 }
+Assert-Autostart $probeCleanupSucceeded 'Temporary S4U probe task was not removed. Refusing permanent registration.'
 Write-Output 'S4U probe verified protected state access, Node.js runtime, and both loopback services.'
 
 if (-not $Register) {
