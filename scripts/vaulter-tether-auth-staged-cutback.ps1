@@ -108,6 +108,8 @@ if (-not $ApplyCutback) {
     Write-Output 'No changes made. -ApplyCutback requires separately approved maintenance.'
     return
 }
+$script:stageStillRunning = $false
+$script:rollbackStagePid = $null
 $ops=@{
     VerifyBaseline = {
         Assert-Cutback ((Get-TaskSnapshot) -ceq $script:baselineXml) 'Task changed before cutback.'
@@ -161,15 +163,78 @@ $ops=@{
         }
         Assert-Cutback ($task.State -eq 'Disabled') 'Named task not disabled after failed cutback.'
         $ports=@(Get-NetTCPConnection -State Listen -ErrorAction Stop | Where-Object {$_.LocalPort -eq 8790})
-        Assert-Cutback ($ports.Count -eq 0) 'Unknown listener blocks staged rollback.'
+        if ($ports.Count -gt 0) {
+            # If quiesce failed before stopping the original owned process,
+            # preserve it; any other occupied listener is a hard stop.
+            $now=Get-ProvenStagedListener
+            Assert-Cutback ($ports.Count -eq 1 -and
+                $now.ProcessId -eq $script:owned.ProcessId -and
+                $now.CreationDate -ceq $script:owned.CreationDate) 'Unknown listener blocks staged rollback.'
+            $script:stageStillRunning=$true
+        } else {
+            $script:stageStillRunning=$false
+        }
     }
     RestoreStage = {
-        throw 'Staged rollback requires independently verified recovery launcher; no unsafe automatic process adoption.'
+        if (-not $script:stageStillRunning) {
+            $secretFile=Join-Path $script:stateDir 'bridge-token.secret'
+            Assert-Cutback (Test-Path -LiteralPath $secretFile -PathType Leaf) 'Existing bridge credential unavailable.'
+            $secret=([IO.File]::ReadAllText($secretFile)).Trim()
+            Assert-Cutback ($secret -match '^[A-Za-z0-9_-]{60,}
+}
+$result=Invoke-StagedCutbackTransaction -Operations $ops
+if ($result -cne 's4u_restored') {throw 'Unexpected cutback state.'}
+Write-Output 'STAGED CUTBACK VERIFIED: original S4U v1 task and independent postcheck healthy.'
+) 'Existing bridge credential invalid.'
+            $node=(Get-Command node.exe -ErrorAction Stop).Source
+            $prior=[Environment]::GetEnvironmentVariable('TETHERPLANE_AUTH_BRIDGE_TOKEN','Process')
+            try {
+                $env:TETHERPLANE_AUTH_BRIDGE_TOKEN=$secret
+                $nonce=[Guid]::NewGuid().ToString('N')
+                $stdout=Join-Path $script:stateDir ("tether-auth-cutback-$nonce.stdout.log")
+                $stderr=Join-Path $script:stateDir ("tether-auth-cutback-$nonce.stderr.log")
+                $argsText='auth/dist/cli.js --config "' + $script:authConfig +
+                    '" --host 127.0.0.1 --port 8790 --allow-insecure-localhost'
+                $started=Start-Process -FilePath $node -ArgumentList $argsText -WorkingDirectory $script:sourceRoot -RedirectStandardOutput $stdout -RedirectStandardError $stderr -WindowStyle Hidden -PassThru -ErrorAction Stop
+                Assert-Cutback ($null -ne $started) 'Failed to launch staged rollback.'
+                $script:rollbackStagePid=[int]$started.Id
+            } finally {
+                $secret=$null
+                if ($null -eq $prior) { Remove-Item Env:\TETHERPLANE_AUTH_BRIDGE_TOKEN -ErrorAction SilentlyContinue }
+                else { $env:TETHERPLANE_AUTH_BRIDGE_TOKEN=$prior }
+            }
+        }
     }
     VerifyStage = {
-        Assert-StagedHealth
-        $now=Get-ProvenStagedListener
-        Assert-Cutback ($now.ProcessId -ne $script:owned.ProcessId) 'Old staged identity unexpectedly reused.'
+        $ready=$false
+        for($i=0;$i -lt 35;$i++) {
+            try {
+                Assert-StagedHealth
+                $ports=@(Get-NetTCPConnection -State Listen -ErrorAction Stop | Where-Object {$_.LocalPort -eq 8790})
+                Assert-Cutback ($ports.Count -eq 1 -and $ports[0].LocalAddress -ceq '127.0.0.1') 'Staged listener not exclusive.'
+                $expectedPid=if($script:stageStillRunning){$script:owned.ProcessId}else{$script:rollbackStagePid}
+                Assert-Cutback ([int]$ports[0].OwningProcess -eq [int]$expectedPid) 'Staged listener not owned by cutback rollback.'
+                $proc=Get-CimInstance Win32_Process -Filter ("ProcessId={0}" -f [int]$expectedPid) -ErrorAction Stop
+                Assert-Cutback ($null -ne $proc -and $proc.Name -ieq 'node.exe') 'Staged rollback process identity invalid.'
+                if (-not $script:stageStillRunning) {
+                    $record=[ordered]@{
+                        schema='tether-auth-owned-stage/v1';port=8790
+                        pid=[int]$proc.ProcessId;parentPid=[int]$proc.ParentProcessId
+                        creationDate=[string]$proc.CreationDate
+                    }
+                    $temporaryProof=Join-Path $script:stateDir ('cutback-proof-' + [Guid]::NewGuid().ToString('N') + '.tmp')
+                    $evidence=Join-Path $script:stateDir ('cutback-old-proof-' + [Guid]::NewGuid().ToString('N') + '.tmp')
+                    [IO.File]::WriteAllText($temporaryProof,($record | ConvertTo-Json -Compress),(New-Object Text.UTF8Encoding($false)))
+                    Set-Acl -LiteralPath $temporaryProof -AclObject (Get-Acl -LiteralPath $script:protectedRunner -ErrorAction Stop) -ErrorAction Stop
+                    [IO.File]::Replace($temporaryProof,$script:proofPath,$evidence)
+                }
+                $ready=$true
+                break
+            } catch {
+                Start-Sleep -Seconds 1
+            }
+        }
+        Assert-Cutback $ready 'Staged auth rollback did not independently verify readiness and process ownership.'
     }
 }
 $result=Invoke-StagedCutbackTransaction -Operations $ops
