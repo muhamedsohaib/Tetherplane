@@ -19,8 +19,9 @@ test("relay production container contract is explicit and secret-safe", async ()
     "utf8",
   );
 
-  assert.match(dockerfile, /FROM node:22[^\n]* AS build/);
-  assert.match(dockerfile, /FROM node:22[^\n]* AS runtime/);
+  assert.match(dockerfile, /^ARG NODE_BASE_IMAGE=node:22-bookworm-slim$/m);
+  assert.match(dockerfile, /^FROM \$\{NODE_BASE_IMAGE\} AS build$/m);
+  assert.match(dockerfile, /^FROM \$\{NODE_BASE_IMAGE\} AS runtime$/m);
   assert.match(dockerfile, /ENV NODE_ENV=production/);
   assert.match(dockerfile, /USER tetherplane/);
   assert.match(dockerfile, /EXPOSE 8788/);
