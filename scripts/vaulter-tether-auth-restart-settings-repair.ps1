@@ -60,7 +60,10 @@ function Test-OnlyRestartCountChanged {
 }
 function Invoke-GuardedSettingsCorrection {
     [CmdletBinding()]
-    param([Parameter(Mandatory=$true)][hashtable]$Operations)
+    param(
+        [Parameter(Mandatory=$true)][hashtable]$Operations,
+        [Parameter(Mandatory=$true)][int]$OriginalCount
+    )
     foreach ($name in @(
         'VerifyBefore','BackupTask','ApplyCount','VerifyAfter',
         'RestorePrior','VerifyRestored'
@@ -78,15 +81,23 @@ function Invoke-GuardedSettingsCorrection {
         & $Operations['VerifyAfter']
         return 'corrected'
     } catch {
-        # Windows may persist a task change then return an error. Always
-        # attempt rollback; never claim it succeeded without verification.
+        # An invalid original count cannot safely be written back. Verify
+        # unchanged state read-only instead; if it changed, stop for recovery.
+        if (-not (Test-RestartCountRange -Count $OriginalCount)) {
+            try {
+                & $Operations['VerifyRestored']
+            } catch {
+                throw 'Restart settings REPAIR FAILED; ROLLBACK UNAVAILABLE for invalid original count. State unverified. Do not repeat or reboot.'
+            }
+            throw 'Restart settings REPAIR FAILED; NO CHANGE VERIFIED. Invalid original definition remains. Do not repeat or reboot.'
+        }
         try {
             & $Operations['RestorePrior']
             & $Operations['VerifyRestored']
         } catch {
             throw 'Restart settings REPAIR FAILED; ROLLBACK UNVERIFIED. Do not repeat or reboot. Inspect live auth and saved private task definition.'
         }
-        throw 'Restart settings REPAIR FAILED; ROLLED BACK original task definition. The invalid prior count may remain. Do not repeat or reboot.'
+        throw 'Restart settings REPAIR FAILED; ROLLED BACK original task definition. Do not repeat or reboot.'
     }
 }
 function Get-Task {
@@ -207,7 +218,7 @@ $operations = @{
         Verify-TaskHealthy
     }
 }
-$status = Invoke-GuardedSettingsCorrection -Operations $operations
+$status = Invoke-GuardedSettingsCorrection -Operations $operations -OriginalCount $script:baselineCount
 Assert-Repair ($status -ceq 'corrected') 'Unexpected repair status.'
 Write-Output "RESTART SETTINGS CORRECTED: count=$script:desiredCount; interval=PT1M; original auth PID=$script:baselinePid unchanged."
 Write-Output 'No task actions, principals or triggers changed. Original task definition backed up privately.'
