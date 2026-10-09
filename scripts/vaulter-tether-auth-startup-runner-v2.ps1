@@ -130,6 +130,13 @@ try {
     Assert-Runner ($LASTEXITCODE -eq 0 -and [int](([string]$nodeVersion).Split('.')[0]) -ge 22) 'Node.js runtime is incompatible.'
 
     if ($Validate) {
+        # This runs UNDER the temporary S4U principal, not the interactive
+        # session. The v2 restart loop must be permitted to inspect its
+        # existing registered supervisor task before live activation.
+        $registeredTask = Get-ScheduledTask -TaskName 'Tetherplane-TetherAuth-Startup' -TaskPath '\' -ErrorAction Stop
+        Assert-Runner ($registeredTask.State -eq 'Running' -and
+            [bool]$registeredTask.Settings.Enabled -and
+            ([string]$registeredTask.Principal.LogonType) -ceq 'S4U') 'S4U auth task metadata inaccessible or changed.'
         # S4U logon may lack network credentials. Verify that it can actually
         # reach loopback sockets before registering any permanent startup task.
         $relayHealth = Invoke-RestMethod -Uri 'http://127.0.0.1:8788/healthz' -TimeoutSec 10
