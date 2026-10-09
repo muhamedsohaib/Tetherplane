@@ -46,4 +46,13 @@ $output = @(Invoke-WorkspaceCommand -Arguments @('/d', '/c', 'echo', 'argument-o
 if ((($output -join [Environment]::NewLine).Trim()) -ne 'argument-one argument-two') {
     throw 'pnpm wrapper dropped an argument.'
 }
+# pnpm is pinned in package.json; do not require globally replacing another pnpm major.
+foreach ($required in @('packageManager', 'corepack.cmd', 'PnpmPrefix')) {
+    if (-not $source.Contains($required)) { throw "Staging script lacks pnpm/Corepack fallback: $required" }
+}
+$script:PnpmPrefix = @('/d', '/c', 'echo', 'pnpm')
+$prefixed = @(Invoke-WorkspaceCommand -Arguments @('argument-one', 'argument-two'))
+if ((($prefixed -join [Environment]::NewLine).Trim()) -ne 'pnpm argument-one argument-two') {
+    throw 'pnpm wrapper dropped Corepack prefix or command arguments.'
+}
 Write-Output 'Windows PowerShell staging syntax and safety guard checks passed.'
