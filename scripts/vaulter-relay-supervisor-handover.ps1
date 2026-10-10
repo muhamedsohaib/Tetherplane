@@ -96,6 +96,11 @@ function Assert-RegisteredTask {
   }).Count -gt 0) 'Expected Interactive relay task logon trigger missing.'
   return $t
 }
+function Read-TaskResultSafely {
+  $info=Get-ScheduledTaskInfo -TaskPath '\' -TaskName $script:TaskName -ErrorAction Stop
+  # LastTaskResult describes the latest instance, not successful recovery.
+  return ('0x{0:X8}' -f ([uint32]([long]$info.LastTaskResult -band 4294967295)))
+}
 function Assert-PrivateBaseline {
   Assert-Handover ($env:COMPUTERNAME -ieq 'Vaulter' -and $env:OS -eq 'Windows_NT') 'Vaulter-only handover.'
   foreach($p in @($script:StateDir,$script:ProtectedBackupDir)){
@@ -278,6 +283,7 @@ if(-not $Stage -and -not $Apply -and -not $Rollback){
   Assert-Handover (Test-TaskIsOriginal) 'Read-only preflight expects original registered launcher.'
   Assert-HealthyListener
   Write-Output 'RELAY SUPERVISOR HANDOVER PREFLIGHT PASS: original Auth0 task running, listener ownership verified.'
+  Write-Output ('Current task LastTaskResult='+[string](Read-TaskResultSafely)+' (not recovery proof).')
   Write-Output 'NO CHANGES MADE. -Stage, -Apply or -Rollback require explicit separate execution.'
   return
 }
