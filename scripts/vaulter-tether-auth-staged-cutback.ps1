@@ -311,13 +311,15 @@ $ops=@{
         $ready=$false
         for($i=0;$i -lt 35;$i++) {
             try {
+                Assert-Cutback ((Get-TaskSnapshot) -ceq $script:baselineXml) 'S4U task changed during staged rollback.'
                 Assert-StagedHealth
                 $ports=@(Get-NetTCPConnection -State Listen -ErrorAction Stop | Where-Object {$_.LocalPort -eq 8790})
                 Assert-Cutback ($ports.Count -eq 1 -and $ports[0].LocalAddress -ceq '127.0.0.1') 'Staged listener not exclusive.'
                 $expectedPid=if($script:stageStillRunning){$script:owned.ProcessId}else{$script:rollbackStagePid}
                 Assert-Cutback ([int]$ports[0].OwningProcess -eq [int]$expectedPid) 'Staged listener not owned by cutback rollback.'
                 $proc=Get-CimInstance Win32_Process -Filter ("ProcessId={0}" -f [int]$expectedPid) -ErrorAction Stop
-                Assert-Cutback ($null -ne $proc -and $proc.Name -ieq 'node.exe') 'Staged rollback process identity invalid.'
+                Assert-Cutback ($null -ne $proc -and $proc.Name -ieq 'node.exe' -and
+                    (Test-OwnedStageCommandLine -CommandLine ([string]$proc.CommandLine) -ExpectedConfig $script:authConfig)) 'Staged rollback process identity invalid.'
                 if (-not $script:stageStillRunning) {
                     $record=[ordered]@{
                         schema='tether-auth-owned-stage/v1';port=8790
