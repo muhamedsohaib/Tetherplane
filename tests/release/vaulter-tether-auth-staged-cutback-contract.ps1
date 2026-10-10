@@ -80,4 +80,67 @@ if ($restoreFailed.Events -ccontains 'VerifyStage') {
  throw 'RED: stage verification ran even after rollback launch failed.'
 }
 
+# Pure command-line identity must reject decoys that satisfy substring checks.
+$identityAst=$ast.Find({
+ param($n)
+ $n -is [Management.Automation.Language.FunctionDefinitionAst] -and
+ $n.Name -eq 'Test-OwnedStageCommandLine'
+},$true)
+if ($null -eq $identityAst) {throw 'RED: strict staged Node command identity predicate missing.'}
+Invoke-Expression $identityAst.Extent.Text
+$config='C:\Auth State\tether-auth-config.json'
+$good='"C:\Program Files\nodejs\node.exe" auth/dist/cli.js --config "' + $config +
+ '" --host 127.0.0.1 --port 8790 --allow-insecure-localhost'
+if (-not (Test-OwnedStageCommandLine -CommandLine $good -ExpectedConfig $config)) {
+ throw 'Valid staged Node command was rejected.'
+}
+$invalid=@(
+ $good.Replace($config,$config + '.backup'),
+ $good.Replace('--host 127.0.0.1','--host 127.0.0.1.evil'),
+ $good.Replace('--port 8790','--port 87900'),
+ $good.Replace('--allow-insecure-localhost','--allow-insecure-localhost-extra'),
+ ($good + ' --port 8790'),
+ ($good + ' --config "' + $config + '"'),
+ $good.Replace('auth/dist/cli.js','auth/dist/cli.js.evil')
+)
+foreach($cmd in $invalid) {
+ if (Test-OwnedStageCommandLine -CommandLine $cmd -ExpectedConfig $config) {
+  throw 'RED: spoofed staged Node command accepted; would permit wrong-process termination.'
+ }
+}
+$listenerFunction=$ast.Find({
+ param($n)
+ $n -is [Management.Automation.Language.FunctionDefinitionAst] -and
+ $n.Name -eq 'Get-ProvenStagedListener'
+},$true)
+if ($null -eq $listenerFunction -or
+    -not $listenerFunction.Extent.Text.Contains('Test-OwnedStageCommandLine')) {
+ throw 'RED: proven listener does not enforce strict command identity.'
+}
+
+# Already-restored v1 bytes must be accepted: activation fallback may have
+# restored the protected file before its S4U task failed to start.
+$decisionAst=$ast.Find({
+ param($n)
+ $n -is [Management.Automation.Language.FunctionDefinitionAst] -and
+ $n.Name -eq 'Get-CutbackV1RestoreDecision'
+},$true)
+if ($null -eq $decisionAst) {throw 'RED: idempotent v1 restore decision missing.'}
+Invoke-Expression $decisionAst.Extent.Text
+if ((Get-CutbackV1RestoreDecision -InstalledVersion 'v1') -cne 'already_v1' -or
+    (Get-CutbackV1RestoreDecision -InstalledVersion 'v2') -cne 'restore_v1') {
+ throw 'An exact installed v1/v2 runner must have a safe cutback decision.'
+}
+try {
+ Get-CutbackV1RestoreDecision -InstalledVersion 'untrusted' | Out-Null
+ throw 'Untrusted runner was accepted.'
+} catch {if ($_.Exception.Message -eq 'Untrusted runner was accepted.'){throw}}
+if ($source -notmatch '(?s)RestoreV1\s*=\s*\{[^}]*Get-CutbackV1RestoreDecision') {
+ throw 'Cutback fails to use version-aware v1 restore.'
+}
+
+# Original signing keys must also be compared AFTER S4U task recovery.
+if ($source -notmatch '(?s)VerifyS4U\s*=\s*\{[^}]*Assert-StagedHealth') {
+ throw 'RED: S4U recovery can silently change signing keys or Auth0 metadata.'
+}
 Write-Output 'Staged cutback transaction contract passed.'
