@@ -148,18 +148,19 @@ function Get-ProvenStagedListener {
     Assert-Cutback ($proofAcl.AreAccessRulesProtected -and
         (Test-CutbackProofAclEquivalent -Expected $runnerAcl -Actual $proofAcl)) 'Staged-fallback proof ACL differs from protected runner.'
     $proof=Get-Content -LiteralPath $script:proofPath -Raw -ErrorAction Stop | ConvertFrom-Json -ErrorAction Stop
-    Assert-Cutback ($proof.schema -ceq 'tether-auth-owned-stage/v1' -and
+    Assert-Cutback ($proof.schema -ceq 'tether-auth-owned-stage/v2' -and
         [int]$proof.port -eq 8790 -and [int]$proof.pid -gt 0 -and
-        -not [string]::IsNullOrWhiteSpace([string]$proof.creationDate)) 'Invalid staged-fallback proof.'
+        [long]$proof.creationUtcTicks -gt 0)) 'Invalid staged-fallback proof.'
     $ports=@(Get-NetTCPConnection -State Listen -ErrorAction Stop | Where-Object {$_.LocalPort -eq 8790})
     Assert-Cutback ($ports.Count -eq 1 -and $ports[0].LocalAddress -ceq '127.0.0.1' -and
         [int]$ports[0].OwningProcess -eq [int]$proof.pid) 'Listener differs from owned staged fallback.'
     $proc=Get-CimInstance Win32_Process -Filter ("ProcessId={0}" -f [int]$proof.pid) -ErrorAction Stop
+    $birthTicks=([datetime]$proc.CreationDate).ToUniversalTime().Ticks
     Assert-Cutback ($null -ne $proc -and $proc.Name -ieq 'node.exe' -and
-        [string]$proc.CreationDate -ceq [string]$proof.creationDate) 'Owned staged PID/creation identity changed.'
+        [long]$birthTicks -eq [long]$proof.creationUtcTicks) 'Owned staged PID/creation identity changed.'
     Assert-Cutback (Test-OwnedStageCommandLine -CommandLine ([string]$proc.CommandLine) -ExpectedConfig $script:authConfig) 'Staged Node CLI/config identity changed.'
     Assert-Cutback ([int]$proc.ParentProcessId -eq [int]$proof.parentPid) 'Staged process parent changed.'
-    return [pscustomobject]@{ProcessId=[int]$proc.ProcessId; CreationDate=[string]$proc.CreationDate; ParentProcessId=[int]$proc.ParentProcessId}
+    return [pscustomobject]@{ProcessId=[int]$proc.ProcessId; CreationUtcTicks=[long]$birthTicks; ParentProcessId=[int]$proc.ParentProcessId}
 }
 function Get-PublicKeyFingerprint([string]$Url) {
     $keys=@((Invoke-RestMethod -Uri $Url -Method Get -TimeoutSec 12 -ErrorAction Stop).keys)
@@ -211,12 +212,12 @@ $ops=@{
     VerifyOwnedTarget = {
         $now=Get-ProvenStagedListener
         Assert-Cutback ($now.ProcessId -eq $script:owned.ProcessId -and
-            $now.CreationDate -ceq $script:owned.CreationDate) 'Staged PID identity changed before quiesce.'
+            $now.CreationUtcTicks -eq $script:owned.CreationUtcTicks) 'Staged PID identity changed before quiesce.'
     }
     QuiesceOwnedStage = {
         $now=Get-ProvenStagedListener
         Assert-Cutback ($now.ProcessId -eq $script:owned.ProcessId -and
-            $now.CreationDate -ceq $script:owned.CreationDate) 'Staged Node replaced before stop.'
+            $now.CreationUtcTicks -eq $script:owned.CreationUtcTicks) 'Staged Node replaced before stop.'
         # The last check must cover the named task too, not just the PID:
         # re-enabled autostart could race the process termination.
         Assert-Cutback ((Get-TaskSnapshot) -ceq $script:baselineXml) 'S4U task changed immediately before staged stop.'
@@ -276,7 +277,7 @@ $ops=@{
             $now=Get-ProvenStagedListener
             Assert-Cutback ($ports.Count -eq 1 -and
                 $now.ProcessId -eq $script:owned.ProcessId -and
-                $now.CreationDate -ceq $script:owned.CreationDate) 'Unknown listener blocks staged rollback.'
+                $now.CreationUtcTicks -eq $script:owned.CreationUtcTicks) 'Unknown listener blocks staged rollback.'
             $script:stageStillRunning=$true
         } else {
             $script:stageStillRunning=$false
@@ -322,9 +323,9 @@ $ops=@{
                     (Test-OwnedStageCommandLine -CommandLine ([string]$proc.CommandLine) -ExpectedConfig $script:authConfig)) 'Staged rollback process identity invalid.'
                 if (-not $script:stageStillRunning) {
                     $record=[ordered]@{
-                        schema='tether-auth-owned-stage/v1';port=8790
+                        schema='tether-auth-owned-stage/v2';port=8790
                         pid=[int]$proc.ProcessId;parentPid=[int]$proc.ParentProcessId
-                        creationDate=[string]$proc.CreationDate
+                        creationUtcTicks=([datetime]$proc.CreationDate).ToUniversalTime().Ticks
                     }
                     $temporaryProof=Join-Path $script:stateDir ('cutback-proof-' + [Guid]::NewGuid().ToString('N') + '.tmp')
                     $evidence=Join-Path $script:stateDir ('cutback-old-proof-' + [Guid]::NewGuid().ToString('N') + '.tmp')
