@@ -4,11 +4,15 @@ on:
     paths:
       - "scripts/vaulter-relay-bounded-supervisor.ps1"
       - "tests/release/vaulter-relay-bounded-supervisor-contract.ps1"
+      - "scripts/vaulter-relay-supervisor-handover.ps1"
+      - "tests/release/vaulter-relay-supervisor-handover-contract.ps1"
       - ".github/workflows/vaulter-relay-bounded-supervisor.yml"
   pull_request:
     paths:
       - "scripts/vaulter-relay-bounded-supervisor.ps1"
       - "tests/release/vaulter-relay-bounded-supervisor-contract.ps1"
+      - "scripts/vaulter-relay-supervisor-handover.ps1"
+      - "tests/release/vaulter-relay-supervisor-handover-contract.ps1"
       - ".github/workflows/vaulter-relay-bounded-supervisor.yml"
 jobs:
   windows-contract:
@@ -18,6 +22,12 @@ jobs:
       - name: Bounded supervisor and isolated child test (Windows PowerShell 5.1)
         shell: powershell
         run: ./tests/release/vaulter-relay-bounded-supervisor-contract.ps1
+      - name: Guarded supervisor handover (Windows PowerShell 5.1)
+        shell: powershell
+        run: ./tests/release/vaulter-relay-supervisor-handover-contract.ps1
+      - name: Guarded supervisor handover (PowerShell 7)
+        shell: pwsh
+        run: ./tests/release/vaulter-relay-supervisor-handover-contract.ps1
       - name: Bounded supervisor and isolated child test (PowerShell 7)
         shell: pwsh
         run: ./tests/release/vaulter-relay-bounded-supervisor-contract.ps1
