@@ -176,9 +176,9 @@ function Assert-TaskAction {
     Assert-Supervisor (-not ((Get-Item -LiteralPath $installed -Force).Attributes -band [IO.FileAttributes]::ReparsePoint)) 'Protected supervisor reparse point refused.'
     Assert-Supervisor ((Get-Acl -LiteralPath $script:SupervisorDir).AreAccessRulesProtected) 'Supervisor install directory ACL not protected.'
     Assert-Supervisor ([IO.Path]::GetFullPath($PSCommandPath) -ieq [IO.Path]::GetFullPath($installed)) 'Only protected installed supervisor may run as task.'
+    $expectedArgs='-NoProfile -NonInteractive -ExecutionPolicy Bypass -File "'+$installed+'" -Serve'
     Assert-Supervisor ($execute -ieq $script:OriginalAction.Executable -and
-      $arguments.IndexOf($installed,[StringComparison]::OrdinalIgnoreCase) -ge 0 -and
-      $arguments -match '(?i)(?:^|\s)-Serve(?:\s|$)') 'Task action does not point to the installed supervisor in Serve mode.'
+      $arguments -ceq $expectedArgs) 'Task action does not EXACTLY match the verified supervisor Serve command.'
   }
 }
 function Assert-RegistrationUnchanged {
