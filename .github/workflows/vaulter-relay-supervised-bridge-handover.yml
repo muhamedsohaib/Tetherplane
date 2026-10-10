@@ -6,6 +6,7 @@ on:
       - "tests/release/vaulter-relay-supervised-bridge-handover-contract.ps1"
       - "tests/release/vaulter-relay-supervised-bridge-stage-contract.ps1"
       - "tests/release/vaulter-relay-supervised-bridge-postcheck-pin-contract.ps1"
+      - "tests/release/vaulter-relay-supervised-bridge-acl-contract.ps1"
       - ".github/workflows/vaulter-relay-supervised-bridge-handover.yml"
   pull_request:
     paths:
@@ -13,6 +14,7 @@ on:
       - "tests/release/vaulter-relay-supervised-bridge-handover-contract.ps1"
       - "tests/release/vaulter-relay-supervised-bridge-stage-contract.ps1"
       - "tests/release/vaulter-relay-supervised-bridge-postcheck-pin-contract.ps1"
+      - "tests/release/vaulter-relay-supervised-bridge-acl-contract.ps1"
       - ".github/workflows/vaulter-relay-supervised-bridge-handover.yml"
 jobs:
   contract:
@@ -37,3 +39,9 @@ jobs:
       - name: Protected postcheck pin (PowerShell 7)
         shell: pwsh
         run: ./tests/release/vaulter-relay-supervised-bridge-postcheck-pin-contract.ps1
+      - name: Private stage ACL contract (Windows PowerShell 5.1)
+        shell: powershell
+        run: ./tests/release/vaulter-relay-supervised-bridge-acl-contract.ps1
+      - name: Private stage ACL contract (PowerShell 7)
+        shell: pwsh
+        run: ./tests/release/vaulter-relay-supervised-bridge-acl-contract.ps1
