@@ -1,0 +1,23 @@
+name: Vaulter Funnel JSON postcheck regression
+on:
+  push:
+    paths:
+      - ".github/workflows/vaulter-funnel-json-postcheck.yml"
+      - "scripts/vaulter-tether-auth-supervised-postcheck.ps1"
+      - "tests/release/vaulter-tether-auth-supervised-postcheck-contract.ps1"
+  pull_request:
+    paths:
+      - ".github/workflows/vaulter-funnel-json-postcheck.yml"
+      - "scripts/vaulter-tether-auth-supervised-postcheck.ps1"
+      - "tests/release/vaulter-tether-auth-supervised-postcheck-contract.ps1"
+jobs:
+  windows-contract:
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Fail-closed semantic Funnel postcheck (Windows PowerShell 5.1)
+        shell: powershell
+        run: ./tests/release/vaulter-tether-auth-supervised-postcheck-contract.ps1
+      - name: Fail-closed semantic Funnel postcheck (PowerShell 7)
+        shell: pwsh
+        run: ./tests/release/vaulter-tether-auth-supervised-postcheck-contract.ps1
