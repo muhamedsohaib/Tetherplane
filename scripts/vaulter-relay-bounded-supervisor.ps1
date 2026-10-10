@@ -174,6 +174,31 @@ function Invoke-BoundedRelaySupervisor {
   }
 }
 
+function Assert-TrustedBridgeChildHelper {
+  [CmdletBinding()]
+  param([Parameter(Mandatory=$true)][string]$StageDirectory)
+  if(-not(Test-Path -LiteralPath $StageDirectory -PathType Container) -or
+    (Get-Item -LiteralPath $StageDirectory -Force).Attributes -band [IO.FileAttributes]::ReparsePoint -or
+    -not (Get-Acl -LiteralPath $StageDirectory).AreAccessRulesProtected){
+    throw 'Protected bridge helper staging directory is unavailable or untrusted.'
+  }
+  $path=Join-Path $StageDirectory 'vaulter-relay-supervised-bridge-child.ps1'
+  $manifestPath=Join-Path $StageDirectory 'manifest.json'
+  foreach($file in @($path,$manifestPath)){
+    if(-not(Test-Path -LiteralPath $file -PathType Leaf) -or
+      (Get-Item -LiteralPath $file -Force).Attributes -band [IO.FileAttributes]::ReparsePoint){
+      throw 'Protected bridge helper file or manifest missing.'
+    }
+  }
+  $manifest=Get-Content -LiteralPath $manifestPath -Raw -ErrorAction Stop |
+    ConvertFrom-Json -ErrorAction Stop
+  $expected=[string]$manifest.BridgeHelperSha256
+  if($expected -notmatch '^[A-Fa-f0-9]{64}$' -or
+    (Get-FileHash -LiteralPath $path -Algorithm SHA256).Hash -cne $expected.ToUpperInvariant()){
+    throw 'Bridge helper source changed before it could be safely loaded.'
+  }
+}
+
 function Get-Task {
   Get-ScheduledTask -TaskPath '\' -TaskName $script:TaskName -ErrorAction Stop
 }
@@ -287,7 +312,7 @@ try {
     StartAndWaitChild={
       if($Bridge){
         $helperPath=Join-Path $script:BridgeDir 'vaulter-relay-supervised-bridge-child.ps1'
-        Assert-Supervisor (Test-Path -LiteralPath $helperPath -PathType Leaf) 'Bridge helper missing.'
+        Assert-TrustedBridgeChildHelper -StageDirectory $script:BridgeDir
         . $helperPath
         $action=Get-VerifiedBridgeChildAction -StageDirectory $script:BridgeDir -WorkingDirectory $script:OriginalAction.WorkingDirectory
         Start-VerifiedOriginalRelayChild -Action $action
