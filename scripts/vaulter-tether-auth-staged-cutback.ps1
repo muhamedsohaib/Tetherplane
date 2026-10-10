@@ -114,12 +114,39 @@ function Get-CutbackV1RestoreDecision {
     if ($InstalledVersion -ceq 'v2') {return 'restore_v1'}
     throw 'Cutback refuses an untrusted protected runner.'
 }
+function Test-CutbackProofAclEquivalent {
+    [CmdletBinding()]
+    param(
+        [Parameter(Mandatory=$true)]$Expected,
+        [Parameter(Mandatory=$true)]$Actual
+    )
+    try {
+        if ([string]$Expected.Owner -cne [string]$Actual.Owner -or
+            [string]$Expected.Group -cne [string]$Actual.Group -or
+            [bool]$Expected.AreAccessRulesProtected -ne [bool]$Actual.AreAccessRulesProtected) {
+            return $false
+        }
+        $before=@(foreach($ace in @($Expected.Access)) {
+            [string]$ace.IdentityReference.Value + '|' + [string]$ace.FileSystemRights + '|' +
+                [string]$ace.AccessControlType + '|' + [string]$ace.InheritanceFlags + '|' +
+                [string]$ace.PropagationFlags
+        }) | Sort-Object
+        $after=@(foreach($ace in @($Actual.Access)) {
+            [string]$ace.IdentityReference.Value + '|' + [string]$ace.FileSystemRights + '|' +
+                [string]$ace.AccessControlType + '|' + [string]$ace.InheritanceFlags + '|' +
+                [string]$ace.PropagationFlags
+        }) | Sort-Object
+        return (($before -join ';') -ceq ($after -join ';'))
+    } catch {return $false}
+}
 function Get-ProvenStagedListener {
     Assert-Cutback (Test-Path -LiteralPath $script:proofPath -PathType Leaf) 'No owned staged-fallback proof; manual review required.'
     $proofFile=Get-Item -LiteralPath $script:proofPath -ErrorAction Stop
     Assert-Cutback (-not [bool]($proofFile.Attributes -band [IO.FileAttributes]::ReparsePoint)) 'Proof path is a reparse point.'
     $proofAcl=Get-Acl -LiteralPath $script:proofPath -ErrorAction Stop
-    Assert-Cutback $proofAcl.AreAccessRulesProtected 'Staged-fallback proof ACL not protected.'
+    $runnerAcl=Get-Acl -LiteralPath $script:protectedRunner -ErrorAction Stop
+    Assert-Cutback ($proofAcl.AreAccessRulesProtected -and
+        (Test-CutbackProofAclEquivalent -Expected $runnerAcl -Actual $proofAcl)) 'Staged-fallback proof ACL differs from protected runner.'
     $proof=Get-Content -LiteralPath $script:proofPath -Raw -ErrorAction Stop | ConvertFrom-Json -ErrorAction Stop
     Assert-Cutback ($proof.schema -ceq 'tether-auth-owned-stage/v1' -and
         [int]$proof.port -eq 8790 -and [int]$proof.pid -gt 0 -and
