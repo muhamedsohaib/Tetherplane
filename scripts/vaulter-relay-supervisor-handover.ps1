@@ -48,6 +48,40 @@ function Test-OnlyTaskActionChanged {
     return ($before.DocumentElement.OuterXml -ceq $after.DocumentElement.OuterXml)
   }catch{return $false}
 }
+function Test-ProtectedOriginalAction {
+  [CmdletBinding()]
+  param([Parameter(Mandatory=$true)][string]$SnapshotXml,
+    [Parameter(Mandatory=$true)][string]$ProtectedBackupXml)
+  try{
+    [xml]$snapshot=$SnapshotXml
+    [xml]$protected=$ProtectedBackupXml
+    $current=$snapshot.SelectSingleNode("//*[local-name()='Actions']")
+    $original=$protected.SelectSingleNode("//*[local-name()='Actions']")
+    return ($null -ne $current -and $null -ne $original -and
+      $current.OuterXml -ceq $original.OuterXml)
+  }catch{return $false}
+}
+function Test-SupervisorParentChain {
+  [CmdletBinding()]
+  param(
+    [Parameter(Mandatory=$true)]$Node,
+    [Parameter(Mandatory=$true)]$Parent,
+    [Parameter(Mandatory=$true)]$Supervisor,
+    [Parameter(Mandatory=$true)][string]$OriginalLauncherPath,
+    [Parameter(Mandatory=$true)][string]$InstalledSupervisorPath
+  )
+  try{
+    return (
+      [string]$Node.Name -ieq 'node.exe' -and
+      [string]$Parent.Name -ieq 'powershell.exe' -and
+      [string]$Supervisor.Name -ieq 'powershell.exe' -and
+      [int]$Node.ParentProcessId -eq [int]$Parent.ProcessId -and
+      [int]$Parent.ParentProcessId -eq [int]$Supervisor.ProcessId -and
+      ([string]$Parent.CommandLine).IndexOf($OriginalLauncherPath,[StringComparison]::OrdinalIgnoreCase) -ge 0 -and
+      ([string]$Supervisor.CommandLine).IndexOf($InstalledSupervisorPath,[StringComparison]::OrdinalIgnoreCase) -ge 0
+    )
+  }catch{return $false}
+}
 function Invoke-GuardedSupervisorHandover {
   [CmdletBinding()]
   param([Parameter(Mandatory=$true)][hashtable]$Operations)
@@ -175,8 +209,8 @@ function Assert-HealthyListener([switch]$Supervised){
   Assert-Handover ([string]$parent.CommandLine -like ('*'+$runner+'*')) 'Relay Node not owned by original launch command.'
   if($Supervised){
     $grandparent=Get-CimInstance Win32_Process -Filter ('ProcessId='+[int]$parent.ParentProcessId) -ErrorAction Stop
-    Assert-Handover ($null -ne $grandparent -and $grandparent.Name -ieq 'powershell.exe' -and
-      [string]$grandparent.CommandLine -like ('*'+$script:InstalledSupervisor+'*')) 'Active relay process not descended from registered protected supervisor.'
+    Assert-Handover ($null -ne $grandparent -and
+      (Test-SupervisorParentChain -Node $node -Parent $parent -Supervisor $grandparent -OriginalLauncherPath ([string]$runner) -InstalledSupervisorPath $script:InstalledSupervisor)) 'Active relay process not descended from registered protected supervisor.'
   }
   Assert-Auth0Baseline
 }
@@ -202,6 +236,34 @@ function Assert-StagedFiles {
     (Get-FileHash -LiteralPath $script:InstalledSupervisor -Algorithm SHA256).Hash -ceq [string]$manifest.SourceSha256 -and
     (Get-FileHash -LiteralPath $script:BeforeTaskXml -Algorithm SHA256).Hash -ceq [string]$manifest.TaskSha256) 'Supervisor installation or private task backup hash mismatch.'
   return [IO.File]::ReadAllText($script:BeforeTaskXml)
+}
+function Assert-ProtectedOriginalAction {
+  $protected=Join-Path $script:ProtectedBackupDir 'relay-task.xml'
+  Assert-Handover (Test-Path -LiteralPath $protected -PathType Leaf) 'Protected pre-bridge original task snapshot missing.'
+  Assert-Handover (-not ((Get-Item -LiteralPath $protected -Force).Attributes -band [IO.FileAttributes]::ReparsePoint)) 'Protected original task XML reparse point refused.'
+  Assert-Handover (
+    (Test-ProtectedOriginalAction -SnapshotXml $script:BaselineXml -ProtectedBackupXml ([IO.File]::ReadAllText($protected)))
+  ) 'Original action differs from protected pre-bridge checkpoint.'
+}
+function Assert-SupervisorProcessOwnedWithoutHealth {
+  $listeners=@(Get-NetTCPConnection -LocalPort 8788 -State Listen -ErrorAction SilentlyContinue)
+  if($listeners.Count -eq 0){return}
+  Assert-Handover ($listeners.Count -eq 1 -and $listeners[0].LocalAddress -ceq '127.0.0.1') 'Unrecognized port binding; task stop refused.'
+  $node=Get-CimInstance Win32_Process -Filter ('ProcessId='+[int]$listeners[0].OwningProcess) -ErrorAction Stop
+  Assert-Handover ($null -ne $node -and $node.Name -ieq 'node.exe') 'Unrecognized relay listener process; task stop refused.'
+  $parent=Get-CimInstance Win32_Process -Filter ('ProcessId='+[int]$node.ParentProcessId) -ErrorAction Stop
+  Assert-Handover ($null -ne $parent) 'Relay launcher parent missing; task stop refused.'
+  $supervisor=Get-CimInstance Win32_Process -Filter ('ProcessId='+[int]$parent.ParentProcessId) -ErrorAction Stop
+  Assert-Handover ($null -ne $supervisor) 'Supervisor parent missing; task stop refused.'
+  $expectedLauncher=Get-OriginalAction -Xml $script:BaselineXml
+  $m=[regex]::Match($expectedLauncher.Arguments,
+    '(?i)(?:^|\s)-File\s+(?:"([^"]+)"|''([^'']+)''|(\S+))')
+  Assert-Handover ($m.Success) 'Original runner path unavailable for verified task stop.'
+  $runner=@($m.Groups[1].Value,$m.Groups[2].Value,$m.Groups[3].Value) |
+    Where-Object {$_} | Select-Object -First 1
+  Assert-Handover (
+    (Test-SupervisorParentChain -Node $node -Parent $parent -Supervisor $supervisor -OriginalLauncherPath ([string]$runner) -InstalledSupervisorPath $script:InstalledSupervisor)
+  ) 'Relay listener process is not proven task-supervisor-owned; task stop refused.'
 }
 function Test-TaskIsOriginal {
   $task=Get-Task
@@ -251,7 +313,7 @@ function Restore-OriginalSafely {
     if($current.State -eq 'Running'){
       # After handover, the only permitted running instance is verified
       # via the exact grandparent supervisor chain.
-      Assert-HealthyListener -Supervised
+      Assert-SupervisorProcessOwnedWithoutHealth
       Stop-ScheduledTask -TaskPath '\' -TaskName $script:TaskName -ErrorAction Stop
       Wait-TaskReadyVacant
     }else{
@@ -280,6 +342,7 @@ $task=Get-Task
 if(-not $Stage -and -not $Apply -and -not $Rollback){
   Assert-Handover ($task.State -eq 'Running') 'Current relay task not running.'
   $script:BaselineXml=Get-TaskXml
+  Assert-ProtectedOriginalAction
   Assert-Handover (Test-TaskIsOriginal) 'Read-only preflight expects original registered launcher.'
   Assert-HealthyListener
   Write-Output 'RELAY SUPERVISOR HANDOVER PREFLIGHT PASS: original Auth0 task running, listener ownership verified.'
@@ -294,6 +357,7 @@ if($Stage){
   Assert-Handover ((Get-FileHash -LiteralPath $script:SourceSupervisor -Algorithm SHA256).Hash -ceq
     $ExpectedSupervisorSha256.ToUpperInvariant()) 'Source supervisor digest differs from reviewed revision.'
   $script:BaselineXml=Get-TaskXml
+  Assert-ProtectedOriginalAction
   Assert-Handover (Test-TaskIsOriginal) 'Original task action does not match private baseline.'
   Assert-HealthyListener
   New-Item -ItemType Directory -Path $script:StageDir -ErrorAction Stop | Out-Null
@@ -316,6 +380,7 @@ if($Stage){
 }
 
 $script:BaselineXml=Assert-StagedFiles
+Assert-ProtectedOriginalAction
 Assert-Handover (Test-OnlyTaskActionChanged -BeforeXml $script:BaselineXml -AfterXml (Get-TaskXml)) 'Unexpected task settings, principal or triggers drift.'
 if($Apply){
   Assert-Handover ($task.State -eq 'Running' -and (Test-TaskIsOriginal) -and
