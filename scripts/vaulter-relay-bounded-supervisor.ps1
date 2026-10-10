@@ -27,6 +27,34 @@ function Assert-Supervisor([bool]$Condition,[string]$Reason){
   if(-not $Condition){throw $Reason}
 }
 
+function Test-InstalledSupervisorIntegrity {
+  [CmdletBinding()]
+  param(
+    [Parameter(Mandatory=$true)][string]$InstalledPath,
+    [Parameter(Mandatory=$true)][string]$SnapshotPath,
+    [Parameter(Mandatory=$true)][string]$ManifestPath
+  )
+  try{
+    foreach($file in @($InstalledPath,$SnapshotPath,$ManifestPath)){
+      if(-not(Test-Path -LiteralPath $file -PathType Leaf) -or
+        ((Get-Item -LiteralPath $file -Force).Attributes -band [IO.FileAttributes]::ReparsePoint)){
+        return $false
+      }
+    }
+    $manifest=[IO.File]::ReadAllText($ManifestPath) | ConvertFrom-Json -ErrorAction Stop
+    if([string]$manifest.SourceSha256 -cnotmatch '^[A-Fa-f0-9]{64}$' -or
+       [string]$manifest.TaskSha256 -cnotmatch '^[A-Fa-f0-9]{64}$'){
+      return $false
+    }
+    return (
+      (Get-FileHash -LiteralPath $InstalledPath -Algorithm SHA256).Hash -ceq
+        ([string]$manifest.SourceSha256).ToUpperInvariant() -and
+      (Get-FileHash -LiteralPath $SnapshotPath -Algorithm SHA256).Hash -ceq
+        ([string]$manifest.TaskSha256).ToUpperInvariant()
+    )
+  }catch{return $false}
+}
+
 function Get-SupervisorOriginalAction {
   [CmdletBinding()]
   param([Parameter(Mandatory=$true)][string]$Xml)
@@ -175,6 +203,9 @@ function Assert-TaskAction {
     Assert-Supervisor (Test-Path -LiteralPath $installed -PathType Leaf) 'Protected installed supervisor unavailable.'
     Assert-Supervisor (-not ((Get-Item -LiteralPath $installed -Force).Attributes -band [IO.FileAttributes]::ReparsePoint)) 'Protected supervisor reparse point refused.'
     Assert-Supervisor ((Get-Acl -LiteralPath $script:SupervisorDir).AreAccessRulesProtected) 'Supervisor install directory ACL not protected.'
+    Assert-Supervisor (
+      (Test-InstalledSupervisorIntegrity -InstalledPath $installed -SnapshotPath (Join-Path $script:SupervisorDir 'pre-supervisor-task.xml') -ManifestPath (Join-Path $script:SupervisorDir 'manifest.json'))
+    ) 'Installed supervisor and protected task backup do not match staged hash manifest.'
     Assert-Supervisor ([IO.Path]::GetFullPath($PSCommandPath) -ieq [IO.Path]::GetFullPath($installed)) 'Only protected installed supervisor may run as task.'
     $expectedArgs='-NoProfile -NonInteractive -ExecutionPolicy Bypass -File "'+$installed+'" -Serve'
     Assert-Supervisor ($execute -ieq $script:OriginalAction.Executable -and
