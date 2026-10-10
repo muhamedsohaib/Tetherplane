@@ -1,0 +1,23 @@
+name: Vaulter relay restart forensics contract
+on:
+  push:
+    paths:
+      - "scripts/vaulter-relay-restart-forensics.ps1"
+      - "tests/release/vaulter-relay-restart-forensics-contract.ps1"
+      - ".github/workflows/vaulter-relay-restart-forensics.yml"
+  pull_request:
+    paths:
+      - "scripts/vaulter-relay-restart-forensics.ps1"
+      - "tests/release/vaulter-relay-restart-forensics-contract.ps1"
+      - ".github/workflows/vaulter-relay-restart-forensics.yml"
+jobs:
+  contract:
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Redacted task event parsing (Windows PowerShell 5.1)
+        shell: powershell
+        run: ./tests/release/vaulter-relay-restart-forensics-contract.ps1
+      - name: Redacted task event parsing (PowerShell 7)
+        shell: pwsh
+        run: ./tests/release/vaulter-relay-restart-forensics-contract.ps1
