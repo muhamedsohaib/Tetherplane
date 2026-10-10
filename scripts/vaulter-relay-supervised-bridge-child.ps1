@@ -50,6 +50,15 @@ function Get-VerifiedBridgeChildAction {
       throw 'Bridge Node executable or CLI hash mismatch.'
     }
   }
+  foreach($entry in @(
+    @{Path=[string]$c.AuthConfigPath;Hash=[string]$manifest.AuthConfigSha256},
+    @{Path=[string]$c.BaselineAuthConfigPath;Hash=[string]$manifest.BaselineAuthConfigSha256}
+  )){
+    if($entry.Hash -notmatch '^[A-Fa-f0-9]{64}$' -or
+      (Get-FileHash -LiteralPath $entry.Path -Algorithm SHA256).Hash -cne $entry.Hash.ToUpperInvariant()){
+      throw 'Bridge Auth0 candidate or baseline changed after protected staging.'
+    }
+  }
   if(-not [string]::IsNullOrWhiteSpace($WorkingDirectory) -and
     -not [IO.Path]::IsPathRooted($WorkingDirectory)){throw 'Working directory must be absolute.'}
   $values=@($launcher,[string]$c.NodeExecutablePath,[string]$c.RelayEntrypointPath,

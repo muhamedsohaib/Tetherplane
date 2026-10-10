@@ -227,6 +227,9 @@ function Assert-StagedFiles {
     @{Path=$script:Snapshot;Hash=[string]$manifest.TaskSha256},
     @{Path=$script:BridgeConfig;Hash=[string]$manifest.BridgeConfigSha256}
   )){Assert-FileHash -path $item.Path -sha $item.Hash}
+  $paths=Get-Content -LiteralPath $script:BridgeConfig -Raw -ErrorAction Stop | ConvertFrom-Json -ErrorAction Stop
+  Assert-FileHash ([string]$paths.AuthConfigPath) ([string]$manifest.AuthConfigSha256)
+  Assert-FileHash ([string]$paths.BaselineAuthConfigPath) ([string]$manifest.BaselineAuthConfigSha256)
   [IO.File]::ReadAllText($script:Snapshot)
 }
 function Wait-ReadyVacant {
@@ -352,6 +355,8 @@ if($Stage){
     BridgeHelperSha256=$ExpectedBridgeHelperSha256.ToUpperInvariant()
     HandoverSha256=$ExpectedHandoverSha256.ToUpperInvariant()
     BridgeConfigSha256=(Get-FileHash -LiteralPath $script:BridgeConfig -Algorithm SHA256).Hash
+    AuthConfigSha256=(Get-FileHash -LiteralPath $AuthConfigPath -Algorithm SHA256).Hash
+    BaselineAuthConfigSha256=(Get-FileHash -LiteralPath $BaselineAuthConfigPath -Algorithm SHA256).Hash
     TaskSha256=(Get-FileHash -LiteralPath $script:Snapshot -Algorithm SHA256).Hash
   }|ConvertTo-Json -Compress
   [IO.File]::WriteAllText($script:Manifest,[string]$manifest,[Text.UTF8Encoding]::new($false))
