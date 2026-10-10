@@ -95,6 +95,7 @@ fs.writeFileSync(process.env.TETHERPLANE_NATIVE_TEST_MARKER,"PASS");
     $params.ExpectedEntrypointSha256=(Get-FileHash -LiteralPath $entry -Algorithm SHA256).Hash
     MustFail { Invoke-VerifiedNativeRelayProcess @params -Serve } 'failing native child'
     if($env:TETHERPLANE_AUTH_BRIDGE_TOKEN -cne 'fixture-existing-value'){throw 'Parent environment not restored.'}
+    $global:LASTEXITCODE = 0
     Write-Output 'VAULTER NATIVE RELAY BRIDGE CONTRACT PASS'
 } finally {
     if($null -eq $original){Remove-Item Env:\TETHERPLANE_AUTH_BRIDGE_TOKEN -ErrorAction SilentlyContinue}
