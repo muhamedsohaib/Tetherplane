@@ -10,6 +10,7 @@ on:
       - "tests/release/vaulter-relay-supervised-rehearsal-contract.ps1"
       - "scripts/vaulter-relay-supervised-bridge-child.ps1"
       - "tests/release/vaulter-relay-supervised-bridge-child-contract.ps1"
+      - "tests/release/vaulter-relay-bridge-helper-integrity-contract.ps1"
       - ".github/workflows/vaulter-relay-bounded-supervisor.yml"
   pull_request:
     paths:
@@ -21,6 +22,7 @@ on:
       - "tests/release/vaulter-relay-supervised-rehearsal-contract.ps1"
       - "scripts/vaulter-relay-supervised-bridge-child.ps1"
       - "tests/release/vaulter-relay-supervised-bridge-child-contract.ps1"
+      - "tests/release/vaulter-relay-bridge-helper-integrity-contract.ps1"
       - ".github/workflows/vaulter-relay-bounded-supervisor.yml"
 jobs:
   windows-contract:
@@ -51,3 +53,9 @@ jobs:
       - name: Supervised bridge child (PowerShell 7)
         shell: pwsh
         run: ./tests/release/vaulter-relay-supervised-bridge-child-contract.ps1
+      - name: Bridge helper pre-source integrity (Windows PowerShell 5.1)
+        shell: powershell
+        run: ./tests/release/vaulter-relay-bridge-helper-integrity-contract.ps1
+      - name: Bridge helper pre-source integrity (PowerShell 7)
+        shell: pwsh
+        run: ./tests/release/vaulter-relay-bridge-helper-integrity-contract.ps1
