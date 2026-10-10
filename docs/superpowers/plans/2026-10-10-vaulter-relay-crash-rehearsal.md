@@ -2,7 +2,18 @@
 
 **Date:** 2026-10-10
 **Scope:** Task-owned relay on Vaulter only. Does not change OAuth issuer, Tailscale routing, protected credential files, task definition or other devices.
-**State:** Source-side guarded rehearsal; completion requires fresh on-Vaulter evidence.
+**State:** Live Vaulter crash rehearsal performed 2026-10-10: **manual-only recovery verified; automatic recovery failed verification**. Auth0 and Funnel preserved. Root cause pending read-only scheduler-event forensics; do not repeat fault injection or activate bridge.
+
+## Live rehearsal result — 2026-10-10
+
+- Exact source revision: `f01590771cd7a344c5175b47f5e2b0227aad7250`; focused Vaulter contracts and full Linux/Windows CI passed at that revision.
+- Independent precheck reported S4U auth supervised/healthy at PID 7752, original Auth0 resource metadata and public signing verification keys, Funnel root and /jwks routes, and four tailnet-only ports.
+- Guarded relay fault injection ran once. Script observed no healthy, independently attributable replacement during the bounded 180-second automatic-recovery window.
+- The script's guarded named-task manual start restored the relay; independent postcheck then passed without changing the issuer, public JWKS or private routes.
+- **Interpretation:** `manual_only` means automatic restart is unverified/failed the acceptance gate; it does **not** prove the scheduler never attempted a restart, or identify the cause.
+- Before any additional live perturbation, run only read-only `scripts/vaulter-relay-restart-forensics.ps1` against Vaulter TaskScheduler/Operational events, which redacts action arguments, event descriptions, identities and secrets. Correlate Event IDs and action ResultCode across the rehearsal interval. If history is unavailable, instrument a separately reviewed rehearsal before any second injection.
+- Candidate causes to investigate, **not claims**: action exit not recognized as failure; Task Scheduler did not retry; a retry was attempted but failed; or the current running task instance had not adopted the registered settings-only correction.
+- **Stop:** No second forced child kill, task definition change, launcher replacement, bridge activation or OAuth migration until root cause is supported by evidence and a scoped repair is tested.
 
 ## Baseline verified by operator
 
