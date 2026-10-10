@@ -24,6 +24,7 @@ $state = Join-Path $root 'state'
 $entry = Join-Path $root 'mock-relay.cjs'
 $registry = Join-Path $root 'registry.json'
 $candidate = Join-Path $root 'candidate.json'
+$baseline = Join-Path $root 'baseline.json'
 $marker = Join-Path $root 'invoked.txt'
 $secret = Join-Path $state 'bridge-token.secret'
 $deployment = Join-Path $state 'tether-auth-config.json'
@@ -44,6 +45,9 @@ try {
     [IO.File]::WriteAllText($deployment,'{"relay":{"bridgeTokenEnv":"TETHERPLANE_AUTH_BRIDGE_TOKEN"}}')
     [IO.File]::WriteAllText($registry,'{"version":1,"devices":[]}')
     [IO.File]::WriteAllText($candidate,'{"oidc":{"issuer":"https://tetherplane-dev.eu.auth0.com/","audience":"https://vaulter.tailf65eba.ts.net/mcp","jwksUri":"https://tetherplane-dev.eu.auth0.com/.well-known/jwks.json","scopes":["tetherplane:access"],"bindings":[{"subject":"fixture","clientId":"fixture","accountId":"fixture","principalId":"fixture"}]},"deviceLoginBridge":{"tokenEnv":"TETHERPLANE_AUTH_BRIDGE_TOKEN"}}')
+    $baselineObj = Get-Content -LiteralPath $candidate -Raw | ConvertFrom-Json
+    $baselineObj.PSObject.Properties.Remove('deviceLoginBridge')
+    [IO.File]::WriteAllText($baseline,($baselineObj | ConvertTo-Json -Depth 32))
     $mock = @'
 const fs = require("node:fs");
 const args=process.argv.slice(2);
@@ -67,6 +71,7 @@ fs.writeFileSync(process.env.TETHERPLANE_NATIVE_TEST_MARKER,"PASS");
       RelayEntrypointPath=$entry
       ExpectedEntrypointSha256=(Get-FileHash -LiteralPath $entry -Algorithm SHA256).Hash
       AuthConfigPath=$candidate
+      BaselineAuthConfigPath=$baseline
       StateFilePath=$registry
     }
     Invoke-VerifiedNativeRelayProcess @params | Out-Null
@@ -90,6 +95,12 @@ fs.writeFileSync(process.env.TETHERPLANE_NATIVE_TEST_MARKER,"PASS");
     [IO.File]::WriteAllText($candidate,'{"oidc":{"issuer":"https://tetherplane-dev.eu.auth0.com/"}}')
     MustFail { Invoke-VerifiedNativeRelayProcess @params -Serve } 'missing bridge declaration'
     [IO.File]::WriteAllText($candidate,$oldJson)
+    $mutated=Get-Content -LiteralPath $candidate -Raw | ConvertFrom-Json
+    $mutated.oidc.bindings[0].accountId='injected-other-account'
+    [IO.File]::WriteAllText($candidate,($mutated | ConvertTo-Json -Depth 32))
+    MustFail { Invoke-VerifiedNativeRelayProcess @params -Serve } 'identity binding changed'
+    [IO.File]::WriteAllText($candidate,$oldJson)
+    if(Test-Path -LiteralPath $marker){throw 'Unauthorized identity change launched a child.'}
     $env:TETHERPLANE_AUTH_BRIDGE_TOKEN='fixture-existing-value'
     [IO.File]::WriteAllText($entry,'process.exit(42)')
     $params.ExpectedEntrypointSha256=(Get-FileHash -LiteralPath $entry -Algorithm SHA256).Hash
