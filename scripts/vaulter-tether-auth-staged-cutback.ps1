@@ -150,7 +150,7 @@ function Get-ProvenStagedListener {
     $proof=Get-Content -LiteralPath $script:proofPath -Raw -ErrorAction Stop | ConvertFrom-Json -ErrorAction Stop
     Assert-Cutback ($proof.schema -ceq 'tether-auth-owned-stage/v2' -and
         [int]$proof.port -eq 8790 -and [int]$proof.pid -gt 0 -and
-        [long]$proof.creationUtcTicks -gt 0)) 'Invalid staged-fallback proof.'
+        [long]$proof.creationUtcTicks -gt 0) 'Invalid staged-fallback proof.'
     $ports=@(Get-NetTCPConnection -State Listen -ErrorAction Stop | Where-Object {$_.LocalPort -eq 8790})
     Assert-Cutback ($ports.Count -eq 1 -and $ports[0].LocalAddress -ceq '127.0.0.1' -and
         [int]$ports[0].OwningProcess -eq [int]$proof.pid) 'Listener differs from owned staged fallback.'
