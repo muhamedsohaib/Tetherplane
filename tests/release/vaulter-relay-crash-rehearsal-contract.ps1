@@ -81,4 +81,11 @@ if($message -notmatch 'RECOVERY UNVERIFIED'){throw 'Failed manual attempt report
 $f=New-Fixture @('WaitAutomatic','WaitManual');$message=''
 try{Invoke-GuardedRelayCrashRehearsal -Operations $f.Operations|Out-Null}catch{$message=$_.Exception.Message}
 if($message -notmatch 'RECOVERY UNVERIFIED'){throw 'Unhealthy manual recovery reported success.'}
+# Verify the first preflight snapshot remains authoritative until injection.
+if($source -notmatch 'VerifyBaseline\s*=\s*\{\s*Assert-RegistrationUnchanged'){
+  throw 'RED: live transaction must not silently rebaseline an altered task.'
+}
+if(-not $source.Contains('Get-FileHash -LiteralPath $backupLauncher')){
+  throw 'RED: private rollback launcher copy must match pinned original hash.'
+}
 Write-Output 'VAULTER RELAY CRASH REHEARSAL CONTRACT PASS'
