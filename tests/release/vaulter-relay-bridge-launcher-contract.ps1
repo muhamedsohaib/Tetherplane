@@ -118,7 +118,7 @@ Write-Output 'SYNTHETIC CHILD PASS'
     }
     $observed = @(Invoke-VerifiedRelayBridgeLauncher @parameters -Serve)
     if (-not (Test-Path -LiteralPath $marker) -or
-        $observed -notcontains 'SYNTHETIC CHILD PASS') {
+        $observed -notcontains 'RELAY BRIDGE CHILD EXIT PASS') {
         throw 'Synthetic child did not inherit the process-scoped credential.'
     }
     if (($observed -join '') -match ('X' * 64)) {
@@ -129,7 +129,8 @@ Write-Output 'SYNTHETIC CHILD PASS'
     }
     Remove-Item -LiteralPath $marker -Force
 
-    Assert-Rejected { Invoke-VerifiedRelayBridgeLauncher @parameters -ExpectedLauncherSha256 ('0' * 64) -Serve } 'altered launcher hash'
+    $badHash = @{}; foreach ($key in $parameters.Keys) { $badHash[$key] = $parameters[$key] }; $badHash.ExpectedLauncherSha256 = '0' * 64
+    Assert-Rejected { Invoke-VerifiedRelayBridgeLauncher @badHash -Serve } 'altered launcher hash'
     if (Test-Path -LiteralPath $marker) {
         throw 'Hash mismatch started a child.'
     }
