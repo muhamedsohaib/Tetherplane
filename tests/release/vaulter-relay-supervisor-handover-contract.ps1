@@ -28,7 +28,7 @@ foreach($needed in @(
 if($source -match '(?i)\b(?:Stop-Process|Kill-Process|Unregister-ScheduledTask|Set-Clipboard)\b|gh auth token|funnel\s+(?:reset|off|--set-path)'){
   throw 'Handover may not kill arbitrary processes or mutate other services/routes.'
 }
-foreach($f in @('Test-OnlyTaskActionChanged','Invoke-GuardedSupervisorHandover')){
+foreach($f in @('Test-OnlyTaskActionChanged','Test-ProtectedOriginalAction','Test-SupervisorParentChain','Invoke-GuardedSupervisorHandover')){
   $n=$ast.Find({
     param($x) $x -is [Management.Automation.Language.FunctionDefinitionAst] -and $x.Name -eq $f
   }.GetNewClosure(),$true)
@@ -54,6 +54,30 @@ foreach($wrong in @(
   if(Test-OnlyTaskActionChanged -BeforeXml $original -AfterXml $wrong){
     throw 'Unexpected principal or restart settings modification passed action-only guard.'
   }
+}
+# Older protected checkpoint may contain retry count 999; actions must still match.
+$checkpoint=$original.Replace('<Count>10</Count>','<Count>999</Count>')
+if(-not(Test-ProtectedOriginalAction -SnapshotXml $original -ProtectedBackupXml $checkpoint)){
+  throw 'RED: original task actions must compare independently of corrected restart settings.'
+}
+if(Test-ProtectedOriginalAction -SnapshotXml $original -ProtectedBackupXml $checkpoint.Replace('original.ps1','hijacked.ps1')){
+  throw 'Protected original-action mismatch must block staging and activation.'
+}
+$node=[pscustomobject]@{Name='node.exe';ParentProcessId=202}
+$runner=[pscustomobject]@{Name='powershell.exe';ProcessId=202;ParentProcessId=303;CommandLine='powershell.exe -File C:\trusted\original.ps1'}
+$supervisor=[pscustomobject]@{Name='powershell.exe';ProcessId=303;CommandLine='powershell.exe -File C:\protected\supervisor.ps1 -Serve'}
+$arguments=@{Node=$node;Parent=$runner;Supervisor=$supervisor;
+  OriginalLauncherPath='C:\trusted\original.ps1';InstalledSupervisorPath='C:\protected\supervisor.ps1'}
+if(-not(Test-SupervisorParentChain @arguments)){
+  throw 'Valid new task-owned process chain was rejected.'
+}
+$wrongParent=[pscustomobject]@{Name='powershell.exe';ProcessId=202;ParentProcessId=304;CommandLine=$runner.CommandLine}
+if(Test-SupervisorParentChain -Node $node -Parent $wrongParent -Supervisor $supervisor -OriginalLauncherPath $arguments.OriginalLauncherPath -InstalledSupervisorPath $arguments.InstalledSupervisorPath){
+  throw 'Unrelated supervisor parent PID accepted.'
+}
+$wrongOwner=[pscustomobject]@{Name='powershell.exe';ProcessId=303;CommandLine='powershell.exe -File C:\other\worker.ps1'}
+if(Test-SupervisorParentChain -Node $node -Parent $runner -Supervisor $wrongOwner -OriginalLauncherPath $arguments.OriginalLauncherPath -InstalledSupervisorPath $arguments.InstalledSupervisorPath){
+  throw 'Other task process accepted as supervised relay owner.'
 }
 function Make-Ops([string]$FailStep=''){
   $steps=New-Object 'System.Collections.Generic.List[string]'
