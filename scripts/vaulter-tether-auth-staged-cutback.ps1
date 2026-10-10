@@ -190,6 +190,9 @@ $ops=@{
         $now=Get-ProvenStagedListener
         Assert-Cutback ($now.ProcessId -eq $script:owned.ProcessId -and
             $now.CreationDate -ceq $script:owned.CreationDate) 'Staged Node replaced before stop.'
+        # The last check must cover the named task too, not just the PID:
+        # re-enabled autostart could race the process termination.
+        Assert-Cutback ((Get-TaskSnapshot) -ceq $script:baselineXml) 'S4U task changed immediately before staged stop.'
         Stop-Process -Id $now.ProcessId -ErrorAction Stop
     }
     VerifyVacant = {
