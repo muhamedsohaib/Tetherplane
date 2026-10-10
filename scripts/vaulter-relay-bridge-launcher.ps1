@@ -66,7 +66,11 @@ function Invoke-VerifiedRelayBridgeLauncher {
     Write-Output 'RELAY BRIDGE CHILD EXIT PASS'
   } finally {
     $secretValue = $null
-    [Environment]::SetEnvironmentVariable($envName,$oldValue,'Process')
+    if ($null -eq $oldValue) {
+      Remove-Item Env:\TETHERPLANE_AUTH_BRIDGE_TOKEN -ErrorAction SilentlyContinue
+    } else {
+      [Environment]::SetEnvironmentVariable($envName,$oldValue,'Process')
+    }
   }
 }
 
