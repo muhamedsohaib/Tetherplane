@@ -120,5 +120,32 @@ try {
   if([int]$result.ExitCode -ne 37 -or [double]$result.DurationSeconds -lt 0){
     throw 'Native child exit code was lost or elapsed time invalid.'
   }
+  # Two genuine Windows PowerShell child processes exit with code 37;
+  # the synthetic task owner stays running and verifies exactly one relaunch.
+  $childLaunches=0
+  $observedCodes=New-Object 'System.Collections.Generic.List[int]'
+  $observedBackoff=New-Object 'System.Collections.Generic.List[int]'
+  $childAction=[pscustomobject]@{
+    Executable=$psExe
+    Arguments=('-NoProfile -NonInteractive -File "'+$fake+'"')
+  }
+  $realOps=@{
+    ShouldStop={return ($childLaunches -ge 2)}.GetNewClosure()
+    AssertOwnership={}
+    AssertPortVacant={}
+    StartAndWaitChild={
+      $childLaunches++
+      $run=Start-VerifiedOriginalRelayChild -Action $childAction
+      $observedCodes.Add([int]$run.ExitCode)
+      return $run
+    }.GetNewClosure()
+    Sleep={param([int]$seconds)$observedBackoff.Add($seconds)}.GetNewClosure()
+  }
+  $realOutcome=Invoke-BoundedRelaySupervisor -Operations $realOps -MaxRestarts 2 -BaseDelaySeconds 1 -MaxDelaySeconds 3
+  if($realOutcome -cne 'stopped' -or $childLaunches -ne 2 -or
+    ($observedCodes -join ',') -cne '37,37' -or
+    ($observedBackoff -join ',') -cne '1'){
+    throw 'Real child failures did not produce exactly one bounded automatic relaunch.'
+  }
 }finally{Remove-Item -LiteralPath $tmpDir -Recurse -Force -ErrorAction SilentlyContinue}
 Write-Output 'VAULTER BOUNDED RELAY SUPERVISOR CONTRACT PASS'
