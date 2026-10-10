@@ -202,7 +202,8 @@ function Assert-PrivateCheckpoint {
   }
   Assert-Supervisor ((Get-FileHash -LiteralPath $launcherCopy -Algorithm SHA256).Hash -ceq $script:TrustedLauncherSha256) 'Original rollback launcher copy hash changed.'
   $original=Get-SupervisorOriginalAction -Xml ([IO.File]::ReadAllText($taskBackup))
-  Assert-Supervisor (Test-Path -LiteralPath $original.Executable -PathType Leaf) 'Original PowerShell executable not found.'
+  $resolvedExecutable=Resolve-VerifiedPowerShellExecutable -RegisteredExecutable $original.Executable
+  Assert-Supervisor (Test-Path -LiteralPath $resolvedExecutable -PathType Leaf) 'Trusted original PowerShell executable not found.'
   Assert-Supervisor (Test-Path -LiteralPath $original.LauncherPath -PathType Leaf) 'Original live launcher missing.'
   Assert-Supervisor (-not ((Get-Item -LiteralPath $original.LauncherPath -Force).Attributes -band [IO.FileAttributes]::ReparsePoint)) 'Original launcher reparse point refused.'
   Assert-Supervisor ((Get-FileHash -LiteralPath $original.LauncherPath -Algorithm SHA256).Hash -ceq $script:TrustedLauncherSha256) 'Original registered launcher hash changed.'
