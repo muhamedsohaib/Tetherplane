@@ -43,11 +43,16 @@ function Invoke-StagedCutbackTransaction {
         return 's4u_restored'
     } catch {
         # A cutback failure is never reported as an accepted S4U restoration.
-        $verified=$true
+        # Each rollback operation depends on the preceding one. In
+        # particular, a failed port/ownership check MUST NOT be followed by
+        # launching a second auth listener.
         foreach($name in @('PrepareStagedRollback','RestoreStage','VerifyStage')) {
-            try { & $Operations[$name] } catch {$verified=$false}
+            try {
+                & $Operations[$name]
+            } catch {
+                throw 'CUTBACK FAILED; ROLLBACK UNVERIFIED. Preserve private evidence; do not reboot or change Funnel.'
+            }
         }
-        if (-not $verified) {throw 'CUTBACK FAILED; ROLLBACK UNVERIFIED. Preserve private evidence; do not reboot or change Funnel.'}
         throw 'CUTBACK FAILED; staged auth restored and verified. S4U cutback not accepted.'
     }
 }
