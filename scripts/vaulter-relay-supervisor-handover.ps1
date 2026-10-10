@@ -180,8 +180,17 @@ function Get-OriginalAction {
   Assert-Handover ($null -ne $cmd -and $null -ne $args) 'Original action command or arguments missing.'
   $exe=[string]$cmd.InnerText
   $arguments=[string]$args.InnerText
-  Assert-Handover ([IO.Path]::IsPathRooted($exe) -and
-    [IO.Path]::GetFileName($exe) -ieq 'powershell.exe' -and
+  # A protected Task Scheduler action may legitimately use exactly
+  # "powershell.exe" rather than an absolute executable path. Relative
+  # paths and arbitrary PowerShell lookalikes must still fail closed.
+  $trusted=Join-Path $env:SystemRoot 'System32\WindowsPowerShell\v1.0\powershell.exe'
+  Assert-Handover (Test-Path -LiteralPath $trusted -PathType Leaf) 'System Windows PowerShell executable missing.'
+  Assert-Handover (-not ((Get-Item -LiteralPath $trusted -Force).Attributes -band [IO.FileAttributes]::ReparsePoint)) 'System Windows PowerShell executable may not be a reparse point.'
+  $matchesSystemPath=$false
+  if([IO.Path]::IsPathRooted($exe)){
+    $matchesSystemPath=([IO.Path]::GetFullPath($exe) -ieq [IO.Path]::GetFullPath($trusted))
+  }
+  Assert-Handover (($exe -ieq 'powershell.exe' -or $matchesSystemPath) -and
     $arguments -match '(?i)(?:^|\s)-File(?=\s)') 'Original task must execute a trusted PowerShell launcher.'
   return [pscustomobject]@{
     Executable=$exe
