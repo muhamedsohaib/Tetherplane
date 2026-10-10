@@ -205,4 +205,79 @@ if (-not $stageBlock.Contains('Get-TaskSnapshot') -or
  throw 'RED: staged rollback may report success without task/CLI re-verification.'
 }
 
+# Exercise the actual ownership reader against isolated fake process/port/ACL
+# observations. No real process, task or network listener is touched.
+$provenAst=$ast.Find({
+ param($n)
+ $n -is [Management.Automation.Language.FunctionDefinitionAst] -and
+ $n.Name -eq 'Get-ProvenStagedListener'
+},$true)
+if ($null -eq $provenAst) {throw 'Missing executable staged-ownership reader.'}
+Invoke-Expression $provenAst.Extent.Text
+$script:proofPath=Join-Path $env:TEMP ('tether-owned-' + [guid]::NewGuid().ToString('N') + '.json')
+$script:protectedRunner=Join-Path $env:TEMP 'test-protected-runner.ps1'
+$script:authConfig=$config
+$script:fakePid=76543
+$script:fakeParent=4567
+$script:fakeBirth='2026-10-10T01:01:01.123Z'
+$script:fakeCommand=$good
+$script:fakeProofAcl=$trustedAcl
+$script:fakeMultipleListeners=$false
+function Get-NetTCPConnection {
+ [CmdletBinding()]
+ param([string]$State)
+ $one=[pscustomobject]@{LocalPort=8790;LocalAddress='127.0.0.1';OwningProcess=$script:fakePid}
+ if ($script:fakeMultipleListeners) {return @($one,$one)}
+ return @($one)
+}
+function Get-CimInstance {
+ [CmdletBinding()]
+ param([string]$ClassName,[string]$Filter)
+ return [pscustomobject]@{
+  ProcessId=$script:fakePid;ParentProcessId=$script:fakeParent;
+  CreationDate=$script:fakeBirth;Name='node.exe';CommandLine=$script:fakeCommand
+ }
+}
+function Get-Acl {
+ [CmdletBinding()]
+ param([string]$LiteralPath)
+ if ($LiteralPath -ceq $script:proofPath) {return $script:fakeProofAcl}
+ return $script:expectedAcl
+}
+$script:expectedAcl=$expectedAcl
+$proof=[ordered]@{
+ schema='tether-auth-owned-stage/v1'; port=8790;
+ pid=$script:fakePid; parentPid=$script:fakeParent; creationDate=$script:fakeBirth
+}
+function Assert-UnownedRefused {
+ try {
+  Get-ProvenStagedListener | Out-Null
+  throw 'Unowned staged listener was accepted.'
+ } catch {
+  if ($_.Exception.Message -eq 'Unowned staged listener was accepted.') {throw}
+ }
+}
+try {
+ [IO.File]::WriteAllText($script:proofPath,($proof | ConvertTo-Json -Compress))
+ $owned=Get-ProvenStagedListener
+ if ($owned.ProcessId -ne $script:fakePid -or $owned.CreationDate -cne $script:fakeBirth) {
+  throw 'Exact owned stage was not returned.'
+ }
+ $script:fakeCommand=$good.Replace('--port 8790','--port 87900')
+ Assert-UnownedRefused
+ $script:fakeCommand=$good
+ $script:fakeProofAcl=$wrongOwner
+ Assert-UnownedRefused
+ $script:fakeProofAcl=$trustedAcl
+ $script:fakeBirth='2026-10-10T01:01:02.123Z'
+ Assert-UnownedRefused
+ $script:fakeBirth=[string]$proof.creationDate
+ $script:fakeMultipleListeners=$true
+ Assert-UnownedRefused
+} finally {
+ if (Test-Path -LiteralPath $script:proofPath) {
+  Remove-Item -LiteralPath $script:proofPath -Force -ErrorAction SilentlyContinue
+ }
+}
+
 Write-Output 'Staged cutback transaction contract passed.'
