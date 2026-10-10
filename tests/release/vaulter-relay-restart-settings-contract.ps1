@@ -15,7 +15,7 @@ foreach($s in @('[switch]$Apply','if (-not $Apply)','Tetherplane Relay',
   'COMPUTERNAME','vaulter','Interactive','AreAccessRulesProtected',
   'RestartCount','RestartInterval','PT1M','999','255','Get-FileHash',
   'Get-NetTCPConnection','Get-ScheduledTask','Export-ScheduledTask','Set-ScheduledTask',
-  'Get-CimInstance','Get-RestartNode','Test-RestartCountRange',
+  'Get-CimInstance','CreationDate','Get-RestartNode','Test-RestartCountRange',
   'Test-OnlyRestartCountChanged','Invoke-GuardedSettingsCorrection',
   'VerifyBefore','BackupTask','VerifyAfter','VerifyRestored',
   'No changes made','ROLLBACK UNAVAILABLE')){
