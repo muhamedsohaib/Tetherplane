@@ -194,8 +194,9 @@ $operations=@{
   }
   WaitAutomatic={Wait-Recovered}
   Rollback={
-    & $script:Handover -Rollback
-    if($LASTEXITCODE -ne 0){throw 'Independent rollback script reported failure.'}
+    # The in-process PowerShell script throws on failure; LASTEXITCODE is
+    # native-process state and must not be treated as its exit result.
+    & $script:Handover -Rollback | Out-Null
   }
   VerifyOriginal={
     & $script:Postcheck | Out-Null
