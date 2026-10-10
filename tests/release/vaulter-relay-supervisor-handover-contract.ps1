@@ -28,7 +28,7 @@ foreach($needed in @(
 if($source -match '(?i)\b(?:Stop-Process|Kill-Process|Unregister-ScheduledTask|Set-Clipboard)\b|gh auth token|funnel\s+(?:reset|off|--set-path)'){
   throw 'Handover may not kill arbitrary processes or mutate other services/routes.'
 }
-foreach($f in @('Test-OnlyTaskActionChanged','Test-ProtectedOriginalAction','Test-SupervisorParentChain','Invoke-GuardedSupervisorHandover')){
+foreach($f in @('Test-TaskPrincipalIsCurrentUser','Get-OriginalAction','Assert-Handover','Test-OnlyTaskActionChanged','Test-ProtectedOriginalAction','Test-SupervisorParentChain','Invoke-GuardedSupervisorHandover')){
   $n=$ast.Find({
     param($x) $x -is [Management.Automation.Language.FunctionDefinitionAst] -and $x.Name -eq $f
   }.GetNewClosure(),$true)
@@ -78,6 +78,22 @@ if(Test-SupervisorParentChain -Node $node -Parent $wrongParent -Supervisor $supe
 $wrongOwner=[pscustomobject]@{Name='powershell.exe';ProcessId=303;CommandLine='powershell.exe -File C:\other\worker.ps1'}
 if(Test-SupervisorParentChain -Node $node -Parent $runner -Supervisor $wrongOwner -OriginalLauncherPath $arguments.OriginalLauncherPath -InstalledSupervisorPath $arguments.InstalledSupervisorPath){
   throw 'Other task process accepted as supervised relay owner.'
+}
+$identity=[Security.Principal.WindowsIdentity]::GetCurrent()
+if(-not (Test-TaskPrincipalIsCurrentUser -TaskUserId $identity.User.Value -CurrentSid $identity.User) -or
+  -not (Test-TaskPrincipalIsCurrentUser -TaskUserId $identity.Name -CurrentSid $identity.User)){
+  throw 'RED: current account SID and task owner SID must resolve identically.'
+}
+if(Test-TaskPrincipalIsCurrentUser -TaskUserId 'S-1-5-18' -CurrentSid ([Security.Principal.SecurityIdentifier]::new('S-1-5-19'))){
+  throw 'A different task owner must be rejected before staging.'
+}
+$psExe=(Get-Command powershell.exe -ErrorAction Stop).Source
+$actionFixture='<Task><Actions><Exec><Command>'+[Security.SecurityElement]::Escape($psExe)+
+  '</Command><Arguments>-NoProfile -File &quot;C:\trusted\relay.ps1&quot;</Arguments><WorkingDirectory>C:\trusted</WorkingDirectory></Exec></Actions></Task>'
+$preserved=Get-OriginalAction -Xml $actionFixture
+if($preserved.Executable -cne $psExe -or $preserved.Arguments -cne '-NoProfile -File "C:\trusted\relay.ps1"' -or
+  $preserved.WorkingDirectory -cne 'C:\trusted'){
+  throw 'Original task executable, flags or working directory were reconstructed incorrectly.'
 }
 function Make-Ops([string]$FailStep=''){
   $steps=New-Object 'System.Collections.Generic.List[string]'
