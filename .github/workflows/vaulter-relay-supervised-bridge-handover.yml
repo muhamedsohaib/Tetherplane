@@ -4,11 +4,13 @@ on:
     paths:
       - "scripts/vaulter-relay-supervised-bridge-handover.ps1"
       - "tests/release/vaulter-relay-supervised-bridge-handover-contract.ps1"
+      - "tests/release/vaulter-relay-supervised-bridge-stage-contract.ps1"
       - ".github/workflows/vaulter-relay-supervised-bridge-handover.yml"
   pull_request:
     paths:
       - "scripts/vaulter-relay-supervised-bridge-handover.ps1"
       - "tests/release/vaulter-relay-supervised-bridge-handover-contract.ps1"
+      - "tests/release/vaulter-relay-supervised-bridge-stage-contract.ps1"
       - ".github/workflows/vaulter-relay-supervised-bridge-handover.yml"
 jobs:
   contract:
@@ -21,3 +23,9 @@ jobs:
       - name: Supervised bridge handover (PowerShell 7)
         shell: pwsh
         run: ./tests/release/vaulter-relay-supervised-bridge-handover-contract.ps1
+      - name: Protected stage baseline (Windows PowerShell 5.1)
+        shell: powershell
+        run: ./tests/release/vaulter-relay-supervised-bridge-stage-contract.ps1
+      - name: Protected stage baseline (PowerShell 7)
+        shell: pwsh
+        run: ./tests/release/vaulter-relay-supervised-bridge-stage-contract.ps1
