@@ -14,7 +14,7 @@ foreach($required in @(
   'relay-pre-bridge-b8afcfe768964e8786a5c229b866ea8d',
   '5522BDE82C0750EA3223ABFCE6DCF965E2A36BEBAAD21754F8BA2F6F8F792DA8',
   'AreAccessRulesProtected','Get-FileHash','Get-NetTCPConnection',
-  'Get-SupervisorOriginalAction','Start-VerifiedOriginalRelayChild',
+  'Get-SupervisorOriginalAction','Assert-PrivateCheckpoint','Start-VerifiedOriginalRelayChild',
   'Invoke-BoundedRelaySupervisor','ProcessStartInfo','WaitForExit',
   'Mutex','MaxRestarts','ResetAfterSeconds','Sleep','ShouldStop',
   'NO CHANGES MADE','RELAY SUPERVISOR PREFLIGHT PASS'
@@ -230,4 +230,42 @@ try{
     throw 'Invalid source pin was accepted.'
   }
 }finally{Remove-Item -LiteralPath $integrityDir -Recurse -Force -ErrorAction SilentlyContinue}
+# Live Vaulter stores the original action executable as exact bare
+# "powershell.exe". Exercise the WHOLE protected-checkpoint validator with
+# synthetic protected ACLs and a real hashed launcher (not just XML parsing).
+$checkpointRoot=Join-Path ([IO.Path]::GetTempPath()) ('tetherplane-checkpoint-contract-'+[Guid]::NewGuid().ToString('N'))
+$checkpointState=Join-Path $checkpointRoot 'state'
+$checkpointBackup=Join-Path $checkpointState 'backup'
+try {
+  foreach($folder in @($checkpointRoot,$checkpointState,$checkpointBackup)){
+    New-Item -Path $folder -ItemType Directory -ErrorAction Stop|Out-Null
+  }
+  foreach($folder in @($checkpointState,$checkpointBackup)){
+    $acl=Get-Acl -LiteralPath $folder -ErrorAction Stop
+    $acl.SetAccessRuleProtection($true,$true)
+    Set-Acl -LiteralPath $folder -AclObject $acl -ErrorAction Stop
+  }
+  $liveLauncher=Join-Path $checkpointRoot 'original.ps1'
+  $backupLauncher=Join-Path $checkpointBackup 'launcher.ps1'
+  $backupXml=Join-Path $checkpointBackup 'relay-task.xml'
+  [IO.File]::WriteAllText($liveLauncher, '# synthetic launcher; no remote task')
+  Copy-Item -LiteralPath $liveLauncher -Destination $backupLauncher -ErrorAction Stop
+  $checkpointXml='<Task><Actions><Exec><Command>powershell.exe</Command><Arguments>-NoProfile -NonInteractive -File &quot;'+[Security.SecurityElement]::Escape($liveLauncher)+'&quot;</Arguments></Exec></Actions></Task>'
+  [IO.File]::WriteAllText($backupXml,$checkpointXml)
+  $script:StateDir=$checkpointState
+  $script:BackupDir=$checkpointBackup
+  $script:TrustedLauncherSha256=(Get-FileHash -LiteralPath $liveLauncher -Algorithm SHA256).Hash
+  $checkpointAction=Assert-PrivateCheckpoint
+  if($checkpointAction.Executable -cne 'powershell.exe' -or
+      $checkpointAction.LauncherPath -cne $liveLauncher){
+    throw 'Valid protected checkpoint must preserve exact bare action and launcher.'
+  }
+  [IO.File]::AppendAllText($liveLauncher, ' tampered')
+  $rejected=$false
+  try{Assert-PrivateCheckpoint|Out-Null}catch{$rejected=$true}
+  if(-not $rejected){throw 'Tampered protected original launcher accepted.'}
+} finally {
+  Remove-Item -LiteralPath $checkpointRoot -Force -Recurse -ErrorAction SilentlyContinue
+}
+
 Write-Output 'VAULTER BOUNDED RELAY SUPERVISOR CONTRACT PASS'
