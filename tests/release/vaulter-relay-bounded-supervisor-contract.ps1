@@ -23,6 +23,20 @@ foreach($required in @(
 }
 if(-not $source.Contains('$arguments -ceq $expectedArgs')){throw 'RED: task action must match exact registered supervisor arguments, not contain substring.'}
 if(-not $source.Contains('Global\TetherplaneVaulterRelaySupervisor')){throw 'RED: mutex must be cross-session/global, not session-local.'}
+if(-not $source.Contains('[System.Threading.Mutex]::new($false,')){
+  throw 'RED: mutex constructor must use explicit PowerShell 5.1 compatible .NET invocation.'
+}
+$randomMutexName='Global\TetherplaneRelayContract_'+[Guid]::NewGuid().ToString('N')
+$testMutex=[System.Threading.Mutex]::new($false,$randomMutexName)
+$lease=$false
+try{
+  $lease=$testMutex.WaitOne(0)
+  if(-not $lease){throw 'Windows cannot acquire a newly created global supervisor mutex.'}
+}finally{
+  if($lease){$testMutex.ReleaseMutex()}
+  $testMutex.Dispose()
+}
+
 if($source -match '(?i)\b(?:Stop-Process|Stop-ScheduledTask|Start-ScheduledTask|Register-ScheduledTask|Unregister-ScheduledTask|Set-ScheduledTask|Set-Clipboard)\b'){
   throw 'Supervisor cannot kill a process, mutate a task, or alter clipboard.'
 }
