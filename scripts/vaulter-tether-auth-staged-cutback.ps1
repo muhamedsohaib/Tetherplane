@@ -69,6 +69,51 @@ function Get-TaskSnapshot {
     Assert-Cutback (@($t.Triggers | Where-Object { $_.CimClass.CimClassName -match 'BootTrigger$' }).Count -gt 0) 'Task boot trigger changed.'
     return [string](Export-ScheduledTask -TaskName $script:taskName -TaskPath '\' -ErrorAction Stop)
 }
+# Compare parsed arguments, not substrings: a lookalike CLI/config
+# must never authorize terminating an unrelated Node process.
+function Test-OwnedStageCommandLine {
+    [CmdletBinding()]
+    param(
+        [Parameter(Mandatory=$true)][string]$CommandLine,
+        [Parameter(Mandatory=$true)][string]$ExpectedConfig
+    )
+    try {
+        $cli=@([regex]::Matches($CommandLine,'(?i)(?:^|\s)auth[\\/]dist[\\/]cli\.js(?=\s|$)'))
+        if ($cli.Count -ne 1) { return $false }
+        $expected=@(
+            @{Name='--config'; Value=$ExpectedConfig; IsPath=$true},
+            @{Name='--host'; Value='127.0.0.1'; IsPath=$false},
+            @{Name='--port'; Value='8790'; IsPath=$false}
+        )
+        foreach($item in $expected) {
+            $pattern='(?i)(?:^|\s)' + [regex]::Escape($item.Name) +
+                '\s+(?:"([^"]+)"|(\S+))(?=\s|$)'
+            $matched=[regex]::Matches($CommandLine,$pattern)
+            if ($matched.Count -ne 1) {return $false}
+            $actual=if($matched[0].Groups[1].Success) {
+                $matched[0].Groups[1].Value
+            } else {
+                $matched[0].Groups[2].Value
+            }
+            if ($item.IsPath) {
+                if ([IO.Path]::GetFullPath($actual) -ine
+                    [IO.Path]::GetFullPath([string]$item.Value)) {return $false}
+            } elseif ($actual -cne [string]$item.Value) {
+                return $false
+            }
+        }
+        $allow=@([regex]::Matches($CommandLine,
+            '(?i)(?:^|\s)--allow-insecure-localhost(?=\s|$)'))
+        return ($allow.Count -eq 1)
+    } catch { return $false }
+}
+function Get-CutbackV1RestoreDecision {
+    [CmdletBinding()]
+    param([Parameter(Mandatory=$true)][string]$InstalledVersion)
+    if ($InstalledVersion -ceq 'v1') {return 'already_v1'}
+    if ($InstalledVersion -ceq 'v2') {return 'restore_v1'}
+    throw 'Cutback refuses an untrusted protected runner.'
+}
 function Get-ProvenStagedListener {
     Assert-Cutback (Test-Path -LiteralPath $script:proofPath -PathType Leaf) 'No owned staged-fallback proof; manual review required.'
     $proofFile=Get-Item -LiteralPath $script:proofPath -ErrorAction Stop
@@ -85,12 +130,7 @@ function Get-ProvenStagedListener {
     $proc=Get-CimInstance Win32_Process -Filter ("ProcessId={0}" -f [int]$proof.pid) -ErrorAction Stop
     Assert-Cutback ($null -ne $proc -and $proc.Name -ieq 'node.exe' -and
         [string]$proc.CreationDate -ceq [string]$proof.creationDate) 'Owned staged PID/creation identity changed.'
-    $command=[string]$proc.CommandLine
-    Assert-Cutback ($command -match '(?i)(?:^|[\s"\\/])auth[\\/]dist[\\/]cli\.js(?=[\s"]|$)' -and
-        $command.Contains('--allow-insecure-localhost') -and
-        $command.Contains('--host 127.0.0.1') -and
-        $command.Contains('--port 8790') -and
-        $command.Contains($script:authConfig)) 'Staged Node CLI/config identity changed.'
+    Assert-Cutback (Test-OwnedStageCommandLine -CommandLine ([string]$proc.CommandLine) -ExpectedConfig $script:authConfig) 'Staged Node CLI/config identity changed.'
     Assert-Cutback ([int]$proc.ParentProcessId -eq [int]$proof.parentPid) 'Staged process parent changed.'
     return [pscustomobject]@{ProcessId=[int]$proc.ProcessId; CreationDate=[string]$proc.CreationDate; ParentProcessId=[int]$proc.ParentProcessId}
 }
@@ -162,7 +202,16 @@ $ops=@{
         Assert-Cutback $vacant 'Port 8790 not vacant; refusing duplicate startup.'
     }
     RestoreV1 = {
-        & $script:offlineRescue -RestoreV1 | Out-Null
+        $paths=@{
+            V1SourcePath=(Join-Path $script:sourceRoot 'scripts\vaulter-tether-auth-startup-runner.ps1')
+            V2SourcePath=(Join-Path $script:sourceRoot 'scripts\vaulter-tether-auth-startup-runner-v2.ps1')
+            ProtectedRunnerPath=$script:protectedRunner
+        }
+        $installed=Get-VerifiedRunnerVersion @paths
+        $decision=Get-CutbackV1RestoreDecision -InstalledVersion $installed
+        if ($decision -ceq 'restore_v1') {
+            & $script:offlineRescue -RestoreV1 | Out-Null
+        }
     }
     EnableTask = {
         & $script:offlineRescue -EnableV1Task | Out-Null
@@ -172,6 +221,9 @@ $ops=@{
     }
     VerifyS4U = {
         & $script:postcheck | Out-Null
+        # The task-owned successor must reuse the exact baseline public keys,
+        # not merely agree with its own freshly served JWKS.
+        Assert-StagedHealth
         $ports=@(Get-NetTCPConnection -State Listen -ErrorAction Stop | Where-Object {$_.LocalPort -eq 8790})
         Assert-Cutback ($ports.Count -eq 1 -and [int]$ports[0].OwningProcess -ne $script:owned.ProcessId) 'S4U listener missing or old staged process persisted.'
     }
