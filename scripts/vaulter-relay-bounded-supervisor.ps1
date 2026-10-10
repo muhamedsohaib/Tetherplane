@@ -11,7 +11,7 @@
   prevents further launches. This does not activate the device-login bridge.
 #>
 [CmdletBinding()]
-param([switch]$Serve)
+param([switch]$Serve,[switch]$Bridge)
 $ErrorActionPreference='Stop'
 Set-StrictMode -Version Latest
 
@@ -19,6 +19,7 @@ $script:TaskName='Tetherplane Relay'
 $script:StateDir=Join-Path $env:LOCALAPPDATA 'Tetherplane\tether-auth'
 $script:BackupDir=Join-Path $script:StateDir 'relay-pre-bridge-b8afcfe768964e8786a5c229b866ea8d'
 $script:SupervisorDir=Join-Path $script:StateDir 'relay-supervisor'
+$script:BridgeDir=Join-Path $script:StateDir 'relay-supervisor-bridge'
 $script:TrustedLauncherSha256='5522BDE82C0750EA3223ABFCE6DCF965E2A36BEBAAD21754F8BA2F6F8F792DA8'
 $script:OriginalAction=$null
 $script:ExpectedRegisteredTaskXml=''
@@ -213,7 +214,18 @@ function Assert-TaskAction {
   $task=Assert-TaskBaseline
   $execute=[string]$task.Actions[0].Execute
   $arguments=[string]$task.Actions[0].Arguments
-  if(-not $Serve){
+  if($Serve -and $Bridge){
+    $bridgeInstalled=Join-Path $script:BridgeDir 'vaulter-relay-bounded-supervisor.ps1'
+    Assert-Supervisor ((Test-Path -LiteralPath $bridgeInstalled -PathType Leaf) -and
+      [IO.Path]::GetFullPath($PSCommandPath) -ieq [IO.Path]::GetFullPath($bridgeInstalled)) 'Only protected bridge supervisor may serve.'
+    Assert-Supervisor ((Get-Acl -LiteralPath $script:BridgeDir).AreAccessRulesProtected) 'Bridge supervisor ACL not protected.'
+    $bridgeManifest=Get-Content -LiteralPath (Join-Path $script:BridgeDir 'manifest.json') -Raw | ConvertFrom-Json
+    Assert-Supervisor ((Get-FileHash -LiteralPath $bridgeInstalled -Algorithm SHA256).Hash -ceq
+      [string]$bridgeManifest.SupervisorSha256) 'Bridge supervisor source hash mismatch.'
+    $expectedArgs='-NoProfile -NonInteractive -ExecutionPolicy Bypass -File "'+$bridgeInstalled+'" -Serve -Bridge'
+    Assert-Supervisor ($execute -ieq $script:OriginalAction.Executable -and
+      $arguments -ceq $expectedArgs) 'Task action does not exactly match reviewed bridge supervisor.'
+  }elseif(-not $Serve){
     Assert-Supervisor ($execute -ieq $script:OriginalAction.Executable -and
       $arguments -ceq $script:OriginalAction.Arguments) 'Original registered task action does not match trusted checkpoint.'
   }else{
@@ -272,7 +284,17 @@ try {
     }
     AssertOwnership={Assert-RegistrationUnchanged}
     AssertPortVacant={Assert-PortVacant}
-    StartAndWaitChild={Start-VerifiedOriginalRelayChild -Action $script:OriginalAction}
+    StartAndWaitChild={
+      if($Bridge){
+        $helperPath=Join-Path $script:BridgeDir 'vaulter-relay-supervised-bridge-child.ps1'
+        Assert-Supervisor (Test-Path -LiteralPath $helperPath -PathType Leaf) 'Bridge helper missing.'
+        . $helperPath
+        $action=Get-VerifiedBridgeChildAction -StageDirectory $script:BridgeDir -WorkingDirectory $script:OriginalAction.WorkingDirectory
+        Start-VerifiedOriginalRelayChild -Action $action
+      }else{
+        Start-VerifiedOriginalRelayChild -Action $script:OriginalAction
+      }
+    }
     Sleep={param([int]$seconds) Start-Sleep -Seconds $seconds}
   }
   Write-Output 'RELAY SUPERVISOR STARTED: bounded original Auth0 launcher supervision; no bridge or issuer changes.'
