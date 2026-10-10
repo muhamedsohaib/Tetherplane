@@ -20,7 +20,7 @@ foreach ($forbidden in @('Stop-Process -Name','Unregister-ScheduledTask','Regist
 $recoveryPath=Join-Path $PSScriptRoot '..\..\scripts\vaulter-tether-auth-recovery-rehearsal.ps1'
 $recovery=[IO.File]::ReadAllText((Resolve-Path -LiteralPath $recoveryPath).Path)
 foreach($required in @('tether-auth-owned-staged-fallback.json',
- 'tether-auth-owned-stage/v1','startedStagePid','CreationDate','ConvertTo-Json',
+ 'tether-auth-owned-stage/v2','startedStagePid','creationUtcTicks','ConvertTo-Json',
  'Set-Acl','File]::Replace')) {
  if (-not $recovery.Contains($required)) {throw "Recovery lacks protected owned-stage evidence: $required"}
 }
@@ -226,7 +226,7 @@ $script:protectedRunner=Join-Path $env:TEMP 'test-protected-runner.ps1'
 $script:authConfig=$config
 $script:fakePid=76543
 $script:fakeParent=4567
-$script:fakeBirth='2026-10-10T01:01:01.123Z'
+$script:fakeBirth=[datetime]'2026-10-10T01:01:01.1234567Z'
 $script:fakeCommand=$good
 $script:fakeProofAcl=$trustedAcl
 $script:fakeMultipleListeners=$false
@@ -253,8 +253,8 @@ function Get-Acl {
 }
 $script:expectedAcl=$expectedAcl
 $proof=[ordered]@{
- schema='tether-auth-owned-stage/v1'; port=8790;
- pid=$script:fakePid; parentPid=$script:fakeParent; creationDate=$script:fakeBirth
+ schema='tether-auth-owned-stage/v2'; port=8790;
+ pid=$script:fakePid; parentPid=$script:fakeParent; creationUtcTicks=[long]$script:fakeBirth.ToUniversalTime().Ticks
 }
 function Assert-UnownedRefused {
  try {
@@ -267,7 +267,7 @@ function Assert-UnownedRefused {
 try {
  [IO.File]::WriteAllText($script:proofPath,($proof | ConvertTo-Json -Compress))
  $owned=Get-ProvenStagedListener
- if ($owned.ProcessId -ne $script:fakePid -or $owned.CreationDate -cne $script:fakeBirth) {
+ if ($owned.ProcessId -ne $script:fakePid -or $owned.CreationUtcTicks -ne [long]$proof.creationUtcTicks) {
   throw 'Exact owned stage was not returned.'
  }
  $script:fakeCommand=$good.Replace('--port 8790','--port 87900')
@@ -276,10 +276,15 @@ try {
  $script:fakeProofAcl=$wrongOwner
  Assert-UnownedRefused
  $script:fakeProofAcl=$trustedAcl
- $script:fakeBirth='2026-10-10T01:01:02.123Z'
+ $script:fakeBirth=[datetime]'2026-10-10T01:01:01.1234568Z'
  Assert-UnownedRefused
- $script:fakeBirth=[string]$proof.creationDate
+ $script:fakeBirth=[datetime]'2026-10-10T01:01:01.1234567Z'
  $script:fakeMultipleListeners=$true
+ Assert-UnownedRefused
+ $script:fakeMultipleListeners=$false
+ $legacy=$proof.Clone()
+ $legacy.schema='tether-auth-owned-stage/v1'
+ [IO.File]::WriteAllText($script:proofPath,($legacy | ConvertTo-Json -Compress))
  Assert-UnownedRefused
 } finally {
  if (Test-Path -LiteralPath $script:proofPath) {
