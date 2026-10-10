@@ -1,0 +1,23 @@
+name: Vaulter protected supervised bridge handover contract
+on:
+  push:
+    paths:
+      - "scripts/vaulter-relay-supervised-bridge-handover.ps1"
+      - "tests/release/vaulter-relay-supervised-bridge-handover-contract.ps1"
+      - ".github/workflows/vaulter-relay-supervised-bridge-handover.yml"
+  pull_request:
+    paths:
+      - "scripts/vaulter-relay-supervised-bridge-handover.ps1"
+      - "tests/release/vaulter-relay-supervised-bridge-handover-contract.ps1"
+      - ".github/workflows/vaulter-relay-supervised-bridge-handover.yml"
+jobs:
+  contract:
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Supervised bridge handover (Windows PowerShell 5.1)
+        shell: powershell
+        run: ./tests/release/vaulter-relay-supervised-bridge-handover-contract.ps1
+      - name: Supervised bridge handover (PowerShell 7)
+        shell: pwsh
+        run: ./tests/release/vaulter-relay-supervised-bridge-handover-contract.ps1
