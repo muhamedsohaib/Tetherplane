@@ -207,6 +207,13 @@ if (-not $stageBlock.Contains('Get-TaskSnapshot') -or
 
 # Exercise the actual ownership reader against isolated fake process/port/ACL
 # observations. No real process, task or network listener is touched.
+$assertAst=$ast.Find({
+ param($n)
+ $n -is [Management.Automation.Language.FunctionDefinitionAst] -and
+ $n.Name -eq 'Assert-Cutback'
+},$true)
+if ($null -eq $assertAst) {throw 'Missing cutback assertion used by listener reader.'}
+Invoke-Expression $assertAst.Extent.Text
 $provenAst=$ast.Find({
  param($n)
  $n -is [Management.Automation.Language.FunctionDefinitionAst] -and
