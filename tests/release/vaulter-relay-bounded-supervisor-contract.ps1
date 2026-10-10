@@ -27,7 +27,7 @@ if($source -match '(?i)\b(?:Stop-Process|Stop-ScheduledTask|Start-ScheduledTask|
 if($source -match '(?i)(?:gh auth token|TETHERPLANE_AUTH_BRIDGE_TOKEN|bridge-token.secret|tailscale\s+(?:funnel|serve)\s+(?:off|reset|--set-path))'){
   throw 'Auth bridge secrets and Funnel mutations not allowed in original Auth0 supervisor.'
 }
-foreach($helper in @('Get-SupervisorOriginalAction','Start-VerifiedOriginalRelayChild','Invoke-BoundedRelaySupervisor')){
+foreach($helper in @('Assert-Supervisor','Get-SupervisorOriginalAction','Start-VerifiedOriginalRelayChild','Invoke-BoundedRelaySupervisor')){
   $node=$ast.Find({
     param($n) $n -is [Management.Automation.Language.FunctionDefinitionAst] -and $n.Name -eq $helper
   }.GetNewClosure(),$true)
