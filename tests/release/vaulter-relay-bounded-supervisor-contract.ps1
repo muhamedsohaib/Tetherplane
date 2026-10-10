@@ -129,13 +129,15 @@ try {
     Executable=$psExe
     Arguments=('-NoProfile -NonInteractive -File "'+$fake+'"')
   }
+  # GetNewClosure uses a dynamic module; capture the tested helper explicitly.
+  $spawnNative=${function:Start-VerifiedOriginalRelayChild}
   $realOps=@{
     ShouldStop={return ($childLaunches -ge 2)}.GetNewClosure()
     AssertOwnership={}
     AssertPortVacant={}
     StartAndWaitChild={
       $childLaunches++
-      $run=Start-VerifiedOriginalRelayChild -Action $childAction
+      $run=& $spawnNative -Action $childAction
       $observedCodes.Add([int]$run.ExitCode)
       return $run
     }.GetNewClosure()
