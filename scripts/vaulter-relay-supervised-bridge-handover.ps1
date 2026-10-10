@@ -135,9 +135,9 @@ function Get-OriginalAction {
   $args=$exec.SelectSingleNode("*[local-name()='Arguments']")
   $cwd=$exec.SelectSingleNode("*[local-name()='WorkingDirectory']")
   Require ($null -ne $command -and $null -ne $args) 'Protected task executable or flags missing.'
-  $host=Join-Path $env:SystemRoot 'System32\WindowsPowerShell\v1.0\powershell.exe'
+  $trustedPsExe=Join-Path $env:SystemRoot 'System32\WindowsPowerShell\v1.0\powershell.exe'
   $execute=[string]$command.InnerText
-  Require ($execute -ieq 'powershell.exe' -or $execute -ieq $host) 'Original supervised task executable is not trusted PowerShell.'
+  Require ($execute -ieq 'powershell.exe' -or $execute -ieq $trustedPsExe) 'Original supervised task executable is not trusted PowerShell.'
   $expected='-NoProfile -NonInteractive -ExecutionPolicy Bypass -File "'+$script:OriginalSupervisor+'" -Serve'
   Require ([string]$args.InnerText -ceq $expected) 'Protected rollback is not the already-supervised Auth0 action.'
   return [pscustomobject]@{
