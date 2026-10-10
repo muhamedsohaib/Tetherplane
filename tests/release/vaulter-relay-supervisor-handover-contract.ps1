@@ -95,6 +95,22 @@ if($preserved.Executable -cne $psExe -or $preserved.Arguments -cne '-NoProfile -
   $preserved.WorkingDirectory -cne 'C:\trusted'){
   throw 'Original task executable, flags or working directory were reconstructed incorrectly.'
 }
+# The live Vaulter action matches its protected backup but stores only the
+# executable name. Refuse relative executables and preserve exact task action.
+$bareFixture=$actionFixture.Replace([Security.SecurityElement]::Escape($psExe),'powershell.exe')
+$bareOriginal=Get-OriginalAction -Xml $bareFixture
+if($bareOriginal.Executable -cne 'powershell.exe' -or
+  $bareOriginal.Arguments -cne '-NoProfile -File "C:\trusted\relay.ps1"' -or
+  $bareOriginal.WorkingDirectory -cne 'C:\trusted'){
+  throw 'RED: exact protected bare powershell.exe registered action was rejected.'
+}
+foreach($badExe in @('.\powershell.exe','..\powershell.exe','tools\powershell.exe','cmd.exe','powershell.exe -EncodedCommand evil','C:\untrusted\powershell.exe')){
+  $bad=$bareFixture.Replace('<Command>powershell.exe</Command>',
+    '<Command>'+[Security.SecurityElement]::Escape($badExe)+'</Command>')
+  $rejected=$false
+  try{Get-OriginalAction -Xml $bad|Out-Null}catch{$rejected=$true}
+  if(-not $rejected){throw "Unsafe original task executable accepted: $badExe"}
+}
 function Make-Ops([string]$FailStep=''){
   $steps=New-Object 'System.Collections.Generic.List[string]'
   $ops=@{}
