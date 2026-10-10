@@ -173,6 +173,18 @@ function Assert-SupervisedBridgeOwnership {
     [string]$Task.Actions[0].WorkingDirectory -cne $cwd){
     throw 'Registered task action or working directory differs from verified bridge baseline.'
   }
+  $registeredExec=$current.SelectSingleNode("//*[local-name()='Actions']/*[local-name()='Exec']")
+  if($null -eq $registeredExec){throw 'Registered supervisor task execution action missing.'}
+  $registeredCmd=$registeredExec.SelectSingleNode("*[local-name()='Command']")
+  $registeredArg=$registeredExec.SelectSingleNode("*[local-name()='Arguments']")
+  $registeredCwd=$registeredExec.SelectSingleNode("*[local-name()='WorkingDirectory']")
+  $xmlCwd=if($null -eq $registeredCwd){''}else{[string]$registeredCwd.InnerText}
+  if($null -eq $registeredCmd -or $null -eq $registeredArg -or
+    [string]$registeredCmd.InnerText -ine $originalExe -or
+    [string]$registeredArg.InnerText -cne $expectedArgs -or
+    $xmlCwd -cne $cwd){
+    throw 'Registered task XML action is not identical to approved supervised bridge action.'
+  }
   $copy=$current.ImportNode($priorActions,$true)
   $null=$currentActions.ParentNode.ReplaceChild($copy,$currentActions)
   if($current.DocumentElement.OuterXml -cne $prior.DocumentElement.OuterXml){
