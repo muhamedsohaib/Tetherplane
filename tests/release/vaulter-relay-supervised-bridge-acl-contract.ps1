@@ -25,7 +25,21 @@ $acl.SetAccessRuleProtection($true,$false)
 $rule=New-Object Security.AccessControl.FileSystemAccessRule($sid,'FullControl','Allow')
 $acl.AddAccessRule($rule)
 if(-not(Test-ApprovedBridgeAcl -Acl $acl -CurrentSid $sid)){
-  throw 'Protected current-user-only ACL rejected.'
+  $ownerOk=$false;$ownerError=''
+  try{$ownerOk=($acl.GetOwner([Security.Principal.SecurityIdentifier]).Value -ceq $sid.Value)}catch{$ownerError=$_.Exception.GetType().Name}
+  $allowCount=0;$translationErrors=0;$allMatched=$true
+  try{
+    foreach($entry in @($acl.Access)){
+      if($entry.AccessControlType -eq [Security.AccessControl.AccessControlType]::Allow){
+        $allowCount++
+        try{$allMatched=$allMatched -and ($entry.IdentityReference.Translate([Security.Principal.SecurityIdentifier]).Value -ceq $sid.Value)}
+        catch{$translationErrors++}
+      }
+    }
+  }catch{$translationErrors++}
+  throw ('Protected current-user-only ACL rejected: inheritanceProtected='+$acl.AreAccessRulesProtected+
+    ' ownerOk='+$ownerOk+' ownerError='+$ownerError+' allowCount='+$allowCount+
+    ' allMatched='+$allMatched+' translationErrors='+$translationErrors)
 }
 $anyone=[Security.Principal.SecurityIdentifier]::new('S-1-1-0')
 $badRule=New-Object Security.AccessControl.FileSystemAccessRule($anyone,'ReadAndExecute','Allow')
