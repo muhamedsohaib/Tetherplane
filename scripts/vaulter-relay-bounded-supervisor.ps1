@@ -50,10 +50,16 @@ function Get-SupervisorOriginalAction {
   Assert-Supervisor ([IO.Path]::IsPathRooted([string]$runner) -and
     [IO.Path]::GetExtension([string]$runner) -ieq '.ps1' -and
     [string]::IsNullOrWhiteSpace($rawArgs.Substring($m.Index+$m.Length))) 'Original launcher path or trailing task arguments unexpected.'
+  $workingNode=$actions[0].SelectSingleNode("*[local-name()='WorkingDirectory']")
+  $working=if($null -ne $workingNode){[string]$workingNode.InnerText}else{''}
+  if(-not [string]::IsNullOrWhiteSpace($working)){
+    Assert-Supervisor ([IO.Path]::IsPathRooted($working)) 'Original task working directory must be absolute.'
+  }
   return [pscustomobject]@{
     Executable=$exe
     Arguments=$rawArgs
     LauncherPath=[string]$runner
+    WorkingDirectory=$working
   }
 }
 
@@ -64,6 +70,10 @@ function Start-VerifiedOriginalRelayChild {
   $psi=New-Object System.Diagnostics.ProcessStartInfo
   $psi.FileName=[string]$Action.Executable
   $psi.Arguments=[string]$Action.Arguments
+  if($null -ne $Action.PSObject.Properties['WorkingDirectory'] -and
+      -not [string]::IsNullOrWhiteSpace([string]$Action.WorkingDirectory)){
+    $psi.WorkingDirectory=[string]$Action.WorkingDirectory
+  }
   $psi.UseShellExecute=$false
   $psi.CreateNoWindow=$true
   $child=New-Object System.Diagnostics.Process
