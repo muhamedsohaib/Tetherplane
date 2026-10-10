@@ -29,7 +29,7 @@ if($source -match '(?i)\b(?:Stop-Process|Stop-ScheduledTask|Start-ScheduledTask|
 if($source -match '(?i)(?:gh auth token|TETHERPLANE_AUTH_BRIDGE_TOKEN|bridge-token.secret|tailscale\s+(?:funnel|serve)\s+(?:off|reset|--set-path))'){
   throw 'Auth bridge secrets and Funnel mutations not allowed in original Auth0 supervisor.'
 }
-foreach($helper in @('Assert-Supervisor','Get-SupervisorOriginalAction','Start-VerifiedOriginalRelayChild','Invoke-BoundedRelaySupervisor')){
+foreach($helper in @('Assert-Supervisor','Test-InstalledSupervisorIntegrity','Get-SupervisorOriginalAction','Start-VerifiedOriginalRelayChild','Invoke-BoundedRelaySupervisor')){
   $node=$ast.Find({
     param($n) $n -is [Management.Automation.Language.FunctionDefinitionAst] -and $n.Name -eq $helper
   }.GetNewClosure(),$true)
@@ -152,4 +152,37 @@ try {
     throw 'Real child failures did not produce exactly one bounded automatic relaunch.'
   }
 }finally{Remove-Item -LiteralPath $tmpDir -Recurse -Force -ErrorAction SilentlyContinue}
+# The protected installed script and action snapshot must both match the
+# manifest whenever the registered supervisor starts, not just during staging.
+$integrityDir=Join-Path ([IO.Path]::GetTempPath()) ('tetherplane-supervisor-integrity-'+[Guid]::NewGuid().ToString('N'))
+New-Item -ItemType Directory -Path $integrityDir -ErrorAction Stop|Out-Null
+try{
+  $installed=Join-Path $integrityDir 'vaulter-relay-bounded-supervisor.ps1'
+  $snapshot=Join-Path $integrityDir 'pre-supervisor-task.xml'
+  $manifestPath=Join-Path $integrityDir 'manifest.json'
+  [IO.File]::WriteAllText($installed,'# reviewed supervisor')
+  [IO.File]::WriteAllText($snapshot,'<Task/>')
+  $manifest=@{
+    SourceSha256=(Get-FileHash -LiteralPath $installed -Algorithm SHA256).Hash
+    TaskSha256=(Get-FileHash -LiteralPath $snapshot -Algorithm SHA256).Hash
+  }|ConvertTo-Json -Compress
+  [IO.File]::WriteAllText($manifestPath,$manifest)
+  if(-not(Test-InstalledSupervisorIntegrity -InstalledPath $installed -SnapshotPath $snapshot -ManifestPath $manifestPath)){
+    throw 'Untampered supervisor manifest was incorrectly rejected.'
+  }
+  [IO.File]::WriteAllText($installed,'# changed supervisor')
+  if(Test-InstalledSupervisorIntegrity -InstalledPath $installed -SnapshotPath $snapshot -ManifestPath $manifestPath){
+    throw 'Modified installed supervisor code was accepted.'
+  }
+  [IO.File]::WriteAllText($installed,'# reviewed supervisor')
+  [IO.File]::WriteAllText($snapshot,'<Task><Changed/></Task>')
+  if(Test-InstalledSupervisorIntegrity -InstalledPath $installed -SnapshotPath $snapshot -ManifestPath $manifestPath){
+    throw 'Modified task backup was accepted.'
+  }
+  [IO.File]::WriteAllText($snapshot,'<Task/>')
+  [IO.File]::WriteAllText($manifestPath,'{"SourceSha256":"garbage"}')
+  if(Test-InstalledSupervisorIntegrity -InstalledPath $installed -SnapshotPath $snapshot -ManifestPath $manifestPath){
+    throw 'Invalid source pin was accepted.'
+  }
+}finally{Remove-Item -LiteralPath $integrityDir -Recurse -Force -ErrorAction SilentlyContinue}
 Write-Output 'VAULTER BOUNDED RELAY SUPERVISOR CONTRACT PASS'
