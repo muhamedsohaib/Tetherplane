@@ -106,6 +106,42 @@ function Get-PublicJwksFingerprint([string]$Url) {
     return (($rows | Sort-Object) -join ';')
 }
 
+# Check the semantic Tailscale route table, not its human-readable spacing.
+# JSON contents are inspected in memory only; never print the full status.
+function Test-FunnelPublicRoutes {
+    [CmdletBinding()]
+    param(
+        [AllowNull()][object]$Config,
+        [Parameter(Mandatory=$true)][string]$Status,
+        [Parameter(Mandatory=$true)][string]$Origin
+    )
+    try {
+        if ($null -eq $Config -or
+            $Origin -cne 'https://vaulter.tailf65eba.ts.net' -or
+            -not $Status.Contains("$Origin (Funnel on)")) {
+            return $false
+        }
+        $hostPort = ([Uri]$Origin).Authority + ':443'
+        if ($null -eq $Config.Web -or $null -eq $Config.AllowFunnel) {
+            return $false
+        }
+        $site = $Config.Web.PSObject.Properties[$hostPort]
+        $enabled = $Config.AllowFunnel.PSObject.Properties[$hostPort]
+        if ($null -eq $site -or $null -eq $enabled -or
+            $enabled.Value -ne $true -or
+            $null -eq $site.Value.Handlers) {
+            return $false
+        }
+        $root = $site.Value.Handlers.PSObject.Properties['/']
+        $jwks = $site.Value.Handlers.PSObject.Properties['/jwks']
+        return ($null -ne $root -and $null -ne $jwks -and
+            [string]$root.Value.Proxy -ceq 'http://127.0.0.1:8788' -and
+            [string]$jwks.Value.Proxy -ceq 'http://127.0.0.1:8790/jwks')
+    } catch {
+        return $false
+    }
+}
+
 Assert-Postcheck ($env:OS -eq 'Windows_NT' -and
     $env:COMPUTERNAME -ieq 'vaulter') 'Read-only auth inspection is restricted to Vaulter.'
 Assert-Postcheck (Test-Path -LiteralPath $script:stateDir -PathType Container) 'Protected auth directory missing.'
@@ -183,10 +219,15 @@ $ts = Get-Command tailscale.exe -ErrorAction Stop
 $lines = @(& $ts.Source funnel status)
 Assert-Postcheck ($LASTEXITCODE -eq 0) 'Cannot inspect existing Tailscale Funnel configuration.'
 $status = ($lines -join [Environment]::NewLine)
+$jsonLines = @(& $ts.Source funnel status --json)
+Assert-Postcheck ($LASTEXITCODE -eq 0 -and $jsonLines.Count -gt 0) 'Cannot inspect Tailscale Funnel JSON status.'
+try {
+    $funnelConfig = ($jsonLines -join [Environment]::NewLine) | ConvertFrom-Json -ErrorAction Stop
+} catch {
+    throw 'Tailscale Funnel JSON status could not be parsed; no changes made.'
+}
 Assert-Postcheck (
-    $status.Contains("$script:origin (Funnel on)") -and
-    $status.Contains('|-- / proxy http://127.0.0.1:8788') -and
-    $status.Contains('/jwks proxy http://127.0.0.1:8790/jwks')
+    (Test-FunnelPublicRoutes -Config $funnelConfig -Status $status -Origin $script:origin)
 ) 'Public Funnel root or JWKS canary changed.'
 foreach ($port in @('10000','8443','9443','9445')) {
     Assert-Postcheck ($status.Contains("$($script:origin):$port (tailnet only)")) 'A private Funnel port changed.'
