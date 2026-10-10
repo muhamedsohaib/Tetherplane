@@ -1,7 +1,7 @@
 # Vaulter authorization child-supervision v2 — gated rollout plan
 
 **Date:** 2026-10-10
-**State:** Candidate implementation only. Not installed or executed on Vaulter. Existing Auth0 relay and S4U v1 service remain live.
+**State:** Protected v2 runner installed on disk on Vaulter, with the running S4U PowerShell supervisor last verified as v1-loaded. Live v2 activation, automatic recovery, reboot, and issuer cutover are **not accepted**. Existing Auth0 relay remains active. See the later installation evidence and staged-fallback cutback plan; the older source-only sections below describe their historical checkpoints.
 **Branch:** `feature/tether-auth-vaulter-migration-20261009`
 **Canonical source:** GitHub and the Leno Tetherplane repository; Vaulter auth-stage is a staging checkout.
 
