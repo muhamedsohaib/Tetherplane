@@ -50,8 +50,8 @@ try{
   [IO.File]::WriteAllText($helperInstalled,'# signed helper')
   [IO.File]::WriteAllText($node,'# fake runtime; not executed')
   [IO.File]::WriteAllText($entry,'# fake relay CLI; not executed')
-  [IO.File]::WriteAllText($auth,'{"oidc":{"issuer":"https://tetherplane-dev.eu.auth0.com/"}}')
-  [IO.File]::WriteAllText($baseline,'{"oidc":{"issuer":"https://tetherplane-dev.eu.auth0.com/"}}')
+  [IO.File]::WriteAllText($auth,'{"oidc":{"issuer":"https://tetherplane-dev.eu.auth0.com/","bindings":[{"subject":"fixture"}]}}')
+  [IO.File]::WriteAllText($baseline,'{"oidc":{"issuer":"https://tetherplane-dev.eu.auth0.com/","bindings":[{"subject":"fixture"}]}}')
   [IO.File]::WriteAllText($registry,'{"version":1,"devices":[]}')
   $cfg=[ordered]@{
     NodeExecutablePath=$node
