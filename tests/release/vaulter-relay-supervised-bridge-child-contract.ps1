@@ -101,7 +101,7 @@ try{
   [IO.File]::AppendAllText($node,'tamper')
   MustFail {Get-VerifiedBridgeChildAction -StageDirectory $stage -WorkingDirectory $fixture} 'tampered node runtime'
   [IO.File]::WriteAllText($node,$save)
-  $badCfg=$cfg.Clone()
+  $badCfg=[ordered]@{}; foreach($key in $cfg.Keys){$badCfg[$key]=$cfg[$key]}
   $badCfg.NodeExecutablePath='.\node.exe'
   [IO.File]::WriteAllText($cfgPath,($badCfg | ConvertTo-Json -Compress))
   $manifest.BridgeConfigSha256=(Get-FileHash -LiteralPath $cfgPath -Algorithm SHA256).Hash
