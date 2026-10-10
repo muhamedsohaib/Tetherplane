@@ -98,10 +98,32 @@ function Assert-FileHash([string]$path,[string]$sha){
   Require ($sha -match '^[A-Fa-f0-9]{64}$') 'Expected SHA256 is invalid or absent.'
   Require ((Get-FileHash -LiteralPath $path -Algorithm SHA256).Hash -ceq $sha.ToUpperInvariant()) 'Protected source or runtime digest mismatch.'
 }
+function Test-ApprovedBridgeAcl {
+  [CmdletBinding()]
+  param(
+    [Parameter(Mandatory=$true)]$Acl,
+    [Parameter(Mandatory=$true)][Security.Principal.SecurityIdentifier]$CurrentSid
+  )
+  try{
+    if(-not [bool]$Acl.AreAccessRulesProtected){return $false}
+    $allowed=@($CurrentSid.Value,'S-1-5-18','S-1-5-32-544','S-1-3-0')
+    $owner=[string]$Acl.GetOwner([Security.Principal.SecurityIdentifier]).Value
+    if($allowed -cnotcontains $owner){return $false}
+    foreach($ace in @($Acl.Access)){
+      if($ace.AccessControlType -eq [Security.AccessControl.AccessControlType]::Allow){
+        $sid=[string]$ace.IdentityReference.Translate([Security.Principal.SecurityIdentifier]).Value
+        if($allowed -cnotcontains $sid){return $false}
+      }
+    }
+    return $true
+  }catch{return $false}
+}
 function Assert-Directory([string]$path){
   Require (Test-Path -LiteralPath $path -PathType Container) 'Required private directory missing.'
   Require (-not ((Get-Item -LiteralPath $path -Force).Attributes -band [IO.FileAttributes]::ReparsePoint)) 'Directory reparse point rejected.'
-  Require ((Get-Acl -LiteralPath $path).AreAccessRulesProtected) 'Private directory ACL inheritance changed.'
+  $acl=Get-Acl -LiteralPath $path -ErrorAction Stop
+  $current=[Security.Principal.WindowsIdentity]::GetCurrent().User
+  Require (Test-ApprovedBridgeAcl -Acl $acl -CurrentSid $current) 'Protected stage owner or allowed ACL principal differs from reviewed private baseline.'
 }
 function Get-ListenerPID([int]$port){
   $listeners=@(Get-NetTCPConnection -LocalPort $port -State Listen -ErrorAction SilentlyContinue)
