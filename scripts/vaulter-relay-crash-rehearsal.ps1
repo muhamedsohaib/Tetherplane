@@ -104,6 +104,9 @@ function Assert-BackupReady {
     Assert-Relay (Test-Path -LiteralPath $dir -PathType Container) 'Private rollback checkpoint missing.'
     Assert-Relay ((Get-Acl -LiteralPath $dir -ErrorAction Stop).AreAccessRulesProtected) 'Private rollback checkpoint ACL not protected.'
   }
+  $backupLauncher=Join-Path $script:BackupDir 'launcher.ps1'
+  Assert-Relay (Test-Path -LiteralPath $backupLauncher -PathType Leaf) 'Original rollback launcher missing.'
+  Assert-Relay ((Get-FileHash -LiteralPath $backupLauncher -Algorithm SHA256 -ErrorAction Stop).Hash -ceq $script:LauncherHash) 'Private rollback launcher differs from the trusted original.'
   foreach($leaf in @('launcher.ps1','auth-config.json','device-state.json','relay-task.xml')){
     Assert-Relay (Test-Path -LiteralPath (Join-Path $script:BackupDir $leaf) -PathType Leaf) 'Protected rollback checkpoint incomplete.'
   }
@@ -217,7 +220,7 @@ if (-not $Exercise) {
   return
 }
 $operations=@{
-  VerifyBaseline={ Assert-Baseline }
+  VerifyBaseline={ Assert-RegistrationUnchanged; Assert-CrashTarget }
   VerifyTarget={ Assert-CrashTarget }
   InjectCrash={
     # No process-name kill: the exact PID is checked against its parent,
