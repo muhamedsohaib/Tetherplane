@@ -207,8 +207,26 @@ function Assert-BridgeListener {
     ([string]$grandparent.CommandLine).IndexOf($script:Supervisor,[StringComparison]::OrdinalIgnoreCase) -ge 0 -and
     ([string]$grandparent.CommandLine).Contains(' -Serve -Bridge')) 'Bridge relay not task-owned by protected bounded supervisor.'
 }
+function Assert-PinnedPostcheck {
+  [CmdletBinding()]
+  param(
+    [Parameter(Mandatory=$true)][string]$RepoRoot,
+    [Parameter(Mandatory=$true)][string]$ExpectedPostcheckSha256,
+    [Parameter(Mandatory=$true)][string]$ExpectedRunnerIntegritySha256
+  )
+  Require ([IO.Path]::IsPathRooted($RepoRoot) -and
+    (Test-Path -LiteralPath $RepoRoot -PathType Container)) 'Reviewed source root for postcheck missing.'
+  $folder=Join-Path $RepoRoot 'scripts'
+  $postcheck=Join-Path $folder 'vaulter-tether-auth-supervised-postcheck.ps1'
+  $validator=Join-Path $folder 'vaulter-tether-auth-runner-integrity.ps1'
+  Assert-FileHash $postcheck $ExpectedPostcheckSha256
+  Assert-FileHash $validator $ExpectedRunnerIntegritySha256
+  return $postcheck
+}
 function Assert-Postcheck {
-  Require (Test-Path -LiteralPath $script:Postcheck -PathType Leaf) 'Independent authorization postcheck script missing.'
+  $meta=Get-Content -LiteralPath $script:Manifest -Raw -ErrorAction Stop |
+    ConvertFrom-Json -ErrorAction Stop
+  $script:Postcheck=Assert-PinnedPostcheck -RepoRoot ([string]$meta.SourceRepo) -ExpectedPostcheckSha256 ([string]$meta.PostcheckSha256) -ExpectedRunnerIntegritySha256 ([string]$meta.RunnerIntegritySha256)
   $null=& $script:Postcheck
   Require ((Get-ListenerPID 8790) -eq $script:AuthPID) 'Authorization process identity changed.'
   $resource=Invoke-RestMethod 'https://vaulter.tailf65eba.ts.net/.well-known/oauth-protected-resource/mcp' -TimeoutSec 15
@@ -230,6 +248,7 @@ function Assert-StagedFiles {
   $paths=Get-Content -LiteralPath $script:BridgeConfig -Raw -ErrorAction Stop | ConvertFrom-Json -ErrorAction Stop
   Assert-FileHash ([string]$paths.AuthConfigPath) ([string]$manifest.AuthConfigSha256)
   Assert-FileHash ([string]$paths.BaselineAuthConfigPath) ([string]$manifest.BaselineAuthConfigSha256)
+  $null=Assert-PinnedPostcheck -RepoRoot ([string]$manifest.SourceRepo) -ExpectedPostcheckSha256 ([string]$manifest.PostcheckSha256) -ExpectedRunnerIntegritySha256 ([string]$manifest.RunnerIntegritySha256)
   [IO.File]::ReadAllText($script:Snapshot)
 }
 function Wait-ReadyVacant {
@@ -350,6 +369,8 @@ if($Stage){
   $manifest=[ordered]@{
     ReviewedCommit=$ExpectedSourceCommit
     SourceRepo=$sourceRoot
+    PostcheckSha256=(Get-FileHash -LiteralPath (Join-Path $PSScriptRoot 'vaulter-tether-auth-supervised-postcheck.ps1') -Algorithm SHA256).Hash
+    RunnerIntegritySha256=(Get-FileHash -LiteralPath (Join-Path $PSScriptRoot 'vaulter-tether-auth-runner-integrity.ps1') -Algorithm SHA256).Hash
     SupervisorSha256=$ExpectedSupervisorSha256.ToUpperInvariant()
     BridgeLauncherSha256=$ExpectedBridgeLauncherSha256.ToUpperInvariant()
     BridgeHelperSha256=$ExpectedBridgeHelperSha256.ToUpperInvariant()
