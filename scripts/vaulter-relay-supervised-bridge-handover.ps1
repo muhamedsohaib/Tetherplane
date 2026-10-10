@@ -109,9 +109,10 @@ function Test-ApprovedBridgeAcl {
     $allowed=@($CurrentSid.Value,'S-1-5-18','S-1-5-32-544','S-1-3-0')
     $owner=[string]$Acl.GetOwner([Security.Principal.SecurityIdentifier]).Value
     if($allowed -cnotcontains $owner){return $false}
-    foreach($ace in @($Acl.Access)){
+    $rules=@($Acl.GetAccessRules($true,$true,[Security.Principal.SecurityIdentifier]))
+    foreach($ace in $rules){
       if($ace.AccessControlType -eq [Security.AccessControl.AccessControlType]::Allow){
-        $sid=[string]$ace.IdentityReference.Translate([Security.Principal.SecurityIdentifier]).Value
+        $sid=[string]$ace.IdentityReference.Value
         if($allowed -cnotcontains $sid){return $false}
       }
     }
