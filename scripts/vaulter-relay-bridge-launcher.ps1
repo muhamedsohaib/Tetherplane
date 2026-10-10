@@ -60,6 +60,7 @@ function Invoke-VerifiedRelayBridgeLauncher {
     [Environment]::SetEnvironmentVariable($envName,$secretValue,'Process')
     $secretValue = $null
     # Keep the child attached. Suppress any child output that might reveal secrets.
+    $global:LASTEXITCODE = 0
     & $LauncherPath 1>$null 2>$null
     if ($LASTEXITCODE -ne 0) { throw 'Relay launcher child exited unsuccessfully.' }
     Write-Output 'RELAY BRIDGE CHILD EXIT PASS'
