@@ -8,6 +8,8 @@ on:
       - "tests/release/vaulter-relay-supervisor-handover-contract.ps1"
       - "scripts/vaulter-relay-supervised-rehearsal.ps1"
       - "tests/release/vaulter-relay-supervised-rehearsal-contract.ps1"
+      - "scripts/vaulter-relay-supervised-bridge-child.ps1"
+      - "tests/release/vaulter-relay-supervised-bridge-child-contract.ps1"
       - ".github/workflows/vaulter-relay-bounded-supervisor.yml"
   pull_request:
     paths:
@@ -17,6 +19,8 @@ on:
       - "tests/release/vaulter-relay-supervisor-handover-contract.ps1"
       - "scripts/vaulter-relay-supervised-rehearsal.ps1"
       - "tests/release/vaulter-relay-supervised-rehearsal-contract.ps1"
+      - "scripts/vaulter-relay-supervised-bridge-child.ps1"
+      - "tests/release/vaulter-relay-supervised-bridge-child-contract.ps1"
       - ".github/workflows/vaulter-relay-bounded-supervisor.yml"
 jobs:
   windows-contract:
@@ -41,3 +45,9 @@ jobs:
       - name: Supervised recovery and rollback contract (PowerShell 7)
         shell: pwsh
         run: ./tests/release/vaulter-relay-supervised-rehearsal-contract.ps1
+      - name: Supervised bridge child (Windows PowerShell 5.1)
+        shell: powershell
+        run: ./tests/release/vaulter-relay-supervised-bridge-child-contract.ps1
+      - name: Supervised bridge child (PowerShell 7)
+        shell: pwsh
+        run: ./tests/release/vaulter-relay-supervised-bridge-child-contract.ps1
