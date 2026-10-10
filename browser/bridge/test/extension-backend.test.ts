@@ -150,7 +150,7 @@ test("extension backend semantic wait polls until revision changes", async () =>
     pollIntervalMs: 1,
   });
 
-  const waiting = backend.waitForSettled("tab:7", 4, 100);
+  const waiting = backend.waitForSettled("tab:7", 4, 5_000);
 
   await new Promise((resolve) => setTimeout(resolve, 0));
   const firstId = String(transport.sent[0]?.request_id);
@@ -166,7 +166,13 @@ test("extension backend semantic wait polls until revision changes", async () =>
     }),
   );
 
-  await new Promise((resolve) => setTimeout(resolve, 5));
+  // Wait for the actual second request instead of relying on a fixed 5 ms
+  // delay. Under loaded CI, that delay can expire before the request exists.
+  const requestDeadline = Date.now() + 3_000;
+  while (transport.sent.length < 2 && Date.now() < requestDeadline) {
+    await new Promise((resolve) => setTimeout(resolve, 5));
+  }
+  assert.equal(transport.sent.length, 2, "second semantic poll was not issued");
   const secondId = String(transport.sent[1]?.request_id);
   transport.push(
     success(secondId, {
