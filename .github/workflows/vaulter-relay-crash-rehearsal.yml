@@ -1,0 +1,23 @@
+name: Vaulter relay crash-recovery rehearsal contract
+on:
+  push:
+    paths:
+      - "scripts/vaulter-relay-crash-rehearsal.ps1"
+      - "tests/release/vaulter-relay-crash-rehearsal-contract.ps1"
+      - ".github/workflows/vaulter-relay-crash-rehearsal.yml"
+  pull_request:
+    paths:
+      - "scripts/vaulter-relay-crash-rehearsal.ps1"
+      - "tests/release/vaulter-relay-crash-rehearsal-contract.ps1"
+      - ".github/workflows/vaulter-relay-crash-rehearsal.yml"
+jobs:
+  contract:
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Synthetic crash recovery contract (Windows PowerShell 5.1)
+        shell: powershell
+        run: ./tests/release/vaulter-relay-crash-rehearsal-contract.ps1
+      - name: Synthetic crash recovery contract (PowerShell 7)
+        shell: pwsh
+        run: ./tests/release/vaulter-relay-crash-rehearsal-contract.ps1
