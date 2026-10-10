@@ -107,6 +107,8 @@ function Get-Task {
 function Get-TaskXml {
     [string](Export-ScheduledTask -TaskName $script:taskName -TaskPath $script:taskPath -ErrorAction Stop)
 }
+$script:baselineNodeCreated=$null
+$script:baselineParentCreated=$null
 function Get-RelayPid {
     $listeners=@(Get-NetTCPConnection -State Listen -LocalPort 8788 -ErrorAction SilentlyContinue)
     Assert-Repair ($listeners.Count -eq 1 -and $listeners[0].LocalAddress -ceq '127.0.0.1') 'Relay must have one loopback-only listener.'
@@ -126,6 +128,13 @@ function Get-RelayPid {
     Assert-Repair (Test-Path -LiteralPath $runner -PathType Leaf) 'Relay launcher path unavailable.'
     Assert-Repair ((Get-FileHash -LiteralPath $runner -Algorithm SHA256 -ErrorAction Stop).Hash -ceq $script:expectedRunnerHash) 'Relay launcher hash unexpectedly changed.'
     Assert-Repair ([string]$parent.CommandLine -like ('*' + $runner + '*')) 'Relay child parent does not match the registered task launcher.'
+    if ($null -eq $script:baselineNodeCreated) {
+        $script:baselineNodeCreated=[string]$child.CreationDate
+        $script:baselineParentCreated=[string]$parent.CreationDate
+    } else {
+        Assert-Repair ([string]$child.CreationDate -ceq $script:baselineNodeCreated -and
+            [string]$parent.CreationDate -ceq $script:baselineParentCreated) 'Relay process identity changed during settings-only inspection.'
+    }
     return [int]$listeners[0].OwningProcess
 }
 function Verify-TaskHealthy {
