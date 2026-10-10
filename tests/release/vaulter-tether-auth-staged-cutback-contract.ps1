@@ -282,8 +282,10 @@ try {
  $script:fakeMultipleListeners=$true
  Assert-UnownedRefused
  $script:fakeMultipleListeners=$false
- $legacy=$proof.Clone()
- $legacy.schema='tether-auth-owned-stage/v1'
+ $legacy=[ordered]@{
+  schema='tether-auth-owned-stage/v1';port=8790;pid=$script:fakePid;
+  parentPid=$script:fakeParent;creationUtcTicks=[long]$proof.creationUtcTicks
+ }
  [IO.File]::WriteAllText($script:proofPath,($legacy | ConvertTo-Json -Compress))
  Assert-UnownedRefused
 } finally {
