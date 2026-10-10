@@ -10,7 +10,7 @@ if(@($parseErrors).Count -ne 0){throw 'Handover script has syntax errors.'}
 $source=[IO.File]::ReadAllText((Resolve-Path -LiteralPath $path).Path)
 foreach($needed in @(
   '[switch]$Stage','[switch]$Apply','[switch]$Rollback',
-  'VAULTER','Tetherplane Relay','relay-supervisor',
+  'Vaulter','Tetherplane Relay','relay-supervisor',
   'AreAccessRulesProtected','SetAccessRuleProtection',
   'relay-pre-bridge-b8afcfe768964e8786a5c229b866ea8d',
   'Get-ScheduledTask','Get-NetTCPConnection','Get-CimInstance',
