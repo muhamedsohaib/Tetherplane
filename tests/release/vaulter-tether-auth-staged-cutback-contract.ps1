@@ -55,4 +55,29 @@ if (($f.Events -join ',') -notmatch 'PrepareStagedRollback,RestoreStage,VerifySt
 $f=New-Fixture @('VerifyS4U','VerifyStage')
 try {Invoke-StagedCutbackTransaction -Operations $f.Operations | Out-Null;throw 'Expected failure'}
 catch { if($_.Exception.Message -eq 'Expected failure' -or $_.Exception.Message -notmatch 'ROLLBACK UNVERIFIED') {throw} }
+# Rollback guards are transaction gates, not best-effort cleanup.
+# An unknown listener or stale task identity must abort BEFORE any staged relaunch.
+$blocked=New-Fixture @('VerifyVacant','PrepareStagedRollback')
+try {
+ Invoke-StagedCutbackTransaction -Operations $blocked.Operations | Out-Null
+ throw 'Unverified rollback unexpectedly succeeded.'
+} catch {
+ if ($_.Exception.Message -eq 'Unverified rollback unexpectedly succeeded.' -or
+     $_.Exception.Message -notmatch 'ROLLBACK UNVERIFIED') { throw }
+}
+if ($blocked.Events -ccontains 'RestoreStage' -or $blocked.Events -ccontains 'VerifyStage') {
+ throw 'RED: failed rollback preflight still attempted to restart auth on an unverified port.'
+}
+$restoreFailed=New-Fixture @('VerifyS4U','RestoreStage')
+try {
+ Invoke-StagedCutbackTransaction -Operations $restoreFailed.Operations | Out-Null
+ throw 'Stage relaunch failure unexpectedly succeeded.'
+} catch {
+ if ($_.Exception.Message -eq 'Stage relaunch failure unexpectedly succeeded.' -or
+     $_.Exception.Message -notmatch 'ROLLBACK UNVERIFIED') { throw }
+}
+if ($restoreFailed.Events -ccontains 'VerifyStage') {
+ throw 'RED: stage verification ran even after rollback launch failed.'
+}
+
 Write-Output 'Staged cutback transaction contract passed.'
