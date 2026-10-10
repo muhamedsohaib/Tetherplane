@@ -238,7 +238,7 @@ if(-not $Serve){
 # Only a registered task-owned instance may enter this branch.
 $script:ExpectedRegisteredTaskXml=[string](Export-ScheduledTask -TaskPath '\' -TaskName $script:TaskName -ErrorAction Stop)
 Assert-PortVacant
-$mutex=New-Object System.Threading.Mutex($false,'Global\TetherplaneVaulterRelaySupervisor')
+$mutex=[System.Threading.Mutex]::new($false,'Global\TetherplaneVaulterRelaySupervisor')
 $ownsMutex=$false
 try {
   try {
