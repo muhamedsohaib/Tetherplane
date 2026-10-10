@@ -5,6 +5,7 @@
 [CmdletBinding()]
 param(
   [switch]$Serve,
+  [switch]$Supervised,
   [string]$StateDirectory = (Join-Path $env:LOCALAPPDATA 'Tetherplane\tether-auth'),
   [Parameter(Mandatory=$true)][string]$NodeExecutablePath,
   [Parameter(Mandatory=$true)][string]$RelayEntrypointPath,
@@ -109,7 +110,214 @@ function Invoke-VerifiedNativeRelayProcess {
   }
 }
 
+
+# Native child ownership is an independent gate: a matching argument string
+# is insufficient without the registered task, real PID chain and task XML.
+function Assert-SupervisedBridgeOwnership {
+  [CmdletBinding()]
+  param(
+    [Parameter(Mandatory=$true)]$SelfProcess,
+    [Parameter(Mandatory=$true)]$ParentProcess,
+    [Parameter(Mandatory=$true)]$Task,
+    [Parameter(Mandatory=$true)][string]$OriginalTaskXml,
+    [Parameter(Mandatory=$true)][string]$CurrentTaskXml,
+    [Parameter(Mandatory=$true)][string]$SupervisorPath,
+    [Parameter(Mandatory=$true)][string]$LauncherPath
+  )
+  $trusted=Join-Path $env:SystemRoot 'System32\WindowsPowerShell\v1.0\powershell.exe'
+  if([string]$SelfProcess.Name -ine 'powershell.exe' -or
+     [string]$ParentProcess.Name -ine 'powershell.exe' -or
+     [int]$SelfProcess.ProcessId -le 0 -or
+     [int]$ParentProcess.ProcessId -le 0 -or
+     [int]$SelfProcess.ParentProcessId -ne [int]$ParentProcess.ProcessId -or
+     [string]$SelfProcess.ExecutablePath -ine $trusted -or
+     [string]$ParentProcess.ExecutablePath -ine $trusted -or
+     $null -eq $SelfProcess.CreationDate -or
+     $null -eq $ParentProcess.CreationDate -or
+     [datetime]$ParentProcess.CreationDate -gt [datetime]$SelfProcess.CreationDate){
+    throw 'Bridge native process is not a trusted PowerShell child of the supervisor.'
+  }
+  $expectedArgs='-NoProfile -NonInteractive -ExecutionPolicy Bypass -File "'+$SupervisorPath+'" -Serve -Bridge'
+  $executablePattern='(?:"'+[regex]::Escape($trusted)+'"|'+[regex]::Escape($trusted)+'|powershell\.exe)'
+  $parentPattern='(?i)^\s*'+$executablePattern+'\s+'+[regex]::Escape($expectedArgs)+'\s*
+if ($Serve) {
+  # Do not launch a second relay or bypass the registered task supervisor.
+  $task = Get-ScheduledTask -TaskName 'Tetherplane Relay' -ErrorAction Stop
+  if ($task.State -ne 'Running' -or -not [bool]$task.Settings.Enabled -or
+      @($task.Actions).Count -ne 1) {
+    throw 'Relay scheduled-task ownership not established.'
+  }
+  if($Supervised){
+    $canonical=Join-Path $env:LOCALAPPDATA 'Tetherplane\tether-auth'
+    if([IO.Path]::GetFullPath($StateDirectory) -ine [IO.Path]::GetFullPath($canonical)){
+      throw 'Supervised native launcher requires canonical private authorization state.'
+    }
+    $bridgeDir=Join-Path $canonical 'relay-supervisor-bridge'
+    $supervisor=Join-Path $bridgeDir 'vaulter-relay-bounded-supervisor.ps1'
+    $native=Join-Path $bridgeDir 'vaulter-relay-bridge-launcher.ps1'
+    $snapshot=Join-Path $bridgeDir 'pre-supervisor-task.xml'
+    $manifestPath=Join-Path $bridgeDir 'manifest.json'
+    if(-not(Test-Path -LiteralPath $bridgeDir -PathType Container) -or
+      -not (Get-Acl -LiteralPath $bridgeDir).AreAccessRulesProtected -or
+      [IO.Path]::GetFullPath($PSCommandPath) -ine [IO.Path]::GetFullPath($native)){
+      throw 'Native bridge launcher is outside the protected installation.'
+    }
+    foreach($file in @($supervisor,$native,$snapshot,$manifestPath)){
+      if(-not(Test-Path -LiteralPath $file -PathType Leaf) -or
+        (Get-Item -LiteralPath $file -Force).Attributes -band [IO.FileAttributes]::ReparsePoint){
+        throw 'Protected bridge launcher source or rollback snapshot missing.'
+      }
+    }
+    $manifest=Get-Content -LiteralPath $manifestPath -Raw -ErrorAction Stop |
+      ConvertFrom-Json -ErrorAction Stop
+    foreach($pin in @(
+      @{Path=$supervisor;Field='SupervisorSha256'},
+      @{Path=$native;Field='BridgeLauncherSha256'},
+      @{Path=$snapshot;Field='TaskSha256'}
+    )){
+      $hash=[string]$manifest.($pin.Field)
+      if($hash -notmatch '^[A-Fa-f0-9]{64}
+  $occupied = @(Get-NetTCPConnection -State Listen -LocalPort 8788 -ErrorAction SilentlyContinue)
+  if ($occupied.Count -ne 0) {
+    throw 'Relay port 8788 already has a listener; refusing duplicate process.'
+  }
+}
+Invoke-VerifiedNativeRelayProcess -Serve:$Serve -StateDirectory $StateDirectory -NodeExecutablePath $NodeExecutablePath -RelayEntrypointPath $RelayEntrypointPath -ExpectedEntrypointSha256 $ExpectedEntrypointSha256 -AuthConfigPath $AuthConfigPath -BaselineAuthConfigPath $BaselineAuthConfigPath -StateFilePath $StateFilePath
+
+  if(-not ([regex]::IsMatch([string]$ParentProcess.CommandLine,$parentPattern))){
+    throw 'Supervisor parent command is not the exact protected bridge task action.'
+  }
+  $childPattern='(?i)^\s*'+$executablePattern+
+    '\s+-NoProfile\s+-NonInteractive\s+-ExecutionPolicy\s+Bypass\s+-File\s+"'+
+    [regex]::Escape($LauncherPath)+'"\s+-Serve\s+-Supervised(?:\s|$)'
+  if(-not ([regex]::IsMatch([string]$SelfProcess.CommandLine,$childPattern))){
+    throw 'Native bridge launcher is not the protected supervised child.'
+  }
+  if([string]$Task.State -cne 'Running' -or
+     -not [bool]$Task.Settings.Enabled -or
+     [string]$Task.Settings.MultipleInstances -cne 'IgnoreNew' -or
+     @($Task.Actions).Count -ne 1){
+    throw 'Registered relay task is not the expected running single-instance supervisor.'
+  }
+  [xml]$prior=$OriginalTaskXml
+  [xml]$current=$CurrentTaskXml
+  $oldActions=$prior.SelectSingleNode("//*[local-name()='Actions']")
+  $newActions=$current.SelectSingleNode("//*[local-name()='Actions']")
+  $oldExec=$prior.SelectSingleNode("//*[local-name()='Actions']/*[local-name()='Exec']")
+  if($null -eq $oldActions -or $null -eq $newActions -or $null -eq $oldExec){
+    throw 'Protected task XML is malformed.'
+  }
+  $exe=$oldExec.SelectSingleNode("*[local-name()='Command']")
+  $cwd=$oldExec.SelectSingleNode("*[local-name()='WorkingDirectory']")
+  if($null -eq $exe){throw 'Protected task action executable missing.'}
+  $oldExe=[string]$exe.InnerText
+  $oldCwd=if($null -eq $cwd){''}else{[string]$cwd.InnerText}
+  if(($oldExe -ine 'powershell.exe' -and $oldExe -ine $trusted) -or
+     [string]$Task.Actions[0].Execute -ine $oldExe -or
+     [string]$Task.Actions[0].Arguments -cne $expectedArgs -or
+     [string]$Task.Actions[0].WorkingDirectory -cne $oldCwd){
+    throw 'Task action differs from trusted original executable or bridge supervisor.'
+  }
+  $saved=$current.ImportNode($oldActions,$true)
+  $null=$newActions.ParentNode.ReplaceChild($saved,$newActions)
+  if($current.DocumentElement.OuterXml -cne $prior.DocumentElement.OuterXml){
+    throw 'Task settings, account, triggers or working directory changed outside the action.'
+  }
+}
+
 if ($env:COMPUTERNAME -ine 'VAULTER') { throw 'Vaulter only' }
+if($Supervised -and -not $Serve){throw 'Supervised bridge child requires explicit Serve mode.'}
+if ($Serve) {
+  # Do not launch a second relay or bypass the registered task supervisor.
+  $task = Get-ScheduledTask -TaskName 'Tetherplane Relay' -ErrorAction Stop
+  if ($task.State -ne 'Running' -or -not [bool]$task.Settings.Enabled -or
+      @($task.Actions).Count -ne 1) {
+    throw 'Relay scheduled-task ownership not established.'
+  }
+  $command = [string]$task.Actions[0].Arguments
+  if ($command.IndexOf($PSCommandPath,[StringComparison]::OrdinalIgnoreCase) -lt 0 -or
+      $command -notmatch '(?i)(?:^|\s)-Serve(?:\s|$)') {
+    throw 'Registered relay task is not configured for the verified native launcher.'
+  }
+  $occupied = @(Get-NetTCPConnection -State Listen -LocalPort 8788 -ErrorAction SilentlyContinue)
+  if ($occupied.Count -ne 0) {
+    throw 'Relay port 8788 already has a listener; refusing duplicate process.'
+  }
+}
+Invoke-VerifiedNativeRelayProcess -Serve:$Serve -StateDirectory $StateDirectory -NodeExecutablePath $NodeExecutablePath -RelayEntrypointPath $RelayEntrypointPath -ExpectedEntrypointSha256 $ExpectedEntrypointSha256 -AuthConfigPath $AuthConfigPath -BaselineAuthConfigPath $BaselineAuthConfigPath -StateFilePath $StateFilePath
+ -or
+        (Get-FileHash -LiteralPath $pin.Path -Algorithm SHA256).Hash -cne $hash.ToUpperInvariant()){
+        throw 'Protected bridge supervisor, native launcher or task snapshot hash changed.'
+      }
+    }
+    $self=Get-CimInstance Win32_Process -Filter ('ProcessId='+[int]$PID) -ErrorAction Stop
+    if($null -eq $self){throw 'Native launcher process identity unavailable.'}
+    $parent=Get-CimInstance Win32_Process -Filter ('ProcessId='+[int]$self.ParentProcessId) -ErrorAction Stop
+    if($null -eq $parent){throw 'Registered bridge supervisor parent unavailable.'}
+    $proof=@{
+      SelfProcess=$self;ParentProcess=$parent;Task=$task
+      OriginalTaskXml=[IO.File]::ReadAllText($snapshot)
+      CurrentTaskXml=[string](Export-ScheduledTask -TaskPath '\' -TaskName 'Tetherplane Relay' -ErrorAction Stop)
+      SupervisorPath=$supervisor;LauncherPath=$native
+    }
+    Assert-SupervisedBridgeOwnership @proof
+  }else{
+    $command = [string]$task.Actions[0].Arguments
+    if ($command.IndexOf($PSCommandPath,[StringComparison]::OrdinalIgnoreCase) -lt 0 -or
+        $command -notmatch '(?i)(?:^|\s)-Serve(?:\s|$)') {
+      throw 'Registered relay task is not configured for the verified native launcher.'
+    }
+  }
+  $occupied = @(Get-NetTCPConnection -State Listen -LocalPort 8788 -ErrorAction SilentlyContinue)
+  if ($occupied.Count -ne 0) {
+    throw 'Relay port 8788 already has a listener; refusing duplicate process.'
+  }
+}
+Invoke-VerifiedNativeRelayProcess -Serve:$Serve -StateDirectory $StateDirectory -NodeExecutablePath $NodeExecutablePath -RelayEntrypointPath $RelayEntrypointPath -ExpectedEntrypointSha256 $ExpectedEntrypointSha256 -AuthConfigPath $AuthConfigPath -BaselineAuthConfigPath $BaselineAuthConfigPath -StateFilePath $StateFilePath
+
+  if(-not ([regex]::IsMatch([string]$ParentProcess.CommandLine,$parentPattern))){
+    throw 'Supervisor parent command is not the exact protected bridge task action.'
+  }
+  $childPattern='(?i)^\s*'+$executablePattern+
+    '\s+-NoProfile\s+-NonInteractive\s+-ExecutionPolicy\s+Bypass\s+-File\s+"'+
+    [regex]::Escape($LauncherPath)+'"\s+-Serve\s+-Supervised(?:\s|$)'
+  if(-not ([regex]::IsMatch([string]$SelfProcess.CommandLine,$childPattern))){
+    throw 'Native bridge launcher is not the protected supervised child.'
+  }
+  if([string]$Task.State -cne 'Running' -or
+     -not [bool]$Task.Settings.Enabled -or
+     [string]$Task.Settings.MultipleInstances -cne 'IgnoreNew' -or
+     @($Task.Actions).Count -ne 1){
+    throw 'Registered relay task is not the expected running single-instance supervisor.'
+  }
+  [xml]$prior=$OriginalTaskXml
+  [xml]$current=$CurrentTaskXml
+  $oldActions=$prior.SelectSingleNode("//*[local-name()='Actions']")
+  $newActions=$current.SelectSingleNode("//*[local-name()='Actions']")
+  $oldExec=$prior.SelectSingleNode("//*[local-name()='Actions']/*[local-name()='Exec']")
+  if($null -eq $oldActions -or $null -eq $newActions -or $null -eq $oldExec){
+    throw 'Protected task XML is malformed.'
+  }
+  $exe=$oldExec.SelectSingleNode("*[local-name()='Command']")
+  $cwd=$oldExec.SelectSingleNode("*[local-name()='WorkingDirectory']")
+  if($null -eq $exe){throw 'Protected task action executable missing.'}
+  $oldExe=[string]$exe.InnerText
+  $oldCwd=if($null -eq $cwd){''}else{[string]$cwd.InnerText}
+  if(($oldExe -ine 'powershell.exe' -and $oldExe -ine $trusted) -or
+     [string]$Task.Actions[0].Execute -ine $oldExe -or
+     [string]$Task.Actions[0].Arguments -cne $expectedArgs -or
+     [string]$Task.Actions[0].WorkingDirectory -cne $oldCwd){
+    throw 'Task action differs from trusted original executable or bridge supervisor.'
+  }
+  $saved=$current.ImportNode($oldActions,$true)
+  $null=$newActions.ParentNode.ReplaceChild($saved,$newActions)
+  if($current.DocumentElement.OuterXml -cne $prior.DocumentElement.OuterXml){
+    throw 'Task settings, account, triggers or working directory changed outside the action.'
+  }
+}
+
+if ($env:COMPUTERNAME -ine 'VAULTER') { throw 'Vaulter only' }
+if($Supervised -and -not $Serve){throw 'Supervised bridge child requires explicit Serve mode.'}
 if ($Serve) {
   # Do not launch a second relay or bypass the registered task supervisor.
   $task = Get-ScheduledTask -TaskName 'Tetherplane Relay' -ErrorAction Stop
