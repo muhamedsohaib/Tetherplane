@@ -135,7 +135,10 @@ try {
  Get-CutbackV1RestoreDecision -InstalledVersion 'untrusted' | Out-Null
  throw 'Untrusted runner was accepted.'
 } catch {if ($_.Exception.Message -eq 'Untrusted runner was accepted.'){throw}}
-if ($source -notmatch '(?s)RestoreV1\s*=\s*\{[^}]*Get-CutbackV1RestoreDecision') {
+$restoreBlockStart=$source.IndexOf('    RestoreV1 = {',[StringComparison]::Ordinal)
+$restoreBlockEnd=$source.IndexOf('    EnableTask = {',$restoreBlockStart,[StringComparison]::Ordinal)
+if ($restoreBlockStart -lt 0 -or $restoreBlockEnd -le $restoreBlockStart -or
+    -not $source.Substring($restoreBlockStart,$restoreBlockEnd-$restoreBlockStart).Contains('Get-CutbackV1RestoreDecision')) {
  throw 'Cutback fails to use version-aware v1 restore.'
 }
 
