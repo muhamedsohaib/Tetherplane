@@ -146,4 +146,53 @@ if ($restoreBlockStart -lt 0 -or $restoreBlockEnd -le $restoreBlockStart -or
 if ($source -notmatch '(?s)VerifyS4U\s*=\s*\{[^}]*Assert-StagedHealth') {
  throw 'RED: S4U recovery can silently change signing keys or Auth0 metadata.'
 }
+# A task reconfiguration between initial preflight and staged Node termination
+# must not strand the authorization listener.
+$quiesceStart=$source.IndexOf('    QuiesceOwnedStage = {',[StringComparison]::Ordinal)
+$quiesceEnd=$source.IndexOf('    VerifyVacant = {',$quiesceStart,[StringComparison]::Ordinal)
+if ($quiesceStart -lt 0 -or $quiesceEnd -le $quiesceStart) {throw 'Missing cutback quiesce block.'}
+$quiesce=$source.Substring($quiesceStart,$quiesceEnd-$quiesceStart)
+if (-not $quiesce.Contains('Get-TaskSnapshot') -or
+    $quiesce.IndexOf('Get-TaskSnapshot') -ge $quiesce.IndexOf('Stop-Process')) {
+ throw 'RED: task definition is not reverified before terminating staged auth.'
+}
+
+# Trust the protected ownership record only if its effective ACL policy
+# matches the protected runner, not merely if inheritance is disabled.
+$aclAst=$ast.Find({
+ param($n)
+ $n -is [Management.Automation.Language.FunctionDefinitionAst] -and
+ $n.Name -eq 'Test-CutbackProofAclEquivalent'
+},$true)
+if ($null -eq $aclAst) {throw 'RED: strict protected proof ACL comparison missing.'}
+Invoke-Expression $aclAst.Extent.Text
+$rule=[pscustomobject]@{
+ IdentityReference=[pscustomobject]@{Value='S-1-5-21-1234'};
+ FileSystemRights='FullControl';AccessControlType='Allow';
+ InheritanceFlags='None';PropagationFlags='None'
+}
+$expectedAcl=[pscustomobject]@{
+ Owner='S-1-5-21-1234';Group='S-1-5-21-1234';
+ AreAccessRulesProtected=$true; Access=@($rule)
+}
+$trustedAcl=[pscustomobject]@{
+ Owner='S-1-5-21-1234';Group='S-1-5-21-1234';
+ AreAccessRulesProtected=$true; Access=@($rule)
+}
+$wrongOwner=[pscustomobject]@{
+ Owner='S-1-5-21-9999';Group='S-1-5-21-1234';
+ AreAccessRulesProtected=$true; Access=@($rule)
+}
+$wrongRule=[pscustomobject]@{
+ Owner='S-1-5-21-1234';Group='S-1-5-21-1234';
+ AreAccessRulesProtected=$true; Access=@()
+}
+if (-not (Test-CutbackProofAclEquivalent -Expected $expectedAcl -Actual $trustedAcl) -or
+    (Test-CutbackProofAclEquivalent -Expected $expectedAcl -Actual $wrongOwner) -or
+    (Test-CutbackProofAclEquivalent -Expected $expectedAcl -Actual $wrongRule)) {
+ throw 'Proof ACL equivalence accepted an unauthorized owner or access policy.'
+}
+if (-not $listenerFunction.Extent.Text.Contains('Test-CutbackProofAclEquivalent')) {
+ throw 'RED: staged listener trusts proof without comparing protected ACLs.'
+}
 Write-Output 'Staged cutback transaction contract passed.'
