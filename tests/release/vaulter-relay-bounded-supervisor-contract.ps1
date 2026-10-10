@@ -43,7 +43,7 @@ if($source -match '(?i)\b(?:Stop-Process|Stop-ScheduledTask|Start-ScheduledTask|
 if($source -match '(?i)(?:gh auth token|TETHERPLANE_AUTH_BRIDGE_TOKEN|bridge-token.secret|tailscale\s+(?:funnel|serve)\s+(?:off|reset|--set-path))'){
   throw 'Auth bridge secrets and Funnel mutations not allowed in original Auth0 supervisor.'
 }
-foreach($helper in @('Assert-Supervisor','Test-InstalledSupervisorIntegrity','Get-SupervisorOriginalAction','Start-VerifiedOriginalRelayChild','Invoke-BoundedRelaySupervisor')){
+foreach($helper in @('Assert-Supervisor','Test-InstalledSupervisorIntegrity','Resolve-VerifiedPowerShellExecutable','Get-SupervisorOriginalAction','Start-VerifiedOriginalRelayChild','Invoke-BoundedRelaySupervisor')){
   $node=$ast.Find({
     param($n) $n -is [Management.Automation.Language.FunctionDefinitionAst] -and $n.Name -eq $helper
   }.GetNewClosure(),$true)
@@ -56,6 +56,30 @@ $xml='<Task><Actions><Exec><Command>'+[Security.SecurityElement]::Escape($psExe)
 $action=Get-SupervisorOriginalAction -Xml $xml
 if([string]$action.Executable -cne $psExe -or [string]$action.LauncherPath -cne 'C:\staged\relay.ps1'){
   throw 'Original launcher action was not preserved exactly.'
+}
+# Vaulter's verified, protected task action registers the executable as the
+# exact bare name "powershell.exe", not an absolute path. Preserve that action,
+# but resolve the child launch to the OS-owned Windows PowerShell binary.
+$bareXml=$xml.Replace([Security.SecurityElement]::Escape($psExe),'powershell.exe')
+$bareAction=Get-SupervisorOriginalAction -Xml $bareXml
+if($bareAction.Executable -cne 'powershell.exe' -or
+   $bareAction.LauncherPath -cne 'C:\staged\relay.ps1'){
+  throw 'RED: protected bare powershell.exe original task action was rejected.'
+}
+$expectedWindowsExe=Join-Path $env:SystemRoot 'System32\WindowsPowerShell\v1.0\powershell.exe'
+$resolved=Resolve-VerifiedPowerShellExecutable -RegisteredExecutable $bareAction.Executable
+if($resolved -ine $expectedWindowsExe -or -not(Test-Path -LiteralPath $resolved -PathType Leaf)){
+  throw 'Bare task executable must launch only the trusted Windows PowerShell system binary.'
+}
+$resolvedRooted=Resolve-VerifiedPowerShellExecutable -RegisteredExecutable $psExe
+if($resolvedRooted -ine $expectedWindowsExe){
+  throw 'Trusted absolute PowerShell executable resolution changed.'
+}
+foreach($badExe in @('.\powershell.exe','..\powershell.exe','tool\powershell.exe','cmd.exe','powershell.exe -Command','C:\untrusted\powershell.exe')){
+  $badXml=$bareXml.Replace('<Command>powershell.exe</Command>','<Command>'+[Security.SecurityElement]::Escape($badExe)+'</Command>')
+  $rejected=$false
+  try{Get-SupervisorOriginalAction -Xml $badXml|Out-Null}catch{$rejected=$true}
+  if(-not $rejected){throw "Untrusted/relative executable accepted for original relay task: $badExe"}
 }
 $xmlWithCwd=$xml.Replace('</Arguments>','</Arguments><WorkingDirectory>C:\trusted-working-directory</WorkingDirectory>')
 $withCwd=Get-SupervisorOriginalAction -Xml $xmlWithCwd
@@ -133,6 +157,13 @@ try {
     Executable=$psExe
     Arguments=('-NoProfile -NonInteractive -File "'+$fake+'"')
   })
+  $bareResult=Start-VerifiedOriginalRelayChild -Action ([pscustomobject]@{
+    Executable='powershell.exe'
+    Arguments=('-NoProfile -NonInteractive -File "'+$fake+'"')
+  })
+  if([int]$bareResult.ExitCode -ne 37){
+    throw 'Failed to safely launch the original bare executable as a supervised child.'
+  }
   if([int]$result.ExitCode -ne 37 -or [double]$result.DurationSeconds -lt 0){
     throw 'Native child exit code was lost or elapsed time invalid.'
   }
