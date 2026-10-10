@@ -1,0 +1,23 @@
+name: Vaulter relay bridge launcher contract
+on:
+  push:
+    paths:
+      - "scripts/vaulter-relay-bridge-launcher.ps1"
+      - "tests/release/vaulter-relay-bridge-launcher-contract.ps1"
+      - ".github/workflows/vaulter-relay-bridge-contract.yml"
+  pull_request:
+    paths:
+      - "scripts/vaulter-relay-bridge-launcher.ps1"
+      - "tests/release/vaulter-relay-bridge-launcher-contract.ps1"
+      - ".github/workflows/vaulter-relay-bridge-contract.yml"
+jobs:
+  contract:
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Contract in Windows PowerShell 5.1
+        shell: powershell
+        run: ./tests/release/vaulter-relay-bridge-launcher-contract.ps1
+      - name: Contract in PowerShell 7
+        shell: pwsh
+        run: ./tests/release/vaulter-relay-bridge-launcher-contract.ps1
