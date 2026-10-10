@@ -21,6 +21,7 @@ foreach($required in @(
 )){
   if(-not $source.Contains($required)){throw "Supervisor missing safety/behavior guard: $required"}
 }
+if(-not $source.Contains('$arguments -ceq $expectedArgs')){throw 'RED: task action must match exact registered supervisor arguments, not contain substring.'}
 if(-not $source.Contains('Global\TetherplaneVaulterRelaySupervisor')){throw 'RED: mutex must be cross-session/global, not session-local.'}
 if($source -match '(?i)\b(?:Stop-Process|Stop-ScheduledTask|Start-ScheduledTask|Register-ScheduledTask|Unregister-ScheduledTask|Set-ScheduledTask|Set-Clipboard)\b'){
   throw 'Supervisor cannot kill a process, mutate a task, or alter clipboard.'
