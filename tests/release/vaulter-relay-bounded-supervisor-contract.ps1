@@ -41,6 +41,14 @@ $action=Get-SupervisorOriginalAction -Xml $xml
 if([string]$action.Executable -cne $psExe -or [string]$action.LauncherPath -cne 'C:\staged\relay.ps1'){
   throw 'Original launcher action was not preserved exactly.'
 }
+$xmlWithCwd=$xml.Replace('</Arguments>','</Arguments><WorkingDirectory>C:\trusted-working-directory</WorkingDirectory>')
+$withCwd=Get-SupervisorOriginalAction -Xml $xmlWithCwd
+if($withCwd.WorkingDirectory -cne 'C:\trusted-working-directory'){
+  throw 'RED: original Scheduled Task working-directory semantics were dropped.'
+}
+if($action.WorkingDirectory -cne ''){
+  throw 'Original action without explicit working directory should inherit the task working directory.'
+}
 foreach($broken in @(
   $xml.Replace('powershell.exe','cmd.exe'),
   $xml.Replace('-File &quot;C:\staged\relay.ps1&quot;','-Command evil'),
