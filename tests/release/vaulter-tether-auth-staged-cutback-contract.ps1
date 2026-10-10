@@ -195,4 +195,14 @@ if (-not (Test-CutbackProofAclEquivalent -Expected $expectedAcl -Actual $trusted
 if (-not $listenerFunction.Extent.Text.Contains('Test-CutbackProofAclEquivalent')) {
  throw 'RED: staged listener trusts proof without comparing protected ACLs.'
 }
+# Recovered staged success must independently recheck the disabled named
+# task and the exact observed Node command, not only a PID and ready response.
+$stageBlockStart=$source.IndexOf('    VerifyStage = {',[StringComparison]::Ordinal)
+if ($stageBlockStart -lt 0) {throw 'Missing staged rollback verification.'}
+$stageBlock=$source.Substring($stageBlockStart)
+if (-not $stageBlock.Contains('Get-TaskSnapshot') -or
+    -not $stageBlock.Contains('Test-OwnedStageCommandLine')) {
+ throw 'RED: staged rollback may report success without task/CLI re-verification.'
+}
+
 Write-Output 'Staged cutback transaction contract passed.'
