@@ -67,6 +67,8 @@ try{
     BridgeHelperSha256=(Get-FileHash -LiteralPath $helperInstalled -Algorithm SHA256).Hash
     BridgeLauncherSha256=(Get-FileHash -LiteralPath $native -Algorithm SHA256).Hash
     BridgeConfigSha256=(Get-FileHash -LiteralPath $cfgPath -Algorithm SHA256).Hash
+    AuthConfigSha256=(Get-FileHash -LiteralPath $candidate -Algorithm SHA256).Hash
+    BaselineAuthConfigSha256=(Get-FileHash -LiteralPath $baseline -Algorithm SHA256).Hash
   }
   [IO.File]::WriteAllText($manifestPath,($manifest | ConvertTo-Json -Compress))
   $action=Get-VerifiedBridgeChildAction -StageDirectory $stage -WorkingDirectory $fixture
@@ -90,6 +92,14 @@ try{
     $child.WaitForExit()
     if($child.ExitCode -ne 37){throw 'Bridge child did not propagate the real child exit code.'}
   }finally{$child.Dispose()}
+  $originalCandidate=[IO.File]::ReadAllText($candidate)
+  [IO.File]::WriteAllText($candidate,$originalCandidate.Replace('"subject":"fixture"','"subject":"unauthorized"'))
+  MustFail {Get-VerifiedBridgeChildAction -StageDirectory $stage -WorkingDirectory $fixture} 'changed Auth0 candidate file'
+  [IO.File]::WriteAllText($candidate,$originalCandidate)
+  $originalBaseline=[IO.File]::ReadAllText($baseline)
+  [IO.File]::WriteAllText($baseline,$originalBaseline.Replace('"subject":"fixture"','"subject":"unauthorized"'))
+  MustFail {Get-VerifiedBridgeChildAction -StageDirectory $stage -WorkingDirectory $fixture} 'changed original Auth0 baseline file'
+  [IO.File]::WriteAllText($baseline,$originalBaseline)
   $save=[IO.File]::ReadAllText($cfgPath)
   [IO.File]::AppendAllText($cfgPath,' ')
   MustFail {Get-VerifiedBridgeChildAction -StageDirectory $stage -WorkingDirectory $fixture} 'tampered config'
