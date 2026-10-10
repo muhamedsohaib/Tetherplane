@@ -123,7 +123,7 @@ try {
   }
   # Two genuine Windows PowerShell child processes exit with code 37;
   # the synthetic task owner stays running and verifies exactly one relaunch.
-  $childLaunches=0
+  $shared=[pscustomobject]@{Launches=0}
   $observedCodes=New-Object 'System.Collections.Generic.List[int]'
   $observedBackoff=New-Object 'System.Collections.Generic.List[int]'
   $childAction=[pscustomobject]@{
@@ -133,11 +133,11 @@ try {
   # GetNewClosure uses a dynamic module; capture the tested helper explicitly.
   $spawnNative=${function:Start-VerifiedOriginalRelayChild}
   $realOps=@{
-    ShouldStop={return ($childLaunches -ge 2)}.GetNewClosure()
+    ShouldStop={return ($shared.Launches -ge 2)}.GetNewClosure()
     AssertOwnership={}
     AssertPortVacant={}
     StartAndWaitChild={
-      $childLaunches++
+      $shared.Launches++
       $run=& $spawnNative -Action $childAction
       $observedCodes.Add([int]$run.ExitCode)
       return $run
@@ -145,7 +145,7 @@ try {
     Sleep={param([int]$seconds)$observedBackoff.Add($seconds)}.GetNewClosure()
   }
   $realOutcome=Invoke-BoundedRelaySupervisor -Operations $realOps -MaxRestarts 2 -BaseDelaySeconds 1 -MaxDelaySeconds 3
-  if($realOutcome -cne 'stopped' -or $childLaunches -ne 2 -or
+  if($realOutcome -cne 'stopped' -or $shared.Launches -ne 2 -or
     ($observedCodes -join ',') -cne '37,37' -or
     ($observedBackoff -join ',') -cne '1'){
     throw 'Real child failures did not produce exactly one bounded automatic relaunch.'
