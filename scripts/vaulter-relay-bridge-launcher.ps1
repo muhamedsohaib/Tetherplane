@@ -75,8 +75,8 @@ function Invoke-VerifiedRelayBridgeLauncher {
 }
 
 
-# Explicit native launch path: the credential alone cannot make an old
-# launcher select a new auth-config file. Bind the CLI arguments directly.
+# Explicit native child launch; the bridge secret alone cannot cause the old
+# launcher to load a staged auth config. Bind the Node CLI arguments directly.
 function Invoke-VerifiedNativeRelayProcess {
   [CmdletBinding()]
   param(
@@ -104,9 +104,7 @@ function Invoke-VerifiedNativeRelayProcess {
   if ([IO.Path]::GetFileName($NodeExecutablePath) -ine 'node.exe') {
     throw 'Relay native runtime must be node.exe.'
   }
-  if ($ExpectedEntrypointSha256 -notmatch '^[a-fA-F0-9]{64}
-Invoke-VerifiedRelayBridgeLauncher -Serve:$Serve -StateDirectory $StateDirectory -LauncherPath $LauncherPath -AuthConfigPath $AuthConfigPath -ExpectedLauncherSha256 $ExpectedLauncherSha256
- -or
+  if ($ExpectedEntrypointSha256 -notmatch '^[a-fA-F0-9]{64}$' -or
       (Get-FileHash -LiteralPath $RelayEntrypointPath -Algorithm SHA256).Hash -cne
         $ExpectedEntrypointSha256.ToUpperInvariant()) {
     throw 'Native relay entrypoint differs from the pinned build.'
@@ -143,9 +141,7 @@ Invoke-VerifiedRelayBridgeLauncher -Serve:$Serve -StateDirectory $StateDirectory
   $secretValue = $null
   try {
     $secretValue = ([IO.File]::ReadAllText($secretFile)).Trim()
-    if ($secretValue -notmatch '^[A-Za-z0-9_-]{64,}
-Invoke-VerifiedRelayBridgeLauncher -Serve:$Serve -StateDirectory $StateDirectory -LauncherPath $LauncherPath -AuthConfigPath $AuthConfigPath -ExpectedLauncherSha256 $ExpectedLauncherSha256
-) {
+    if ($secretValue -notmatch '^[A-Za-z0-9_-]{64,}$') {
       throw 'Protected relay bridge credential is malformed.'
     }
     [Environment]::SetEnvironmentVariable($envName,$secretValue,'Process')
@@ -153,8 +149,6 @@ Invoke-VerifiedRelayBridgeLauncher -Serve:$Serve -StateDirectory $StateDirectory
     $global:LASTEXITCODE = 0
     $arguments = @($RelayEntrypointPath,'--auth-config',$AuthConfigPath,'--state-file',
       $StateFilePath,'--host','127.0.0.1','--port','8788','--allow-insecure-localhost')
-    # The expected candidate is the exact --auth-config value. The secret
-    # exists only in the environment; no token is passed through argv.
     & $NodeExecutablePath @arguments 1>$null 2>$null
     if ($LASTEXITCODE -ne 0) { throw 'Native relay child exited unsuccessfully.' }
     Write-Output 'NATIVE RELAY CHILD EXIT PASS'
