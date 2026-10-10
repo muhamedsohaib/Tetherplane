@@ -55,6 +55,23 @@ function Test-InstalledSupervisorIntegrity {
   }catch{return $false}
 }
 
+function Resolve-VerifiedPowerShellExecutable {
+  [CmdletBinding()]
+  param([Parameter(Mandatory=$true)][string]$RegisteredExecutable)
+  # Task Scheduler legitimately registers the original action as the bare
+  # executable name. Preserve that action in XML while the managed child
+  # always uses the well-known OS Windows PowerShell binary, never PATH.
+  $trusted=Join-Path $env:SystemRoot 'System32\WindowsPowerShell\v1.0\powershell.exe'
+  Assert-Supervisor (Test-Path -LiteralPath $trusted -PathType Leaf) 'System Windows PowerShell executable missing.'
+  Assert-Supervisor (-not ((Get-Item -LiteralPath $trusted -Force).Attributes -band [IO.FileAttributes]::ReparsePoint)) 'System Windows PowerShell executable may not be a reparse point.'
+  $matchesSystemPath=$false
+  if([IO.Path]::IsPathRooted($RegisteredExecutable)){
+    $matchesSystemPath=([IO.Path]::GetFullPath($RegisteredExecutable) -ieq [IO.Path]::GetFullPath($trusted))
+  }
+  Assert-Supervisor ($RegisteredExecutable -ieq 'powershell.exe' -or $matchesSystemPath) 'Registered task executable is not the trusted Windows PowerShell host.'
+  return [IO.Path]::GetFullPath($trusted)
+}
+
 function Get-SupervisorOriginalAction {
   [CmdletBinding()]
   param([Parameter(Mandatory=$true)][string]$Xml)
@@ -66,8 +83,8 @@ function Get-SupervisorOriginalAction {
   Assert-Supervisor ($null -ne $cmd -and $null -ne $args) 'Original task action command or arguments missing.'
   $exe=[string]$cmd.InnerText
   $rawArgs=[string]$args.InnerText
-  Assert-Supervisor ([IO.Path]::IsPathRooted($exe) -and
-    [IO.Path]::GetFileName($exe) -ieq 'powershell.exe') 'Original action executable is not absolute Windows PowerShell.'
+  # Validate the exact protected bare name OR the canonical rooted system host.
+  $null=Resolve-VerifiedPowerShellExecutable -RegisteredExecutable $exe
   Assert-Supervisor (@([regex]::Matches($rawArgs,'(?i)(?:^|\s)-File(?=\s)')).Count -eq 1 -and
     $rawArgs -notmatch '(?i)(?:^|\s)-(?:EncodedCommand|EncodedArguments|Command)(?=\s|$)') 'Original command contains an unsafe or ambiguous command mode.'
   $m=[regex]::Match($rawArgs,
@@ -96,7 +113,7 @@ function Start-VerifiedOriginalRelayChild {
   param([Parameter(Mandatory=$true)]$Action)
   # No shell interpolation, no copied secrets, no reconstructed CLI flags.
   $psi=New-Object System.Diagnostics.ProcessStartInfo
-  $psi.FileName=[string]$Action.Executable
+  $psi.FileName=Resolve-VerifiedPowerShellExecutable -RegisteredExecutable ([string]$Action.Executable)
   $psi.Arguments=[string]$Action.Arguments
   if($null -ne $Action.PSObject.Properties['WorkingDirectory'] -and
       -not [string]::IsNullOrWhiteSpace([string]$Action.WorkingDirectory)){
