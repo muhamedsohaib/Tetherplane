@@ -6,7 +6,7 @@ if(-not(Test-Path -LiteralPath $path -PathType Leaf)){throw 'RED: guarded relay 
 $tokens=$null;$parseErrors=$null
 $ast=[Management.Automation.Language.Parser]::ParseFile(
   (Resolve-Path -LiteralPath $path).Path,[ref]$tokens,[ref]$parseErrors)
-if(@($parseErrors).Count -ne 0){throw 'Handover script has syntax errors.'}
+if(@($parseErrors).Count -ne 0){$safe=@($parseErrors | ForEach-Object { 'line='+$_.Extent.StartLineNumber+' id='+$_.ErrorId });throw ('Handover script has syntax errors: '+($safe -join ', '))}
 $source=[IO.File]::ReadAllText((Resolve-Path -LiteralPath $path).Path)
 foreach($needed in @(
   '[switch]$Stage','[switch]$Apply','[switch]$Rollback',
