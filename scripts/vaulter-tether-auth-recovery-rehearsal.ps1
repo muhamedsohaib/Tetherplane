@@ -444,11 +444,11 @@ function Wait-StagedAuth([int]$Attempts=35) {
             # Record only verified process identity; never log protected arguments,
             # credentials or signer state. The protected ACL is inherited explicitly.
             $record = [ordered]@{
-                schema = 'tether-auth-owned-stage/v1'
+                schema = 'tether-auth-owned-stage/v2'
                 port = 8790
                 pid = [int]$listener.ProcessId
                 parentPid = [int]$listener.ParentProcessId
-                creationDate = [string]$listener.CreationDate
+                creationUtcTicks = ([datetime]$listener.CreationDate).ToUniversalTime().Ticks
             }
             $proofPath = Join-Path $script:stateDir 'tether-auth-owned-staged-fallback.json'
             $temporaryProof = Join-Path $script:stateDir ('staged-proof-' + [Guid]::NewGuid().ToString('N') + '.tmp')
