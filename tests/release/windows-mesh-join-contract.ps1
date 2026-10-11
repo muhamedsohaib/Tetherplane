@@ -42,7 +42,11 @@ foreach($origin in @('http://vaulter.tailf65eba.ts.net','https://example.org','h
   try{Assert-MeshRelayEndpoints $origin 'wss://vaulter.tailf65eba.ts.net/device'}catch{$rejected=$true}
   if(-not $rejected){throw "Untrusted relay origin accepted"}
 }
-$installer=[IO.File]::ReadAllText((Join-Path $repo 'scripts\install-windows.ps1'))
+$installerPath=Join-Path $repo 'scripts\install-windows.ps1'
+$installerTokens=$null;$installerErrors=$null
+[Management.Automation.Language.Parser]::ParseFile($installerPath,[ref]$installerTokens,[ref]$installerErrors)|Out-Null
+if(@($installerErrors).Count -gt 0){throw 'RED: Windows installer PowerShell syntax invalid'}
+$installer=[IO.File]::ReadAllText($installerPath)
 $uninstaller=[IO.File]::ReadAllText((Join-Path $repo 'scripts\uninstall-windows.ps1'))
 foreach($needle in @('-ScheduledTaskName $taskName','Get-MeshTaskName $id')){
   if(-not $script.Contains($needle)){throw "RED: mesh join lacks side-by-side scheduled task protection: $needle"}
