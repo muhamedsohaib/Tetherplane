@@ -98,6 +98,7 @@ function Complete-SignedMeshPackage {
       }
     }
     $manifest|Add-Member -NotePropertyName 'signed_package' -NotePropertyValue $true -Force
+    $manifest|Add-Member -NotePropertyName 'distribution_trust' -NotePropertyValue 'trusted_publisher_authenticode' -Force
     $manifest|Add-Member -NotePropertyName 'signed_signer_thumbprint' -NotePropertyValue $signer -Force
     $manifest|Add-Member -NotePropertyName 'signing_verification' -NotePropertyValue 'Windows Authenticode; trusted OS chain' -Force
     $encoding=[Text.UTF8Encoding]::new($false)
