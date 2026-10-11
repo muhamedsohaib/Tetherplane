@@ -71,6 +71,12 @@ foreach($forbidden in @('TetherplaneModelWorker','model-worker-supervisor','Remo
 foreach($needle in @('Uninstall-Tetherplane-Mesh.ps1','$meshTaskInstall','Join-Path $install "uninstall-windows.ps1"')){
   if(-not $installer.Contains($needle)){throw "RED: installer must copy isolated cleanup into mesh install: $needle"}
 }
+foreach($pin in @('mesh_uninstall_sha256','windows_installer_sha256','Uninstall-Tetherplane-Mesh.ps1')){
+  if(-not $script.Contains($pin)){throw "RED: mesh preflight lacks required safe-cleanup pin: $pin"}
+}
+if($installer.IndexOf('Get-ScheduledTask') -gt $installer.IndexOf('New-Item -ItemType Directory')){
+  throw 'RED: installer must reject scheduled-task conflicts before mutation'
+}
 if(-not $script.Contains('Assert-MeshSafeInstall $bundle $install $state $id')){
   throw 'RED: mesh join must preflight the selected logical device ID'
 }
