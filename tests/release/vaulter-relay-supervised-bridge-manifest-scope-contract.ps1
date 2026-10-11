@@ -45,7 +45,7 @@ foreach($expected in @('$script:ManifestPath','[IO.File]::WriteAllText($script:M
 }
 # Exercise the ACTUAL script path assignment and write statement in a synthetic directory.
 $pathAssignment=@($source -split '\r?\n' | Where-Object {
-  $_ -match "^\s*\\$script:ManifestPath=Join-Path \\$script:StageDir 'manifest.json'\s*$"
+  $_ -match '^\s*\$script:ManifestPath=Join-Path \$script:StageDir ''manifest.json''\s*$'
 })
 $writeStatement=@($source -split '\r?\n' | Where-Object {
   $_ -match '^\s*\[IO\.File\]::WriteAllText\(\$script:ManifestPath,\[string\]\$stageManifestJson,'

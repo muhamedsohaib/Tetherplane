@@ -33,7 +33,7 @@ $script:StageDir=Join-Path $script:StateDir 'relay-supervisor-bridge'
 $script:OriginalSupervisorDir=Join-Path $script:StateDir 'relay-supervisor'
 $script:OriginalSupervisor=Join-Path $script:OriginalSupervisorDir 'vaulter-relay-bounded-supervisor.ps1'
 $script:Snapshot=Join-Path $script:StageDir 'pre-supervisor-task.xml'
-$script:Manifest=Join-Path $script:StageDir 'manifest.json'
+$script:ManifestPath=Join-Path $script:StageDir 'manifest.json'
 $script:Supervisor=Join-Path $script:StageDir 'vaulter-relay-bounded-supervisor.ps1'
 $script:Launcher=Join-Path $script:StageDir 'vaulter-relay-bridge-launcher.ps1'
 $script:Helper=Join-Path $script:StageDir 'vaulter-relay-supervised-bridge-child.ps1'
@@ -270,7 +270,7 @@ function Invoke-PinnedPostcheck {
   }
 }
 function Assert-Postcheck {
-  $meta=Get-Content -LiteralPath $script:Manifest -Raw -ErrorAction Stop |
+  $meta=Get-Content -LiteralPath $script:ManifestPath -Raw -ErrorAction Stop |
     ConvertFrom-Json -ErrorAction Stop
   $script:Postcheck=Assert-PinnedPostcheck -RepoRoot ([string]$meta.SourceRepo) -ExpectedPostcheckSha256 ([string]$meta.PostcheckSha256) -ExpectedRunnerIntegritySha256 ([string]$meta.RunnerIntegritySha256)
   Invoke-PinnedPostcheck -Path $script:Postcheck
@@ -282,7 +282,7 @@ function Assert-Postcheck {
 function Assert-StagedFiles {
   Assert-Directory $script:StateDir
   Assert-Directory $script:StageDir
-  $manifest=Get-Content -LiteralPath $script:Manifest -Raw -ErrorAction Stop | ConvertFrom-Json -ErrorAction Stop
+  $manifest=Get-Content -LiteralPath $script:ManifestPath -Raw -ErrorAction Stop | ConvertFrom-Json -ErrorAction Stop
   foreach($item in @(
     @{Path=$script:Supervisor;Hash=[string]$manifest.SupervisorSha256},
     @{Path=$script:Launcher;Hash=[string]$manifest.BridgeLauncherSha256},
@@ -412,7 +412,7 @@ if($Stage){
     StateFilePath=$StateFilePath
   }|ConvertTo-Json -Compress
   [IO.File]::WriteAllText($script:BridgeConfig,[string]$config,[Text.UTF8Encoding]::new($false))
-  $manifest=[ordered]@{
+  $stageManifestJson=[ordered]@{
     ReviewedCommit=$ExpectedSourceCommit
     SourceRepo=$sourceRoot
     PostcheckSha256=(Get-FileHash -LiteralPath (Join-Path $PSScriptRoot 'vaulter-tether-auth-supervised-postcheck.ps1') -Algorithm SHA256).Hash
@@ -426,7 +426,7 @@ if($Stage){
     BaselineAuthConfigSha256=(Get-FileHash -LiteralPath $BaselineAuthConfigPath -Algorithm SHA256).Hash
     TaskSha256=(Get-FileHash -LiteralPath $script:Snapshot -Algorithm SHA256).Hash
   }|ConvertTo-Json -Compress
-  [IO.File]::WriteAllText($script:Manifest,[string]$manifest,[Text.UTF8Encoding]::new($false))
+  [IO.File]::WriteAllText($script:ManifestPath,[string]$stageManifestJson,[Text.UTF8Encoding]::new($false))
   $null=Assert-StagedFiles
   Require ((Get-TaskXml) -ceq $script:BaselineXml) 'Original supervised task changed during bridge staging.'
   Require ((Get-ListenerPID 8790) -eq $script:AuthPID -and
@@ -451,9 +451,9 @@ if(-not $Stage -and -not $Apply -and -not $Rollback){
   return
 }
 $script:BaselineXml=Assert-StagedFiles
-$manifest=Get-Content -LiteralPath $script:Manifest -Raw | ConvertFrom-Json
+$stagedManifestData=Get-Content -LiteralPath $script:ManifestPath -Raw | ConvertFrom-Json
 Require ([IO.Path]::GetFullPath($PSCommandPath) -ieq [IO.Path]::GetFullPath($script:InstalledHandover)) 'Only protected installed bridge handover may activate or roll back.'
-$script:RepoPath=[string]$manifest.SourceRepo
+$script:RepoPath=[string]$stagedManifestData.SourceRepo
 $script:Postcheck=Join-Path $script:RepoPath 'scripts\vaulter-tether-auth-supervised-postcheck.ps1'
 Require (Test-Path -LiteralPath $script:Postcheck -PathType Leaf) 'Independent postcheck missing; no action change.'
 Require (Test-BridgeActionOnlyChanged -BeforeXml $script:BaselineXml -AfterXml (Get-TaskXml)) 'Task settings, triggers or principal changed from protected stage.'
