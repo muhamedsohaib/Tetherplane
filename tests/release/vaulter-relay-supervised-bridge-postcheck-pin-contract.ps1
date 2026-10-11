@@ -12,7 +12,7 @@ foreach($token in @('Assert-PinnedPostcheck','PostcheckSha256','RunnerIntegrityS
   if(-not $source.Contains($token)){throw "RED: protected postcheck pin missing: $token"}
 }
 $verifyIndex=$source.IndexOf('Assert-PinnedPostcheck -RepoRoot',[StringComparison]::Ordinal)
-$invokeIndex=$source.IndexOf('$null=& $script:Postcheck',[StringComparison]::Ordinal)
+$invokeIndex=$source.IndexOf('Invoke-PinnedPostcheck -Path $script:Postcheck',[StringComparison]::Ordinal)
 if($verifyIndex -lt 0 -or $invokeIndex -lt 0 -or $verifyIndex -ge $invokeIndex){
   throw 'RED: postcheck can run before source hash validation.'
 }
