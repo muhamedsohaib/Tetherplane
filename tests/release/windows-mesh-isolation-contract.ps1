@@ -85,6 +85,9 @@ try{
   if($null -eq $global:TetherplaneTestMeshTask -or $global:TetherplaneTestMeshTask.TaskName -cne 'Tetherplane Mesh Leno'){
     throw 'Mesh installer did not register a separate device-scoped task.'
   }
+  if([string]$global:TetherplaneTestMeshTask.Actions[0].Arguments -match 'ExecutionPolicy\s+Bypass'){
+    throw 'RED: signed mesh scheduled task must not bypass PowerShell execution policy.'
+  }
   if(-not(Test-Path -LiteralPath $legacySentinel)){
     throw 'Legacy installation was touched by mesh installation.'
   }
