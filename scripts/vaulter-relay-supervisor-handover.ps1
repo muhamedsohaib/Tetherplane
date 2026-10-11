@@ -452,7 +452,7 @@ if($Apply){
 }
 
 if($Rollback){
-  Assert-Handover (Test-TaskIsSupervisor -or (Test-TaskIsOriginal)) 'Registered action does not match either reviewed configuration.'
+  Assert-Handover ((Test-TaskIsSupervisor) -or (Test-TaskIsOriginal)) 'Registered action does not match either reviewed configuration.'
   Restore-OriginalSafely
   Start-OriginalSafely
   Assert-Handover ((Get-TaskXml) -ceq $script:BaselineXml) 'Original task registration not restored exactly.'
