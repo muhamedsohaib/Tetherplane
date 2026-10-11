@@ -6,6 +6,9 @@ on:
       - feature/four-device-mesh-rollout-20261011
   workflow_dispatch:
 
+permissions:
+  contents: read
+
 jobs:
   windows-bootstrap:
     runs-on: windows-latest
@@ -17,3 +20,56 @@ jobs:
       - name: Mesh bootstrap contract PowerShell 7
         shell: pwsh
         run: ./tests/release/windows-mesh-join-contract.ps1
+
+  windows-bundle:
+    needs: windows-bootstrap
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Install Rust toolchain
+        uses: dtolnay/rust-toolchain@stable
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+      - name: Enable pnpm
+        shell: pwsh
+        run: |
+          corepack enable
+          corepack prepare pnpm@10 --activate
+      - name: Install workspace dependencies
+        run: pnpm install --frozen-lockfile
+      - name: Build TypeScript workspace
+        run: pnpm -r build
+      - name: Build Windows device binary
+        run: cargo build --release -p tetherd
+      - name: Package exact source commit
+        shell: pwsh
+        run: |
+          ./scripts/package-windows.ps1 -OutputPath dist/Tetherplane-FourDevice-Mesh-Windows-x64 -SkipBuild
+      - name: Independently verify package and installer
+        shell: pwsh
+        run: |
+          ./tests/release/windows-mesh-join-contract.ps1
+          ./tests/release/windows-package-smoke.ps1
+          $bundle = 'dist/Tetherplane-FourDevice-Mesh-Windows-x64'
+          $manifest = Get-Content -LiteralPath (Join-Path $bundle 'manifest.json') -Raw | ConvertFrom-Json
+          if ($manifest.source_commit -cne $env:GITHUB_SHA) { throw 'Package source commit mismatch' }
+          if (-not(Test-Path (Join-Path $bundle 'Join-Tetherplane-Mesh.cmd'))) { throw 'One-click launcher missing' }
+      - name: Archive single installer for all four Windows devices
+        shell: pwsh
+        run: |
+          $source='dist/Tetherplane-FourDevice-Mesh-Windows-x64'
+          $archive='Tetherplane-FourDevice-Mesh-Windows-x64.zip'
+          Compress-Archive -Path (Join-Path $source '*') -DestinationPath $archive -Force
+          if (-not(Test-Path -LiteralPath $archive)) { throw 'Mesh archive creation failed' }
+          $sha=(Get-FileHash -LiteralPath $archive -Algorithm SHA256).Hash.ToLowerInvariant()
+          "$sha  $archive" | Set-Content -LiteralPath 'Tetherplane-Mesh-SHA256SUMS.txt' -Encoding ascii
+          $env:GITHUB_SHA | Set-Content -LiteralPath 'Tetherplane-Mesh-SourceCommit.txt' -Encoding ascii
+      - uses: actions/upload-artifact@v4
+        with:
+          name: Tetherplane-FourDevice-Mesh-Windows-x64
+          path: |
+            Tetherplane-FourDevice-Mesh-Windows-x64.zip
+            Tetherplane-Mesh-SHA256SUMS.txt
+            Tetherplane-Mesh-SourceCommit.txt
+          retention-days: 30
