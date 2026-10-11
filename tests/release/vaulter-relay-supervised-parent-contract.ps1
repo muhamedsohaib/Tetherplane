@@ -11,13 +11,15 @@ foreach($needed in @('[switch]$Supervised','Assert-SupervisedBridgeOwnership','G
     'Get-ScheduledTask','Export-ScheduledTask','-Serve -Bridge')){
   if(-not $source.Contains($needed)){throw "RED: native supervised bridge ownership guard missing $needed"}
 }
-$function=$ast.Find({
-  param($n)
-  $n -is [Management.Automation.Language.FunctionDefinitionAst] -and
-  $n.Name -ceq 'Assert-SupervisedBridgeOwnership'
-},$true)
-if($null -eq $function){throw 'RED: testable native bridge ownership guard missing.'}
-Invoke-Expression $function.Extent.Text
+foreach($name in @('Test-BridgeProcessArgv','Assert-SupervisedBridgeOwnership')){
+  $function=$ast.Find({
+    param($n)
+    $n -is [Management.Automation.Language.FunctionDefinitionAst] -and
+    $n.Name -ceq $name
+  },$true)
+  if($null -eq $function){throw "Testable native bridge ownership helper missing: $name"}
+  Invoke-Expression $function.Extent.Text
+}
 $supervisorPath='C:\protected\relay-supervisor-bridge\vaulter-relay-bounded-supervisor.ps1'
 $launcherPath='C:\protected\relay-supervisor-bridge\vaulter-relay-bridge-launcher.ps1'
 $exe=Join-Path $env:SystemRoot 'System32\WindowsPowerShell\v1.0\powershell.exe'

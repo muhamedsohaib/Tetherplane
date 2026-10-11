@@ -111,6 +111,38 @@ function Invoke-VerifiedNativeRelayProcess {
 }
 
 
+# Compare the complete Windows process command-line argv, not textual quoting.
+# Task Scheduler may omit unnecessary quotes. Reject malformed token boundaries.
+function Test-BridgeProcessArgv {
+  [CmdletBinding()]
+  param([Parameter(Mandatory=$true)][string]$CommandLine,
+        [Parameter(Mandatory=$true)][string]$TrustedExecutable,
+        [Parameter(Mandatory=$true)][string[]]$ExpectedArguments,
+        [switch]$AllowTrailing)
+  if([string]::IsNullOrWhiteSpace($CommandLine)){return $false}
+  $remaining=$CommandLine.Trim()
+  $actual=New-Object 'System.Collections.Generic.List[string]'
+  while($remaining.Length -gt 0){
+    $pattern=if($actual.Count -eq 0){
+      '\A(?:"([^"]*)"|([^\s"]+))'
+    }else{
+      '\A\s+(?:"([^"]*)"|([^\s"]+))'
+    }
+    $match=[regex]::Match($remaining,$pattern)
+    if(-not $match.Success -or $match.Index -ne 0){return $false}
+    $part=if($match.Groups[1].Success){$match.Groups[1].Value}else{$match.Groups[2].Value}
+    $actual.Add([string]$part)
+    $remaining=$remaining.Substring($match.Length)
+  }
+  $required=$ExpectedArguments.Count+1
+  if($actual.Count -lt $required -or (-not $AllowTrailing -and $actual.Count -ne $required)){return $false}
+  if([string]$actual[0] -ine $TrustedExecutable -and [string]$actual[0] -ine 'powershell.exe'){return $false}
+  for($i=0;$i -lt $ExpectedArguments.Count;$i++){
+    if([string]$actual[$i+1] -ine [string]$ExpectedArguments[$i]){return $false}
+  }
+  return $true
+}
+
 # Only the verified task-owned supervisor may spawn a bridge-enabled child.
 function Assert-SupervisedBridgeOwnership {
   [CmdletBinding()]
@@ -137,15 +169,12 @@ function Assert-SupervisedBridgeOwnership {
     throw 'Native bridge child is not owned by the trusted supervisor process.'
   }
   $expectedArgs='-NoProfile -NonInteractive -ExecutionPolicy Bypass -File "'+$SupervisorPath+'" -Serve -Bridge'
-  $exePattern='(?:"'+[regex]::Escape($trusted)+'"|'+[regex]::Escape($trusted)+'|powershell\.exe)'
-  $parentPattern='(?i)^\s*'+$exePattern+'\s+'+[regex]::Escape($expectedArgs)+'\s*$'
-  if(-not [regex]::IsMatch([string]$ParentProcess.CommandLine,$parentPattern)){
+  $parentFlags=@('-NoProfile','-NonInteractive','-ExecutionPolicy','Bypass','-File',$SupervisorPath,'-Serve','-Bridge')
+  if(-not (Test-BridgeProcessArgv -CommandLine ([string]$ParentProcess.CommandLine) -TrustedExecutable $trusted -ExpectedArguments $parentFlags)){
     throw 'Bridge supervisor parent command does not match registered task.'
   }
-  $childPattern='(?i)^\s*'+$exePattern+
-    '\s+-NoProfile\s+-NonInteractive\s+-ExecutionPolicy\s+Bypass\s+-File\s+"'+
-    [regex]::Escape($LauncherPath)+'"\s+-Serve\s+-Supervised(?:\s|$)'
-  if(-not [regex]::IsMatch([string]$SelfProcess.CommandLine,$childPattern)){
+  $childFlags=@('-NoProfile','-NonInteractive','-ExecutionPolicy','Bypass','-File',$LauncherPath,'-Serve','-Supervised')
+  if(-not (Test-BridgeProcessArgv -CommandLine ([string]$SelfProcess.CommandLine) -TrustedExecutable $trusted -ExpectedArguments $childFlags -AllowTrailing)){
     throw 'Native launcher command does not match protected child.'
   }
   if([string]$Task.State -cne 'Running' -or
