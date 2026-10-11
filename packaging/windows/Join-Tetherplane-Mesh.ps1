@@ -89,7 +89,8 @@ function Set-MeshPrivateAcl([string]$Path,[switch]$Directory){
     }
   }
 }
-function Assert-MeshSafeInstall([string]$Bundle,[string]$Install,[string]$State){
+function Assert-MeshSafeInstall([string]$Bundle,[string]$Install,[string]$State,[string]$Candidate){
+  Assert-MeshDeviceId $Candidate
   foreach($file in @('install-windows.ps1','manifest.json','bin\tetherd.exe','Join-Tetherplane-Mesh.ps1')){
     $path=Join-Path $Bundle $file
     if(-not(Test-Path -LiteralPath $path -PathType Leaf)){throw 'Incomplete reviewed Windows package.'}
@@ -115,7 +116,7 @@ function Assert-MeshSafeInstall([string]$Bundle,[string]$Install,[string]$State)
       throw 'Existing mesh installation or state detected. Refusing to overwrite or regenerate device identity.'
     }
   }
-  $meshTask=Get-MeshTaskName $DeviceId
+  $meshTask=Get-MeshTaskName $Candidate
   if(Get-ScheduledTask -TaskPath '\' -TaskName $meshTask -ErrorAction SilentlyContinue){
     throw 'Existing device-scoped Tetherplane Mesh task detected; refusing to replace it.'
   }
@@ -152,7 +153,7 @@ function Join-MeshDevice {
   $install=Join-Path $env:LOCALAPPDATA 'Programs\Tetherplane-Mesh'
   $state=Join-Path $env:LOCALAPPDATA ('Tetherplane\mesh\'+$id)
   $bundle=Split-Path -Parent $PSCommandPath
-  Assert-MeshSafeInstall $bundle $install $state
+  Assert-MeshSafeInstall $bundle $install $state $id
 
   # The existing Vaulter relay is healthy but not supervised. Do not add a
   # background task on that host until operator recovery is independently proven.
