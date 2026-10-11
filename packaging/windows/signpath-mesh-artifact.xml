@@ -1,0 +1,40 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!--
+  Import into an approved SignPath OSS project's artifact configuration.
+  Signing is unavailable until the foundation accepts the project, a trusted
+  build system and origin policy are configured, and an approver authorizes
+  a signing request. Do not sign any upstream binary under this policy.
+  Root input: the inner Windows ZIP created by scripts/package-windows.ps1
+  and archived by the four-device-mesh-bootstrap workflow.
+-->
+<artifact-configuration xmlns="http://signpath.io/artifact-configuration/v1">
+  <zip-file>
+    <pe-file path="bin/tetherd.exe">
+      <authenticode-sign hash-algorithm="sha256" />
+    </pe-file>
+    <powershell-file path="Join-Tetherplane-Mesh.ps1">
+      <authenticode-sign hash-algorithm="sha256" />
+    </powershell-file>
+    <powershell-file path="Inspect-Tetherplane-Mesh.ps1">
+      <authenticode-sign hash-algorithm="sha256" />
+    </powershell-file>
+    <powershell-file path="Uninstall-Tetherplane-Mesh.ps1">
+      <authenticode-sign hash-algorithm="sha256" />
+    </powershell-file>
+    <powershell-file path="install-windows.ps1">
+      <authenticode-sign hash-algorithm="sha256" />
+    </powershell-file>
+    <powershell-file path="uninstall-windows.ps1">
+      <authenticode-sign hash-algorithm="sha256" />
+    </powershell-file>
+    <powershell-file path="install-model-worker-windows.ps1">
+      <authenticode-sign hash-algorithm="sha256" />
+    </powershell-file>
+    <powershell-file path="launch/tetherplane-agent.ps1">
+      <authenticode-sign hash-algorithm="sha256" />
+    </powershell-file>
+    <powershell-file path="launch/tetherplane-mcp.ps1">
+      <authenticode-sign hash-algorithm="sha256" />
+    </powershell-file>
+  </zip-file>
+</artifact-configuration>
