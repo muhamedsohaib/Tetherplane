@@ -152,4 +152,123 @@ $o.Ops['RestoreOriginal']={throw 'rollback denied'}
 $err=''
 try{Invoke-GuardedSupervisorHandover -Operations $o.Ops|Out-Null}catch{$err=$_.Exception.Message}
 if($err -notmatch 'ROLLBACK UNVERIFIED'){throw 'Rollback failure cannot claim healthy original service.'}
+# The original supervisor has a separate manual recovery entrypoint from the
+# newer bridge handover. Execute the REAL -Rollback guard and restore helpers
+# against synthetic task/port boundaries. Never access a live Windows service.
+foreach($functionName in @(
+  'Assert-Handover','Test-TaskIsOriginal','Test-TaskIsSupervisor',
+  'Restore-OriginalSafely','Start-OriginalSafely'
+)){
+  $node=$ast.Find({
+    param($n)
+    $n -is [Management.Automation.Language.FunctionDefinitionAst] -and
+    $n.Name -ceq $functionName
+  }.GetNewClosure(),$true)
+  if($null -eq $node){throw "Missing testable manual supervisor recovery helper $functionName"}
+  Invoke-Expression $node.Extent.Text
+}
+$rollbackNodes=@($ast.EndBlock.Statements | Where-Object {
+  $_ -is [Management.Automation.Language.IfStatementAst] -and
+  $_.Clauses[0].Item1.Extent.Text -ceq '$Rollback'
+})
+if($rollbackNodes.Count -ne 1){throw 'Manual supervisor rollback branch not found.'}
+$branchText=$rollbackNodes[0].Clauses[0].Item2.Extent.Text
+$rollbackBody=[scriptblock]::Create($branchText.Substring(1,$branchText.Length-2))
+$script:TaskName='synthetic-relay-task'
+$script:InstalledSupervisor='C:\synthetic\relay-supervisor\vaulter-relay-bounded-supervisor.ps1'
+$script:OriginalArgs='-File "C:\synthetic\original-relay.ps1"'
+$script:BaselineXml='<Task><Actions>synthetic baseline</Actions></Task>'
+$script:ManualRecoveryEvents=New-Object 'System.Collections.Generic.List[string]'
+function Get-Task {return $script:ManualRecoveryTask}
+function Get-TaskXml {return $script:BaselineXml}
+function Get-OriginalAction {
+  param([string]$Xml)
+  return [pscustomobject]@{
+    Executable='powershell.exe'
+    Arguments=$script:OriginalArgs
+    WorkingDirectory='C:\synthetic'
+  }
+}
+function Get-NetTCPConnection {
+  param($LocalPort,$State,$ErrorAction)
+  if([int]$LocalPort -ne 8788){throw 'Unexpected synthetic relay port'}
+  if($script:ManualRecoveryOccupied){[pscustomobject]@{OwningProcess=999}}
+}
+function Assert-SupervisorProcessOwnedWithoutHealth {
+  if(-not $script:ManualRecoveryOwned){throw 'Unowned synthetic relay listener'}
+  $script:ManualRecoveryEvents.Add('verify-owner')
+}
+function Stop-ScheduledTask {
+  param($TaskPath,$TaskName,$ErrorAction)
+  if($TaskPath -cne '\' -or $TaskName -cne 'synthetic-relay-task'){
+    throw 'Unexpected synthetic task stop target'
+  }
+  $script:ManualRecoveryEvents.Add('stop')
+  $script:ManualRecoveryTask.State='Ready'
+  $script:ManualRecoveryOccupied=$false
+}
+function Wait-TaskReadyVacant {
+  if($script:ManualRecoveryTask.State -cne 'Ready' -or $script:ManualRecoveryOccupied){
+    throw 'Synthetic relay port was not empty after task stop'
+  }
+  $script:ManualRecoveryEvents.Add('wait-vacant')
+}
+function Set-OnlyRelayAction {
+  param([switch]$ToSupervisor)
+  if($ToSupervisor){throw 'Rollback must never register another supervisor'}
+  $script:ManualRecoveryEvents.Add('restore')
+  $script:ManualRecoveryTask.Actions[0].Arguments=$script:OriginalArgs
+}
+function Start-ScheduledTask {
+  param($TaskPath,$TaskName,$ErrorAction)
+  if($TaskPath -cne '\' -or $TaskName -cne 'synthetic-relay-task' -or
+     $script:ManualRecoveryOccupied -or $script:ManualRecoveryTask.State -cne 'Ready'){
+    throw 'Attempt to start synthetic relay without vacant port and Ready task'
+  }
+  $script:ManualRecoveryEvents.Add('start')
+  $script:ManualRecoveryTask.State='Running'
+  $script:ManualRecoveryOccupied=$true
+}
+function Assert-HealthyListener {
+  if($script:ManualRecoveryTask.State -cne 'Running' -or -not $script:ManualRecoveryOccupied){
+    throw 'Synthetic relay not healthy'
+  }
+}
+function Wait-Healthy {
+  if($script:ManualRecoveryTask.State -cne 'Running' -or -not $script:ManualRecoveryOccupied){
+    throw 'Synthetic relay health unavailable'
+  }
+  $script:ManualRecoveryEvents.Add('health')
+}
+$supervisorArgs='-NoProfile -NonInteractive -ExecutionPolicy Bypass -File "'+
+    $script:InstalledSupervisor+'" -Serve'
+foreach($case in @(
+  @{Name='original Ready';Action='original';State='Ready';Occupied=$false;Owned=$true;Accept=$true;Events='start,health'},
+  @{Name='original Running';Action='original';State='Running';Occupied=$true;Owned=$true;Accept=$true;Events='health'},
+  @{Name='supervisor Ready';Action='supervisor';State='Ready';Occupied=$false;Owned=$true;Accept=$true;Events='restore,start,health'},
+  @{Name='supervisor Running and owned';Action='supervisor';State='Running';Occupied=$true;Owned=$true;Accept=$true;Events='verify-owner,stop,wait-vacant,restore,start,health'},
+  @{Name='supervisor Running unowned';Action='supervisor';State='Running';Occupied=$true;Owned=$false;Accept=$false;Events=''},
+  @{Name='unknown action';Action='unknown';State='Ready';Occupied=$false;Owned=$true;Accept=$false;Events=''},
+  @{Name='occupied original Ready';Action='original';State='Ready';Occupied=$true;Owned=$true;Accept=$false;Events=''},
+  @{Name='occupied supervisor Ready';Action='supervisor';State='Ready';Occupied=$true;Owned=$true;Accept=$false;Events=''}
+)){
+  $script:ManualRecoveryEvents.Clear()
+  $script:ManualRecoveryOccupied=[bool]$case.Occupied
+  $script:ManualRecoveryOwned=[bool]$case.Owned
+  $testArgs=switch($case.Action){
+    'original' {$script:OriginalArgs}
+    'supervisor' {$supervisorArgs}
+    default {'-File "C:\unknown\untrusted.ps1"'}
+  }
+  $script:ManualRecoveryTask=[pscustomobject]@{State=$case.State;Actions=@(
+    [pscustomobject]@{Execute='powershell.exe';Arguments=$testArgs;WorkingDirectory='C:\synthetic'}
+  )}
+  $accepted=$true
+  try{& $rollbackBody | Out-Null}catch{$accepted=$false}
+  $actualEvents=$script:ManualRecoveryEvents -join ','
+  if($accepted -ne $case.Accept -or $actualEvents -cne $case.Events){
+    throw ('MANUAL SUPERVISOR ROLLBACK REGRESSION: '+$case.Name+
+      '; accepted='+$accepted+'; events='+$actualEvents)
+  }
+}
 Write-Output 'VAULTER GUARDED SUPERVISOR HANDOVER CONTRACT PASS'
