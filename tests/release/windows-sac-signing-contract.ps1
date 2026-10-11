@@ -49,14 +49,23 @@ try{
   $manifest|ConvertTo-Json -Depth 5|Set-Content -LiteralPath (Join-Path $package 'manifest.json') -Encoding UTF8
   $before=(Get-FileHash -LiteralPath $payload -Algorithm SHA256).Hash
 
-  $out=@(& powershell.exe -NoProfile -NonInteractive -File $verify -PackagePath $package 2>&1)
-  if($LASTEXITCODE -eq 0){throw 'Unsigned package incorrectly passed trust verification'}
-  if(-not(($out|Out-String) -match 'unsigned|untrusted|not signed|signed_package')){
+  # Child stderr is redirected to a temporary file so intentional rejection
+  # cannot be misinterpreted as a terminating PowerShell ErrorRecord.
+  $verifyOut=Join-Path $root 'verify.out'
+  $verifyErr=Join-Path $root 'verify.err'
+  $verifyArgs='-NoProfile -NonInteractive -File "'+$verify+'" -PackagePath "'+$package+'"'
+  $verifyProcess=Start-Process -FilePath 'powershell.exe' -ArgumentList $verifyArgs -Wait -PassThru -RedirectStandardOutput $verifyOut -RedirectStandardError $verifyErr
+  if($verifyProcess.ExitCode -eq 0){throw 'Unsigned package incorrectly passed trust verification'}
+  $out=Get-Content -LiteralPath $verifyErr -Raw -ErrorAction Stop
+  if($out -notmatch 'unsigned|untrusted|not signed|signed_package'){
     throw 'Unsigned verification failure did not identify the trust problem'
   }
 
-  $out=@(& powershell.exe -NoProfile -NonInteractive -File $finalize -SignedPackagePath $package -OutputPath $output 2>&1)
-  if($LASTEXITCODE -eq 0){throw 'Unsigned package incorrectly finalized as trusted'}
+  $finalOut=Join-Path $root 'finalize.out'
+  $finalErr=Join-Path $root 'finalize.err'
+  $finalArgs='-NoProfile -NonInteractive -File "'+$finalize+'" -SignedPackagePath "'+$package+'" -OutputPath "'+$output+'"'
+  $finalProcess=Start-Process -FilePath 'powershell.exe' -ArgumentList $finalArgs -Wait -PassThru -RedirectStandardOutput $finalOut -RedirectStandardError $finalErr
+  if($finalProcess.ExitCode -eq 0){throw 'Unsigned package incorrectly finalized as trusted'}
   if(Test-Path -LiteralPath $output){throw 'Rejected unsigned input created signed output files'}
   if((Get-FileHash -LiteralPath $payload -Algorithm SHA256).Hash -cne $before){
     throw 'Rejected signing attempt modified the input package'
