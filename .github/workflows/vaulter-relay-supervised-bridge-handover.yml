@@ -61,3 +61,22 @@ jobs:
       - name: Manifest variable isolation (PowerShell 7)
         shell: pwsh
         run: ./tests/release/vaulter-relay-supervised-bridge-manifest-scope-contract.ps1
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+      - name: Related runtime contracts (Windows PowerShell 5.1)
+        shell: powershell
+        run: |
+          $contracts = @('vaulter-relay-bridge-launcher','vaulter-relay-bridge-native','vaulter-relay-supervised-parent','vaulter-relay-supervised-bridge-child','vaulter-relay-bridge-helper-integrity','vaulter-relay-bounded-supervisor','vaulter-tether-auth-supervised-postcheck')
+          foreach ($contract in $contracts) {
+            & powershell.exe -NoProfile -NonInteractive -ExecutionPolicy Bypass -File ("tests/release/$contract-contract.ps1")
+            if ($LASTEXITCODE -ne 0) { throw "Related runtime contract failed: $contract" }
+          }
+      - name: Related runtime contracts (PowerShell 7)
+        shell: pwsh
+        run: |
+          $contracts = @('vaulter-relay-bridge-launcher','vaulter-relay-bridge-native','vaulter-relay-supervised-parent','vaulter-relay-supervised-bridge-child','vaulter-relay-bridge-helper-integrity','vaulter-relay-bounded-supervisor','vaulter-tether-auth-supervised-postcheck')
+          foreach ($contract in $contracts) {
+            & pwsh -NoProfile -NonInteractive -File ("tests/release/$contract-contract.ps1")
+            if ($LASTEXITCODE -ne 0) { throw "Related runtime contract failed: $contract" }
+          }

@@ -482,7 +482,7 @@ if($Apply){
   return
 }
 if($Rollback){
-  Require (Test-TaskIsBridge -or (Test-TaskIsAuth0)) 'Unknown relay task action; guarded rollback refused.'
+  Require ((Test-TaskIsBridge) -or (Test-TaskIsAuth0)) 'Unknown relay task action; guarded rollback refused.'
   Restore-Auth0Safely
   Start-Auth0Safely
   Require ((Get-TaskXml) -ceq $script:BaselineXml) 'Rollback did not restore exact original supervised XML.'
