@@ -11,6 +11,13 @@ $ast=[Management.Automation.Language.Parser]::ParseFile($join,[ref]$tokens,[ref]
 if(@($parseErrors).Count -gt 0){throw 'Mesh bootstrap syntax invalid'}
 $script=[IO.File]::ReadAllText($join)
 $cmd=[IO.File]::ReadAllText($entry)
+if($script.Contains('-ExecutionPolicy Bypass')){
+  throw 'RED: signed mesh enrollment must not invoke an execution-policy bypass.'
+}
+$cleanupSource=[IO.File]::ReadAllText((Join-Path $repo 'packaging\windows\Uninstall-Tetherplane-Mesh.ps1'))
+if($cleanupSource.Contains('-ExecutionPolicy Bypass')){
+  throw 'RED: signed mesh cleanup must not depend on a bypass-launched task.'
+}
 foreach($needed in @('Join-MeshDevice','Start-MeshPairing','Get-MeshCredentialHash','Get-MeshPairingBody','Assert-MeshSafeInstall','Set-MeshPrivateAcl','-InstallScheduledTask','Start-ScheduledTask','-AgentArgumentsFile','https://vaulter.tailf65eba.ts.net','wss://vaulter.tailf65eba.ts.net/device')){
   if(-not $script.Contains($needed)){throw "RED: missing secure enrollment requirement $needed"}
 }
