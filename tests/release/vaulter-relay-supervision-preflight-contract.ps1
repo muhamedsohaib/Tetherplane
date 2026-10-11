@@ -14,11 +14,16 @@ $source=[IO.File]::ReadAllText((Resolve-Path -LiteralPath $sourcePath).Path)
 foreach($forbidden in @(
   'Stop-ScheduledTask','Start-ScheduledTask','Set-ScheduledTask','Register-ScheduledTask',
   'Unregister-ScheduledTask','Stop-Process','Start-Process','Remove-Item',
-  'New-Item','Set-Content','Set-Acl','Set-MpPreference','-ExecutionPolicy Bypass'
+  'New-Item','Set-Content','Set-Acl','Set-MpPreference'
 )){
   if($source.Contains($forbidden)){
     throw ('A read-only supervisor inventory may not mutate a system: '+$forbidden)
   }
+}
+# The legacy task's exact, previously approved argument string includes
+# an execution-policy flag. It may be compared as data, but never executed.
+if($source -match '(?im)^\s*(?:&\s*\S*|Start-Process\s+\S*|powershell(?:\.exe)?\s+)[^\r\n]*-ExecutionPolicy\s+Bypass'){
+  throw 'Read-only preflight may not invoke a policy-bypassing child process.'
 }
 foreach($expected in @('Get-ScheduledTask','Get-NetTCPConnection',
     'Get-CimInstance','Get-FileHash','Get-Acl','Invoke-RestMethod',
