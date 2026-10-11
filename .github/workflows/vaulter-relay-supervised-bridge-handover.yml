@@ -7,6 +7,7 @@ on:
       - "tests/release/vaulter-relay-supervised-bridge-stage-contract.ps1"
       - "tests/release/vaulter-relay-supervised-bridge-postcheck-pin-contract.ps1"
       - "tests/release/vaulter-relay-supervised-bridge-postcheck-execution-contract.ps1"
+      - "tests/release/vaulter-relay-supervised-bridge-manifest-scope-contract.ps1"
       - "tests/release/vaulter-relay-supervised-bridge-acl-contract.ps1"
       - ".github/workflows/vaulter-relay-supervised-bridge-handover.yml"
   pull_request:
@@ -16,6 +17,7 @@ on:
       - "tests/release/vaulter-relay-supervised-bridge-stage-contract.ps1"
       - "tests/release/vaulter-relay-supervised-bridge-postcheck-pin-contract.ps1"
       - "tests/release/vaulter-relay-supervised-bridge-postcheck-execution-contract.ps1"
+      - "tests/release/vaulter-relay-supervised-bridge-manifest-scope-contract.ps1"
       - "tests/release/vaulter-relay-supervised-bridge-acl-contract.ps1"
       - ".github/workflows/vaulter-relay-supervised-bridge-handover.yml"
 jobs:
@@ -53,3 +55,9 @@ jobs:
       - name: Isolated postcheck execution (PowerShell 7)
         shell: pwsh
         run: ./tests/release/vaulter-relay-supervised-bridge-postcheck-execution-contract.ps1
+      - name: Manifest variable isolation (Windows PowerShell 5.1)
+        shell: powershell
+        run: ./tests/release/vaulter-relay-supervised-bridge-manifest-scope-contract.ps1
+      - name: Manifest variable isolation (PowerShell 7)
+        shell: pwsh
+        run: ./tests/release/vaulter-relay-supervised-bridge-manifest-scope-contract.ps1
