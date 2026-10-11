@@ -41,6 +41,8 @@ try{
   $failure=''
   try{Invoke-PinnedPostcheck -Path (Join-Path $dir 'missing.ps1')}catch{$failure=$_.Exception.Message}
   if(-not $failure){throw 'Missing postcheck was not rejected.'}
+  # Expected failing native-child fixture must not poison the CI step exit status.
+  $global:LASTEXITCODE=0
   Write-Output 'VAULTER BRIDGE ISOLATED POSTCHECK EXECUTION CONTRACT PASS'
 }finally{
   Remove-Item -LiteralPath $dir -Recurse -Force -ErrorAction SilentlyContinue
