@@ -44,6 +44,19 @@ $arguments=@{SelfProcess=$self;ParentProcess=$parent;Task=$task;
     OriginalTaskXml=$old;CurrentTaskXml=$new;
     SupervisorPath=$supervisorPath;LauncherPath=$launcherPath}
 Assert-SupervisedBridgeOwnership @arguments
+# Windows can report equivalent live PowerShell argv without quoting paths
+# that contain no spaces. Do not reject the actual registered supervisor.
+$unquoted=@{};foreach($key in $arguments.Keys){$unquoted[$key]=$arguments[$key]}
+$unquoted.ParentProcess=[pscustomobject]@{
+  Name='powershell.exe';ProcessId=121;CreationDate=$parent.CreationDate
+  ExecutablePath=$exe;CommandLine=('powershell.exe '+$expectedArgs.Replace('"',''))
+}
+$unquoted.SelfProcess=[pscustomobject]@{
+  Name='powershell.exe';ProcessId=122;ParentProcessId=121
+  CreationDate=$self.CreationDate;ExecutablePath=$exe
+  CommandLine=('powershell.exe -NoProfile -NonInteractive -ExecutionPolicy Bypass -File '+$launcherPath+' -Serve -Supervised -NodeExecutablePath "C:\Program Files\nodejs\node.exe"')
+}
+Assert-SupervisedBridgeOwnership @unquoted
 function MustReject([string]$name,[hashtable]$changes) {
   $args=@{};foreach($key in $arguments.Keys){$args[$key]=$arguments[$key]}
   foreach($key in $changes.Keys){$args[$key]=$changes[$key]}
