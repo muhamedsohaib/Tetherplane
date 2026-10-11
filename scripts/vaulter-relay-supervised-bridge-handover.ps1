@@ -246,11 +246,34 @@ function Assert-PinnedPostcheck {
   Assert-FileHash $validator $ExpectedRunnerIntegritySha256
   return $postcheck
 }
+# Run an independently pinned postcheck under the same narrow process-only
+# execution-policy override used by Vaulter's proven supervised staging.
+# Never modify Process, CurrentUser, LocalMachine or GroupPolicy settings.
+function Invoke-PinnedPostcheck {
+  [CmdletBinding()]
+  param([Parameter(Mandatory=$true)][string]$Path)
+  if(-not(Test-Path -LiteralPath $Path -PathType Leaf) -or
+     (Get-Item -LiteralPath $Path -Force).Attributes -band [IO.FileAttributes]::ReparsePoint){
+    throw 'Pinned postcheck source unavailable or is a reparse point.'
+  }
+  $trustedExe=Join-Path $env:SystemRoot 'System32\WindowsPowerShell\v1.0\powershell.exe'
+  if(-not(Test-Path -LiteralPath $trustedExe -PathType Leaf) -or
+     (Get-Item -LiteralPath $trustedExe -Force).Attributes -band [IO.FileAttributes]::ReparsePoint){
+    throw 'Trusted Windows PowerShell executable for postcheck unavailable.'
+  }
+  # Suppress postcheck script stdout/stderr; never disclose private metadata
+  # or key contents through a deployment health check.
+  & $trustedExe -NoProfile -NonInteractive -ExecutionPolicy Bypass -File $Path 1>$null 2>$null
+  $code=[int]$LASTEXITCODE
+  if($code -ne 0){
+    throw ('Independent pinned postcheck failed with exit code '+$code+'.')
+  }
+}
 function Assert-Postcheck {
   $meta=Get-Content -LiteralPath $script:Manifest -Raw -ErrorAction Stop |
     ConvertFrom-Json -ErrorAction Stop
   $script:Postcheck=Assert-PinnedPostcheck -RepoRoot ([string]$meta.SourceRepo) -ExpectedPostcheckSha256 ([string]$meta.PostcheckSha256) -ExpectedRunnerIntegritySha256 ([string]$meta.RunnerIntegritySha256)
-  $null=& $script:Postcheck
+  Invoke-PinnedPostcheck -Path $script:Postcheck
   Require ((Get-ListenerPID 8790) -eq $script:AuthPID) 'Authorization process identity changed.'
   $resource=Invoke-RestMethod 'https://vaulter.tailf65eba.ts.net/.well-known/oauth-protected-resource/mcp' -TimeoutSec 15
   Require (@($resource.authorization_servers).Count -eq 1 -and
@@ -368,7 +391,7 @@ if($Stage){
   $script:AuthPID=Get-ListenerPID 8790
   $script:RelayPID=Get-ListenerPID 8788
   $script:Postcheck=Join-Path $PSScriptRoot 'vaulter-tether-auth-supervised-postcheck.ps1'
-  $null=& $script:Postcheck
+  Invoke-PinnedPostcheck -Path $script:Postcheck
   New-Item -ItemType Directory -Path $script:StageDir -ErrorAction Stop | Out-Null
   $acl=Get-Acl -LiteralPath $script:StageDir
   $acl.SetAccessRuleProtection($true,$true)
@@ -408,7 +431,7 @@ if($Stage){
   Require ((Get-TaskXml) -ceq $script:BaselineXml) 'Original supervised task changed during bridge staging.'
   Require ((Get-ListenerPID 8790) -eq $script:AuthPID -and
     (Get-ListenerPID 8788) -eq $script:RelayPID) 'Service process identity changed during stage.'
-  $null=& $script:Postcheck
+  Invoke-PinnedPostcheck -Path $script:Postcheck
   Write-Output 'BRIDGE PROTECTED STAGE VERIFIED: original task and Auth0 relay untouched; source and rollback protected.'
   return
 }
