@@ -45,9 +45,19 @@ No paid account creation, signing request or public release is automatic.
 
 1. Produce the tested Windows x64 package from an exact source commit through
    `.github/workflows/four-device-mesh-bootstrap.yml`. Its Action artifact is
-   explicitly an **unsigned pilot** and should not be advertised as safe to
+   explicitly an **unsigned pilot** (manifest
+   `signed_package=false`, `distribution_trust=unsigned_pilot_artifact`) and should not be advertised as safe to
    launch on a Smart App Control-enforced computer.
-2. Have the approved signing provider sign each Tetherplane-authored payload,
+2. For SignPath, import the reviewed artifact configuration
+   `packaging/windows/signpath-mesh-artifact.xml` into the approved project.
+   Its ZIP rules use supported `pe-file` and `powershell-file` Authenticode
+   signing for exactly the nine first-party payloads. SignPath open-source
+   signing requires GitHub-hosted build provenance, origin verification and
+   approval. The GitHub Actions artifact is a wrapper around the Windows ZIP:
+   the SignPath signing request must use the **inner** Windows ZIP (or a
+   workflow artifact assembled with exactly that ZIP's contents), not
+   accidentally sign only the wrapper archive.
+3. Have the approved signing provider sign each Tetherplane-authored payload,
    preserving its relative location within the staged folder:
    `bin/tetherd.exe`, `Join-Tetherplane-Mesh.ps1`,
    `Inspect-Tetherplane-Mesh.ps1`, `Uninstall-Tetherplane-Mesh.ps1`,
@@ -57,7 +67,7 @@ No paid account creation, signing request or public release is automatic.
    dynamically downloaded code or user scripts with the project's identity.
    The provider must attest verified build provenance, not simply accept an
    arbitrary unsigned ZIP.
-3. On an authorized Windows signing/release runner, finalize **after** all
+4. On an authorized Windows signing/release runner, finalize **after** all
    signatures are applied:
 
    ```powershell
@@ -72,7 +82,7 @@ No paid account creation, signing request or public release is automatic.
    copying. It then recomputes hashes *after signing*, marks the copied
    manifest as signed, removes only the two downloaded batch launchers,
    re-verifies the package and emits a ZIP plus SHA-256 checksum file.
-4. The independent read-only gate for the resulting folder is:
+5. The independent read-only gate for the resulting folder is:
 
    ```powershell
    .\scripts\verify-windows-mesh-signatures.ps1 `
