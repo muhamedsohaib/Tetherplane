@@ -6,6 +6,7 @@ param(
     [switch]$Force,
     [switch]$IncludeRelay,
     [switch]$InstallScheduledTask,
+    [string]$ScheduledTaskName = "Tetherplane Agent",
     [string]$AgentArgumentsFile
 )
 
@@ -68,7 +69,31 @@ if ($InstallScheduledTask) {
     }
     $agentArgs | ConvertTo-Json -Depth 4 | Set-Content -LiteralPath (Join-Path $configDir "agent-args.json") -Encoding UTF8
 
-    $taskName = "Tetherplane Agent"
+    if ($ScheduledTaskName -cnotmatch '^Tetherplane (Agent|Mesh (Leno|RTX|Surface|Vaulter))    $action = New-ScheduledTaskAction -Execute "powershell.exe" -Argument ('-NoProfile -NonInteractive -WindowStyle Hidden -ExecutionPolicy Bypass -File "' + (Join-Path $install "launch\tetherplane-agent.ps1") + '"')
+    $trigger = New-ScheduledTaskTrigger -AtLogOn
+    $existingTask = Get-ScheduledTask -TaskName $taskName -ErrorAction SilentlyContinue
+    if ($existingTask -and -not $Force) {
+        throw "scheduled task already exists: $taskName"
+    }
+    if ($existingTask) {
+        Unregister-ScheduledTask -TaskName $taskName -Confirm:$false
+    }
+    Register-ScheduledTask -TaskName $taskName -Action $action -Trigger $trigger -RunLevel Limited -Force | Out-Null
+}
+
+$receipt = [ordered]@{
+    install_prefix = $install
+    state_dir = $state
+    state_created_by_installer = (-not $stateExisted)
+    scheduled_task = $taskName
+}
+$receipt | ConvertTo-Json -Depth 4 | Set-Content -LiteralPath (Join-Path $configDir "install.json") -Encoding UTF8
+
+Write-Output "TETHERPLANE_INSTALL_OK $install"
+) {
+        throw "unrecognized Tetherplane scheduled task identity"
+    }
+    $taskName = $ScheduledTaskName
     $action = New-ScheduledTaskAction -Execute "powershell.exe" -Argument ('-NoProfile -NonInteractive -WindowStyle Hidden -ExecutionPolicy Bypass -File "' + (Join-Path $install "launch\tetherplane-agent.ps1") + '"')
     $trigger = New-ScheduledTaskTrigger -AtLogOn
     $existingTask = Get-ScheduledTask -TaskName $taskName -ErrorAction SilentlyContinue
