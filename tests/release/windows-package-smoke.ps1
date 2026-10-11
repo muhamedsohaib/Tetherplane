@@ -40,6 +40,8 @@ try {
         "install-windows.ps1",
         "install-model-worker-windows.ps1",
         "uninstall-windows.ps1",
+        "Join-Tetherplane-Mesh.ps1",
+        "Join-Tetherplane-Mesh.cmd",
         "manifest.json"
     )) {
         if (-not (Test-Path -LiteralPath (Join-Path $stage $relative))) {
@@ -51,6 +53,12 @@ try {
     & node -e "JSON.parse(require('fs').readFileSync(process.argv[1], 'utf8'));" $manifestPath
     if ($LASTEXITCODE -ne 0) {
         throw "packaged manifest.json is not directly parseable UTF-8 JSON"
+    }
+
+    $manifest=Get-Content -LiteralPath $manifestPath -Raw|ConvertFrom-Json
+    if([string]$manifest.mesh_join_sha256 -cne (Get-FileHash -LiteralPath (Join-Path $stage "Join-Tetherplane-Mesh.ps1") -Algorithm SHA256).Hash -or
+       [string]$manifest.tetherd_sha256 -cne (Get-FileHash -LiteralPath (Join-Path $stage "bin\tetherd.exe") -Algorithm SHA256).Hash){
+        throw "mesh package hash manifest mismatch"
     }
 
     $stagedInstallScript = Get-Content -LiteralPath (Join-Path $stage "install-windows.ps1") -Raw

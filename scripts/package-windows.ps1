@@ -74,6 +74,8 @@ Copy-Item -LiteralPath (Join-Path $repo "packaging\windows\tetherplane-agent.ps1
 Copy-Item -LiteralPath (Join-Path $repo "scripts\install-windows.ps1") -Destination (Join-Path $output "install-windows.ps1")
 Copy-Item -LiteralPath (Join-Path $repo "scripts\install-model-worker-windows.ps1") -Destination (Join-Path $output "install-model-worker-windows.ps1")
 Copy-Item -LiteralPath (Join-Path $repo "scripts\uninstall-windows.ps1") -Destination (Join-Path $output "uninstall-windows.ps1")
+Copy-Item -LiteralPath (Join-Path $repo "packaging\windows\Join-Tetherplane-Mesh.ps1") -Destination (Join-Path $output "Join-Tetherplane-Mesh.ps1")
+Copy-Item -LiteralPath (Join-Path $repo "packaging\windows\Join-Tetherplane-Mesh.cmd") -Destination (Join-Path $output "Join-Tetherplane-Mesh.cmd")
 
 foreach ($doc in @("README.md","SECURITY.md","CONTRIBUTING.md","LICENSE-MIT","LICENSE-APACHE")) {
     $source = Join-Path $repo $doc
@@ -94,6 +96,8 @@ $manifest = [ordered]@{
     name = "Tetherplane"
     version = "0.1.0"
     source_commit = $commit
+    mesh_join_sha256 = (Get-FileHash -LiteralPath (Join-Path $output "Join-Tetherplane-Mesh.ps1") -Algorithm SHA256).Hash
+    tetherd_sha256 = (Get-FileHash -LiteralPath (Join-Path $output "bin\tetherd.exe") -Algorithm SHA256).Hash
     platform = "windows"
     architecture = "x64"
     node_runtime_required = $true
