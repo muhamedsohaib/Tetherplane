@@ -40,6 +40,7 @@ try {
         "install-windows.ps1",
         "install-model-worker-windows.ps1",
         "uninstall-windows.ps1",
+        "Uninstall-Tetherplane-Mesh.ps1",
         "Join-Tetherplane-Mesh.ps1",
         "Join-Tetherplane-Mesh.cmd",
         "Inspect-Tetherplane-Mesh.ps1",
@@ -64,6 +65,15 @@ try {
     }
     if([string]$manifest.mesh_inspect_sha256 -cne (Get-FileHash -LiteralPath (Join-Path $stage "Inspect-Tetherplane-Mesh.ps1") -Algorithm SHA256).Hash){
         throw "read-only inspector hash manifest mismatch"
+    }
+
+    foreach ($check in @(
+        @{ File = 'Uninstall-Tetherplane-Mesh.ps1'; Digest = [string]$manifest.mesh_uninstall_sha256 },
+        @{ File = 'install-windows.ps1'; Digest = [string]$manifest.windows_installer_sha256 }
+    )) {
+        if ($check.Digest -cne (Get-FileHash -LiteralPath (Join-Path $stage $check.File) -Algorithm SHA256).Hash) {
+            throw "mesh package integrity mismatch: $($check.File)"
+        }
     }
 
     $stagedInstallScript = Get-Content -LiteralPath (Join-Path $stage "install-windows.ps1") -Raw
