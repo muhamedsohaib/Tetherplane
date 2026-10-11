@@ -112,7 +112,13 @@ New-Item -ItemType Directory -Force -Path $configDir | Out-Null
 
 if ($InstallScheduledTask) {
     $agentArgs | ConvertTo-Json -Depth 4 | Set-Content -LiteralPath (Join-Path $configDir "agent-args.json") -Encoding UTF8
-    $action = New-ScheduledTaskAction -Execute "powershell.exe" -Argument ('-NoProfile -NonInteractive -WindowStyle Hidden -ExecutionPolicy Bypass -File "' + (Join-Path $install "launch\tetherplane-agent.ps1") + '"')
+    $taskPowerShellArgs = '-NoProfile -NonInteractive -WindowStyle Hidden'
+    if (-not $meshTaskInstall) {
+        # Preserve the legacy task contract; signed mesh agents never need an
+        # execution-policy override.
+        $taskPowerShellArgs += ' -ExecutionPolicy Bypass'
+    }
+    $action = New-ScheduledTaskAction -Execute "powershell.exe" -Argument ($taskPowerShellArgs + ' -File "' + (Join-Path $install "launch\tetherplane-agent.ps1") + '"')
     $trigger = New-ScheduledTaskTrigger -AtLogOn
     if ($existingTask) {
         Unregister-ScheduledTask -TaskPath '\' -TaskName $taskName -Confirm:$false
