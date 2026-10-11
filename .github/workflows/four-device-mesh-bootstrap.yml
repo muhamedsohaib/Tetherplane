@@ -1,0 +1,19 @@
+name: Four-device mesh bootstrap contract
+
+on:
+  push:
+    branches:
+      - feature/four-device-mesh-rollout-20261011
+  workflow_dispatch:
+
+jobs:
+  windows-bootstrap:
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Mesh bootstrap contract Windows PowerShell 5.1
+        shell: powershell
+        run: ./tests/release/windows-mesh-join-contract.ps1
+      - name: Mesh bootstrap contract PowerShell 7
+        shell: pwsh
+        run: ./tests/release/windows-mesh-join-contract.ps1
