@@ -57,7 +57,7 @@ function Invoke-MeshUninstall {
   if($null -ne $task){
     $actions=@($task.Actions)
     $expectedLaunch=Join-Path $install 'launch\tetherplane-agent.ps1'
-    $expectedArgs='-NoProfile -NonInteractive -WindowStyle Hidden -ExecutionPolicy Bypass -File "'+$expectedLaunch+'"'
+    $expectedArgs='-NoProfile -NonInteractive -WindowStyle Hidden -File "'+$expectedLaunch+'"'
     if($actions.Count -ne 1 -or
        [string]$actions[0].Execute -ine 'powershell.exe' -or
        [string]$actions[0].Arguments -cne $expectedArgs){
