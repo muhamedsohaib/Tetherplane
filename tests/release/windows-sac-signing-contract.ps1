@@ -16,6 +16,15 @@ foreach($file in @($verify,$finalize)){
 }
 $verifierText=[IO.File]::ReadAllText($verify)
 $finalizerText=[IO.File]::ReadAllText($finalize)
+$unsignedPackagerText=[IO.File]::ReadAllText((Join-Path $repo 'scripts\package-windows.ps1'))
+if(-not $unsignedPackagerText.Contains('signed_package = $false') -or
+   -not $unsignedPackagerText.Contains('distribution_trust = "unsigned_pilot_artifact"')){
+  throw 'RED: ordinary package must explicitly identify unsigned pilot status'
+}
+if(-not $verifierText.Contains('distribution_trust') -or
+   -not $finalizerText.Contains('distribution_trust')){
+  throw 'RED: signed distribution requires explicit publisher-trust provenance'
+}
 foreach($required in @('Get-AuthenticodeSignature','Valid','manifest.json','tetherd.exe','Join-Tetherplane-Mesh.ps1','Inspect-Tetherplane-Mesh.ps1','signed_package')){
   if(-not $verifierText.Contains($required)){throw "RED: missing signing-verification contract $required"}
 }
