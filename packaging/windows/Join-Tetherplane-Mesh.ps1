@@ -15,6 +15,10 @@ param(
 $ErrorActionPreference='Stop'
 Set-StrictMode -Version Latest
 
+function Get-MeshTaskName([string]$Candidate){
+  Assert-MeshDeviceId $Candidate
+  return ('Tetherplane Mesh '+$Candidate)
+}
 function Assert-MeshDeviceId([string]$Candidate){
   if($Candidate -cnotin @('Leno','RTX','Surface','Vaulter')){
     throw 'Device ID must be exactly one of Leno, RTX, Surface or Vaulter.'
@@ -111,8 +115,9 @@ function Assert-MeshSafeInstall([string]$Bundle,[string]$Install,[string]$State)
       throw 'Existing mesh installation or state detected. Refusing to overwrite or regenerate device identity.'
     }
   }
-  if(Get-ScheduledTask -TaskPath '\' -TaskName 'Tetherplane Agent' -ErrorAction SilentlyContinue){
-    throw 'Existing Tetherplane Agent task detected; refusing to replace it.'
+  $meshTask=Get-MeshTaskName $DeviceId
+  if(Get-ScheduledTask -TaskPath '\' -TaskName $meshTask -ErrorAction SilentlyContinue){
+    throw 'Existing device-scoped Tetherplane Mesh task detected; refusing to replace it.'
   }
 }
 function Start-MeshPairing([string]$Origin,[string]$Candidate,[string]$CredentialHash){
@@ -212,14 +217,15 @@ function Join-MeshDevice {
     '--principal-profile',$profile,'--state-dir',$state)
   [IO.File]::WriteAllText($argsFile,($arguments|ConvertTo-Json),$encoding)
   Set-MeshPrivateAcl $argsFile
+  $taskName=Get-MeshTaskName $id
   $installer=Join-Path $bundle 'install-windows.ps1'
   $hostPs=Join-Path $env:SystemRoot 'System32\WindowsPowerShell\v1.0\powershell.exe'
-  & $hostPs -NoProfile -NonInteractive -ExecutionPolicy Bypass -File $installer -PackagePath $bundle -InstallPrefix $install -StateDir $state -InstallScheduledTask -AgentArgumentsFile $argsFile
+  & $hostPs -NoProfile -NonInteractive -ExecutionPolicy Bypass -File $installer -PackagePath $bundle -InstallPrefix $install -StateDir $state -InstallScheduledTask -ScheduledTaskName $taskName -AgentArgumentsFile $argsFile
   if($LASTEXITCODE -ne 0){
     throw 'Installer failed; preserve the protected state and inspect before retry.'
   }
-  Start-ScheduledTask -TaskPath '\' -TaskName 'Tetherplane Agent' -ErrorAction Stop
-  $task=Get-ScheduledTask -TaskPath '\' -TaskName 'Tetherplane Agent' -ErrorAction Stop
+  Start-ScheduledTask -TaskPath '\' -TaskName $taskName -ErrorAction Stop
+  $task=Get-ScheduledTask -TaskPath '\' -TaskName $taskName -ErrorAction Stop
   if($task.State -ne 'Running'){throw 'Background agent task did not reach Running.'}
   $manifest=Get-Content -LiteralPath (Join-Path $bundle 'manifest.json') -Raw | ConvertFrom-Json
   Write-Output ('MESH DEVICE INSTALLED: '+$id)
