@@ -16,10 +16,14 @@ jobs:
       - uses: actions/checkout@v4
       - name: Mesh bootstrap contract Windows PowerShell 5.1
         shell: powershell
-        run: ./tests/release/windows-mesh-join-contract.ps1
+        run: |
+          ./tests/release/windows-mesh-join-contract.ps1
+          ./tests/release/windows-mesh-preflight-contract.ps1
       - name: Mesh bootstrap contract PowerShell 7
         shell: pwsh
-        run: ./tests/release/windows-mesh-join-contract.ps1
+        run: |
+          ./tests/release/windows-mesh-join-contract.ps1
+          ./tests/release/windows-mesh-preflight-contract.ps1
 
   windows-bundle:
     needs: windows-bootstrap
@@ -50,11 +54,14 @@ jobs:
         shell: pwsh
         run: |
           ./tests/release/windows-mesh-join-contract.ps1
+          ./tests/release/windows-mesh-preflight-contract.ps1
           ./tests/release/windows-package-smoke.ps1
           $bundle = 'dist/Tetherplane-FourDevice-Mesh-Windows-x64'
           $manifest = Get-Content -LiteralPath (Join-Path $bundle 'manifest.json') -Raw | ConvertFrom-Json
           if ($manifest.source_commit -cne $env:GITHUB_SHA) { throw 'Package source commit mismatch' }
           if (-not(Test-Path (Join-Path $bundle 'Join-Tetherplane-Mesh.cmd'))) { throw 'One-click launcher missing' }
+          if (-not(Test-Path (Join-Path $bundle 'Inspect-Tetherplane-Mesh.cmd'))) { throw 'Read-only inspection launcher missing' }
+          if ($manifest.mesh_inspect_sha256 -cne (Get-FileHash -LiteralPath (Join-Path $bundle 'Inspect-Tetherplane-Mesh.ps1') -Algorithm SHA256).Hash) { throw 'Read-only inspection digest mismatch' }
       - name: Archive single installer for all four Windows devices
         shell: pwsh
         run: |

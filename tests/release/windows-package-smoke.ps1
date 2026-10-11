@@ -42,6 +42,8 @@ try {
         "uninstall-windows.ps1",
         "Join-Tetherplane-Mesh.ps1",
         "Join-Tetherplane-Mesh.cmd",
+        "Inspect-Tetherplane-Mesh.ps1",
+        "Inspect-Tetherplane-Mesh.cmd",
         "manifest.json"
     )) {
         if (-not (Test-Path -LiteralPath (Join-Path $stage $relative))) {
@@ -59,6 +61,9 @@ try {
     if([string]$manifest.mesh_join_sha256 -cne (Get-FileHash -LiteralPath (Join-Path $stage "Join-Tetherplane-Mesh.ps1") -Algorithm SHA256).Hash -or
        [string]$manifest.tetherd_sha256 -cne (Get-FileHash -LiteralPath (Join-Path $stage "bin\tetherd.exe") -Algorithm SHA256).Hash){
         throw "mesh package hash manifest mismatch"
+    }
+    if([string]$manifest.mesh_inspect_sha256 -cne (Get-FileHash -LiteralPath (Join-Path $stage "Inspect-Tetherplane-Mesh.ps1") -Algorithm SHA256).Hash){
+        throw "read-only inspector hash manifest mismatch"
     }
 
     $stagedInstallScript = Get-Content -LiteralPath (Join-Path $stage "install-windows.ps1") -Raw
