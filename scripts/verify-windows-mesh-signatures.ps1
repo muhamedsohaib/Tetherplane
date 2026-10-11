@@ -73,6 +73,9 @@ function Assert-MeshSignedPackage([string]$Root) {
      $manifest.signed_package -ne $true){
     throw 'This is an unsigned package, not a trusted signed distribution.'
   }
+  if([string]$manifest.distribution_trust -cne 'trusted_publisher_authenticode'){
+    throw 'Signed package must have independently checked publisher-trust provenance.'
+  }
   if([string]$manifest.platform -cne 'windows' -or
      [string]$manifest.architecture -cne 'x64' -or
      [string]$manifest.source_commit -cnotmatch '^[a-f0-9]{40}$'){
