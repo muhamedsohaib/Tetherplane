@@ -31,6 +31,34 @@ foreach($unsafe in @('-ExecutionPolicy Bypass','Unblock-File','Set-MpPreference'
   }
 }
 
+$signpath=Join-Path $repo 'packaging\windows\signpath-mesh-artifact.xml'
+if(-not(Test-Path -LiteralPath $signpath -PathType Leaf)){
+  throw 'RED: reviewed SignPath Windows artifact configuration is missing'
+}
+[xml]$signPathXml=Get-Content -LiteralPath $signpath -Raw
+if($signPathXml.DocumentElement.LocalName -cne 'artifact-configuration' -or
+   $signPathXml.DocumentElement.NamespaceURI -cne 'http://signpath.io/artifact-configuration/v1'){
+  throw 'Incorrect SignPath artifact-configuration XML identity'
+}
+$zip=@($signPathXml.SelectNodes("//*[local-name()='zip-file']"))
+if($zip.Count -ne 1){throw 'SignPath signing must receive exactly one ZIP artifact root'}
+$rules=@($signPathXml.SelectNodes("//*[local-name()='pe-file' or local-name()='powershell-file']"))
+$actual=@($rules|ForEach-Object { $_.GetAttribute('path').Replace('/','\') }|Sort-Object)
+$expected=@(
+ 'bin\tetherd.exe','Join-Tetherplane-Mesh.ps1','Inspect-Tetherplane-Mesh.ps1',
+ 'Uninstall-Tetherplane-Mesh.ps1','install-windows.ps1','uninstall-windows.ps1',
+ 'install-model-worker-windows.ps1','launch\tetherplane-agent.ps1',
+ 'launch\tetherplane-mcp.ps1'
+)|Sort-Object
+if(($actual -join '|') -cne ($expected -join '|')){
+  throw 'SignPath config must sign exactly nine first-party files, not dependencies'
+}
+foreach($node in $rules){
+  if($null -eq $node.SelectSingleNode("*[local-name()='authenticode-sign']")){
+    throw 'SignPath code signing rule must use Authenticode'
+  }
+}
+
 $root=Join-Path ([IO.Path]::GetTempPath()) ('tetherplane-signed-contract-'+[guid]::NewGuid().ToString('N'))
 $package=Join-Path $root 'unsigned'
 $output=Join-Path $root 'signed'
