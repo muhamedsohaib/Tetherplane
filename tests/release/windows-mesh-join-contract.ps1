@@ -50,7 +50,42 @@ foreach($needle in @('-ScheduledTaskName $taskName','Get-MeshTaskName $id')){
 foreach($needle in @('[string]$ScheduledTaskName', '$taskName = $ScheduledTaskName')){
   if(-not $installer.Contains($needle)){throw "RED: Windows installer does not support a separate mesh task: $needle"}
 }
-if(-not $uninstaller.Contains('$isMeshSideBySide')){
-  throw 'RED: mesh uninstall must not remove the legacy model-worker startup registration'
+# A mesh install must use a separate cleanup entrypoint. The ordinary Windows
+# uninstaller manages the legacy model-worker registration and is not safe to
+# reuse for a side-by-side mesh installation.
+$meshCleanupPath=Join-Path $repo 'packaging\windows\Uninstall-Tetherplane-Mesh.ps1'
+if(-not(Test-Path -LiteralPath $meshCleanupPath -PathType Leaf)){
+  throw 'RED: side-by-side mesh cleanup entrypoint is missing'
+}
+$cleanupText=[IO.File]::ReadAllText($meshCleanupPath)
+$cleanupTokens=$null;$cleanupErrors=$null
+$cleanupAst=[Management.Automation.Language.Parser]::ParseFile($meshCleanupPath,[ref]$cleanupTokens,[ref]$cleanupErrors)
+if(@($cleanupErrors).Count -gt 0){throw 'Mesh cleanup script syntax invalid'}
+foreach($forbidden in @('TetherplaneModelWorker','model-worker-supervisor','Remove-ItemProperty','Stop-Process')){
+  if($cleanupText.Contains($forbidden)){throw "Mesh cleanup references legacy/global runtime: $forbidden"}
+}
+foreach($needle in @('Uninstall-Tetherplane-Mesh.ps1','$meshTaskInstall','Join-Path $install "uninstall-windows.ps1"')){
+  if(-not $installer.Contains($needle)){throw "RED: installer must copy isolated cleanup into mesh install: $needle"}
+}
+if(-not $script.Contains('Assert-MeshSafeInstall $bundle $install $state $id')){
+  throw 'RED: mesh join must preflight the selected logical device ID'
+}
+$receiptHelper=$cleanupAst.Find({param($n) $n -is [Management.Automation.Language.FunctionDefinitionAst] -and $n.Name -ceq 'Assert-MeshUninstallReceipt'},$true)
+if($null -eq $receiptHelper){throw 'RED: mesh cleanup receipt validation is missing'}
+Invoke-Expression $receiptHelper.Extent.Text
+$installPath=Join-Path $env:LOCALAPPDATA 'Programs\Tetherplane-Mesh'
+$statePath=Join-Path $env:LOCALAPPDATA 'Tetherplane\mesh\Leno'
+$valid=[pscustomobject]@{install_prefix=$installPath;state_dir=$statePath;scheduled_task='Tetherplane Mesh Leno'}
+if((Assert-MeshUninstallReceipt $valid $installPath) -cne 'Tetherplane Mesh Leno'){
+  throw 'Mesh cleanup did not accept a matching, device-owned receipt'
+}
+foreach($bad in @(
+  [pscustomobject]@{install_prefix=$installPath;state_dir=$statePath;scheduled_task='Tetherplane Agent'},
+  [pscustomobject]@{install_prefix=$installPath;state_dir=$statePath;scheduled_task='Tetherplane Mesh Surface'},
+  [pscustomobject]@{install_prefix=(Join-Path $env:LOCALAPPDATA 'Programs\Tetherplane');state_dir=$statePath;scheduled_task='Tetherplane Mesh Leno'}
+)){
+  $denied=$false
+  try{Assert-MeshUninstallReceipt $bad $installPath|Out-Null}catch{$denied=$true}
+  if(-not $denied){throw 'Mesh cleanup allowed a legacy, mismatched or outside-prefix receipt'}
 }
 Write-Output 'FOUR-DEVICE MESH BOOTSTRAP SECURITY CONTRACT PASS'
