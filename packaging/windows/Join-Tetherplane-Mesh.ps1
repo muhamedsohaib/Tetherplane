@@ -91,7 +91,7 @@ function Set-MeshPrivateAcl([string]$Path,[switch]$Directory){
 }
 function Assert-MeshSafeInstall([string]$Bundle,[string]$Install,[string]$State,[string]$Candidate){
   Assert-MeshDeviceId $Candidate
-  foreach($file in @('install-windows.ps1','manifest.json','bin\tetherd.exe','Join-Tetherplane-Mesh.ps1')){
+  foreach($file in @('install-windows.ps1','Uninstall-Tetherplane-Mesh.ps1','manifest.json','bin\tetherd.exe','Join-Tetherplane-Mesh.ps1')){
     $path=Join-Path $Bundle $file
     if(-not(Test-Path -LiteralPath $path -PathType Leaf)){throw 'Incomplete reviewed Windows package.'}
     Assert-MeshOrdinaryPath $path -RequireExisting
@@ -103,6 +103,8 @@ function Assert-MeshSafeInstall([string]$Bundle,[string]$Install,[string]$State,
   }
   foreach($pin in @(
     @{Path=(Join-Path $Bundle 'Join-Tetherplane-Mesh.ps1');Hash=[string]$manifest.mesh_join_sha256},
+    @{Path=(Join-Path $Bundle 'Uninstall-Tetherplane-Mesh.ps1');Hash=[string]$manifest.mesh_uninstall_sha256},
+    @{Path=(Join-Path $Bundle 'install-windows.ps1');Hash=[string]$manifest.windows_installer_sha256},
     @{Path=(Join-Path $Bundle 'bin\tetherd.exe');Hash=[string]$manifest.tetherd_sha256}
   )){
     if($pin.Hash -notmatch '^[A-Fa-f0-9]{64}$' -or
