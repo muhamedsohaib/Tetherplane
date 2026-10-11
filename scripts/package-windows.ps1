@@ -106,6 +106,8 @@ $manifest = [ordered]@{
     tetherd_sha256 = (Get-FileHash -LiteralPath (Join-Path $output "bin\tetherd.exe") -Algorithm SHA256).Hash
     platform = "windows"
     architecture = "x64"
+    signed_package = $false
+    distribution_trust = "unsigned_pilot_artifact"
     node_runtime_required = $true
     default_mcp_tools = @("device","files","process","browser","desktop","batch")
 }
