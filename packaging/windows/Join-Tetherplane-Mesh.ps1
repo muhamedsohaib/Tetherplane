@@ -223,7 +223,7 @@ function Join-MeshDevice {
   $taskName=Get-MeshTaskName $id
   $installer=Join-Path $bundle 'install-windows.ps1'
   $hostPs=Join-Path $env:SystemRoot 'System32\WindowsPowerShell\v1.0\powershell.exe'
-  & $hostPs -NoProfile -NonInteractive -ExecutionPolicy Bypass -File $installer -PackagePath $bundle -InstallPrefix $install -StateDir $state -InstallScheduledTask -ScheduledTaskName $taskName -AgentArgumentsFile $argsFile
+  & $hostPs -NoProfile -NonInteractive -File $installer -PackagePath $bundle -InstallPrefix $install -StateDir $state -InstallScheduledTask -ScheduledTaskName $taskName -AgentArgumentsFile $argsFile
   if($LASTEXITCODE -ne 0){
     throw 'Installer failed; preserve the protected state and inspect before retry.'
   }
