@@ -18,12 +18,15 @@ foreach($blocked in @('Stop-ScheduledTask','Stop-Process','Unregister-ScheduledT
   if($script.Contains($blocked)){throw "Forbidden bootstrap operation: $blocked"}
 }
 if(-not $cmd.Contains('Join-Tetherplane-Mesh.ps1') -or -not $cmd.Contains('%~dp0')){throw 'One-click cmd entrypoint is not relative to extracted archive'}
-foreach($name in @('Assert-MeshDeviceId','Get-MeshCredentialHash','Get-MeshPairingBody','Assert-MeshRelayEndpoints')){
+foreach($name in @('Assert-MeshDeviceId','Get-MeshTaskName','Get-MeshCredentialHash','Get-MeshPairingBody','Assert-MeshRelayEndpoints')){
   $f=$ast.Find({param($n)$n -is [Management.Automation.Language.FunctionDefinitionAst] -and $n.Name -ceq $name},$true)
   if($null -eq $f){throw "Missing testable helper $name"}
   Invoke-Expression $f.Extent.Text
 }
-foreach($id in @('Leno','RTX','Surface','Vaulter')){Assert-MeshDeviceId $id}
+foreach($id in @('Leno','RTX','Surface','Vaulter')){
+  Assert-MeshDeviceId $id
+  if((Get-MeshTaskName $id) -cne ('Tetherplane Mesh '+$id)){throw 'Mesh task name must be device-scoped'}
+}
 foreach($id in @('','Unknown','Leno;Exit','../../Surface','leno ')){
   $rejected=$false
   try{Assert-MeshDeviceId $id}catch{$rejected=$true}
@@ -38,5 +41,16 @@ foreach($origin in @('http://vaulter.tailf65eba.ts.net','https://example.org','h
   $rejected=$false
   try{Assert-MeshRelayEndpoints $origin 'wss://vaulter.tailf65eba.ts.net/device'}catch{$rejected=$true}
   if(-not $rejected){throw "Untrusted relay origin accepted"}
+}
+$installer=[IO.File]::ReadAllText((Join-Path $repo 'scripts\install-windows.ps1'))
+$uninstaller=[IO.File]::ReadAllText((Join-Path $repo 'scripts\uninstall-windows.ps1'))
+foreach($needle in @('-ScheduledTaskName $taskName','Get-MeshTaskName $id')){
+  if(-not $script.Contains($needle)){throw "RED: mesh join lacks side-by-side scheduled task protection: $needle"}
+}
+foreach($needle in @('[string]$ScheduledTaskName', '$taskName = $ScheduledTaskName')){
+  if(-not $installer.Contains($needle)){throw "RED: Windows installer does not support a separate mesh task: $needle"}
+}
+if(-not $uninstaller.Contains('$isMeshSideBySide')){
+  throw 'RED: mesh uninstall must not remove the legacy model-worker startup registration'
 }
 Write-Output 'FOUR-DEVICE MESH BOOTSTRAP SECURITY CONTRACT PASS'
