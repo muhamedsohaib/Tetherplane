@@ -20,12 +20,14 @@ jobs:
           ./tests/release/windows-mesh-join-contract.ps1
           ./tests/release/windows-mesh-preflight-contract.ps1
           ./tests/release/windows-mesh-isolation-contract.ps1
+          ./tests/release/windows-sac-signing-contract.ps1
       - name: Mesh bootstrap contract PowerShell 7
         shell: pwsh
         run: |
           ./tests/release/windows-mesh-join-contract.ps1
           ./tests/release/windows-mesh-preflight-contract.ps1
           ./tests/release/windows-mesh-isolation-contract.ps1
+          ./tests/release/windows-sac-signing-contract.ps1
 
   windows-bundle:
     needs: windows-bootstrap
@@ -58,6 +60,7 @@ jobs:
           ./tests/release/windows-mesh-join-contract.ps1
           ./tests/release/windows-mesh-preflight-contract.ps1
           ./tests/release/windows-mesh-isolation-contract.ps1
+          ./tests/release/windows-sac-signing-contract.ps1
           ./tests/release/windows-package-smoke.ps1
           $bundle = 'dist/Tetherplane-FourDevice-Mesh-Windows-x64'
           $manifest = Get-Content -LiteralPath (Join-Path $bundle 'manifest.json') -Raw | ConvertFrom-Json
