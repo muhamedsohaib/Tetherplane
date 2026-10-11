@@ -19,8 +19,11 @@ $finalizerText=[IO.File]::ReadAllText($finalize)
 foreach($required in @('Get-AuthenticodeSignature','Valid','manifest.json','tetherd.exe','Join-Tetherplane-Mesh.ps1','Inspect-Tetherplane-Mesh.ps1','signed_package')){
   if(-not $verifierText.Contains($required)){throw "RED: missing signing-verification contract $required"}
 }
-foreach($required in @('verify-windows-mesh-signatures.ps1','mesh_join_sha256','mesh_inspect_sha256','mesh_uninstall_sha256','windows_installer_sha256','tetherd_sha256')){
+foreach($required in @('verify-windows-mesh-signatures.ps1','Get-MeshSignedFiles','Assert-MeshSignedPayload','Assert-MeshSignedPackage','signed_package')){
   if(-not $finalizerText.Contains($required)){throw "RED: missing signed-package finalization contract $required"}
+}
+foreach($required in @('mesh_join_sha256','mesh_inspect_sha256','mesh_uninstall_sha256','windows_installer_sha256','tetherd_sha256')){
+  if(-not $verifierText.Contains($required)){throw "RED: required signed package hash pin missing: $required"}
 }
 foreach($unsafe in @('-ExecutionPolicy Bypass','Unblock-File','Set-MpPreference','Stop-ScheduledTask','Stop-Process')){
   if($verifierText.Contains($unsafe) -or $finalizerText.Contains($unsafe)){
