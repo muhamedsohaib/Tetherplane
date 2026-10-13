@@ -15,7 +15,7 @@ foreach($required in @(
   '5522BDE82C0750EA3223ABFCE6DCF965E2A36BEBAAD21754F8BA2F6F8F792DA8',
   'AreAccessRulesProtected','Get-FileHash','Get-NetTCPConnection',
   'Get-SupervisorOriginalAction','Assert-PrivateCheckpoint','Start-VerifiedOriginalRelayChild',
-  'Invoke-BoundedRelaySupervisor','ProcessStartInfo','WaitForExit',
+  'Invoke-BoundedRelaySupervisor',
   'Mutex','MaxRestarts','ResetAfterSeconds','Sleep','ShouldStop',
   'NO CHANGES MADE','RELAY SUPERVISOR PREFLIGHT PASS'
 )){

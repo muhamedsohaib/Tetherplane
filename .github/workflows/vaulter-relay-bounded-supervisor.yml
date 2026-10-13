@@ -6,6 +6,8 @@ on:
       - "scripts/vaulter-relay-supervision-preflight.ps1"
       - "tests/release/vaulter-relay-supervision-preflight-contract.ps1"
       - "tests/release/vaulter-relay-bounded-supervisor-contract.ps1"
+      - "tests/release/vaulter-relay-child-lifetime-contract.ps1"
+      - "tests/release/vaulter-relay-native-launch-contract.ps1"
       - "scripts/vaulter-relay-supervisor-handover.ps1"
       - "tests/release/vaulter-relay-supervisor-handover-contract.ps1"
       - "scripts/vaulter-relay-supervised-rehearsal.ps1"
@@ -20,6 +22,8 @@ on:
       - "scripts/vaulter-relay-supervision-preflight.ps1"
       - "tests/release/vaulter-relay-supervision-preflight-contract.ps1"
       - "tests/release/vaulter-relay-bounded-supervisor-contract.ps1"
+      - "tests/release/vaulter-relay-child-lifetime-contract.ps1"
+      - "tests/release/vaulter-relay-native-launch-contract.ps1"
       - "scripts/vaulter-relay-supervisor-handover.ps1"
       - "tests/release/vaulter-relay-supervisor-handover-contract.ps1"
       - "scripts/vaulter-relay-supervised-rehearsal.ps1"
@@ -31,6 +35,7 @@ on:
 jobs:
   windows-contract:
     runs-on: windows-latest
+    timeout-minutes: 10
     steps:
       - uses: actions/checkout@v4
       - name: Read-only supervision preflight contract (Windows PowerShell 5.1)
@@ -69,3 +74,16 @@ jobs:
       - name: Bridge helper pre-source integrity (PowerShell 7)
         shell: pwsh
         run: ./tests/release/vaulter-relay-bridge-helper-integrity-contract.ps1
+
+      - name: Owned child lifetime (Windows PowerShell 5.1)
+        shell: powershell
+        run: ./tests/release/vaulter-relay-child-lifetime-contract.ps1
+      - name: Owned child lifetime (PowerShell 7)
+        shell: pwsh
+        run: ./tests/release/vaulter-relay-child-lifetime-contract.ps1
+      - name: Native child launch contract (Windows PowerShell 5.1)
+        shell: powershell
+        run: ./tests/release/vaulter-relay-native-launch-contract.ps1
+      - name: Native child launch contract (PowerShell 7)
+        shell: pwsh
+        run: ./tests/release/vaulter-relay-native-launch-contract.ps1

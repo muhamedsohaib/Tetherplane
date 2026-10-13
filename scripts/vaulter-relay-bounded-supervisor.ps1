@@ -112,29 +112,145 @@ function Get-SupervisorOriginalAction {
 function Start-VerifiedOriginalRelayChild {
   [CmdletBinding()]
   param([Parameter(Mandatory=$true)]$Action)
-  # No shell interpolation, no copied secrets, no reconstructed CLI flags.
-  $psi=New-Object System.Diagnostics.ProcessStartInfo
-  $psi.FileName=Resolve-VerifiedPowerShellExecutable -RegisteredExecutable ([string]$Action.Executable)
-  $psi.Arguments=[string]$Action.Arguments
+  $executable=Resolve-VerifiedPowerShellExecutable -RegisteredExecutable ([string]$Action.Executable)
+  $working=$null
   if($null -ne $Action.PSObject.Properties['WorkingDirectory'] -and
       -not [string]::IsNullOrWhiteSpace([string]$Action.WorkingDirectory)){
-    $psi.WorkingDirectory=[string]$Action.WorkingDirectory
+    $working=[string]$Action.WorkingDirectory
   }
-  $psi.UseShellExecute=$false
-  $psi.CreateNoWindow=$true
-  $child=New-Object System.Diagnostics.Process
-  $child.StartInfo=$psi
-  $started=[DateTime]::UtcNow
-  try {
-    if(-not $child.Start()){throw 'Original task action did not start.'}
-    # Only the exactly spawned child is waited upon. No human process killed.
-    $child.WaitForExit()
-    return [pscustomobject]@{
-      ExitCode=[int]$child.ExitCode
-      DurationSeconds=[double]([DateTime]::UtcNow-$started).TotalSeconds
+  # An unnamed, non-inheritable job owns ONLY this newly created child tree.
+  # JOB_LIST assigns it atomically before any child instruction can execute;
+  # Start-Process then AssignProcessToJobObject would leave a crash race.
+  # Windows 10 / Server 2016 or newer is required. Failure never falls back
+  # to an uncontained launch. The protected supervisor remains a single file.
+  if($null -eq ('Tetherplane.RelayChildJobV1' -as [type])){
+    Add-Type -TypeDefinition @'
+using System;
+using System.ComponentModel;
+using System.Runtime.InteropServices;
+using System.Text;
+
+namespace Tetherplane {
+  public static class RelayChildJobV1 {
+    [StructLayout(LayoutKind.Sequential)]
+    struct BasicLimits {
+      public long ProcessTime, JobTime;
+      public uint Flags;
+      public UIntPtr MinWorkingSet, MaxWorkingSet;
+      public uint ActiveProcessLimit;
+      public UIntPtr Affinity;
+      public uint Priority, Scheduling;
     }
-  } finally {
-    $child.Dispose()
+    [StructLayout(LayoutKind.Sequential)]
+    struct IoCounters {
+      public ulong ReadOps, WriteOps, OtherOps, ReadBytes, WriteBytes, OtherBytes;
+    }
+    [StructLayout(LayoutKind.Sequential)]
+    struct ExtendedLimits {
+      public BasicLimits Basic;
+      public IoCounters Io;
+      public UIntPtr ProcessMemory, JobMemory, PeakProcessMemory, PeakJobMemory;
+    }
+    [StructLayout(LayoutKind.Sequential, CharSet=CharSet.Unicode)]
+    struct StartupInfo {
+      public uint Size;
+      public string Reserved, Desktop, Title;
+      public uint X, Y, XSize, YSize, XChars, YChars, Fill, Flags;
+      public ushort Show, ReservedSize;
+      public IntPtr ReservedBytes, StdIn, StdOut, StdErr;
+    }
+    [StructLayout(LayoutKind.Sequential)]
+    struct StartupInfoEx {
+      public StartupInfo Startup;
+      public IntPtr Attributes;
+    }
+    [StructLayout(LayoutKind.Sequential)]
+    struct ProcessInfo {
+      public IntPtr Process, Thread;
+      public uint ProcessId, ThreadId;
+    }
+    [DllImport("kernel32.dll", CharSet=CharSet.Unicode, SetLastError=true)]
+    static extern IntPtr CreateJobObjectW(IntPtr security, string name);
+    [DllImport("kernel32.dll", SetLastError=true)]
+    static extern bool SetInformationJobObject(IntPtr job, int kind,
+      ref ExtendedLimits limits, uint size);
+    [DllImport("kernel32.dll", SetLastError=true)]
+    static extern bool InitializeProcThreadAttributeList(IntPtr list,
+      int count, int flags, ref IntPtr size);
+    [DllImport("kernel32.dll", SetLastError=true)]
+    static extern bool UpdateProcThreadAttribute(IntPtr list, uint flags,
+      IntPtr attribute, IntPtr value, IntPtr size, IntPtr previous, IntPtr returned);
+    [DllImport("kernel32.dll")]
+    static extern void DeleteProcThreadAttributeList(IntPtr list);
+    [DllImport("kernel32.dll", CharSet=CharSet.Unicode, SetLastError=true)]
+    static extern bool CreateProcessW(string application, StringBuilder command,
+      IntPtr processSecurity, IntPtr threadSecurity, bool inheritHandles,
+      uint flags, IntPtr environment, string workingDirectory,
+      ref StartupInfoEx startup, out ProcessInfo process);
+    [DllImport("kernel32.dll", SetLastError=true)]
+    static extern uint WaitForSingleObject(IntPtr handle, uint timeout);
+    [DllImport("kernel32.dll", SetLastError=true)]
+    static extern bool GetExitCodeProcess(IntPtr process, out uint code);
+    [DllImport("kernel32.dll")]
+    static extern bool CloseHandle(IntPtr handle);
+    static Exception Failure(string step) {
+      // Never disclose argv, tokens, task XML or environment in an error.
+      return new InvalidOperationException("Owned relay child "+step+
+        " failed (Win32 "+Marshal.GetLastWin32Error()+").");
+    }
+    public static int Run(string executable, string arguments, string working) {
+      IntPtr job=IntPtr.Zero, list=IntPtr.Zero, jobValue=IntPtr.Zero;
+      bool initialized=false;
+      ProcessInfo process=new ProcessInfo();
+      try {
+        job=CreateJobObjectW(IntPtr.Zero, null);
+        if(job==IntPtr.Zero) throw Failure("job creation");
+        ExtendedLimits limits=new ExtendedLimits();
+        limits.Basic.Flags=0x2000; // JOB_OBJECT_LIMIT_KILL_ON_JOB_CLOSE
+        if(!SetInformationJobObject(job,9,ref limits,
+            (uint)Marshal.SizeOf(typeof(ExtendedLimits)))) throw Failure("job limits");
+        IntPtr bytes=IntPtr.Zero;
+        InitializeProcThreadAttributeList(IntPtr.Zero,1,0,ref bytes);
+        if(bytes==IntPtr.Zero) throw Failure("attribute sizing");
+        list=Marshal.AllocHGlobal(bytes);
+        if(!InitializeProcThreadAttributeList(list,1,0,ref bytes)) throw Failure("attribute initialization");
+        initialized=true;
+        jobValue=Marshal.AllocHGlobal(IntPtr.Size);
+        Marshal.WriteIntPtr(jobValue,job);
+        if(!UpdateProcThreadAttribute(list,0,new IntPtr(0x0002000D),
+            jobValue,new IntPtr(IntPtr.Size),IntPtr.Zero,IntPtr.Zero)) throw Failure("job attachment");
+        StartupInfoEx startup=new StartupInfoEx();
+        startup.Startup.Size=(uint)Marshal.SizeOf(typeof(StartupInfoEx));
+        startup.Attributes=list;
+        // Preserve the protected action's raw argument string verbatim.
+        StringBuilder command=new StringBuilder("\""+executable+"\" "+arguments);
+        if(!CreateProcessW(executable,command,IntPtr.Zero,IntPtr.Zero,false,
+            0x08080000,IntPtr.Zero,String.IsNullOrEmpty(working) ? null : working,ref startup,out process))
+          throw Failure("contained creation"); // NO_WINDOW | EXTENDED_STARTUPINFO_PRESENT
+        if(WaitForSingleObject(process.Process,0xFFFFFFFF)!=0) throw Failure("wait");
+        uint code;
+        if(!GetExitCodeProcess(process.Process,out code)) throw Failure("exit status");
+        return unchecked((int)code);
+      } finally {
+        // Closing the sole job handle also reaps descendants after launcher
+        // exit. Abrupt supervisor death makes the kernel close the same handle.
+        if(job!=IntPtr.Zero) CloseHandle(job);
+        if(process.Thread!=IntPtr.Zero) CloseHandle(process.Thread);
+        if(process.Process!=IntPtr.Zero) CloseHandle(process.Process);
+        if(initialized) DeleteProcThreadAttributeList(list);
+        if(list!=IntPtr.Zero) Marshal.FreeHGlobal(list);
+        if(jobValue!=IntPtr.Zero) Marshal.FreeHGlobal(jobValue);
+      }
+    }
+  }
+}
+'@
+  }
+  $watch=[Diagnostics.Stopwatch]::StartNew()
+  $exitCode=[Tetherplane.RelayChildJobV1]::Run($executable,[string]$Action.Arguments,$working)
+  return [pscustomobject]@{
+    ExitCode=[int]$exitCode
+    DurationSeconds=[double]$watch.Elapsed.TotalSeconds
   }
 }
 
