@@ -1,0 +1,49 @@
+# NON-OPERATIVE evidence only: do not modify licenses or publish software.
+name: Non-operative dependency license evidence
+
+on:
+  push:
+    branches:
+      - feature/license-protection-proposal-20261013
+    paths:
+      - scripts/audit_third_party_licenses.py
+      - tests/legal/test_registry_license_evidence.py
+      - .github/workflows/license-metadata-evidence.yml
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  inspect-public-metadata:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      - name: Verify license parser tests
+        run: python -m unittest discover -s tests/legal -p 'test_registry_license_evidence.py' -v
+      - name: Collect public registry license metadata
+        id: audit
+        continue-on-error: true
+        run: |
+          python scripts/audit_third_party_licenses.py \
+            --cargo-lock Cargo.lock \
+            --pnpm-lock pnpm-lock.yaml \
+            --output out/licensing-registry-evidence.json \
+            --fetch-metadata --workers 3
+      - name: Archive evidence even on network errors
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: licensing-registry-evidence
+          path: out/licensing-registry-evidence.json
+          retention-days: 30
+          if-no-files-found: warn
+      - name: Signal registry fetch incompleteness
+        if: steps.audit.outcome == 'failure'
+        run: |
+          echo 'License registry evidence incomplete; review the uploaded artifact.'
+          exit 1
