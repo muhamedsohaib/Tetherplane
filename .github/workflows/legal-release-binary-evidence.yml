@@ -42,11 +42,20 @@ jobs:
             --cargo-lock out/Cargo-v0.1.0.lock \
             --expected-sha256 c909cdd78ac786ea2bcb4853841db9d52928c8ae54a99e3306c945aba1066e9c \
             --output out/v0.1.0-binary-registry-path-evidence.json
+      - name: Windows-target dependency candidates (not proof of linkage)
+        run: |
+          git worktree add --detach "$RUNNER_TEMP/tetherplane-release-v010" v0.1.0
+          cd "$RUNNER_TEMP/tetherplane-release-v010"
+          cargo tree --locked --target x86_64-pc-windows-msvc \
+            -p tetherd --edges normal --prefix none --format '{p}' \
+            > "$GITHUB_WORKSPACE/out/v0.1.0-windows-cargo-tree.txt"
       - name: Archive read-only evidence
         if: always()
         uses: actions/upload-artifact@v4
         with:
           name: tetherplane-v010-binary-rust-evidence
-          path: out/v0.1.0-binary-registry-path-evidence.json
+          path: |
+            out/v0.1.0-binary-registry-path-evidence.json
+            out/v0.1.0-windows-cargo-tree.txt
           retention-days: 30
           if-no-files-found: warn
