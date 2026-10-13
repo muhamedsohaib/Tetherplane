@@ -67,6 +67,10 @@ def classify_license(license_expression):
     if not license_expression:
         return 'review-missing'
     expression = license_expression.strip()
+    alternatives = [part.strip(' ()') for part in re.split(r'\s+OR\s+', expression)]
+    if (len(alternatives) > 1 and any(part in PERMISSIVE for part in alternatives)
+            and any(re.search(r'(?i)(?:A?GPL|LGPL)', part) for part in alternatives)):
+        return 'review-alternative-copyleft'
     if re.search(r'(?i)(?:A?GPL|LGPL|MPL|EPL|CDDL|SSPL|BUSL|PROPRIETARY|UNLICENSED|COMMONS CLAUSE)', expression):
         return 'review-copyleft'
     if re.search(r'(?i)(?:SEE LICENSE|CUSTOM|UNKNOWN|NOASSERTION)', expression):
