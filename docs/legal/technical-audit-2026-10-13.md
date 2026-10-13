@@ -91,3 +91,11 @@ The public v0.1.0 Windows ZIP is a separate historical artifact released on 2026
 ## Next deliverable / no implicit go-ahead
 
 Full source/build/installed-runtime SBOM, third-party notice audit, clearance of all branch-only work destined for release, provenance/chain-of-title confirmation and professional legal sign-off. **Do not activate AGPL, alter LICENSE/metadata, merge main, tag a release, or contact third parties on the basis of this report.**
+
+## 2026-10-13 addendum — historical artifact and metadata evidence obtained after initial report
+
+The initial report above accurately described the first audit's access limitations **at that time**, but its claim that the historical v0.1.0 ZIP had not been inspected is now **superseded for that specific historical release**. The original GitHub Actions release artifact was subsequently recovered, its embedded Windows ZIP matched the SHA-256 in the public release and archived SHA256SUMS, and the full ZIP CRC/Node package license-file survey passed. See [release-v0.1.0-artifact-audit-2026-10-13.md](release-v0.1.0-artifact-audit-2026-10-13.md).
+
+The [registry metadata report](registry-license-metadata-2026-10-13.md) also documents successful automated collection of exact-version license declarations for all **191** Rust and **179** npm lockfile records. **352** were identified by a narrow, conservative permissive-identifier allowlist; **17** other declarations require interpretation, plus **one** with a permissive **OR** alternative to LGPL. This is not a legal clearance or source-derived Windows Rust binary SBOM.
+
+Leno remains offline. A fresh local checkout audit, actual linked-crate graph/notice inventory, future candidate release artifact, contributor rights evidence and counsel signoff remain blocked/outstanding. Existing MIT OR Apache-2.0 rights, release tags and root license remain unchanged.
