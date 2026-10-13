@@ -2,6 +2,7 @@ import assert from "node:assert/strict";
 import { spawnSync, execFileSync } from "node:child_process";
 import {
   existsSync,
+  lstatSync,
   mkdirSync,
   readFileSync,
   rmSync,
@@ -12,6 +13,12 @@ import path from "node:path";
 import process from "node:process";
 import { fileURLToPath } from "node:url";
 import { normalizeCommandForPlatform } from "./live-acceptance-command.mjs";
+import {
+  acceptanceRootPath,
+  assertFreshAcceptanceRoot,
+  assertOwnedAcceptanceRoot,
+  writeAcceptanceOwnership,
+} from "./live-acceptance-safety.mjs";
 
 const here = path.dirname(fileURLToPath(import.meta.url));
 const repoRoot = path.resolve(here, "..");
@@ -36,12 +43,8 @@ if (mode === "--describe") {
 
 requireWindows();
 
-const acceptanceRoot = path.join(
-  requiredEnvironment("LOCALAPPDATA"),
-  "Tetherplane",
-  "live-acceptance",
-  plan.release,
-);
+const localAppData = requiredEnvironment("LOCALAPPDATA");
+const acceptanceRoot = acceptanceRootPath(localAppData, plan.release);
 const packageDir = path.join(acceptanceRoot, "package");
 const installDir = path.join(acceptanceRoot, "install");
 const stateDir = path.join(acceptanceRoot, "state");
@@ -59,7 +62,12 @@ if (mode === "--prepare") {
 function prepare() {
   const sourceCommit = assertSourceTruth();
 
-  rmSync(acceptanceRoot, { recursive: true, force: true });
+  // Preserve previous acceptance state; never overwrite a prior run.
+  assertFreshAcceptanceRoot(localAppData, plan.release);
+  mkdirSync(path.dirname(acceptanceRoot), { recursive: true });
+  assertFreshAcceptanceRoot(localAppData, plan.release);
+  mkdirSync(acceptanceRoot);
+  writeAcceptanceOwnership(acceptanceRoot, plan.release);
   mkdirSync(allowDir, { recursive: true });
 
   stage("source_of_truth", () => {
@@ -145,6 +153,7 @@ function live() {
   }
 
   const sourceCommit = assertSourceTruth();
+  assertOwnedAcceptanceRoot(localAppData, plan.release);
   const prepared = requirePrepared();
   assert.equal(prepared.source_commit, sourceCommit);
   assert.equal(prepared.release, plan.release);
@@ -187,18 +196,13 @@ function live() {
 }
 
 function cleanup() {
-  const expectedBase = path.resolve(
-    requiredEnvironment("LOCALAPPDATA"),
-    "Tetherplane",
-    "live-acceptance",
-  );
-  const resolvedRoot = path.resolve(acceptanceRoot);
-  if (
-    resolvedRoot !== path.join(expectedBase, plan.release) ||
-    !resolvedRoot.startsWith(expectedBase + path.sep)
-  ) {
-    fail("refusing cleanup outside the dedicated live-acceptance root");
+  // Explicit cleanup is allowed only for the exact stage this runner created.
+  // Missing stages are already clean; unowned/redirected stages fail closed.
+  if (!lstatSync(acceptanceRoot, { throwIfNoEntry: false })) {
+    process.stdout.write("LIVE_ACCEPTANCE_CLEANUP=PASS\n");
+    return;
   }
+  assertOwnedAcceptanceRoot(localAppData, plan.release);
 
   if (existsSync(installDir)) {
     run("powershell.exe", [
