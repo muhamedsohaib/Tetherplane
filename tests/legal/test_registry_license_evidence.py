@@ -24,6 +24,12 @@ class AuditContractTests(unittest.TestCase):
             {'ecosystem': 'npm', 'name': 'zod', 'version': '4.6.5'},
         ])
 
+    def test_nested_pnpm_peer_metadata_is_not_package(self):
+        text = "lockfileVersion: '9.0'\npackages:\n  zod@4.6.5:\n    peerDependencies:\n      x: '*'\nsnapshots:\n  zod@4.6.5: {}\n"
+        self.assertEqual(audit.parse_pnpm_lock(text), [
+            {'ecosystem': 'npm', 'name': 'zod', 'version': '4.6.5'},
+        ])
+
     def test_license_normalization(self):
         self.assertEqual(audit.normalize_license({'type': 'MIT'}), 'MIT')
         self.assertEqual(audit.normalize_license('MIT OR Apache-2.0'), 'MIT OR Apache-2.0')
