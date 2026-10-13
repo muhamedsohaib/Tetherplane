@@ -41,3 +41,7 @@ Current disposition: **preliminary evidence only; release blocked**.
 ## Owner statement and expanded technical review (2026-10-13)
 
 The user has stated personal ownership and no known employer/client/contractor/third-party claims. Record this as a **self-report only**; no signed rights or contracts were independently reviewed. An extended audit also examined the more recent 661-commit development branch, the same 191 external Rust and 179 pnpm lockfile entries, and Windows packaging gaps. See [technical audit](technical-audit-2026-10-13.md) and [machine-readable lockfile inventory](lockfile-inventory-2026-10-13.json). This does not constitute legal or licensing clearance.
+
+## 2026-10-13 supplementary evidence — release ZIP and full registry metadata
+
+The previous technical report's lack-of-ZIP-access note is superseded for the **historical** v0.1.0 ZIP following a successful recovery from the GitHub Actions release artifact and checksum verification. See [historical ZIP findings](release-v0.1.0-artifact-audit-2026-10-13.md) and [exact-version registry declarations](registry-license-metadata-2026-10-13.md). Neither establishes copyright ownership or licenses of the Rust crates actually linked into the Windows binary. This does not alter the owner's self-reported rights status or lift any legal/release gate.
