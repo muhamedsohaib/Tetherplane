@@ -11,6 +11,9 @@ The acceptance runner:
 - requires Windows for execution;
 - requires local `main` to be clean and exactly equal to `origin/main`;
 - creates only a side-by-side Tetherplane-owned acceptance install under `%LOCALAPPDATA%\Tetherplane\live-acceptance\v0.1.0`;
+- refuses an existing acceptance root instead of recursively replacing its contents;
+- writes an exclusive ownership receipt before staging and requires a matching receipt for observed operation and explicit cleanup;
+- refuses symlink/junction redirection in acceptance staging and cleanup;
 - does not register or replace the production scheduled task;
 - does not move the physical cursor or request foreground fallback;
 - does not publish a release tag;
@@ -43,6 +46,8 @@ Expected final markers:
 
     LIVE_ACCEPTANCE_PREPARED=True
     USER_PRESENCE_REQUIRED_FOR_NEXT_PHASE=True
+
+Preparation refuses to overwrite an existing acceptance folder. Inspect an old folder before proceeding. If it was created by this guarded runner, use the explicit `--cleanup` mode and then prepare again. A folder left by an older runner may have no ownership receipt; in that case automated cleanup refuses it and the operator must inspect and recover it manually without deleting unrelated files.
 
 Do not continue to the next phase until the operator is physically at Leno.
 
@@ -102,7 +107,7 @@ After local and remote live proof are complete:
 
     node scripts/live-acceptance.mjs --cleanup
 
-Cleanup is explicit because it removes the Tetherplane-owned side-by-side acceptance install and its temporary state. It does not touch the normal production install.
+Cleanup is explicit because it removes the Tetherplane-owned side-by-side acceptance install and its temporary state. It does not touch the normal production install. It requires the exact ownership receipt, validates the expected root and refuses redirected staging paths. A missing stage is already clean; an unowned or legacy stage is never removed automatically.
 
 Expected marker:
 
