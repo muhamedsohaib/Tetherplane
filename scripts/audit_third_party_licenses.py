@@ -42,7 +42,7 @@ def parse_pnpm_lock(text: str):
     section = text.split('\npackages:\n', 1)[1].split('\nsnapshots:\n', 1)[0]
     records = []
     for line in section.splitlines():
-        match = re.fullmatch(r'  (.+):\s*', line)
+        match = re.fullmatch(r'  ([^ \t].*):\s*', line)
         if not match:
             continue
         key = match.group(1).strip().strip("'\"")
