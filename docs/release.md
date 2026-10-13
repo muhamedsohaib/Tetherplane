@@ -32,6 +32,8 @@ Run:
 
 ## Live acceptance gate
 
+Acceptance preparation is non-destructive: if the candidate staging root already exists it is preserved and `--prepare` refuses to continue. A new run writes an ownership receipt before installing. `--cleanup` checks that receipt and rejects symlink/junction redirection before removing the isolated staging root. Legacy staging without the receipt needs operator inspection rather than automatic removal.
+
 Before creating the public `v0.1.0` tag, follow `docs/live-acceptance.md`.
 
 Preparation is non-interactive and uses a side-by-side LocalAppData install:
