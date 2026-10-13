@@ -1,0 +1,2040 @@
+{
+  "title": "Tetherplane public-source lockfile inventory — NOT A LICENSE CLEARANCE OR RELEASE SBOM",
+  "generated_date": "2026-10-13",
+  "provenance": {
+    "canonical_repository": "https://github.com/muhamedsohaib/Tetherplane",
+    "default_branch_sha": "5feee084eb24bfd4831ab42840bb5f10dafc8113",
+    "inspected_newer_branch": "feature/live-acceptance-preserve-state-20261013",
+    "inspected_newer_branch_sha": "1dc56dde11a7c4ea593ad709dbfb2050cf025762",
+    "cargo_lock_blob_sha": "00a4c70f4d6619ac9dbca8e0a58d9c5d2957081d",
+    "pnpm_lock_blob_sha": "b2d552249f995f07a605a240ed521aa4a91bbdb8",
+    "note": "Both inspected branch heads have identical Cargo.lock and pnpm-lock.yaml blob SHAs; every package below is a lockfile record, not a confirmed shipped runtime dependency."
+  },
+  "stats": {
+    "rust_all": 198,
+    "rust_registry": 191,
+    "rust_internal": 7,
+    "pnpm_packages": 179,
+    "pnpm_importers": 11,
+    "pnpm_direct_placements": 42,
+    "pnpm_unique_external_direct_names": 13
+  },
+  "license_disclaimer": "Neither lockfile contains complete legally verified license metadata. Do not infer compatibility or ownership from these lists. No build/asset SBOM or copied-source audit has been performed.",
+  "rust_registry_packages": [
+    {
+      "name": "aho-corasick",
+      "version": "1.1.5",
+      "license": "unverified"
+    },
+    {
+      "name": "android_system_properties",
+      "version": "0.1.6",
+      "license": "unverified"
+    },
+    {
+      "name": "anyhow",
+      "version": "1.0.104",
+      "license": "unverified"
+    },
+    {
+      "name": "async-trait",
+      "version": "0.1.92",
+      "license": "unverified"
+    },
+    {
+      "name": "autocfg",
+      "version": "1.5.1",
+      "license": "unverified"
+    },
+    {
+      "name": "bitflags",
+      "version": "1.3.2",
+      "license": "unverified"
+    },
+    {
+      "name": "bitflags",
+      "version": "2.13.2",
+      "license": "unverified"
+    },
+    {
+      "name": "block-buffer",
+      "version": "0.10.4",
+      "license": "unverified"
+    },
+    {
+      "name": "block-buffer",
+      "version": "0.12.1",
+      "license": "unverified"
+    },
+    {
+      "name": "bstr",
+      "version": "1.13.1",
+      "license": "unverified"
+    },
+    {
+      "name": "bumpalo",
+      "version": "3.20.3",
+      "license": "unverified"
+    },
+    {
+      "name": "bytes",
+      "version": "1.12.1",
+      "license": "unverified"
+    },
+    {
+      "name": "cc",
+      "version": "1.4.7",
+      "license": "unverified"
+    },
+    {
+      "name": "cfg-if",
+      "version": "1.0.5",
+      "license": "unverified"
+    },
+    {
+      "name": "cfg_aliases",
+      "version": "0.1.1",
+      "license": "unverified"
+    },
+    {
+      "name": "chacha20",
+      "version": "0.10.2",
+      "license": "unverified"
+    },
+    {
+      "name": "chrono",
+      "version": "0.4.45",
+      "license": "unverified"
+    },
+    {
+      "name": "const-oid",
+      "version": "0.10.2",
+      "license": "unverified"
+    },
+    {
+      "name": "core-foundation-sys",
+      "version": "0.8.7",
+      "license": "unverified"
+    },
+    {
+      "name": "cpufeatures",
+      "version": "0.2.17",
+      "license": "unverified"
+    },
+    {
+      "name": "cpufeatures",
+      "version": "0.3.1",
+      "license": "unverified"
+    },
+    {
+      "name": "crossbeam-deque",
+      "version": "0.8.8",
+      "license": "unverified"
+    },
+    {
+      "name": "crossbeam-epoch",
+      "version": "0.9.21",
+      "license": "unverified"
+    },
+    {
+      "name": "crossbeam-utils",
+      "version": "0.8.23",
+      "license": "unverified"
+    },
+    {
+      "name": "crypto-common",
+      "version": "0.1.7",
+      "license": "unverified"
+    },
+    {
+      "name": "crypto-common",
+      "version": "0.2.2",
+      "license": "unverified"
+    },
+    {
+      "name": "data-encoding",
+      "version": "2.11.1",
+      "license": "unverified"
+    },
+    {
+      "name": "digest",
+      "version": "0.10.7",
+      "license": "unverified"
+    },
+    {
+      "name": "digest",
+      "version": "0.11.3",
+      "license": "unverified"
+    },
+    {
+      "name": "dispatch2",
+      "version": "0.3.1",
+      "license": "unverified"
+    },
+    {
+      "name": "displaydoc",
+      "version": "0.2.7",
+      "license": "unverified"
+    },
+    {
+      "name": "downcast-rs",
+      "version": "1.2.1",
+      "license": "unverified"
+    },
+    {
+      "name": "errno",
+      "version": "0.3.14",
+      "license": "unverified"
+    },
+    {
+      "name": "error-code",
+      "version": "3.4.0",
+      "license": "unverified"
+    },
+    {
+      "name": "fastrand",
+      "version": "2.5.0",
+      "license": "unverified"
+    },
+    {
+      "name": "filedescriptor",
+      "version": "0.8.3",
+      "license": "unverified"
+    },
+    {
+      "name": "find-msvc-tools",
+      "version": "0.1.13",
+      "license": "unverified"
+    },
+    {
+      "name": "form_urlencoded",
+      "version": "1.2.2",
+      "license": "unverified"
+    },
+    {
+      "name": "futures",
+      "version": "0.3.34",
+      "license": "unverified"
+    },
+    {
+      "name": "futures-channel",
+      "version": "0.3.34",
+      "license": "unverified"
+    },
+    {
+      "name": "futures-core",
+      "version": "0.3.34",
+      "license": "unverified"
+    },
+    {
+      "name": "futures-executor",
+      "version": "0.3.34",
+      "license": "unverified"
+    },
+    {
+      "name": "futures-io",
+      "version": "0.3.34",
+      "license": "unverified"
+    },
+    {
+      "name": "futures-macro",
+      "version": "0.3.34",
+      "license": "unverified"
+    },
+    {
+      "name": "futures-sink",
+      "version": "0.3.34",
+      "license": "unverified"
+    },
+    {
+      "name": "futures-task",
+      "version": "0.3.34",
+      "license": "unverified"
+    },
+    {
+      "name": "futures-util",
+      "version": "0.3.34",
+      "license": "unverified"
+    },
+    {
+      "name": "generic-array",
+      "version": "0.14.7",
+      "license": "unverified"
+    },
+    {
+      "name": "getrandom",
+      "version": "0.2.17",
+      "license": "unverified"
+    },
+    {
+      "name": "getrandom",
+      "version": "0.4.3",
+      "license": "unverified"
+    },
+    {
+      "name": "globset",
+      "version": "0.4.20",
+      "license": "unverified"
+    },
+    {
+      "name": "http",
+      "version": "1.5.0",
+      "license": "unverified"
+    },
+    {
+      "name": "httparse",
+      "version": "1.10.1",
+      "license": "unverified"
+    },
+    {
+      "name": "hybrid-array",
+      "version": "0.4.15",
+      "license": "unverified"
+    },
+    {
+      "name": "iana-time-zone",
+      "version": "0.1.65",
+      "license": "unverified"
+    },
+    {
+      "name": "iana-time-zone-haiku",
+      "version": "0.1.2",
+      "license": "unverified"
+    },
+    {
+      "name": "icu_collections",
+      "version": "2.3.0",
+      "license": "unverified"
+    },
+    {
+      "name": "icu_locale_core",
+      "version": "2.3.0",
+      "license": "unverified"
+    },
+    {
+      "name": "icu_normalizer",
+      "version": "2.3.0",
+      "license": "unverified"
+    },
+    {
+      "name": "icu_normalizer_data",
+      "version": "2.3.0",
+      "license": "unverified"
+    },
+    {
+      "name": "icu_properties",
+      "version": "2.3.0",
+      "license": "unverified"
+    },
+    {
+      "name": "icu_properties_data",
+      "version": "2.3.0",
+      "license": "unverified"
+    },
+    {
+      "name": "icu_provider",
+      "version": "2.3.1",
+      "license": "unverified"
+    },
+    {
+      "name": "idna",
+      "version": "1.1.0",
+      "license": "unverified"
+    },
+    {
+      "name": "idna_adapter",
+      "version": "1.2.2",
+      "license": "unverified"
+    },
+    {
+      "name": "ignore",
+      "version": "0.4.33",
+      "license": "unverified"
+    },
+    {
+      "name": "itoa",
+      "version": "1.0.18",
+      "license": "unverified"
+    },
+    {
+      "name": "js-sys",
+      "version": "0.3.105",
+      "license": "unverified"
+    },
+    {
+      "name": "lazy_static",
+      "version": "1.5.0",
+      "license": "unverified"
+    },
+    {
+      "name": "libc",
+      "version": "0.2.189",
+      "license": "unverified"
+    },
+    {
+      "name": "linux-raw-sys",
+      "version": "0.12.1",
+      "license": "unverified"
+    },
+    {
+      "name": "litemap",
+      "version": "0.8.3",
+      "license": "unverified"
+    },
+    {
+      "name": "log",
+      "version": "0.4.34",
+      "license": "unverified"
+    },
+    {
+      "name": "memchr",
+      "version": "2.8.3",
+      "license": "unverified"
+    },
+    {
+      "name": "mio",
+      "version": "1.2.3",
+      "license": "unverified"
+    },
+    {
+      "name": "nix",
+      "version": "0.28.0",
+      "license": "unverified"
+    },
+    {
+      "name": "ntapi",
+      "version": "0.4.3",
+      "license": "unverified"
+    },
+    {
+      "name": "num-traits",
+      "version": "0.2.19",
+      "license": "unverified"
+    },
+    {
+      "name": "objc2",
+      "version": "0.6.4",
+      "license": "unverified"
+    },
+    {
+      "name": "objc2-core-foundation",
+      "version": "0.3.2",
+      "license": "unverified"
+    },
+    {
+      "name": "objc2-encode",
+      "version": "4.1.0",
+      "license": "unverified"
+    },
+    {
+      "name": "objc2-foundation",
+      "version": "0.3.2",
+      "license": "unverified"
+    },
+    {
+      "name": "objc2-io-kit",
+      "version": "0.3.2",
+      "license": "unverified"
+    },
+    {
+      "name": "objc2-open-directory",
+      "version": "0.3.2",
+      "license": "unverified"
+    },
+    {
+      "name": "once_cell",
+      "version": "1.21.4",
+      "license": "unverified"
+    },
+    {
+      "name": "percent-encoding",
+      "version": "2.3.2",
+      "license": "unverified"
+    },
+    {
+      "name": "pin-project-lite",
+      "version": "0.2.17",
+      "license": "unverified"
+    },
+    {
+      "name": "portable-pty",
+      "version": "0.9.0",
+      "license": "unverified"
+    },
+    {
+      "name": "potential_utf",
+      "version": "0.1.6",
+      "license": "unverified"
+    },
+    {
+      "name": "proc-macro2",
+      "version": "1.0.107",
+      "license": "unverified"
+    },
+    {
+      "name": "quote",
+      "version": "1.0.47",
+      "license": "unverified"
+    },
+    {
+      "name": "r-efi",
+      "version": "6.0.0",
+      "license": "unverified"
+    },
+    {
+      "name": "rand",
+      "version": "0.10.2",
+      "license": "unverified"
+    },
+    {
+      "name": "rand_core",
+      "version": "0.10.1",
+      "license": "unverified"
+    },
+    {
+      "name": "regex",
+      "version": "1.13.1",
+      "license": "unverified"
+    },
+    {
+      "name": "regex-automata",
+      "version": "0.4.18",
+      "license": "unverified"
+    },
+    {
+      "name": "regex-syntax",
+      "version": "0.8.11",
+      "license": "unverified"
+    },
+    {
+      "name": "ring",
+      "version": "0.17.14",
+      "license": "unverified"
+    },
+    {
+      "name": "rustix",
+      "version": "1.1.5",
+      "license": "unverified"
+    },
+    {
+      "name": "rustls",
+      "version": "0.23.45",
+      "license": "unverified"
+    },
+    {
+      "name": "rustls-pki-types",
+      "version": "1.15.1",
+      "license": "unverified"
+    },
+    {
+      "name": "rustls-webpki",
+      "version": "0.103.15",
+      "license": "unverified"
+    },
+    {
+      "name": "rustversion",
+      "version": "1.0.23",
+      "license": "unverified"
+    },
+    {
+      "name": "same-file",
+      "version": "1.0.6",
+      "license": "unverified"
+    },
+    {
+      "name": "serde",
+      "version": "1.0.229",
+      "license": "unverified"
+    },
+    {
+      "name": "serde_core",
+      "version": "1.0.229",
+      "license": "unverified"
+    },
+    {
+      "name": "serde_derive",
+      "version": "1.0.229",
+      "license": "unverified"
+    },
+    {
+      "name": "serde_json",
+      "version": "1.0.151",
+      "license": "unverified"
+    },
+    {
+      "name": "serial2",
+      "version": "0.2.38",
+      "license": "unverified"
+    },
+    {
+      "name": "sha1",
+      "version": "0.11.0",
+      "license": "unverified"
+    },
+    {
+      "name": "sha2",
+      "version": "0.10.9",
+      "license": "unverified"
+    },
+    {
+      "name": "shared_library",
+      "version": "0.1.9",
+      "license": "unverified"
+    },
+    {
+      "name": "shell-words",
+      "version": "1.1.1",
+      "license": "unverified"
+    },
+    {
+      "name": "shlex",
+      "version": "2.0.1",
+      "license": "unverified"
+    },
+    {
+      "name": "signal-hook-registry",
+      "version": "1.4.8",
+      "license": "unverified"
+    },
+    {
+      "name": "slab",
+      "version": "0.4.12",
+      "license": "unverified"
+    },
+    {
+      "name": "smallvec",
+      "version": "1.16.1",
+      "license": "unverified"
+    },
+    {
+      "name": "socket2",
+      "version": "0.6.5",
+      "license": "unverified"
+    },
+    {
+      "name": "stable_deref_trait",
+      "version": "1.2.1",
+      "license": "unverified"
+    },
+    {
+      "name": "subtle",
+      "version": "2.6.1",
+      "license": "unverified"
+    },
+    {
+      "name": "syn",
+      "version": "2.0.119",
+      "license": "unverified"
+    },
+    {
+      "name": "syn",
+      "version": "3.0.6",
+      "license": "unverified"
+    },
+    {
+      "name": "synstructure",
+      "version": "0.14.0",
+      "license": "unverified"
+    },
+    {
+      "name": "sysinfo",
+      "version": "0.39.6",
+      "license": "unverified"
+    },
+    {
+      "name": "tempfile",
+      "version": "3.27.0",
+      "license": "unverified"
+    },
+    {
+      "name": "thiserror",
+      "version": "1.0.69",
+      "license": "unverified"
+    },
+    {
+      "name": "thiserror",
+      "version": "2.0.20",
+      "license": "unverified"
+    },
+    {
+      "name": "thiserror-impl",
+      "version": "1.0.69",
+      "license": "unverified"
+    },
+    {
+      "name": "thiserror-impl",
+      "version": "2.0.20",
+      "license": "unverified"
+    },
+    {
+      "name": "tinystr",
+      "version": "0.8.4",
+      "license": "unverified"
+    },
+    {
+      "name": "tokio",
+      "version": "1.53.1",
+      "license": "unverified"
+    },
+    {
+      "name": "tokio-macros",
+      "version": "2.7.2",
+      "license": "unverified"
+    },
+    {
+      "name": "tokio-rustls",
+      "version": "0.26.5",
+      "license": "unverified"
+    },
+    {
+      "name": "tokio-tungstenite",
+      "version": "0.30.0",
+      "license": "unverified"
+    },
+    {
+      "name": "tungstenite",
+      "version": "0.30.0",
+      "license": "unverified"
+    },
+    {
+      "name": "typenum",
+      "version": "1.20.1",
+      "license": "unverified"
+    },
+    {
+      "name": "uiautomation",
+      "version": "0.25.1",
+      "license": "unverified"
+    },
+    {
+      "name": "uiautomation_derive",
+      "version": "0.7.9",
+      "license": "unverified"
+    },
+    {
+      "name": "unicode-ident",
+      "version": "1.0.26",
+      "license": "unverified"
+    },
+    {
+      "name": "untrusted",
+      "version": "0.9.0",
+      "license": "unverified"
+    },
+    {
+      "name": "url",
+      "version": "2.5.8",
+      "license": "unverified"
+    },
+    {
+      "name": "utf8_iter",
+      "version": "1.0.4",
+      "license": "unverified"
+    },
+    {
+      "name": "uuid",
+      "version": "1.26.1",
+      "license": "unverified"
+    },
+    {
+      "name": "version_check",
+      "version": "0.9.5",
+      "license": "unverified"
+    },
+    {
+      "name": "walkdir",
+      "version": "2.5.0",
+      "license": "unverified"
+    },
+    {
+      "name": "wasi",
+      "version": "0.11.1+wasi-snapshot-preview1",
+      "license": "unverified"
+    },
+    {
+      "name": "wasm-bindgen",
+      "version": "0.2.128",
+      "license": "unverified"
+    },
+    {
+      "name": "wasm-bindgen-macro",
+      "version": "0.2.128",
+      "license": "unverified"
+    },
+    {
+      "name": "wasm-bindgen-macro-support",
+      "version": "0.2.128",
+      "license": "unverified"
+    },
+    {
+      "name": "wasm-bindgen-shared",
+      "version": "0.2.128",
+      "license": "unverified"
+    },
+    {
+      "name": "webpki-roots",
+      "version": "0.26.11",
+      "license": "unverified"
+    },
+    {
+      "name": "webpki-roots",
+      "version": "1.0.9",
+      "license": "unverified"
+    },
+    {
+      "name": "winapi",
+      "version": "0.3.9",
+      "license": "unverified"
+    },
+    {
+      "name": "winapi-i686-pc-windows-gnu",
+      "version": "0.4.0",
+      "license": "unverified"
+    },
+    {
+      "name": "winapi-util",
+      "version": "0.1.11",
+      "license": "unverified"
+    },
+    {
+      "name": "winapi-x86_64-pc-windows-gnu",
+      "version": "0.4.0",
+      "license": "unverified"
+    },
+    {
+      "name": "windows",
+      "version": "0.62.2",
+      "license": "unverified"
+    },
+    {
+      "name": "windows-collections",
+      "version": "0.3.2",
+      "license": "unverified"
+    },
+    {
+      "name": "windows-core",
+      "version": "0.62.2",
+      "license": "unverified"
+    },
+    {
+      "name": "windows-future",
+      "version": "0.3.2",
+      "license": "unverified"
+    },
+    {
+      "name": "windows-implement",
+      "version": "0.60.2",
+      "license": "unverified"
+    },
+    {
+      "name": "windows-interface",
+      "version": "0.59.3",
+      "license": "unverified"
+    },
+    {
+      "name": "windows-link",
+      "version": "0.2.1",
+      "license": "unverified"
+    },
+    {
+      "name": "windows-numerics",
+      "version": "0.3.1",
+      "license": "unverified"
+    },
+    {
+      "name": "windows-result",
+      "version": "0.4.1",
+      "license": "unverified"
+    },
+    {
+      "name": "windows-strings",
+      "version": "0.5.1",
+      "license": "unverified"
+    },
+    {
+      "name": "windows-sys",
+      "version": "0.52.0",
+      "license": "unverified"
+    },
+    {
+      "name": "windows-sys",
+      "version": "0.61.2",
+      "license": "unverified"
+    },
+    {
+      "name": "windows-targets",
+      "version": "0.52.6",
+      "license": "unverified"
+    },
+    {
+      "name": "windows-threading",
+      "version": "0.2.1",
+      "license": "unverified"
+    },
+    {
+      "name": "windows-win",
+      "version": "3.0.0",
+      "license": "unverified"
+    },
+    {
+      "name": "windows_aarch64_gnullvm",
+      "version": "0.52.6",
+      "license": "unverified"
+    },
+    {
+      "name": "windows_aarch64_msvc",
+      "version": "0.52.6",
+      "license": "unverified"
+    },
+    {
+      "name": "windows_i686_gnu",
+      "version": "0.52.6",
+      "license": "unverified"
+    },
+    {
+      "name": "windows_i686_gnullvm",
+      "version": "0.52.6",
+      "license": "unverified"
+    },
+    {
+      "name": "windows_i686_msvc",
+      "version": "0.52.6",
+      "license": "unverified"
+    },
+    {
+      "name": "windows_x86_64_gnu",
+      "version": "0.52.6",
+      "license": "unverified"
+    },
+    {
+      "name": "windows_x86_64_gnullvm",
+      "version": "0.52.6",
+      "license": "unverified"
+    },
+    {
+      "name": "windows_x86_64_msvc",
+      "version": "0.52.6",
+      "license": "unverified"
+    },
+    {
+      "name": "winreg",
+      "version": "0.10.1",
+      "license": "unverified"
+    },
+    {
+      "name": "winsafe",
+      "version": "0.0.29",
+      "license": "unverified"
+    },
+    {
+      "name": "writeable",
+      "version": "0.6.4",
+      "license": "unverified"
+    },
+    {
+      "name": "yoke",
+      "version": "0.8.3",
+      "license": "unverified"
+    },
+    {
+      "name": "yoke-derive",
+      "version": "0.8.3",
+      "license": "unverified"
+    },
+    {
+      "name": "zerofrom",
+      "version": "0.1.8",
+      "license": "unverified"
+    },
+    {
+      "name": "zerofrom-derive",
+      "version": "0.1.8",
+      "license": "unverified"
+    },
+    {
+      "name": "zeroize",
+      "version": "1.9.0",
+      "license": "unverified"
+    },
+    {
+      "name": "zerotrie",
+      "version": "0.2.5",
+      "license": "unverified"
+    },
+    {
+      "name": "zerovec",
+      "version": "0.11.8",
+      "license": "unverified"
+    },
+    {
+      "name": "zerovec-derive",
+      "version": "0.11.6",
+      "license": "unverified"
+    },
+    {
+      "name": "zmij",
+      "version": "1.0.23",
+      "license": "unverified"
+    }
+  ],
+  "rust_workspace_packages": [
+    {
+      "name": "tether-browser-provider",
+      "version": "0.1.0"
+    },
+    {
+      "name": "tether-core",
+      "version": "0.1.0"
+    },
+    {
+      "name": "tether-desktop-provider",
+      "version": "0.1.0"
+    },
+    {
+      "name": "tether-filesystem-provider",
+      "version": "0.1.0"
+    },
+    {
+      "name": "tether-process-provider",
+      "version": "0.1.0"
+    },
+    {
+      "name": "tether-search-provider",
+      "version": "0.1.0"
+    },
+    {
+      "name": "tetherd",
+      "version": "0.1.0"
+    }
+  ],
+  "pnpm_registry_packages": [
+    {
+      "name": "@apidevtools/json-schema-ref-parser",
+      "version": "11.9.3",
+      "license": "unverified"
+    },
+    {
+      "name": "@esbuild/aix-ppc64",
+      "version": "0.25.10",
+      "license": "unverified"
+    },
+    {
+      "name": "@esbuild/android-arm64",
+      "version": "0.25.10",
+      "license": "unverified"
+    },
+    {
+      "name": "@esbuild/android-arm",
+      "version": "0.25.10",
+      "license": "unverified"
+    },
+    {
+      "name": "@esbuild/android-x64",
+      "version": "0.25.10",
+      "license": "unverified"
+    },
+    {
+      "name": "@esbuild/darwin-arm64",
+      "version": "0.25.10",
+      "license": "unverified"
+    },
+    {
+      "name": "@esbuild/darwin-x64",
+      "version": "0.25.10",
+      "license": "unverified"
+    },
+    {
+      "name": "@esbuild/freebsd-arm64",
+      "version": "0.25.10",
+      "license": "unverified"
+    },
+    {
+      "name": "@esbuild/freebsd-x64",
+      "version": "0.25.10",
+      "license": "unverified"
+    },
+    {
+      "name": "@esbuild/linux-arm64",
+      "version": "0.25.10",
+      "license": "unverified"
+    },
+    {
+      "name": "@esbuild/linux-arm",
+      "version": "0.25.10",
+      "license": "unverified"
+    },
+    {
+      "name": "@esbuild/linux-ia32",
+      "version": "0.25.10",
+      "license": "unverified"
+    },
+    {
+      "name": "@esbuild/linux-loong64",
+      "version": "0.25.10",
+      "license": "unverified"
+    },
+    {
+      "name": "@esbuild/linux-mips64el",
+      "version": "0.25.10",
+      "license": "unverified"
+    },
+    {
+      "name": "@esbuild/linux-ppc64",
+      "version": "0.25.10",
+      "license": "unverified"
+    },
+    {
+      "name": "@esbuild/linux-riscv64",
+      "version": "0.25.10",
+      "license": "unverified"
+    },
+    {
+      "name": "@esbuild/linux-s390x",
+      "version": "0.25.10",
+      "license": "unverified"
+    },
+    {
+      "name": "@esbuild/linux-x64",
+      "version": "0.25.10",
+      "license": "unverified"
+    },
+    {
+      "name": "@esbuild/netbsd-arm64",
+      "version": "0.25.10",
+      "license": "unverified"
+    },
+    {
+      "name": "@esbuild/netbsd-x64",
+      "version": "0.25.10",
+      "license": "unverified"
+    },
+    {
+      "name": "@esbuild/openbsd-arm64",
+      "version": "0.25.10",
+      "license": "unverified"
+    },
+    {
+      "name": "@esbuild/openbsd-x64",
+      "version": "0.25.10",
+      "license": "unverified"
+    },
+    {
+      "name": "@esbuild/openharmony-arm64",
+      "version": "0.25.10",
+      "license": "unverified"
+    },
+    {
+      "name": "@esbuild/sunos-x64",
+      "version": "0.25.10",
+      "license": "unverified"
+    },
+    {
+      "name": "@esbuild/win32-arm64",
+      "version": "0.25.10",
+      "license": "unverified"
+    },
+    {
+      "name": "@esbuild/win32-ia32",
+      "version": "0.25.10",
+      "license": "unverified"
+    },
+    {
+      "name": "@esbuild/win32-x64",
+      "version": "0.25.10",
+      "license": "unverified"
+    },
+    {
+      "name": "@hono/node-server",
+      "version": "2.1.1",
+      "license": "unverified"
+    },
+    {
+      "name": "@jsdevtools/ono",
+      "version": "7.1.3",
+      "license": "unverified"
+    },
+    {
+      "name": "@modelcontextprotocol/sdk",
+      "version": "1.30.0",
+      "license": "unverified"
+    },
+    {
+      "name": "@types/accepts",
+      "version": "1.3.7",
+      "license": "unverified"
+    },
+    {
+      "name": "@types/body-parser",
+      "version": "1.19.6",
+      "license": "unverified"
+    },
+    {
+      "name": "@types/chrome",
+      "version": "0.3.0",
+      "license": "unverified"
+    },
+    {
+      "name": "@types/connect",
+      "version": "3.4.38",
+      "license": "unverified"
+    },
+    {
+      "name": "@types/content-disposition",
+      "version": "0.5.9",
+      "license": "unverified"
+    },
+    {
+      "name": "@types/cookies",
+      "version": "0.9.2",
+      "license": "unverified"
+    },
+    {
+      "name": "@types/express-serve-static-core",
+      "version": "5.1.3",
+      "license": "unverified"
+    },
+    {
+      "name": "@types/express",
+      "version": "5.0.6",
+      "license": "unverified"
+    },
+    {
+      "name": "@types/filesystem",
+      "version": "0.0.36",
+      "license": "unverified"
+    },
+    {
+      "name": "@types/filewriter",
+      "version": "0.0.33",
+      "license": "unverified"
+    },
+    {
+      "name": "@types/har-format",
+      "version": "1.2.16",
+      "license": "unverified"
+    },
+    {
+      "name": "@types/http-assert",
+      "version": "1.5.6",
+      "license": "unverified"
+    },
+    {
+      "name": "@types/http-errors",
+      "version": "2.0.5",
+      "license": "unverified"
+    },
+    {
+      "name": "@types/json-schema",
+      "version": "7.0.15",
+      "license": "unverified"
+    },
+    {
+      "name": "@types/keygrip",
+      "version": "1.0.6",
+      "license": "unverified"
+    },
+    {
+      "name": "@types/koa-compose",
+      "version": "3.2.9",
+      "license": "unverified"
+    },
+    {
+      "name": "@types/koa",
+      "version": "3.0.3",
+      "license": "unverified"
+    },
+    {
+      "name": "@types/lodash",
+      "version": "4.17.25",
+      "license": "unverified"
+    },
+    {
+      "name": "@types/node",
+      "version": "24.13.6",
+      "license": "unverified"
+    },
+    {
+      "name": "@types/oidc-provider",
+      "version": "9.12.1",
+      "license": "unverified"
+    },
+    {
+      "name": "@types/qs",
+      "version": "6.15.1",
+      "license": "unverified"
+    },
+    {
+      "name": "@types/range-parser",
+      "version": "1.2.7",
+      "license": "unverified"
+    },
+    {
+      "name": "@types/send",
+      "version": "1.2.1",
+      "license": "unverified"
+    },
+    {
+      "name": "@types/serve-static",
+      "version": "2.2.0",
+      "license": "unverified"
+    },
+    {
+      "name": "@types/ws",
+      "version": "8.18.1",
+      "license": "unverified"
+    },
+    {
+      "name": "accepts",
+      "version": "1.3.8",
+      "license": "unverified"
+    },
+    {
+      "name": "accepts",
+      "version": "2.0.0",
+      "license": "unverified"
+    },
+    {
+      "name": "ajv-formats",
+      "version": "3.0.1",
+      "license": "unverified"
+    },
+    {
+      "name": "ajv",
+      "version": "8.17.1",
+      "license": "unverified"
+    },
+    {
+      "name": "argparse",
+      "version": "2.0.1",
+      "license": "unverified"
+    },
+    {
+      "name": "body-parser",
+      "version": "2.3.0",
+      "license": "unverified"
+    },
+    {
+      "name": "bytes",
+      "version": "3.1.2",
+      "license": "unverified"
+    },
+    {
+      "name": "call-bind-apply-helpers",
+      "version": "1.0.2",
+      "license": "unverified"
+    },
+    {
+      "name": "call-bound",
+      "version": "1.0.4",
+      "license": "unverified"
+    },
+    {
+      "name": "content-disposition",
+      "version": "1.0.1",
+      "license": "unverified"
+    },
+    {
+      "name": "content-disposition",
+      "version": "1.1.0",
+      "license": "unverified"
+    },
+    {
+      "name": "content-type",
+      "version": "1.0.5",
+      "license": "unverified"
+    },
+    {
+      "name": "content-type",
+      "version": "2.1.0",
+      "license": "unverified"
+    },
+    {
+      "name": "cookie-signature",
+      "version": "1.2.2",
+      "license": "unverified"
+    },
+    {
+      "name": "cookie",
+      "version": "0.7.2",
+      "license": "unverified"
+    },
+    {
+      "name": "cookies",
+      "version": "0.9.2",
+      "license": "unverified"
+    },
+    {
+      "name": "cors",
+      "version": "2.8.6",
+      "license": "unverified"
+    },
+    {
+      "name": "cross-spawn",
+      "version": "7.0.6",
+      "license": "unverified"
+    },
+    {
+      "name": "debug",
+      "version": "4.4.3",
+      "license": "unverified"
+    },
+    {
+      "name": "deep-equal",
+      "version": "1.0.1",
+      "license": "unverified"
+    },
+    {
+      "name": "delegates",
+      "version": "1.0.0",
+      "license": "unverified"
+    },
+    {
+      "name": "depd",
+      "version": "1.1.2",
+      "license": "unverified"
+    },
+    {
+      "name": "depd",
+      "version": "2.0.0",
+      "license": "unverified"
+    },
+    {
+      "name": "destroy",
+      "version": "1.2.0",
+      "license": "unverified"
+    },
+    {
+      "name": "dunder-proto",
+      "version": "1.0.1",
+      "license": "unverified"
+    },
+    {
+      "name": "ee-first",
+      "version": "1.1.1",
+      "license": "unverified"
+    },
+    {
+      "name": "encodeurl",
+      "version": "2.0.0",
+      "license": "unverified"
+    },
+    {
+      "name": "es-define-property",
+      "version": "1.0.1",
+      "license": "unverified"
+    },
+    {
+      "name": "es-errors",
+      "version": "1.3.0",
+      "license": "unverified"
+    },
+    {
+      "name": "es-object-atoms",
+      "version": "1.1.2",
+      "license": "unverified"
+    },
+    {
+      "name": "esbuild",
+      "version": "0.25.10",
+      "license": "unverified"
+    },
+    {
+      "name": "escape-html",
+      "version": "1.0.3",
+      "license": "unverified"
+    },
+    {
+      "name": "etag",
+      "version": "1.8.1",
+      "license": "unverified"
+    },
+    {
+      "name": "eventsource-parser",
+      "version": "3.1.1",
+      "license": "unverified"
+    },
+    {
+      "name": "eventsource",
+      "version": "3.0.7",
+      "license": "unverified"
+    },
+    {
+      "name": "express-rate-limit",
+      "version": "8.7.0",
+      "license": "unverified"
+    },
+    {
+      "name": "express",
+      "version": "5.2.1",
+      "license": "unverified"
+    },
+    {
+      "name": "fast-deep-equal",
+      "version": "3.1.3",
+      "license": "unverified"
+    },
+    {
+      "name": "fast-uri",
+      "version": "3.1.8",
+      "license": "unverified"
+    },
+    {
+      "name": "fdir",
+      "version": "6.5.0",
+      "license": "unverified"
+    },
+    {
+      "name": "finalhandler",
+      "version": "2.1.1",
+      "license": "unverified"
+    },
+    {
+      "name": "forwarded",
+      "version": "0.2.0",
+      "license": "unverified"
+    },
+    {
+      "name": "fresh",
+      "version": "0.5.2",
+      "license": "unverified"
+    },
+    {
+      "name": "fresh",
+      "version": "2.0.0",
+      "license": "unverified"
+    },
+    {
+      "name": "function-bind",
+      "version": "1.1.2",
+      "license": "unverified"
+    },
+    {
+      "name": "get-intrinsic",
+      "version": "1.3.0",
+      "license": "unverified"
+    },
+    {
+      "name": "get-proto",
+      "version": "1.0.1",
+      "license": "unverified"
+    },
+    {
+      "name": "gopd",
+      "version": "1.2.0",
+      "license": "unverified"
+    },
+    {
+      "name": "has-symbols",
+      "version": "1.1.0",
+      "license": "unverified"
+    },
+    {
+      "name": "hasown",
+      "version": "2.0.4",
+      "license": "unverified"
+    },
+    {
+      "name": "hono",
+      "version": "4.13.8",
+      "license": "unverified"
+    },
+    {
+      "name": "http-assert",
+      "version": "1.5.0",
+      "license": "unverified"
+    },
+    {
+      "name": "http-errors",
+      "version": "1.8.1",
+      "license": "unverified"
+    },
+    {
+      "name": "http-errors",
+      "version": "2.0.1",
+      "license": "unverified"
+    },
+    {
+      "name": "iconv-lite",
+      "version": "0.7.3",
+      "license": "unverified"
+    },
+    {
+      "name": "inherits",
+      "version": "2.0.4",
+      "license": "unverified"
+    },
+    {
+      "name": "ip-address",
+      "version": "10.7.2",
+      "license": "unverified"
+    },
+    {
+      "name": "ipaddr.js",
+      "version": "1.9.1",
+      "license": "unverified"
+    },
+    {
+      "name": "is-extglob",
+      "version": "2.1.1",
+      "license": "unverified"
+    },
+    {
+      "name": "is-glob",
+      "version": "4.0.3",
+      "license": "unverified"
+    },
+    {
+      "name": "is-promise",
+      "version": "4.0.0",
+      "license": "unverified"
+    },
+    {
+      "name": "isexe",
+      "version": "2.0.0",
+      "license": "unverified"
+    },
+    {
+      "name": "jose",
+      "version": "6.2.12",
+      "license": "unverified"
+    },
+    {
+      "name": "js-yaml",
+      "version": "4.3.2",
+      "license": "unverified"
+    },
+    {
+      "name": "json-schema-to-typescript",
+      "version": "15.0.4",
+      "license": "unverified"
+    },
+    {
+      "name": "json-schema-traverse",
+      "version": "1.0.0",
+      "license": "unverified"
+    },
+    {
+      "name": "json-schema-typed",
+      "version": "8.0.2",
+      "license": "unverified"
+    },
+    {
+      "name": "keygrip",
+      "version": "1.1.0",
+      "license": "unverified"
+    },
+    {
+      "name": "koa-compose",
+      "version": "4.1.0",
+      "license": "unverified"
+    },
+    {
+      "name": "koa",
+      "version": "3.2.1",
+      "license": "unverified"
+    },
+    {
+      "name": "lodash",
+      "version": "4.18.1",
+      "license": "unverified"
+    },
+    {
+      "name": "math-intrinsics",
+      "version": "1.1.0",
+      "license": "unverified"
+    },
+    {
+      "name": "media-typer",
+      "version": "1.1.1",
+      "license": "unverified"
+    },
+    {
+      "name": "merge-descriptors",
+      "version": "2.0.0",
+      "license": "unverified"
+    },
+    {
+      "name": "mime-db",
+      "version": "1.52.0",
+      "license": "unverified"
+    },
+    {
+      "name": "mime-db",
+      "version": "1.54.0",
+      "license": "unverified"
+    },
+    {
+      "name": "mime-types",
+      "version": "2.1.35",
+      "license": "unverified"
+    },
+    {
+      "name": "mime-types",
+      "version": "3.0.2",
+      "license": "unverified"
+    },
+    {
+      "name": "minimist",
+      "version": "1.2.8",
+      "license": "unverified"
+    },
+    {
+      "name": "ms",
+      "version": "2.1.3",
+      "license": "unverified"
+    },
+    {
+      "name": "negotiator",
+      "version": "0.6.3",
+      "license": "unverified"
+    },
+    {
+      "name": "negotiator",
+      "version": "1.1.0",
+      "license": "unverified"
+    },
+    {
+      "name": "object-assign",
+      "version": "4.1.1",
+      "license": "unverified"
+    },
+    {
+      "name": "object-inspect",
+      "version": "1.13.4",
+      "license": "unverified"
+    },
+    {
+      "name": "oidc-provider",
+      "version": "9.12.2",
+      "license": "unverified"
+    },
+    {
+      "name": "on-finished",
+      "version": "2.4.1",
+      "license": "unverified"
+    },
+    {
+      "name": "once",
+      "version": "1.4.0",
+      "license": "unverified"
+    },
+    {
+      "name": "parseurl",
+      "version": "1.3.3",
+      "license": "unverified"
+    },
+    {
+      "name": "path-key",
+      "version": "3.1.1",
+      "license": "unverified"
+    },
+    {
+      "name": "path-to-regexp",
+      "version": "8.4.2",
+      "license": "unverified"
+    },
+    {
+      "name": "picomatch",
+      "version": "4.0.7",
+      "license": "unverified"
+    },
+    {
+      "name": "pkce-challenge",
+      "version": "5.0.1",
+      "license": "unverified"
+    },
+    {
+      "name": "prettier",
+      "version": "3.9.7",
+      "license": "unverified"
+    },
+    {
+      "name": "proxy-addr",
+      "version": "2.0.8",
+      "license": "unverified"
+    },
+    {
+      "name": "qs",
+      "version": "6.16.0",
+      "license": "unverified"
+    },
+    {
+      "name": "range-parser",
+      "version": "1.3.0",
+      "license": "unverified"
+    },
+    {
+      "name": "raw-body",
+      "version": "3.0.2",
+      "license": "unverified"
+    },
+    {
+      "name": "require-from-string",
+      "version": "2.0.2",
+      "license": "unverified"
+    },
+    {
+      "name": "router",
+      "version": "2.2.0",
+      "license": "unverified"
+    },
+    {
+      "name": "safer-buffer",
+      "version": "2.1.2",
+      "license": "unverified"
+    },
+    {
+      "name": "send",
+      "version": "1.2.1",
+      "license": "unverified"
+    },
+    {
+      "name": "serve-static",
+      "version": "2.2.1",
+      "license": "unverified"
+    },
+    {
+      "name": "setprototypeof",
+      "version": "1.2.0",
+      "license": "unverified"
+    },
+    {
+      "name": "shebang-command",
+      "version": "2.0.0",
+      "license": "unverified"
+    },
+    {
+      "name": "shebang-regex",
+      "version": "3.0.0",
+      "license": "unverified"
+    },
+    {
+      "name": "side-channel-list",
+      "version": "1.0.1",
+      "license": "unverified"
+    },
+    {
+      "name": "side-channel-map",
+      "version": "1.0.1",
+      "license": "unverified"
+    },
+    {
+      "name": "side-channel-weakmap",
+      "version": "1.0.2",
+      "license": "unverified"
+    },
+    {
+      "name": "side-channel",
+      "version": "1.1.1",
+      "license": "unverified"
+    },
+    {
+      "name": "statuses",
+      "version": "1.5.0",
+      "license": "unverified"
+    },
+    {
+      "name": "statuses",
+      "version": "2.0.2",
+      "license": "unverified"
+    },
+    {
+      "name": "tinyglobby",
+      "version": "0.2.17",
+      "license": "unverified"
+    },
+    {
+      "name": "toidentifier",
+      "version": "1.0.1",
+      "license": "unverified"
+    },
+    {
+      "name": "tsscmp",
+      "version": "1.0.6",
+      "license": "unverified"
+    },
+    {
+      "name": "type-is",
+      "version": "2.1.0",
+      "license": "unverified"
+    },
+    {
+      "name": "typescript",
+      "version": "5.8.3",
+      "license": "unverified"
+    },
+    {
+      "name": "undici-types",
+      "version": "7.18.2",
+      "license": "unverified"
+    },
+    {
+      "name": "unpipe",
+      "version": "1.0.0",
+      "license": "unverified"
+    },
+    {
+      "name": "vary",
+      "version": "1.1.2",
+      "license": "unverified"
+    },
+    {
+      "name": "which",
+      "version": "2.0.2",
+      "license": "unverified"
+    },
+    {
+      "name": "wrappy",
+      "version": "1.0.2",
+      "license": "unverified"
+    },
+    {
+      "name": "ws",
+      "version": "8.21.3",
+      "license": "unverified"
+    },
+    {
+      "name": "zod-to-json-schema",
+      "version": "3.25.2",
+      "license": "unverified"
+    },
+    {
+      "name": "zod",
+      "version": "4.6.5",
+      "license": "unverified"
+    }
+  ],
+  "pnpm_importers": {
+    ".": {
+      "dependencies": [],
+      "devDependencies": [
+        "typescript"
+      ],
+      "optionalDependencies": []
+    },
+    "adapters/compact-mcp": {
+      "dependencies": [
+        "@modelcontextprotocol/sdk",
+        "@tetherplane/protocol",
+        "ajv",
+        "zod"
+      ],
+      "devDependencies": [
+        "@types/node"
+      ],
+      "optionalDependencies": []
+    },
+    "adapters/model-client": {
+      "dependencies": [
+        "@tetherplane/protocol"
+      ],
+      "devDependencies": [
+        "@types/node"
+      ],
+      "optionalDependencies": []
+    },
+    "adapters/rdc-compat": {
+      "dependencies": [
+        "@modelcontextprotocol/sdk",
+        "@tetherplane/compact-mcp",
+        "@tetherplane/protocol",
+        "zod"
+      ],
+      "devDependencies": [
+        "@types/node"
+      ],
+      "optionalDependencies": []
+    },
+    "auth": {
+      "dependencies": [
+        "oidc-provider"
+      ],
+      "devDependencies": [
+        "@types/node",
+        "@types/oidc-provider"
+      ],
+      "optionalDependencies": []
+    },
+    "browser/bridge": {
+      "dependencies": [
+        "ws"
+      ],
+      "devDependencies": [
+        "@tetherplane/browser-lab",
+        "@types/node",
+        "@types/ws"
+      ],
+      "optionalDependencies": []
+    },
+    "extension/browser": {
+      "dependencies": [
+        "@tetherplane/browser-bridge"
+      ],
+      "devDependencies": [
+        "@types/chrome",
+        "@types/node",
+        "esbuild"
+      ],
+      "optionalDependencies": []
+    },
+    "fixtures/browser-lab": {
+      "dependencies": [],
+      "devDependencies": [
+        "@types/node"
+      ],
+      "optionalDependencies": []
+    },
+    "protocol": {
+      "dependencies": [],
+      "devDependencies": [
+        "ajv",
+        "json-schema-to-typescript"
+      ],
+      "optionalDependencies": []
+    },
+    "relay": {
+      "dependencies": [
+        "@modelcontextprotocol/sdk",
+        "@tetherplane/compact-mcp",
+        "@tetherplane/protocol",
+        "jose",
+        "ws",
+        "zod"
+      ],
+      "devDependencies": [
+        "@types/node",
+        "@types/ws"
+      ],
+      "optionalDependencies": []
+    },
+    "tests/e2e": {
+      "dependencies": [
+        "@modelcontextprotocol/sdk",
+        "@tetherplane/browser-bridge",
+        "@tetherplane/browser-lab",
+        "@tetherplane/compact-mcp",
+        "@tetherplane/model-client",
+        "@tetherplane/relay"
+      ],
+      "devDependencies": [
+        "@types/node"
+      ],
+      "optionalDependencies": []
+    }
+  },
+  "pnpm_unique_external_direct_names": [
+    "@modelcontextprotocol/sdk",
+    "@types/chrome",
+    "@types/node",
+    "@types/oidc-provider",
+    "@types/ws",
+    "ajv",
+    "esbuild",
+    "jose",
+    "json-schema-to-typescript",
+    "oidc-provider",
+    "typescript",
+    "ws",
+    "zod"
+  ]
+}

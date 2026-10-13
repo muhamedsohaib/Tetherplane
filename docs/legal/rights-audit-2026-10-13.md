@@ -37,3 +37,7 @@ Compatible permissive material may be included in an AGPL-covered combined relea
 When Leno is online, first verify git status, branch, last five commits and remotes, then run complete author/file/license inventory in the canonical working copy. Audit the staged Windows release ZIP and record exact tool versions, source SHA, evidence timestamps and open questions. Do not substitute another computer without express authorization.
 
 Current disposition: **preliminary evidence only; release blocked**.
+
+## Owner statement and expanded technical review (2026-10-13)
+
+The user has stated personal ownership and no known employer/client/contractor/third-party claims. Record this as a **self-report only**; no signed rights or contracts were independently reviewed. An extended audit also examined the more recent 661-commit development branch, the same 191 external Rust and 179 pnpm lockfile entries, and Windows packaging gaps. See [technical audit](technical-audit-2026-10-13.md) and [machine-readable lockfile inventory](lockfile-inventory-2026-10-13.json). This does not constitute legal or licensing clearance.

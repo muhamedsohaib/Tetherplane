@@ -9,6 +9,7 @@ Prepare prospective AGPL-3.0-only licensing for eligible future Tetherplane code
 ## Review documents
 
 - [Rights and provenance audit](rights-audit-2026-10-13.md)
+- [Technical rights / dependency audit](technical-audit-2026-10-13.md) and [lockfile inventory](lockfile-inventory-2026-10-13.json) — public-source baseline and unresolved Leno/ZIP gaps
 - [AGPL transition blueprint](draft-agpl-transition.md)
 - [Commercial-license negotiation sheet](draft-commercial-license.md)
 - [Contributor and ownership process](draft-contributor-rights.md)
