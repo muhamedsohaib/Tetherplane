@@ -1,3 +1,5 @@
+> **2026-10-13 decision:** Option A selected for *preparation only*: prospective AGPL-3.0-only plus alternative commercial licensing. No operative change authorized. See [draft preparation packet](README.md), [rights audit](rights-audit-2026-10-13.md), and [release gates](release-gates.md).
+
 # Tetherplane licensing transition — proposal, not an operative license
 
 Status: PROPOSAL ONLY — legal and ownership review required before any license change.
