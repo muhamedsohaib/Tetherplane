@@ -1,0 +1,44 @@
+# NON-OPERATIVE. Read-only Git provenance; no licensing or release publication.
+name: All-branch rights provenance evidence
+
+on:
+  push:
+    branches:
+      - feature/license-protection-proposal-20261013
+    paths:
+      - scripts/audit_all_refs.py
+      - tests/legal/test_all_refs.py
+      - .github/workflows/legal-all-refs-evidence.yml
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  inspect-refs:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      - name: Run regression tests on temporary Git repository
+        run: python -m unittest discover -s tests/legal -p 'test_all_refs.py' -v
+      - name: Count commits and author labels across fetched refs
+        run: |
+          mkdir -p out
+          python scripts/audit_all_refs.py \
+            --repo . --base-ref refs/remotes/origin/main \
+            --output out/all-ref-provenance.json
+      - name: Preserve bounded evidence
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: tetherplane-all-refs-legal-evidence
+          path: out/all-ref-provenance.json
+          retention-days: 30
+          if-no-files-found: warn
