@@ -30,6 +30,12 @@ class AuditContractTests(unittest.TestCase):
             {'ecosystem': 'npm', 'name': 'zod', 'version': '4.6.5'},
         ])
 
+    def test_permissive_option_does_not_make_lgpl_mandatory(self):
+        self.assertEqual(
+            audit.classify_license('MIT OR Apache-2.0 OR LGPL-2.1-or-later'),
+            'review-alternative-copyleft',
+        )
+
     def test_license_normalization(self):
         self.assertEqual(audit.normalize_license({'type': 'MIT'}), 'MIT')
         self.assertEqual(audit.normalize_license('MIT OR Apache-2.0'), 'MIT OR Apache-2.0')
