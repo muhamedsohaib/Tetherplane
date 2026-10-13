@@ -1,0 +1,52 @@
+# NON-OPERATIVE historical-release evidence. No license or release publication.
+name: Historical Rust Binary Evidence
+
+on:
+  push:
+    branches:
+      - feature/license-protection-proposal-20261013
+    paths:
+      - scripts/audit_binary_crates.py
+      - tests/legal/test_binary_crates.py
+      - .github/workflows/legal-release-binary-evidence.yml
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  release-static-inspection:
+    runs-on: ubuntu-latest
+    timeout-minutes: 12
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      - name: Run focused binary-audit unit tests
+        run: python -m unittest discover -s tests/legal -p 'test_binary_crates.py' -v
+      - name: Fetch historical release and tag lockfile
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          mkdir -p out
+          gh release download v0.1.0 --repo "$GITHUB_REPOSITORY" --pattern 'Tetherplane-Windows-x64.zip' --dir out
+          git show v0.1.0:Cargo.lock > out/Cargo-v0.1.0.lock
+      - name: Inspect Windows executable statically
+        run: |
+          python scripts/audit_binary_crates.py \
+            --release-zip out/Tetherplane-Windows-x64.zip \
+            --cargo-lock out/Cargo-v0.1.0.lock \
+            --expected-sha256 c909cdd78ac786ea2bcb4853841db9d52928c8ae54a99e3306c945aba1066e9c \
+            --output out/v0.1.0-binary-registry-path-evidence.json
+      - name: Archive read-only evidence
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: tetherplane-v010-binary-rust-evidence
+          path: out/v0.1.0-binary-registry-path-evidence.json
+          retention-days: 30
+          if-no-files-found: warn
