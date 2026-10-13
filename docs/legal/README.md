@@ -12,6 +12,8 @@ Prepare prospective AGPL-3.0-only licensing for eligible future Tetherplane code
 - [Technical rights / dependency audit](technical-audit-2026-10-13.md) and [lockfile inventory](lockfile-inventory-2026-10-13.json) — original source baseline (see dated addendum)
 - [Checksum-verified historical v0.1.0 Windows ZIP inspection](release-v0.1.0-artifact-audit-2026-10-13.md) — complete ZIP entry/Node license-file survey; not a Rust binary SBOM
 - [All 370 registry license declarations](registry-license-metadata-2026-10-13.md) — fully fetched, with 18 conservative manual-review flags and reproducible audit workflow
+- [Historical Windows Rust binary / dependency graph evidence](historical-rust-binary-evidence-2026-10-13.md) — 46 PE source-path matches against 149 external Windows graph candidates
+- [All-branch provenance census](all-refs-provenance-2026-10-13.md) — 1,089 reachable commits across 63 refs and unresolved automation identity
 - [AGPL transition blueprint](draft-agpl-transition.md)
 - [Commercial-license negotiation sheet](draft-commercial-license.md)
 - [Contributor and ownership process](draft-contributor-rights.md)
