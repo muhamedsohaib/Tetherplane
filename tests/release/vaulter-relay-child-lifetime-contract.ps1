@@ -120,4 +120,3 @@ try{
      [IO.Path]::GetFileName($resolved) -notmatch '^tetherplane-child-lifetime-[a-f0-9]{32}$'){throw 'Unsafe fixture cleanup path'}
   Remove-Item -LiteralPath $resolved -Recurse -Force
 }
-
