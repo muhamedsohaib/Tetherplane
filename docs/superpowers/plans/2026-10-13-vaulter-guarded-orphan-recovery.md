@@ -1,13 +1,14 @@
-# Vaulter guarded orphan recovery — source repair and NO-GO record
+# Vaulter guarded orphan recovery — source repair and live restoration
 
 Date: 2026-10-13 (Asia/Dubai).
 Canonical repository: https://github.com/muhamedsohaib/Tetherplane
 Base: d0778b7d09de744de863ca61a43f6ddacdc39a69.
 Branch: fix/vaulter-guarded-orphan-recovery-20261013.
 
-Status: child-lifetime source fix independently verified; **live supervision NOT restored**.
-No live relay stop, task mutation, protected-stage replacement, Auth0 change,
-PostgreSQL operation, Holter operation, or unrelated-process termination occurred.
+Status: child-lifetime source fix independently verified; **live supervision restored**
+on 2026-10-13 via identity-bound legacy-orphan handover. Existing Apply/Rollback
+occupied-port refusals were not relaxed. PostgreSQL, Holter, Auth0 issuer and
+unrelated processes were not modified.
 
 ## Read-only incident evidence
 
@@ -107,6 +108,15 @@ A green isolated test is not a live recovery, cold-boot or automatic-restart pro
    Never kill an unknown listener or repeatedly restart in order to force a pass.
    Bridge activation, Auth0 cutover, crash injection and reboot remain separate.
 
-Current decision: **NO-GO for live interruption**. The current relay remains
-healthy but unsupervised. The reviewed source fix is preparation, not a completed
-legacy-orphan handover procedure.
+Live continuation executed 2026-10-13 on Vaulter:
+
+- Dedicated `scripts/vaulter-relay-legacy-orphan-handover.ps1` plus contract.
+- Isolated rehearsal on vacant loopback 18788 passed; production endpoints untouched.
+- Identity-bound `-Recover` replaced the Ready+occupied orphan with the already
+  registered protected supervisor. Independent preflight:
+  `SUPERVISED_AUTH0_VERIFIED`.
+- Staged Composio OAuth bindings activated (12 -> 14) with original Auth0 issuer
+  and protected original file preserved. Auth PID 6360 and PostgreSQL PID 5508
+  remained unchanged.
+- Authenticated Leno MCP `device.status` was not proven: the local static client
+  token is rejected as `invalid_token` by the Auth0-protected MCP edge.
