@@ -16,6 +16,26 @@ jobs:
         run: python -m unittest discover -s tests/skills -p "test_*.py"
       - name: Package checked starter ZIP
         run: python scripts/package_starter_skill.py --output dist/agensi/tetherplane-starter.zip
+  starter-integration:
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, windows-latest]
+    runs-on: ${{ matrix.os }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+      - run: corepack enable
+      - run: corepack prepare pnpm@10 --activate
+      - run: pnpm install --frozen-lockfile
+      - run: cargo build -p tetherd
+      - run: pnpm --filter @tetherplane/e2e build:deps
+      - name: Read-only starter MCP integration
+        run: node --test tests/e2e/tetherplane-starter.test.ts
+
   quality:
     strategy:
       fail-fast: false
