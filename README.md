@@ -4,6 +4,10 @@ Tetherplane is an open-source control plane for AI-operated computers. It gives 
 
 The local agent is the final authority. Remote relays and AI clients can route requests, but they cannot override stricter local policy.
 
+## Official free starter skill
+
+The [Tetherplane Official Starter](skills/tetherplane-starter/README.md) is a free, open-source Agent Skills-format guide for safe local MCP setup, discovering the six tools, and verifying a read-only device-status call. It requires no marketplace account or subscription. Agent activation and remote compatibility are verified separately before being advertised.
+
 ## Default AI-facing surface
 
 Compact MCP exposes exactly six tools:
