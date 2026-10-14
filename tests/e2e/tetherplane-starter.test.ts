@@ -47,7 +47,7 @@ test("official starter fixture proves local read-only status, schema and policy 
     });
     assert.equal(denied.isError, true);
     assert.equal(
-      (denied.structuredContent?.error as { code?: string } | undefined)?.code,
+      (denied.structuredContent as { error?: { code?: string } } | undefined)?.error?.code,
       "permission_denied",
     );
   } finally {
