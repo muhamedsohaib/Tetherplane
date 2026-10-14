@@ -1,0 +1,3 @@
+interface:
+  display_name: "Tetherplane Starter"
+  short_description: "Safe local MCP setup and device-status verification"

@@ -1,0 +1,10 @@
+[
+  {
+    "name": "device",
+    "arguments": {"op": "status", "args": {}}
+  },
+  {
+    "name": "device",
+    "arguments": {"op": "schema", "args": {"namespace": "device", "operation": "status"}}
+  }
+]
