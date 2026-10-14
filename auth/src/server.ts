@@ -7,6 +7,7 @@ import {
 import {
   createServer as createHttpsServer,
 } from "node:https";
+import { randomBytes, timingSafeEqual } from "node:crypto";
 import type { AddressInfo } from "node:net";
 
 import type {
@@ -59,6 +60,7 @@ export class TetherAuthServer {
   readonly #tls: TetherAuthTlsOptions | undefined;
   readonly #allowInsecureLocalhost: boolean;
   #server: HttpServer | null = null;
+  readonly #formProofs = new Map<string, { csrf: string; kind: "login" | "consent"; expiresAt: number }>();
 
   constructor(options: TetherAuthServerOptions) {
     if (typeof options.providerHandler !== "function") {
@@ -137,6 +139,7 @@ export class TetherAuthServer {
   async close(): Promise<void> {
     const server = this.#server;
     this.#server = null;
+    this.#formProofs.clear();
     if (!server || !server.listening) {
       return;
     }
@@ -198,7 +201,14 @@ export class TetherAuthServer {
                   )),
                 };
 
-          if (!response.writableEnded) {
+          if (!response.writableEnded && wantsHtml(request)) {
+            const csrf = randomBytes(32).toString("hex");
+            this.#formProofs.set(loginMatch[1], { csrf, kind: pending.kind, expiresAt: Date.now() + 5 * 60_000 });
+            response.statusCode = 200;
+            writeHtml(response, pending.kind === "consent"
+              ? consentPage(loginMatch[1], pending.clientId, pending.oidcScopes, pending.resourceScopes, csrf)
+              : loginPage(loginMatch[1], pending.userCode, pending.expiresAt, csrf));
+          } else if (!response.writableEnded) {
             writeJson(
               response,
               200,
@@ -246,6 +256,13 @@ export class TetherAuthServer {
               "consent interaction is not supported",
             );
           }
+          if (isForm(request)) {
+            const form = await readForm(request);
+            if (!this.#verifyForm(consentMatch[1], "consent", form)) {
+              response.writeHead(400).end();
+              return;
+            }
+          }
           await this.#interactions.completeConsent(
             request,
             response,
@@ -281,9 +298,13 @@ export class TetherAuthServer {
         completeMatch?.[1]
       ) {
         try {
-          const body = await readObjectBody(
-            request,
-          );
+          const body = isForm(request)
+            ? await readForm(request)
+            : await readObjectBody(request);
+          if (isForm(request) && !this.#verifyForm(completeMatch[1], "login", body)) {
+            response.writeHead(400).end();
+            return;
+          }
           const userCode = stringField(
             body,
             "userCode",
@@ -303,10 +324,14 @@ export class TetherAuthServer {
 
           if (result === "pending") {
             if (!response.writableEnded) {
-              writeJson(response, 202, {
-                status:
-                  "pending_device_approval",
-              });
+              if (isForm(request)) {
+                response.statusCode = 202;
+                writeHtml(response, shell("Device approval pending", "<p>Waiting for approval on your paired device. Return to the previous page after approving and submit again.</p>"));
+              } else {
+                writeJson(response, 202, {
+                  status: "pending_device_approval",
+                });
+              }
             }
             return;
           }
@@ -337,6 +362,19 @@ export class TetherAuthServer {
       request,
       response,
     );
+  }
+
+  #verifyForm(uid: string, kind: "login" | "consent", form: Record<string, unknown>): boolean {
+    const proof = this.#formProofs.get(uid);
+    if (!proof || proof.kind !== kind || proof.expiresAt < Date.now()) {
+      this.#formProofs.delete(uid);
+      return false;
+    }
+    const value = form["csrf"];
+    if (typeof value !== "string" || !/^[a-f0-9]{64}$/.test(value)) return false;
+    const received = Buffer.from(value, "hex");
+    const expected = Buffer.from(proof.csrf, "hex");
+    return timingSafeEqual(received, expected);
   }
 }
 
@@ -500,4 +538,58 @@ function formatAddress(
       ? `[${address.address}]`
       : address.address;
   return `${protocol}://${host}:${address.port}`;
+}
+
+
+function wantsHtml(request: IncomingMessage): boolean {
+  return (request.headers.accept ?? "").includes("text/html");
+}
+function isForm(request: IncomingMessage): boolean {
+  return (request.headers["content-type"] ?? "").split(";")[0]?.trim().toLowerCase() === "application/x-www-form-urlencoded";
+}
+async function readForm(request: IncomingMessage): Promise<Record<string, unknown>> {
+  let body = "";
+  for await (const chunk of request) {
+    body += Buffer.from(chunk as Uint8Array).toString("utf8");
+    if (Buffer.byteLength(body, "utf8") > 16 * 1024) throw new Error("interaction form exceeds limit");
+  }
+  const params = new URLSearchParams(body);
+  const result: Record<string, unknown> = {};
+  for (const [key, value] of params) {
+    if (Object.hasOwn(result, key)) throw new Error("duplicate interaction form field");
+    result[key] = value;
+  }
+  return result;
+}
+function escapeHtml(value: string): string {
+  return value.replace(/[&<>"']/g, (char) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" })[char]!);
+}
+function shell(title: string, body: string): string {
+  return '<!doctype html><html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1"><title>' +
+    escapeHtml(title) + '</title></head><body><main><h1>' + escapeHtml(title) + '</h1>' + body + '</main></body></html>';
+}
+function csrfField(csrf: string): string {
+  return '<input type="hidden" name="csrf" value="' + csrf + '">';
+}
+function loginPage(uid: string, userCode: string, expiresAt: string, csrf: string): string {
+  return shell("Tetherplane device approval", '<p>Approve this one-time code on your paired Tetherplane device:</p><p><strong>' +
+    escapeHtml(userCode) + '</strong></p><p>Expires: ' + escapeHtml(expiresAt) +
+    '</p><form method="post" action="/interaction/' + encodeURIComponent(uid) + '/device-login">' +
+    csrfField(csrf) + '<input type="hidden" name="userCode" value="' + escapeHtml(userCode) +
+    '"><button type="submit">Continue after approving</button></form>');
+}
+function consentPage(uid: string, clientId: string, oidcScopes: string[], resourceScopes: Array<{ resource: string; scopes: string[] }>, csrf: string): string {
+  const entries = [...oidcScopes, ...resourceScopes.flatMap(x => x.scopes.map(scope => x.resource + " : " + scope))];
+  const scopes = entries.map(x => "<li>" + escapeHtml(x) + "</li>").join("");
+  return shell("Tetherplane authorization", '<p>Client: <strong>' + escapeHtml(clientId) + '</strong></p><p>Requested permissions:</p><ul>' +
+    scopes + '</ul><form method="post" action="/interaction/' + encodeURIComponent(uid) +
+    '/consent">' + csrfField(csrf) + '<button type="submit">Authorize</button></form>');
+}
+function writeHtml(response: ServerResponse, body: string): void {
+  response.setHeader("content-type", "text/html; charset=utf-8");
+  response.setHeader("cache-control", "no-store");
+  response.setHeader("referrer-policy", "no-referrer");
+  response.setHeader("x-content-type-options", "nosniff");
+  response.setHeader("content-security-policy", "default-src 'none'; form-action 'self'; base-uri 'none'; frame-ancestors 'none'");
+  response.end(body);
 }
