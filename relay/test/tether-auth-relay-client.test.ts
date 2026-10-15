@@ -175,6 +175,50 @@ test("tether-auth relay client requires HTTPS outside explicit loopback developm
   );
 });
 
+test("tether-auth relay client fails fast when the bridge never responds", async () => {
+  const server = createServer((_request, _response) => {
+    // Intentionally never responds, mirroring a detached bridge route.
+  });
+  await listen(server);
+
+  try {
+    const client = new RelayDeviceLoginProofClient({
+      relayUrl: baseUrl(server),
+      bridgeToken:
+        "TEST_BRIDGE_VALUE_ABCDEFGHIJKLMNOPQRSTUVWXYZ",
+      allowInsecureLocalhost: true,
+      timeoutMs: 250,
+    });
+
+    await assert.rejects(
+      client.start({
+        interactionUid: "interaction_789",
+      }),
+      /timed out|timeout/i,
+    );
+    await assert.rejects(
+      client.consume({
+        interactionUid: "interaction_789",
+        userCode: "IJKL-9012",
+      }),
+      /timed out|timeout/i,
+    );
+    assert.throws(
+      () =>
+        new RelayDeviceLoginProofClient({
+          relayUrl: baseUrl(server),
+          bridgeToken:
+            "TEST_BRIDGE_VALUE_ABCDEFGHIJKLMNOPQRSTUVWXYZ",
+          allowInsecureLocalhost: true,
+          timeoutMs: 0,
+        }),
+      /timeout/i,
+    );
+  } finally {
+    await closeServer(server);
+  }
+});
+
 async function listen(
   server: ReturnType<typeof createServer>,
 ): Promise<void> {
