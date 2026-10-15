@@ -45,6 +45,16 @@ export function createTetherAuthRuntime(
     adapter: input.adapter,
   });
 
+  // Only trust the forwarding headers when the HTTP listener is explicitly
+  // loopback-only behind a same-host TLS terminator. Direct TLS mode must not
+  // trust client-supplied X-Forwarded-Host/Proto headers.
+  if (
+    input.allowInsecureLocalhost === true &&
+    input.tls === undefined
+  ) {
+    provider.proxy = true;
+  }
+
   const interactionProvider:
     TetherAuthInteractionProvider = {
       async interactionDetails(
@@ -83,6 +93,8 @@ export function createTetherAuthRuntime(
             params: {
               client_id:
                 details.params["client_id"],
+              redirect_uri:
+                details.params["redirect_uri"],
             },
             ...(details.session
               ? {

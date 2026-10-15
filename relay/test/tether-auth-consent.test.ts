@@ -255,3 +255,111 @@ test("OIDC consent rejects unknown resources, scopes, claims, and RAR before gra
   assert.equal(grantCalls, 0);
   assert.equal(finished, 0);
 });
+
+test("OIDC consent accepts a resource scope listed in both scope collections", async () => {
+  const resource = "https://mcp.example.com/mcp";
+  const grantOps: Array<unknown> = [];
+  const controller =
+    new TetherAuthInteractionController({
+      provider: {
+        async interactionDetails() {
+          return {
+            uid: "interaction_dual",
+            prompt: {
+              name: "consent",
+              details: {
+                missingOIDCScope: [
+                  "openid",
+                  "tetherplane:access",
+                ],
+                missingResourceScopes: {
+                  [resource]: [
+                    "tetherplane:access",
+                  ],
+                },
+              },
+            },
+            params: {
+              client_id: "client-a",
+            },
+            session: {
+              accountId: "account-a",
+            },
+          } as never;
+        },
+        async interactionFinished() {},
+      },
+      logins: {
+        async start() {
+          throw new Error(
+            "login proof must not run during consent",
+          );
+        },
+        async consume() {
+          throw new Error(
+            "login proof must not run during consent",
+          );
+        },
+      },
+      resource,
+      grants: {
+        async find() {
+          return null;
+        },
+        create() {
+          return {
+            addOIDCScope(scope: string) {
+              grantOps.push({ op: "oidc", scope });
+            },
+            addResourceScope(
+              indicator: string,
+              scope: string,
+            ) {
+              grantOps.push({
+                op: "resource",
+                indicator,
+                scope,
+              });
+            },
+            async save() {
+              return "grant-456";
+            },
+          };
+        },
+      },
+    });
+
+  assert.deepEqual(
+    await controller.describeConsent(
+      {} as IncomingMessage,
+      {} as ServerResponse,
+      "interaction_dual",
+    ),
+    {
+      clientId: "client-a",
+      oidcScopes: ["openid", "tetherplane:access"],
+      resourceScopes: [
+        {
+          resource,
+          scopes: ["tetherplane:access"],
+        },
+      ],
+    },
+  );
+  assert.equal(
+    await controller.completeConsent(
+      {} as IncomingMessage,
+      {} as ServerResponse,
+      "interaction_dual",
+    ),
+    "completed",
+  );
+  assert.deepEqual(grantOps, [
+    { op: "oidc", scope: "openid tetherplane:access" },
+    {
+      op: "resource",
+      indicator: resource,
+      scope: "tetherplane:access",
+    },
+  ]);
+});

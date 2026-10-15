@@ -81,6 +81,108 @@ test("tether-auth provider requires explicit signing keys and persistent adapter
   );
 });
 
+test("tether-auth advertises HTTPS endpoints behind a loopback TLS terminator", async () => {
+  const keys = await generateKeyPair("RS256", { extractable: true });
+  const privateJwk = {
+    ...(await exportJWK(keys.privateKey)),
+    kid: "proxy-smoke",
+    alg: "RS256",
+    use: "sig",
+  };
+
+  const { createTetherAuthRuntime } = await import(
+    "../../auth/src/runtime.ts"
+  );
+  const runtime = createTetherAuthRuntime({
+    issuer: "https://auth.example.com/",
+    resource: "https://mcp.example.com/mcp",
+    interactionBasePath: "/interaction",
+    jwks: { keys: [privateJwk] },
+    adapter: TestAdapter,
+    logins: {
+      start: async () => ({
+        userCode: "ABCD-1234",
+        expiresAt: "2030-01-01T00:00:00.000Z",
+      }),
+      consume: async () => null,
+    },
+    allowInsecureLocalhost: true,
+  });
+
+  const address = await runtime.server.listen({
+    host: "127.0.0.1",
+    port: 0,
+  });
+  try {
+    const response = await fetch(
+      `${address.url}/.well-known/openid-configuration`,
+      {
+        headers: {
+          host: "auth.example.com",
+          "x-forwarded-proto": "https",
+          "x-forwarded-host": "auth.example.com",
+        },
+      },
+    );
+    assert.equal(response.status, 200);
+    const metadata = (await response.json()) as Record<string, unknown>;
+    for (const field of [
+      "authorization_endpoint",
+      "token_endpoint",
+      "userinfo_endpoint",
+      "jwks_uri",
+      "registration_endpoint",
+      "revocation_endpoint",
+    ]) {
+      assert.match(
+        String(metadata[field] ?? ""),
+        /^https:\/\//,
+        `${field} must advertise HTTPS behind the TLS terminator`,
+      );
+    }
+  } finally {
+    await runtime.server.close();
+  }
+});
+
+test("tether-auth never trusts forwarded headers in direct TLS mode", async () => {
+  const keys = await generateKeyPair("RS256", { extractable: true });
+  const privateJwk = {
+    ...(await exportJWK(keys.privateKey)),
+    kid: "proxy-negative",
+    alg: "RS256",
+    use: "sig",
+  };
+
+  const { createTetherAuthRuntime } = await import(
+    "../../auth/src/runtime.ts"
+  );
+  const runtime = createTetherAuthRuntime({
+    issuer: "https://auth.example.com/",
+    resource: "https://mcp.example.com/mcp",
+    interactionBasePath: "/interaction",
+    jwks: { keys: [privateJwk] },
+    adapter: TestAdapter,
+    logins: {
+      start: async () => ({
+        userCode: "ABCD-1234",
+        expiresAt: "2030-01-01T00:00:00.000Z",
+      }),
+      consume: async () => null,
+    },
+    tls: { cert: "test-cert", key: "test-key" },
+  });
+
+  try {
+    assert.equal(
+      (runtime.provider as unknown as { proxy: unknown }).proxy,
+      false,
+    );
+  } finally {
+    await runtime.server.close();
+  }
+});
+
 class TestAdapter {
   constructor(_name: string) {}
   async upsert(): Promise<void> {}
