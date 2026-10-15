@@ -30,6 +30,11 @@ import {
   DeviceRouter,
 } from "./routing/device-router.ts";
 import { RelayHealthHttpGateway } from "./health-http.ts";
+import { isClaimed } from "./http-claim.ts";
+import {
+  AccessLog,
+  attachAccessLogging,
+} from "./access-log.ts";
 
 type NodeRelayServer =
   | ReturnType<typeof createHttpServer>
@@ -90,6 +95,7 @@ export class RelayServer {
     allowInsecureLocalhost?: boolean;
     routeTimeoutMs?: number;
     authLoginBridgeToken?: string;
+    accessLogFile?: string;
   }): Promise<RelayServer> {
     const registry = await DeviceRegistry.open(
       options.stateFile
@@ -106,10 +112,14 @@ export class RelayServer {
       registry,
       router,
     });
+    const accessLog = options.accessLogFile
+      ? new AccessLog({ file: options.accessLogFile })
+      : undefined;
     const mcpGateway = new RemoteMcpHttpGateway({
       router,
       authenticator: options.authenticator,
       ...(options.oauth ? { oauth: options.oauth } : {}),
+      ...(accessLog ? { accessLog } : {}),
     });
     const healthGateway = new RelayHealthHttpGateway();
     const controlGateway = new RelayControlHttpGateway({
@@ -134,11 +144,15 @@ export class RelayServer {
         : createHttpsServer(options.tls);
 
     const httpCompatible = server as unknown as HttpServer;
+    if (accessLog) {
+      attachAccessLogging(httpCompatible, accessLog);
+    }
     healthGateway.attach(httpCompatible);
     deviceGateway.attach(httpCompatible, "/device");
     mcpGateway.attach(httpCompatible, "/mcp");
     controlGateway.attach(httpCompatible);
     authLoginGateway?.attach(httpCompatible);
+    attachUnmatchedFallback(httpCompatible);
 
     return new RelayServer({
       server,
@@ -236,6 +250,19 @@ export class RelayServer {
       deviceWsUrl: `${wsScheme}://${authority}/device`,
     };
   }
+}
+
+function attachUnmatchedFallback(server: HttpServer): void {
+  server.on("request", (_request, response) => {
+    setImmediate(() => {
+      if (response.writableEnded || isClaimed(response)) return;
+      response.writeHead(404, {
+        "content-type": "application/json",
+        "cache-control": "no-store",
+      });
+      response.end(JSON.stringify({ error: "not_found" }));
+    });
+  });
 }
 
 function isLoopbackHost(host: string): boolean {

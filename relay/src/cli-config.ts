@@ -5,7 +5,7 @@ import {
   type ClientAuthenticator,
 } from "./auth/static-auth.ts";
 import type { OAuthResource } from "./auth/oauth-resource.ts";
-import { readFile } from "node:fs/promises";
+import { readFile, stat } from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
 
@@ -217,6 +217,10 @@ function configString(
   return value.trim();
 }
 
+function isAbsoluteLogPath(value: string): boolean {
+  return path.isAbsolute(value);
+}
+
 function requiredValue(
   args: string[],
   index: number,
@@ -274,10 +278,17 @@ const bridgeConfigSchema = z
   })
   .strict();
 
+const diagnosticsSchema = z
+  .object({
+    accessLogFile: z.string().min(1),
+  })
+  .strict();
+
 const oidcConfigSchema = z
   .object({
     oidc: z.union([oidcBindingSchema, oidcSubjectSchema]),
     deviceLoginBridge: bridgeConfigSchema.optional(),
+    diagnostics: diagnosticsSchema.optional(),
   })
   .strict();
 
@@ -288,6 +299,7 @@ export async function loadClientAuth(
   authenticator: ClientAuthenticator;
   oauth?: OAuthResource;
   authLoginBridgeToken?: string;
+  accessLogFile?: string;
 }> {
   let parsed: unknown;
   try {
@@ -309,6 +321,7 @@ export async function loadClientAuth(
     }
     const oidc = result.data.oidc;
     const bridge = result.data.deviceLoginBridge;
+    const diagnostics = result.data.diagnostics;
     const authLoginBridgeToken =
       bridge === undefined
         ? undefined
@@ -321,6 +334,23 @@ export async function loadClientAuth(
         `relay auth bridge environment variable is missing: ${bridge.tokenEnv}`,
       );
     }
+    if (
+      diagnostics?.accessLogFile !== undefined &&
+      !isAbsoluteLogPath(diagnostics.accessLogFile)
+    ) {
+      throw new Error(
+        "relay diagnostics accessLogFile must be an absolute path",
+      );
+    }
+    if (diagnostics?.accessLogFile !== undefined) {
+      const parent = path.dirname(diagnostics.accessLogFile);
+      const parentStat = await stat(parent).catch(() => null);
+      if (!parentStat || !parentStat.isDirectory()) {
+        throw new Error(
+          "relay diagnostics accessLogFile parent directory is missing",
+        );
+      }
+    }
     return {
       authenticator: new OidcClientAuthenticator(oidc),
       oauth: {
@@ -330,6 +360,9 @@ export async function loadClientAuth(
       },
       ...(authLoginBridgeToken
         ? { authLoginBridgeToken }
+        : {}),
+      ...(diagnostics?.accessLogFile
+        ? { accessLogFile: diagnostics.accessLogFile }
         : {}),
     };
   }

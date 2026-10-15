@@ -10,6 +10,8 @@ import type {
 } from "../auth/static-auth.ts";
 import type { DeviceRegistry } from "./registry.ts";
 
+import { markClaimed } from "../http-claim.ts";
+
 export class RelayControlHttpGateway {
   readonly #registry: DeviceRegistry;
   readonly #authenticator: ClientAuthenticator;
@@ -56,6 +58,19 @@ export class RelayControlHttpGateway {
       request.url ?? "/",
       `http://${request.headers.host ?? "localhost"}`,
     );
+
+    if (
+      (request.method === "POST" &&
+        url.pathname === "/pair/start") ||
+      (request.method === "POST" &&
+        url.pathname === "/pair/approve") ||
+      (request.method === "GET" &&
+        url.pathname === "/devices") ||
+      (request.method === "POST" &&
+        /^\/devices\/([^/]+)\/revoke$/.test(url.pathname))
+    ) {
+      markClaimed(response);
+    }
 
     try {
       if (

@@ -7,6 +7,8 @@ import type {
 } from "node:http";
 
 import { createCompactMcpServer } from "@tetherplane/compact-mcp";
+import { markClaimed } from "../http-claim.ts";
+import type { AccessLog } from "../access-log.ts";
 import { StreamableHTTPServerTransport } from "@modelcontextprotocol/sdk/server/streamableHttp.js";
 import { isInitializeRequest } from "@modelcontextprotocol/sdk/types.js";
 
@@ -26,6 +28,7 @@ export class RemoteMcpHttpGateway {
   readonly #router: DeviceRouter;
   readonly #oauth: OAuthResource | undefined;
   readonly #authenticator: ClientAuthenticator;
+  readonly #accessLog: AccessLog | undefined;
   readonly #sessions = new Map<string, McpSession>();
   #attachedServer: Server | null = null;
   #requestHandler:
@@ -36,10 +39,12 @@ export class RemoteMcpHttpGateway {
     router: DeviceRouter;
     authenticator: ClientAuthenticator;
     oauth?: OAuthResource;
+    accessLog?: AccessLog;
   }) {
     this.#oauth = options.oauth ? validateOAuthResource(options.oauth) : undefined;
     this.#router = options.router;
     this.#authenticator = options.authenticator;
+    this.#accessLog = options.accessLog;
   }
 
   attach(server: Server, pathname = "/mcp"): void {
@@ -80,6 +85,7 @@ export class RemoteMcpHttpGateway {
       `http://${request.headers.host ?? "localhost"}`,
     );
     if (this.#oauth && ["/.well-known/oauth-protected-resource", new URL(resourceMetadataUrl(this.#oauth)).pathname].includes(url.pathname)) {
+      markClaimed(response);
       if (request.method !== "GET") {
         response.writeHead(405, { allow: "GET" }).end();
       } else {
@@ -90,6 +96,7 @@ export class RemoteMcpHttpGateway {
     if (url.pathname !== pathname) {
       return;
     }
+    markClaimed(response);
 
     const identity = await this.#authenticate(request).catch(() => null);
     // OAuth discovery must work even when the client sends stale credentials.
@@ -140,6 +147,14 @@ export class RemoteMcpHttpGateway {
     identity: ClientIdentity | null,
   ): Promise<void> {
     const body = await readJsonBody(request);
+    if (
+      body &&
+      typeof body === "object" &&
+      !Array.isArray(body) &&
+      "method" in body
+    ) {
+      this.#accessLog?.noteMcpMethod(response, body.method);
+    }
     const sessionId = singleHeader(
       request.headers["mcp-session-id"],
     );

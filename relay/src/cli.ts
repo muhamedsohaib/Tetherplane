@@ -20,6 +20,7 @@ async function main(): Promise<void> {
     authenticator,
     oauth,
     authLoginBridgeToken,
+    accessLogFile,
   } = await loadClientAuth(options.authConfig);
 
   const tls =
@@ -37,6 +38,7 @@ async function main(): Promise<void> {
     ...(authLoginBridgeToken
       ? { authLoginBridgeToken }
       : {}),
+    ...(accessLogFile ? { accessLogFile } : {}),
     ...(tls ? { tls } : {}),
     allowInsecureLocalhost:
       options.allowInsecureLocalhost,
