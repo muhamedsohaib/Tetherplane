@@ -5,6 +5,10 @@ import test from "node:test";
 import {
   BrowserBridgeService,
   BrowserOwnershipRegistry,
+  CdpBackendError,
+  CdpBrowserBackend,
+  findInstalledChromium,
+  launchCdpOwnedBrowser,
   startBrowserRpcServer,
   type BrowserServiceBackend,
   type BrowserServicePage,
@@ -99,5 +103,79 @@ test("service never trusts caller-supplied ownership for a human page", async ()
     assert.equal(backend.performed.length, 0);
   } finally {
     await server.close();
+  }
+});
+
+test("browser status fails when its provider cannot observe pages", async () => {
+  class DisconnectedBackend extends FakeBackend {
+    override async pages(): Promise<BrowserServicePage[]> {
+      throw new CdpBackendError(
+        "provider_failure",
+        "CDP browser connection is not open",
+      );
+    }
+  }
+  const backend = new DisconnectedBackend();
+  const server = await startBrowserRpcServer({
+    host: "127.0.0.1",
+    port: 0,
+    service: new BrowserBridgeService({ backend }),
+  });
+  try {
+    const response = await rpc(server.address, {
+      type: "invoke",
+      request_id: "disconnected-status",
+      capability: "browser.status",
+      arguments: {},
+    });
+    assert.equal(response.status, "error");
+    assert.equal(response.request_id, "disconnected-status");
+    assert.equal(response.verification, "failed");
+    assert.equal((response.error as Record<string, unknown>).code, "provider_failure");
+    assert.equal(response.data, undefined);
+    assert.equal(backend.performed.length, 0);
+  } finally {
+    await server.close();
+  }
+});
+
+for (const empty of [false, true]) {
+  test(`browser status observes a connected provider with ${empty ? "no" : "human"} pages without exposing or changing them`, async () => {
+    const backend = new FakeBackend();
+    if (empty) backend.pagesState.length = 0;
+    const originalPages = structuredClone(backend.pagesState);
+    const service = new BrowserBridgeService({ backend });
+    const response = await service.invoke("browser.status", {});
+    assert.deepEqual(response, {
+      data: {
+        available: true,
+        mode: "background_only",
+        capabilities: {
+          backend: "fake",
+          operations: ["pages", "create_tab", "snapshot", "act", "navigate", "close"],
+        },
+      },
+      verification: "not_applicable",
+    });
+    assert.deepEqual(backend.pagesState, originalPages);
+    assert.deepEqual(backend.performed, []);
+  });
+}
+
+test("browser status detects a real isolated CDP browser disconnect", { timeout: 30_000 }, async () => {
+  const executablePath = findInstalledChromium();
+  assert.ok(executablePath, "expected an installed compatible Chromium executable");
+  const control = await launchCdpOwnedBrowser({ executablePath });
+  const service = new BrowserBridgeService({ backend: new CdpBrowserBackend({ control }) });
+  try {
+    const connected = await service.invoke("browser.status", {});
+    assert.equal((connected.data as Record<string, unknown>).available, true);
+    await control.close();
+    await assert.rejects(
+      service.invoke("browser.status", {}),
+      (error: unknown) => error instanceof CdpBackendError && error.code === "provider_failure",
+    );
+  } finally {
+    await control.close();
   }
 });
