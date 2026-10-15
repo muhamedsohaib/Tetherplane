@@ -41,6 +41,15 @@ export type TetherAuthServerOptions = {
   interactions?: TetherAuthServerInteractions;
   tls?: TetherAuthTlsOptions;
   allowInsecureLocalhost?: boolean;
+  dcrRateLimit?: {
+    maxRequests: number;
+    windowMs: number;
+  };
+};
+
+const DEFAULT_DCR_RATE_LIMIT = {
+  maxRequests: 30,
+  windowMs: 3_600_000,
 };
 
 export type TetherAuthListenOptions = {
@@ -61,6 +70,10 @@ export class TetherAuthServer {
   readonly #allowInsecureLocalhost: boolean;
   #server: HttpServer | null = null;
   readonly #formProofs = new Map<string, { csrf: string; kind: "login" | "consent"; expiresAt: number }>();
+  readonly #dcrMaxRequests: number;
+  readonly #dcrWindowMs: number;
+  #dcrWindowStart: number | null = null;
+  #dcrCount = 0;
 
   constructor(options: TetherAuthServerOptions) {
     if (typeof options.providerHandler !== "function") {
@@ -68,11 +81,29 @@ export class TetherAuthServer {
         "tether-auth requires an OIDC provider handler",
       );
     }
+    const dcrMaxRequests =
+      options.dcrRateLimit?.maxRequests ??
+      DEFAULT_DCR_RATE_LIMIT.maxRequests;
+    const dcrWindowMs =
+      options.dcrRateLimit?.windowMs ??
+      DEFAULT_DCR_RATE_LIMIT.windowMs;
+    if (
+      !Number.isInteger(dcrMaxRequests) ||
+      dcrMaxRequests < 1 ||
+      !Number.isInteger(dcrWindowMs) ||
+      dcrWindowMs < 1
+    ) {
+      throw new Error(
+        "tether-auth dynamic registration rate limit must use positive integers",
+      );
+    }
     this.#providerHandler = options.providerHandler;
     this.#interactions = options.interactions;
     this.#tls = options.tls;
     this.#allowInsecureLocalhost =
       options.allowInsecureLocalhost ?? false;
+    this.#dcrMaxRequests = dcrMaxRequests;
+    this.#dcrWindowMs = dcrWindowMs;
   }
 
   async listen(
@@ -207,7 +238,7 @@ export class TetherAuthServer {
             response.statusCode = 200;
             writeHtml(response, pending.kind === "consent"
               ? consentPage(loginMatch[1], pending.clientId, pending.oidcScopes, pending.resourceScopes, csrf)
-              : loginPage(loginMatch[1], pending.userCode, pending.expiresAt, csrf));
+              : loginPage(loginMatch[1], pending.userCode, pending.expiresAt, csrf), pending.callbackOrigin);
           } else if (!response.writableEnded) {
             writeJson(
               response,
@@ -358,9 +389,57 @@ export class TetherAuthServer {
       }
     }
 
+    if (
+      request.method === "POST" &&
+      pathname === "/reg" &&
+      !this.#consumeDcrBudget()
+    ) {
+      const retryAfterSeconds = this.#dcrRetryAfterSeconds();
+      response.setHeader(
+        "retry-after",
+        String(retryAfterSeconds),
+      );
+      writeJson(response, 429, {
+        error: "temporarily_unavailable",
+        error_description:
+          "dynamic client registration rate limit exceeded",
+      });
+      return;
+    }
+
     this.#providerHandler(
       request,
       response,
+    );
+  }
+
+  #consumeDcrBudget(): boolean {
+    const now = Date.now();
+    if (
+      this.#dcrWindowStart === null ||
+      now - this.#dcrWindowStart >= this.#dcrWindowMs
+    ) {
+      this.#dcrWindowStart = now;
+      this.#dcrCount = 0;
+    }
+    if (this.#dcrCount >= this.#dcrMaxRequests) {
+      return false;
+    }
+    this.#dcrCount += 1;
+    return true;
+  }
+
+  #dcrRetryAfterSeconds(): number {
+    if (this.#dcrWindowStart === null) {
+      return 1;
+    }
+    const remainingMs =
+      this.#dcrWindowStart +
+      this.#dcrWindowMs -
+      Date.now();
+    return Math.max(
+      1,
+      Math.ceil(remainingMs / 1000),
     );
   }
 
@@ -585,11 +664,17 @@ function consentPage(uid: string, clientId: string, oidcScopes: string[], resour
     scopes + '</ul><form method="post" action="/interaction/' + encodeURIComponent(uid) +
     '/consent">' + csrfField(csrf) + '<button type="submit">Authorize</button></form>');
 }
-function writeHtml(response: ServerResponse, body: string): void {
+const SAFE_FORM_ACTION_ORIGIN =
+  /^(https:\/\/[A-Za-z0-9.-]+(?::\d+)?|http:\/\/(127\.0\.0\.1|localhost|\[::1\])(:\d+)?)$/;
+function writeHtml(response: ServerResponse, body: string, formActionOrigin?: string): void {
   response.setHeader("content-type", "text/html; charset=utf-8");
   response.setHeader("cache-control", "no-store");
   response.setHeader("referrer-policy", "no-referrer");
   response.setHeader("x-content-type-options", "nosniff");
-  response.setHeader("content-security-policy", "default-src 'none'; form-action 'self'; base-uri 'none'; frame-ancestors 'none'");
+  const formAction =
+    formActionOrigin && SAFE_FORM_ACTION_ORIGIN.test(formActionOrigin)
+      ? `form-action 'self' ${formActionOrigin}`
+      : "form-action 'self'";
+  response.setHeader("content-security-policy", `default-src 'none'; ${formAction}; base-uri 'none'; frame-ancestors 'none'`);
   response.end(body);
 }

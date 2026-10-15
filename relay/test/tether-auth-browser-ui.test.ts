@@ -1,4 +1,4 @@
-import assert from "node:assert/strict";
+﻿import assert from "node:assert/strict";
 import type { IncomingMessage, ServerResponse } from "node:http";
 import test from "node:test";
 
@@ -12,6 +12,69 @@ function extractCsrf(html: string): string {
   assert.ok(match, "browser form must carry an unpredictable interaction-specific CSRF token");
   return match[1]!;
 }
+
+test("interaction pages allow form navigation to the validated callback origin only", async () => {
+  const server = new TetherAuthServer({
+    providerHandler(_request, response) { response.writeHead(404).end(); },
+    interactions: {
+      async beginLogin() { throw new Error("unused"); },
+      async beginInteraction(
+        _request: IncomingMessage,
+        _response: ServerResponse,
+        interactionUid: string,
+      ) {
+        if (interactionUid === "interaction_evil") {
+          return {
+            kind: "login" as const,
+            userCode: safeCode,
+            expiresAt: "2030-10-14T16:00:00.000Z",
+            callbackOrigin: "http://evil.example",
+          };
+        }
+        return {
+          kind: "login" as const,
+          userCode: safeCode,
+          expiresAt: "2030-10-14T16:00:00.000Z",
+          callbackOrigin: "http://127.0.0.1:8765",
+        };
+      },
+      async completeLogin() { throw new Error("unused"); },
+    },
+    allowInsecureLocalhost: true,
+  });
+
+  try {
+    const address = await server.listen({ host: "127.0.0.1", port: 0 });
+    const page = await fetch(address.url + "/interaction/" + uid, {
+      headers: { accept: "text/html" },
+    });
+    assert.equal(page.status, 200);
+    const csp = page.headers.get("content-security-policy") ?? "";
+    assert.match(csp, /default-src 'none'/);
+    assert.match(csp, /base-uri 'none'/);
+    assert.match(csp, /frame-ancestors 'none'/);
+    assert.ok(
+      csp.includes("form-action 'self' http://127.0.0.1:8765"),
+      "validated loopback callback must be a form-action target",
+    );
+    await page.text();
+
+    const evil = await fetch(
+      address.url + "/interaction/interaction_evil",
+      { headers: { accept: "text/html" } },
+    );
+    assert.equal(evil.status, 200);
+    const evilCsp = evil.headers.get("content-security-policy") ?? "";
+    assert.ok(
+      !evilCsp.includes("evil.example"),
+      "unvalidated origins must never enter the policy",
+    );
+    assert.match(evilCsp, /form-action 'self'(;|$)/);
+    await evil.text();
+  } finally {
+    await server.close();
+  }
+});
 
 test("human login uses an escaped no-store HTML form and resumes the provider redirect after device approval", async () => {
   let approved = false;
