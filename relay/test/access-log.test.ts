@@ -56,7 +56,7 @@ test("access log records arrival and completion without sensitive values", async
     assert.equal(missing.status, 404);
     await missing.text();
 
-    const raw = await readFile(accessLogFile, "utf8");
+    const raw = await waitForLog(accessLogFile, 4);
     assert.ok(!raw.includes("should-never-appear"));
     const entries = entriesOf(raw);
     const starts = entries.filter((e) => e.event === "start");
@@ -130,7 +130,7 @@ test("access log records validated MCP method names without arguments", async ()
     });
     await call.text();
 
-    const raw = await readFile(accessLogFile, "utf8");
+    const raw = await waitForLog(accessLogFile, 6);
     assert.ok(!raw.includes(forged));
     const entries = entriesOf(raw);
     const methods = new Set(
@@ -245,6 +245,17 @@ test("diagnostics accessLogFile config is strictly validated", async () => {
     await rm(dir, { recursive: true, force: true });
   }
 });
+
+async function waitForLog(file: string, minLines: number): Promise<string> {
+  const deadline = Date.now() + 5_000;
+  for (;;) {
+    const raw = await readFile(file, "utf8").catch(() => "");
+    const lines = raw.split("\n").filter((line) => line.trim().length > 0);
+    if (lines.length >= minLines) return raw;
+    if (Date.now() > deadline) return raw;
+    await new Promise((resolve) => setTimeout(resolve, 25));
+  }
+}
 
 function auth(): StaticClientAuthenticator {
   return new StaticClientAuthenticator([
