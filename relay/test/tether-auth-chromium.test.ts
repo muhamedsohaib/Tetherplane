@@ -7,11 +7,11 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import test from "node:test";
 import { exportJWK, generateKeyPair } from "jose";
-import WebSocket from "ws";
+import { rm } from "node:fs/promises";
 
 import { createSqliteAdapter } from "../../auth/src/sqlite-adapter.ts";
 import { createTetherAuthRuntime } from "../../auth/src/runtime.ts";
-import { readChromiumDevToolsPort } from "./helpers/chromium-debug-port.ts";
+import { closeChromiumFromProfile, connectTestCdp, readChromiumDevToolsPort, withChromiumTestResources } from "./helpers/chromium-debug-port.ts";
 
 function chromiumBinary(): string | null {
   const override = process.env.TETHERPLANE_CHROMIUM_BIN;
@@ -48,81 +48,11 @@ function chromiumBinary(): string | null {
 
 const CHROME = chromiumBinary();
 
-type Cdp = {
-  send<T>(method: string, params?: unknown): Promise<T>;
-  onEvent(listener: (method: string, text: string) => void): void;
-  close(): void;
-};
-
-async function connectCdp(url: string): Promise<Cdp> {
-  const socket = new WebSocket(url);
-  await new Promise<void>((resolve, reject) => {
-    socket.once("open", () => resolve());
-    socket.once("error", (error) => reject(error));
-  });
-  let nextId = 1;
-  const pending = new Map<
-    number,
-    { resolve: (value: unknown) => void; reject: (error: Error) => void }
-  >();
-  const listeners = new Set<(method: string, text: string) => void>();
-  socket.on("message", (raw) => {
-    const message = JSON.parse(String(raw)) as {
-      id?: number;
-      method?: string;
-      params?: unknown;
-      result?: unknown;
-      error?: { message?: string };
-    };
-    if (
-      typeof message.id === "number" &&
-      pending.has(message.id)
-    ) {
-      const entry = pending.get(message.id)!;
-      pending.delete(message.id);
-      if (message.error) {
-        entry.reject(
-          new Error(message.error.message ?? "CDP error"),
-        );
-      } else {
-        entry.resolve(message.result);
-      }
-      return;
-    }
-    if (message.method) {
-      const text = JSON.stringify(message.params ?? null).slice(
-        0,
-        300,
-      );
-      for (const listener of listeners) {
-        listener(message.method, text);
-      }
-    }
-  });
-  return {
-    send<T>(method: string, params?: unknown): Promise<T> {
-      const id = nextId++;
-      return new Promise<T>((resolve, reject) => {
-        pending.set(id, {
-          resolve: resolve as (value: unknown) => void,
-          reject,
-        });
-        socket.send(JSON.stringify({ id, method, params }));
-      });
-    },
-    onEvent(listener) {
-      listeners.add(listener);
-    },
-    close() {
-      socket.close();
-    },
-  };
-}
 
 test(
   "chromium completes the browser flow to a loopback callback without CSP violations",
   { skip: CHROME === null, timeout: 90_000 },
-  async () => {
+  async () => withChromiumTestResources(async (defer) => {
     const keys = await generateKeyPair("RS256", {
       extractable: true,
     });
@@ -132,11 +62,11 @@ test(
       alg: "RS256",
       use: "sig",
     };
-    const databasePath = join(
-      mkdtempSync(join(tmpdir(), "tether-chromium-")),
-      "provider.sqlite",
-    );
+    const databaseDir = mkdtempSync(join(tmpdir(), "tether-chromium-"));
+    defer(() => rm(databaseDir, { recursive: true, force: true }));
+    const databasePath = join(databaseDir, "provider.sqlite");
     const storage = createSqliteAdapter({ databasePath });
+    defer(() => storage.close());
     const runtime = createTetherAuthRuntime({
       issuer: "https://auth.example.test/",
       resource: "https://mcp.example.test/mcp",
@@ -152,6 +82,7 @@ test(
       },
       allowInsecureLocalhost: true,
     });
+    defer(() => runtime.server.close());
     const address = await runtime.server.listen({
       host: "127.0.0.1",
       port: 0,
@@ -176,9 +107,14 @@ test(
       response.writeHead(404);
       response.end();
     });
-    await new Promise<void>((resolve) =>
-      callbackServer.listen(0, "127.0.0.1", resolve),
-    );
+    defer(async () => {
+      callbackServer.closeAllConnections();
+      if (callbackServer.listening) await new Promise<void>((resolve) => callbackServer.close(() => resolve()));
+    });
+    await new Promise<void>((resolve, reject) => {
+      callbackServer.once("error", reject);
+      callbackServer.listen(0, "127.0.0.1", resolve);
+    });
     const callbackPort = (callbackServer.address() as AddressInfo)
       .port;
     const callbackBase = `http://127.0.0.1:${callbackPort}/callback`;
@@ -186,6 +122,7 @@ test(
     const registered = (await (
       await fetch(`${address.url}/reg`, {
         method: "POST",
+        signal: AbortSignal.timeout(5000),
         headers: { "content-type": "application/json" },
         body: JSON.stringify({
           redirect_uris: [callbackBase],
@@ -213,6 +150,30 @@ test(
       join(tmpdir(), "tether-chromium-profile-"),
     );
     let chrome: ChildProcess | null = null;
+    let browserClosed = false;
+    defer(async () => { if (!chrome || browserClosed) await rm(profileDir, { recursive: true, force: true }); });
+    defer(async () => {
+      if (!chrome) return;
+      // No PID fallback after launcher exit: it could now be an unrelated
+      // process. Missing private debugger evidence remains a reported cleanup
+      // blocker requiring ownership-scoped operator recovery.
+      await closeChromiumFromProfile(profileDir);
+      if (process.platform === "win32") {
+        const literal = profileDir.replaceAll("'", "''");
+        const deadline = Date.now() + 10_000;
+        let remaining = "";
+        do {
+          remaining = execFileSync("powershell.exe", [
+            "-NoProfile", "-NonInteractive", "-Command",
+            "@(Get-CimInstance Win32_Process -Filter \"Name='chrome.exe'\" | Where-Object { $_.CommandLine -and $_.CommandLine.Contains('" + literal + "') }).Count",
+          ], { encoding: "utf8", windowsHide: true, timeout: 5000 }).trim();
+          if (Number(remaining) === 0) break;
+          await new Promise((resolve) => setTimeout(resolve, 100));
+        } while (Date.now() < deadline);
+        assert.equal(Number(remaining), 0, "test-owned Chromium profile processes must all exit");
+      }
+      browserClosed = true;
+    });
     const violations: Array<string> = [];
     const record = (method: string, text: string) => {
       if (
@@ -225,8 +186,7 @@ test(
         }
       }
     };
-    try {
-      chrome = spawn(
+    chrome = spawn(
         CHROME!,
         [
           "--headless=new",
@@ -237,7 +197,7 @@ test(
           `--user-data-dir=${profileDir}`,
           "about:blank",
         ],
-        { stdio: "ignore" },
+        { stdio: "ignore", windowsHide: true },
       );
       let debuggerUrl = "";
       let debugPort = 0;
@@ -266,7 +226,7 @@ test(
       );
       const targets = (await (
         await fetch(
-          `http://127.0.0.1:${debugPort}/json/list`,
+          `http://127.0.0.1:${debugPort}/json/list`, { signal: AbortSignal.timeout(2000) },
         )
       ).json()) as Array<{
         type: string;
@@ -276,7 +236,7 @@ test(
         (target) => target.type === "page",
       );
       assert.ok(page, "chromium must expose a page target");
-      const cdp = await connectCdp(page.webSocketDebuggerUrl);
+      const cdp = await connectTestCdp(page.webSocketDebuggerUrl);
       try {
         cdp.onEvent(record);
         await cdp.send("Page.enable");
@@ -343,28 +303,6 @@ test(
       } finally {
         cdp.close();
       }
-    } finally {
-      if (chrome) {
-        if (process.platform === "win32" && chrome.pid && chrome.exitCode === null) {
-          // Terminate only the headless Chrome tree launched by this test;
-          // chrome.kill() alone can orphan Chromium subprocesses on Windows.
-          try {
-            execFileSync("taskkill.exe", ["/PID", String(chrome.pid), "/T", "/F"], {
-              stdio: "ignore",
-              timeout: 10_000,
-            });
-          } catch {
-            chrome.kill();
-          }
-        } else {
-          chrome.kill();
-        }
-      }
-      await runtime.server.close();
-      storage.close();
-      await new Promise<void>((resolve) =>
-        callbackServer.close(() => resolve()),
-      );
-    }
-  },
+
+  }),
 );

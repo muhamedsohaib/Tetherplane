@@ -1,4 +1,5 @@
 import assert from "node:assert/strict";
+import { createHash } from "node:crypto";
 import { execFileSync, spawn, type ChildProcess } from "node:child_process";
 import { mkdtemp, readFile, rm } from "node:fs/promises";
 import os from "node:os";
@@ -51,7 +52,7 @@ function powershell(command: string): string {
   return execFileSync(
     "powershell.exe",
     ["-NoProfile", "-Sta", "-Command", command],
-    { encoding: "utf8" },
+    { encoding: "utf8", windowsHide: true, timeout: 15_000 },
   ).trim();
 }
 
@@ -64,10 +65,44 @@ function cursorPosition(): { x: number; y: number } {
   return { x: x as number, y: y as number };
 }
 
-function clipboardTextBase64(): string {
-  return powershell(
+function clipboardDigest(): string {
+  return createHash("sha256").update(powershell(
     "Add-Type -AssemblyName System.Windows.Forms; $t=[System.Windows.Forms.Clipboard]::GetText(); Write-Output ([Convert]::ToBase64String([Text.Encoding]::UTF8.GetBytes($t)))",
-  );
+  )).digest("hex");
+}
+
+
+type DesktopObservation = {
+  x: number; y: number; foreground: number; inputTick: number; clipboardSequence: number;
+};
+
+function desktopObservation(): DesktopObservation {
+  // Read metadata only. No key contents, clipboard contents, titles, physical
+  // input, focus changes, or user activity stream are recorded in diagnostics.
+  const output = powershell(`
+Add-Type -TypeDefinition @'
+using System;
+using System.Runtime.InteropServices;
+public static class TetherplaneCoexistenceProbe {
+  [StructLayout(LayoutKind.Sequential)] struct Point { public int X; public int Y; }
+  [StructLayout(LayoutKind.Sequential)] struct LastInput { public uint Size; public uint Tick; }
+  [DllImport("user32.dll")] static extern bool GetCursorPos(out Point point);
+  [DllImport("user32.dll")] static extern IntPtr GetForegroundWindow();
+  [DllImport("user32.dll")] static extern bool GetLastInputInfo(ref LastInput input);
+  [DllImport("user32.dll")] static extern uint GetClipboardSequenceNumber();
+  public static string Read() {
+    Point p;
+    LastInput input = new LastInput { Size = (uint)Marshal.SizeOf(typeof(LastInput)) };
+    if (!GetCursorPos(out p) || !GetLastInputInfo(ref input)) throw new InvalidOperationException("desktop metadata unavailable");
+    return string.Format("{0},{1},{2},{3},{4}", p.X, p.Y, GetForegroundWindow().ToInt64(), input.Tick, GetClipboardSequenceNumber());
+  }
+}
+'@
+[TetherplaneCoexistenceProbe]::Read()
+`);
+  const values = output.split(",").map(Number);
+  assert.ok(values.length === 5 && values.every(Number.isSafeInteger), "invalid desktop coexistence metadata");
+  return { x: values[0]!, y: values[1]!, foreground: values[2]!, inputTick: values[3]!, clipboardSequence: values[4]! };
 }
 
 async function readState(statePath: string): Promise<Record<string, unknown>> {
@@ -115,7 +150,7 @@ test(
       process.platform !== "win32" ||
       process.env.GITHUB_ACTIONS === "true",
   },
-  async () => {
+  async (t) => {
     const here = path.dirname(fileURLToPath(import.meta.url));
     const fixturePath = path.join(here, "fixtures", "windows-desktop-fixture.ps1");
     const temp = await mkdtemp(path.join(os.tmpdir(), "tetherplane-desktop-e2e-"));
@@ -220,9 +255,28 @@ test(
         ) ?? findPattern(ownedNodes, "selection");
 
       const cursorBefore = cursorPosition();
-      const clipboardBefore = clipboardTextBase64();
+      const clipboardBefore = clipboardDigest();
       const humanBefore = await readState(humanState);
       assert.equal(humanBefore.focused, true);
+
+      let previousObservation = desktopObservation();
+      const verifyObservation = (operation: string) => {
+        const observed = desktopObservation();
+        const context = {
+          operation, before: previousObservation, after: observed,
+          input_tick_changed: previousObservation.inputTick !== observed.inputTick,
+          attribution: "unresolved; correlate with the operator-observed window",
+        };
+        t.diagnostic("COEXISTENCE " + JSON.stringify(context));
+        assert.deepEqual(
+          { x: observed.x, y: observed.y },
+          { x: previousObservation.x, y: previousObservation.y },
+          operation + ": physical cursor changed; " + JSON.stringify(context),
+        );
+        assert.equal(observed.foreground, previousObservation.foreground, operation + ": foreground changed");
+        assert.equal(observed.clipboardSequence, previousObservation.clipboardSequence, operation + ": system clipboard changed");
+        previousObservation = observed;
+      };
 
       const valueResult = await call(local.client, "desktop", {
         op: "act",
@@ -239,6 +293,7 @@ test(
         true,
         "human fixture lost focus after semantic set_value",
       );
+      verifyObservation("set_value");
 
       const invokeResult = await call(local.client, "desktop", {
         op: "act",
@@ -254,6 +309,7 @@ test(
         true,
         "human fixture lost focus after semantic invoke",
       );
+      verifyObservation("invoke");
 
       const selectionResult = await call(local.client, "desktop", {
         op: "act",
@@ -269,6 +325,7 @@ test(
         true,
         "human fixture lost focus after semantic select",
       );
+      verifyObservation("select");
 
       const ownedAfter = await waitForState(
         ownedState,
@@ -282,7 +339,7 @@ test(
 
       await new Promise((resolve) => setTimeout(resolve, 200));
       assert.deepEqual(cursorPosition(), cursorBefore);
-      assert.equal(clipboardTextBase64(), clipboardBefore);
+      assert.equal(clipboardDigest(), clipboardBefore);
       assert.equal((await readState(humanState)).focused, true);
 
       const humanInvoke = findPattern(humanNodes, "invoke");
@@ -328,7 +385,7 @@ test(
         }),
       );
       assert.equal(privateGet.text, "private-e2e-value");
-      assert.equal(clipboardTextBase64(), clipboardBefore);
+      assert.equal(clipboardDigest(), clipboardBefore);
 
       const noLease = await call(local.client, "desktop", {
         op: "physical_pointer_move",
