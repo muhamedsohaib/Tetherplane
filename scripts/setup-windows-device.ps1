@@ -59,6 +59,49 @@ function Write-Utf8NoBomJson {
     )
 }
 
+
+function Assert-DevicePathNotRedirected {
+    param([Parameter(Mandatory = $true)][string]$LiteralPath)
+    $current = [IO.Path]::GetFullPath($LiteralPath)
+    $root = [IO.Path]::GetPathRoot($current)
+    while ($current) {
+        $item = $null
+        try { $item = Get-Item -LiteralPath $current -Force -ErrorAction Stop }
+        catch [System.Management.Automation.ItemNotFoundException] { }
+        if ($item -and (($item.Attributes -band [IO.FileAttributes]::ReparsePoint) -ne 0)) {
+            throw "refusing redirected device path (reparse point): $current"
+        }
+        if ($current -eq $root) { break }
+        $parent = [IO.Path]::GetDirectoryName($current)
+        if ($parent -eq $current) { break }
+        $current = $parent
+    }
+}
+
+function Assert-ManagedDeviceDestinations {
+    param([Parameter(Mandatory = $true)][string]$InstallPrefix)
+    Assert-DevicePathNotRedirected -LiteralPath $InstallPrefix
+    Assert-DevicePathNotRedirected -LiteralPath (Join-Path $InstallPrefix "config\install.json")
+    foreach ($file in $ManagedFiles) {
+        Assert-DevicePathNotRedirected -LiteralPath (Join-Path $InstallPrefix $file)
+    }
+}
+
+function Confirm-ManagedDeviceReceipt {
+    param([Parameter(Mandatory = $true)][string]$InstallPrefix)
+    $install = [IO.Path]::GetFullPath($InstallPrefix)
+    $receiptPath = Join-Path $install "config\install.json"
+    Assert-DevicePathNotRedirected -LiteralPath $receiptPath
+    try {
+        $receipt = Get-Content -LiteralPath $receiptPath -Raw | ConvertFrom-Json
+        if ([string]$receipt.managed_by -cne "setup-windows-device.ps1") { throw "foreign receipt" }
+        $recorded = [IO.Path]::GetFullPath([string]$receipt.install_prefix).TrimEnd("\")
+        if ($recorded -ine $install.TrimEnd("\")) { throw "receipt prefix mismatch" }
+    } catch {
+        throw "install receipt does not prove ownership of this prefix; refusing repair: $install"
+    }
+}
+
 function Get-CurrentUserSid {
     return ([Security.Principal.WindowsIdentity]::GetCurrent()).User.Value
 }
@@ -139,6 +182,8 @@ function Install-ManagedDeviceFiles {
     )
     $package = [IO.Path]::GetFullPath($PackagePath)
     $install = [IO.Path]::GetFullPath($InstallPrefix)
+    Assert-ManagedDeviceDestinations -InstallPrefix $install
+    Confirm-DevicePackage -PackagePath $package | Out-Null
     $receiptPath = Join-Path $install "config\install.json"
     if ((Test-Path -LiteralPath $install)) {
         $existing = @(Get-ChildItem -LiteralPath $install -Force -ErrorAction SilentlyContinue)
@@ -147,6 +192,7 @@ function Install-ManagedDeviceFiles {
             throw "install prefix holds files this setup did not install; refusing to touch an unmanaged prefix: $install"
         }
         if ($existing.Count -gt 0 -and $managed) {
+            Confirm-ManagedDeviceReceipt -InstallPrefix $install
             Repair-ManagedDeviceFiles -PackagePath $package -InstallPrefix $install
             return [ordered]@{ ok = $true; repaired = $true; install_prefix = $install }
         }
@@ -174,6 +220,9 @@ function Repair-ManagedDeviceFiles {
     )
     $package = [IO.Path]::GetFullPath($PackagePath)
     $install = [IO.Path]::GetFullPath($InstallPrefix)
+    Assert-ManagedDeviceDestinations -InstallPrefix $install
+    Confirm-ManagedDeviceReceipt -InstallPrefix $install
+    Confirm-DevicePackage -PackagePath $package | Out-Null
     foreach ($file in $ManagedFiles) {
         $source = Join-Path $package $file
         if (-not (Test-Path -LiteralPath $source -PathType Leaf)) { continue }
@@ -209,6 +258,12 @@ function Protect-DeviceDirectory {
     $sid = Get-CurrentUserSid
     icacls $StateDir /inheritance:r /grant:r "*${sid}:(OI)(CI)F" /grant:r "*S-1-5-18:(OI)(CI)F" /grant:r "*S-1-5-32-544:(OI)(CI)F" | Out-Null
     if ($LASTEXITCODE -ne 0) { throw "failed to restrict directory $StateDir" }
+    # /inheritance:r removes inherited grants; /grant:r does not remove an
+    # explicit grant to another principal. Verify the directory before a
+    # credential is ever created, rather than protecting only the final file.
+    if (-not (Test-RestrictedCredentialFile -CredentialPath $StateDir)) {
+        throw "device state directory has unexpected explicit access rules; refusing credential creation"
+    }
 }
 
 function Test-RestrictedCredentialFile {
@@ -220,6 +275,11 @@ function Test-RestrictedCredentialFile {
     })
     $want = @((Get-CurrentUserSid); "S-1-5-18"; "S-1-5-32-544")
     if ($sids.Count -ne 3) { return $false }
+    foreach ($rule in $acl.Access) {
+        if ($rule.AccessControlType -ne [Security.AccessControl.AccessControlType]::Allow) { return $false }
+        $full = [Security.AccessControl.FileSystemRights]::FullControl
+        if (($rule.FileSystemRights -band $full) -ne $full) { return $false }
+    }
     foreach ($required in $want) {
         if ($sids -notcontains $required) { return $false }
     }
@@ -235,6 +295,10 @@ function Install-DeviceIdentity {
         throw "device ID must start alphanumeric and contain only letters, digits, dash or underscore (max 63 chars)"
     }
     $state = [IO.Path]::GetFullPath($StateDir)
+    Assert-DevicePathNotRedirected -LiteralPath $state
+    foreach ($leaf in @("device-id.txt", "device.credential", "principal.json", "agent")) {
+        Assert-DevicePathNotRedirected -LiteralPath (Join-Path $state $leaf)
+    }
     New-Item -ItemType Directory -Force -Path $state | Out-Null
     try {
         Protect-DeviceDirectory -StateDir $state
@@ -296,6 +360,11 @@ function Install-DeviceAgentTask {
     )
     $install = [IO.Path]::GetFullPath($InstallPrefix)
     $state = [IO.Path]::GetFullPath($StateDir)
+    Assert-ManagedDeviceDestinations -InstallPrefix $install
+    Assert-DevicePathNotRedirected -LiteralPath $state
+    foreach ($leaf in @("device.credential", "principal.json", "agent")) {
+        Assert-DevicePathNotRedirected -LiteralPath (Join-Path $state $leaf)
+    }
     $tetherd = Join-Path $install "bin\tetherd.exe"
     $supervisor = Join-Path $install "launch\tetherplane-agent.ps1"
     $credentialFile = Join-Path $state "device.credential"
