@@ -8,6 +8,15 @@ SKILL = ROOT / "skills/tetherplane-starter"
 
 
 class StarterContractTests(unittest.TestCase):
+    def test_starter_ci_discovers_exact_zip_in_pinned_opencode_host(self):
+        workflow = (ROOT / ".github/workflows/ci.yml").read_text(encoding="utf-8")
+        starter = workflow.split("  starter-skill:", 1)[1].split("  starter-integration:", 1)[0]
+        package = starter.index("python scripts/package_starter_skill.py --output dist/agensi/tetherplane-starter.zip")
+        host = starter.index("python tests/skills/opencode_host_acceptance.py dist/agensi/tetherplane-starter.zip")
+        self.assertLess(package, host)
+        self.assertIn("@opencode/cli@2.0.30", starter)
+        self.assertIn("python -m unittest discover -s tests/skills -p", starter)
+
     def test_minimal_frontmatter_matches_folder(self):
         text = (SKILL / "SKILL.md").read_text(encoding="utf-8")
         self.assertRegex(text, r"(?s)\A---\nname: tetherplane-starter\ndescription: .{30,300}\n---\n")
