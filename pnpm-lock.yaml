@@ -173,6 +173,8 @@ importers:
         specifier: 24.13.6
         version: 24.13.6
 
+  tests/skills: {}
+
 packages:
 
   '@apidevtools/json-schema-ref-parser@11.9.3':
