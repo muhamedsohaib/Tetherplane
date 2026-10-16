@@ -1,5 +1,5 @@
 import assert from "node:assert/strict";
-import { spawn, type ChildProcess } from "node:child_process";
+import { execFileSync, spawn, type ChildProcess } from "node:child_process";
 import { existsSync, mkdtempSync } from "node:fs";
 import { createServer } from "node:http";
 import type { AddressInfo } from "node:net";
@@ -11,6 +11,7 @@ import WebSocket from "ws";
 
 import { createSqliteAdapter } from "../../auth/src/sqlite-adapter.ts";
 import { createTetherAuthRuntime } from "../../auth/src/runtime.ts";
+import { readChromiumDevToolsPort } from "./helpers/chromium-debug-port.ts";
 
 function chromiumBinary(): string | null {
   const override = process.env.TETHERPLANE_CHROMIUM_BIN;
@@ -120,7 +121,7 @@ async function connectCdp(url: string): Promise<Cdp> {
 
 test(
   "chromium completes the browser flow to a loopback callback without CSP violations",
-  { skip: CHROME === null },
+  { skip: CHROME === null, timeout: 90_000 },
   async () => {
     const keys = await generateKeyPair("RS256", {
       extractable: true,
@@ -211,7 +212,6 @@ test(
     const profileDir = mkdtempSync(
       join(tmpdir(), "tether-chromium-profile-"),
     );
-    const debugPort = 19322;
     let chrome: ChildProcess | null = null;
     const violations: Array<string> = [];
     const record = (method: string, text: string) => {
@@ -233,18 +233,22 @@ test(
           "--no-first-run",
           "--no-default-browser-check",
           "--disable-gpu",
-          `--remote-debugging-port=${debugPort}`,
+          "--remote-debugging-port=0",
           `--user-data-dir=${profileDir}`,
           "about:blank",
         ],
         { stdio: "ignore" },
       );
       let debuggerUrl = "";
+      let debugPort = 0;
       for (let i = 0; i < 75 && !debuggerUrl; i += 1) {
         await new Promise((resolve) =>
           setTimeout(resolve, 200),
         );
         try {
+          // A unique, freshly-created Chrome profile is the authority for
+          // its ephemeral CDP port. Never attach to a shared fixed port.
+          debugPort = await readChromiumDevToolsPort(profileDir);
           const version = (await (
             await fetch(
               `http://127.0.0.1:${debugPort}/json/version`,
@@ -341,7 +345,20 @@ test(
       }
     } finally {
       if (chrome) {
-        chrome.kill();
+        if (process.platform === "win32" && chrome.pid && chrome.exitCode === null) {
+          // Terminate only the headless Chrome tree launched by this test;
+          // chrome.kill() alone can orphan Chromium subprocesses on Windows.
+          try {
+            execFileSync("taskkill.exe", ["/PID", String(chrome.pid), "/T", "/F"], {
+              stdio: "ignore",
+              timeout: 10_000,
+            });
+          } catch {
+            chrome.kill();
+          }
+        } else {
+          chrome.kill();
+        }
       }
       await runtime.server.close();
       storage.close();

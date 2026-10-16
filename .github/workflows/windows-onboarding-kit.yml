@@ -1,0 +1,94 @@
+name: Windows onboarding kit
+
+# Builds the agent-only device kit from this exact commit and publishes it as a
+# PRIVATE workflow artifact (ZIP + SHA-256). This is not a release: no tag, no
+# GitHub Release, no public listing. It is independent of the general CI
+# workflow so an unrelated environment-sensitive test cannot block the kit.
+
+on:
+  push:
+    branches:
+      - "feature/windows-repeatable-onboarding-**"
+    paths:
+      - "agent/**"
+      - "relay/**"
+      - "adapters/compact-mcp/**"
+      - "Cargo.toml"
+      - "Cargo.lock"
+      - "packaging/windows/**"
+      - "scripts/*device*.ps1"
+      - "scripts/*onboarding*.ps1"
+      - "scripts/*doctor*.ps1"
+      - "docs/remote/connection-profile.json"
+      - "tests/onboarding/**"
+      - ".github/workflows/windows-onboarding-kit.yml"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  kit:
+    runs-on: windows-latest
+    timeout-minutes: 40
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install Rust toolchain
+        uses: dtolnay/rust-toolchain@stable
+
+      - name: Build the device agent
+        shell: powershell
+        run: cargo build --release -p tetherd
+
+      - name: Onboarding tests (Pester 3.4, real agent)
+        shell: powershell
+        run: powershell -NoProfile -ExecutionPolicy Bypass -File scripts/run-onboarding-tests.ps1
+
+      - name: Build the device kit from this commit
+        shell: powershell
+        run: powershell -NoProfile -ExecutionPolicy Bypass -File scripts/package-windows-device-kit.ps1 -OutputPath dist/tetherplane-device-kit -SkipBuild -Zip
+
+      - name: Verify the built ZIP as a new computer would receive it
+        shell: powershell
+        run: powershell -NoProfile -ExecutionPolicy Bypass -File scripts/verify-windows-device-kit.ps1 -ZipPath dist/tetherplane-device-kit.zip
+
+      - name: Upload the private kit artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: tetherplane-device-kit-${{ github.sha }}
+          path: |
+            dist/tetherplane-device-kit.zip
+            dist/tetherplane-device-kit.zip.sha256
+          if-no-files-found: error
+          retention-days: 14
+
+  relay-approval:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+
+      - name: Enable Corepack
+        run: corepack enable
+
+      - name: Install pnpm 10
+        run: corepack prepare pnpm@10 --activate
+
+      - name: Install workspace
+        run: pnpm install --frozen-lockfile
+
+      - name: Build compact MCP
+        run: pnpm --filter @tetherplane/compact-mcp build
+
+      - name: Relay typecheck
+        run: pnpm --filter @tetherplane/relay typecheck
+
+      - name: Pairing approval and tool metadata tests
+        run: node --test relay/test/device-approve-pairing.test.ts adapters/compact-mcp/test/device-schema.test.ts adapters/compact-mcp/test/device-description.test.ts

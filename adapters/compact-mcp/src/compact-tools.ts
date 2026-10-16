@@ -47,6 +47,18 @@ const TOOL_NAMES = [
   "batch",
 ] as const;
 
+const DEVICE_DESCRIPTION =
+  "Tetherplane device operations: status, capabilities, schema, and approve_pairing. " +
+  "approve_pairing (args {userCode, expectedDeviceId}) approves a new computer's pending pairing " +
+  "for the signed-in account; it changes account state and is not read-only. " +
+  "Use op=schema for operation details.";
+
+function toolDescription(name: (typeof TOOL_NAMES)[number]): string {
+  return name === "device"
+    ? DEVICE_DESCRIPTION
+    : `Tetherplane ${name} operations`;
+}
+
 export function createCompactMcpServer(
   options: CompactServerOptions,
 ): McpServer {
@@ -59,7 +71,7 @@ export function createCompactMcpServer(
     server.registerTool(
       name,
       {
-        description: `Tetherplane ${name} operations`,
+        description: toolDescription(name),
         inputSchema: commonInputSchema,
         ...(options.oauthScopes ? { _meta: { securitySchemes: [{ type: "oauth2", scopes: options.oauthScopes }] } } : {}),
       },
@@ -88,7 +100,7 @@ export function createCompactMcpServer(
     server.server.setRequestHandler(ListToolsRequestSchema, async () => ({
       tools: TOOL_NAMES.map(name => ({
         name,
-        description: `Tetherplane ${name} operations`,
+        description: toolDescription(name),
         inputSchema: z.toJSONSchema(commonInputSchema, { io: "input" }) as { type: "object" },
         securitySchemes,
         _meta: { securitySchemes },

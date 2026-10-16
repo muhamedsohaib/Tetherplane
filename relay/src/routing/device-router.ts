@@ -6,7 +6,10 @@ import type {
 } from "@tetherplane/protocol";
 
 import type { ClientIdentity } from "../auth/static-auth.ts";
-import type { DeviceRegistry } from "../devices/registry.ts";
+import type {
+  DeviceBinding,
+  DeviceRegistry,
+} from "../devices/registry.ts";
 
 export type RelayToDeviceMessage = {
   type: "invoke";
@@ -96,6 +99,27 @@ export class DeviceRouter {
 
   isOnline(deviceId: string): boolean {
     return this.#connections.has(deviceId);
+  }
+
+  async approveDevicePairing(input: {
+    accountId: string;
+    userCode: string;
+    expectedDeviceId: string;
+  }): Promise<DeviceBinding> {
+    const pendingDeviceId =
+      this.#registry.peekPendingDeviceId(input.userCode);
+    if (!pendingDeviceId) {
+      throw new Error("pairing code is invalid or expired");
+    }
+    if (pendingDeviceId !== input.expectedDeviceId) {
+      throw new Error(
+        `pairing code does not match device ${input.expectedDeviceId}`,
+      );
+    }
+    return this.#registry.approvePairing({
+      accountId: input.accountId,
+      userCode: input.userCode,
+    });
   }
 
   async call(

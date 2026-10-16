@@ -38,7 +38,9 @@ export class DeviceRegistry {
   readonly #stateFile: string | null;
   readonly #devices = new Map<string, DeviceRecord>();
   readonly #pendingByCode = new Map<string, PendingPairing>();
+  readonly #pendingByDevice = new Map<string, PendingPairing>();
   readonly #pairingTtlMs: number;
+  #mutationQueue: Promise<void> = Promise.resolve();
 
   private constructor(options: {
     stateFile?: string;
@@ -72,6 +74,14 @@ export class DeviceRegistry {
     if (current && current.revokedAt === null) {
       throw new Error("device is already paired and must be revoked before re-pairing");
     }
+    const earlier = this.#pendingByDevice.get(input.deviceId);
+    if (earlier) {
+      if (earlier.expiresAt > Date.now()) {
+        throw new Error("device already has a pending pairing; approve or wait for expiry");
+      }
+      this.#pendingByDevice.delete(input.deviceId);
+      this.#pendingByCode.delete(earlier.userCode);
+    }
 
     const pending: PendingPairing = {
       pairingId: randomUUID(),
@@ -81,6 +91,7 @@ export class DeviceRegistry {
       expiresAt: Date.now() + this.#pairingTtlMs,
     };
     this.#pendingByCode.set(pending.userCode, pending);
+    this.#pendingByDevice.set(pending.deviceId, pending);
     return {
       pairingId: pending.pairingId,
       userCode: pending.userCode,
@@ -93,23 +104,49 @@ export class DeviceRegistry {
     userCode: string;
   }): Promise<DeviceBinding> {
     validateAccountId(input.accountId);
-    const pending = this.#pendingByCode.get(input.userCode);
-    if (!pending || pending.expiresAt <= Date.now()) {
-      if (pending) this.#pendingByCode.delete(input.userCode);
-      throw new Error("pairing code is invalid or expired");
-    }
-    this.#pendingByCode.delete(input.userCode);
+    return this.#serializeMutation(async () => {
+      const pending = this.#pendingByCode.get(input.userCode);
+      if (!pending || pending.expiresAt <= Date.now()) {
+        if (pending) {
+          this.#pendingByCode.delete(input.userCode);
+          if (this.#pendingByDevice.get(pending.deviceId) === pending) {
+            this.#pendingByDevice.delete(pending.deviceId);
+          }
+        }
+        throw new Error("pairing code is invalid or expired");
+      }
+      if (this.#pendingByDevice.get(pending.deviceId) !== pending) {
+        throw new Error("pairing code is no longer active");
+      }
+      const current = this.#devices.get(pending.deviceId);
+      if (current && current.revokedAt === null) {
+        throw new Error("device is already paired and must be revoked before re-pairing");
+      }
 
-    const record: DeviceRecord = {
-      deviceId: pending.deviceId,
-      accountId: input.accountId,
-      credentialHash: pending.credentialHash,
-      pairedAt: new Date().toISOString(),
-      revokedAt: null,
-    };
-    this.#devices.set(record.deviceId, record);
-    await this.#persist();
-    return publicBinding(record);
+      const record: DeviceRecord = {
+        deviceId: pending.deviceId,
+        accountId: input.accountId,
+        credentialHash: pending.credentialHash,
+        pairedAt: new Date().toISOString(),
+        revokedAt: null,
+      };
+      const nextDevices = new Map(this.#devices);
+      nextDevices.set(record.deviceId, record);
+      // Do not expose a device as paired until the durable write succeeds.
+      await this.#persist(nextDevices);
+      this.#devices.set(record.deviceId, record);
+      this.#pendingByCode.delete(input.userCode);
+      this.#pendingByDevice.delete(pending.deviceId);
+      return publicBinding(record);
+    });
+  }
+
+  peekPendingDeviceId(userCode: string): string | null {
+    const pending = this.#pendingByCode.get(userCode);
+    if (!pending || pending.expiresAt <= Date.now()) {
+      return null;
+    }
+    return pending.deviceId;
   }
 
   async authenticateDevice(
@@ -142,15 +179,23 @@ export class DeviceRegistry {
     accountId: string;
     deviceId: string;
   }): Promise<DeviceBinding> {
-    const record = this.#devices.get(input.deviceId);
-    if (!record || record.accountId !== input.accountId) {
-      throw new Error("device is not owned by this account");
-    }
-    if (record.revokedAt === null) {
-      record.revokedAt = new Date().toISOString();
-      await this.#persist();
-    }
-    return publicBinding(record);
+    return this.#serializeMutation(async () => {
+      const record = this.#devices.get(input.deviceId);
+      if (!record || record.accountId !== input.accountId) {
+        throw new Error("device is not owned by this account");
+      }
+      if (record.revokedAt !== null) return publicBinding(record);
+      const revoked: DeviceRecord = {
+        ...record,
+        revokedAt: new Date().toISOString(),
+      };
+      const nextDevices = new Map(this.#devices);
+      nextDevices.set(input.deviceId, revoked);
+      // A failed write must not revoke a device in volatile state only.
+      await this.#persist(nextDevices);
+      this.#devices.set(input.deviceId, revoked);
+      return publicBinding(revoked);
+    });
   }
 
   getDevice(deviceId: string): DeviceBinding | null {
@@ -185,22 +230,30 @@ export class DeviceRegistry {
     }
   }
 
-  async #persist(): Promise<void> {
-    if (!this.#stateFile) return;
-    await mkdir(path.dirname(this.#stateFile), { recursive: true });
+  #serializeMutation<T>(operation: () => Promise<T>): Promise<T> {
+    const result = this.#mutationQueue.then(operation);
+    // A rejected write must not permanently poison the mutation queue.
+    this.#mutationQueue = result.then(() => undefined, () => undefined);
+    return result;
+  }
+
+  async #persist(devices: Map<string, DeviceRecord>): Promise<void> {
+    const stateFile = this.#stateFile;
+    if (!stateFile) return;
+    await mkdir(path.dirname(stateFile), { recursive: true });
     const state: RegistryState = {
       version: 1,
-      devices: [...this.#devices.values()].sort((a, b) =>
+      devices: [...devices.values()].sort((a, b) =>
         a.deviceId.localeCompare(b.deviceId),
       ),
     };
-    const temporary = `${this.#stateFile}.tmp-${process.pid}`;
+    const temporary = `${stateFile}.tmp-${process.pid}`;
     await writeFile(
       temporary,
       JSON.stringify(state, null, 2) + "\n",
       { encoding: "utf8", mode: 0o600 },
     );
-    await rename(temporary, this.#stateFile);
+    await rename(temporary, stateFile);
   }
 }
 export function hashDeviceCredential(secret: string): string {
