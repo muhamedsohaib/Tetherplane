@@ -9,11 +9,9 @@ Tetherplane is free and self-hostable. This skill is only guidance; it never ins
 - An operator-selected local folder eligible for the agent's explicit `--allow` roots, preferably a disposable test directory.
 - Built `tetherd` and Compact MCP adapter binaries/files; do not assume they exist.
 
-From the Tetherplane repository root, **after the operator authorizes building**:
+Install the prerequisite tools through their official instructions separately; this skill does not enable or change system-wide package-manager shims. From the Tetherplane repository root, **after the operator authorizes local dependency installation and building**:
 
 ```powershell
-corepack enable
-corepack prepare pnpm@10 --activate
 pnpm install --frozen-lockfile
 cargo build -p tetherd
 pnpm --filter @tetherplane/compact-mcp build

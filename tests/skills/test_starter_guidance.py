@@ -6,6 +6,12 @@ SKILL = ROOT / "skills/tetherplane-starter"
 
 
 class StarterGuidanceTests(unittest.TestCase):
+    def test_setup_does_not_change_global_package_manager_configuration(self):
+        setup = (SKILL / "references/setup.md").read_text(encoding="utf-8").lower()
+        self.assertNotIn("corepack enable", setup)
+        self.assertNotIn("corepack prepare", setup)
+        self.assertIn("pnpm install --frozen-lockfile", setup)
+
     def test_missing_agent_requires_prerequisite_check(self):
         setup = (SKILL / "references/setup.md").read_text(encoding="utf-8").lower()
         for term in ("tetherd", "node.js", "pnpm", "--allow", "prerequisite"):

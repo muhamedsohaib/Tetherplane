@@ -23,7 +23,8 @@
 
 | Host / workflow | Evidence status | Publication claim |
 | --- | --- | --- |
-| Local Tetherplane Compact MCP fixture | Not tested on this branch | Do not claim live verified until E2E green |
+| Local Tetherplane Compact MCP fixture | GitHub Actions starter-integration passed on Windows and Ubuntu for commit `eca17b3`; repeat on the final candidate SHA | Claim verified CI fixture only, not an independent consumer installation |
+| OpenCode 2.0.30 skill activation | Not verified: isolated host skill-list returned no matching entry; model-driven activation did not complete | Do not claim working host activation until the exact installed package is discovered and loaded |
 | Claude Code skill activation | Not tested | Compatibility is a format-level expectation only |
 | Codex CLI skill activation | Not tested | No tested activation claim yet |
 | Cursor skill activation | Not tested | No tested activation claim yet |
@@ -33,6 +34,6 @@ There is **no guaranteed** installation time, cross-client compatibility, market
 
 ## Pre-publication approval gate
 
-- Confirm current Agensi creator terms, pricing (Free), license declarations, package size/structure, privacy and security scan requirements.
+- Confirm current Agensi creator terms, pricing (Free), license declarations, package size/structure, privacy and security scan requirements. Agensi's public creator guide (https://www.agensi.io/learn/how-to-sell-skills-on-agensi) says Stripe Connect is required even for a free listing; this is not configured or authorized by the development work.
 - Confirm real local MCP smoke and a supported agent activation test; keep unsupported platforms marked unverified.
 - Request explicit user approval before submitting the ZIP, changing a listing, sending messages, linking payout details or publishing public marketing claims.
