@@ -106,20 +106,9 @@ export class DeviceRouter {
     userCode: string;
     expectedDeviceId: string;
   }): Promise<DeviceBinding> {
-    const pendingDeviceId =
-      this.#registry.peekPendingDeviceId(input.userCode);
-    if (!pendingDeviceId) {
-      throw new Error("pairing code is invalid or expired");
-    }
-    if (pendingDeviceId !== input.expectedDeviceId) {
-      throw new Error(
-        `pairing code does not match device ${input.expectedDeviceId}`,
-      );
-    }
-    return this.#registry.approvePairing({
-      accountId: input.accountId,
-      userCode: input.userCode,
-    });
+    // Check expected identity, rate limits and code consumption atomically in
+    // the registry; a separate peek would leave a check/use gap.
+    return this.#registry.approvePairing(input);
   }
 
   async call(

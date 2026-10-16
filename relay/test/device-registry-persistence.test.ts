@@ -8,9 +8,11 @@ import { DeviceRegistry, hashDeviceCredential } from "../src/devices/registry.ts
 
 test("simultaneously approved distinct devices persist without lost bindings", async () => {
   const temp = await mkdtemp(path.join(os.tmpdir(), "tetherplane-pair-persist-"));
+  let registry!: DeviceRegistry;
+  let reloaded: DeviceRegistry | undefined;
   try {
     const stateFile = path.join(temp, "devices.json");
-    const registry = await DeviceRegistry.open({ stateFile });
+    registry = await DeviceRegistry.open({ stateFile });
     const pairings = await Promise.all(Array.from({ length: 12 }, async (_, index) => {
       const deviceId = `PairingConcurrent${index}`;
       const secret = `distinct-local-credential-for-${deviceId}`;
@@ -29,7 +31,8 @@ test("simultaneously approved distinct devices persist without lost bindings", a
       "concurrent durable approvals must not collide on the same temporary file",
     );
 
-    const reloaded = await DeviceRegistry.open({ stateFile });
+    await registry.close();
+    reloaded = await DeviceRegistry.open({ stateFile });
     assert.equal(reloaded.listDevices("account-owner").length, pairings.length);
     for (const pairing of pairings) {
       assert.equal(
@@ -38,6 +41,8 @@ test("simultaneously approved distinct devices persist without lost bindings", a
       );
     }
   } finally {
+    await registry?.close();
+    await reloaded?.close();
     await rm(temp, { recursive: true, force: true });
   }
 });
@@ -45,9 +50,12 @@ test("simultaneously approved distinct devices persist without lost bindings", a
 
 test("a failed durable approval leaves the device unpaired and its code recoverable", async () => {
   const temp = await mkdtemp(path.join(os.tmpdir(), "tetherplane-pair-failure-"));
+  let registry!: DeviceRegistry;
+  let reloaded: DeviceRegistry | undefined;
   try {
     const blocker = path.join(temp, "blocked-parent");
-    const registry = await DeviceRegistry.open({ stateFile: path.join(blocker, "devices.json") });
+    registry = await DeviceRegistry.open({ stateFile: path.join(blocker, "devices.json") });
+    await rename(blocker, blocker + "-previous");
     await writeFile(blocker, "not a directory");
     const started = await registry.startPairing({
       deviceId: "ApprovalMustBeDurable",
@@ -60,16 +68,20 @@ test("a failed durable approval leaves the device unpaired and its code recovera
     assert.equal(registry.getDevice("ApprovalMustBeDurable"), null);
     assert.equal(registry.peekPendingDeviceId(started.userCode), "ApprovalMustBeDurable");
   } finally {
+    await registry?.close();
+    await reloaded?.close();
     await rm(temp, { recursive: true, force: true });
   }
 });
 
 test("a failed durable revocation does not silently revoke the live in-memory device", async () => {
   const temp = await mkdtemp(path.join(os.tmpdir(), "tetherplane-revoke-failure-"));
+  let registry!: DeviceRegistry;
+  let reloaded: DeviceRegistry | undefined;
   try {
     const folder = path.join(temp, "state");
     const stateFile = path.join(folder, "devices.json");
-    const registry = await DeviceRegistry.open({ stateFile });
+    registry = await DeviceRegistry.open({ stateFile });
     const secret = "credential-for-failed-revocation-test";
     const started = await registry.startPairing({
       deviceId: "RevocationMustBeDurable",
@@ -86,6 +98,8 @@ test("a failed durable revocation does not silently revoke the live in-memory de
     assert.equal(registry.getDevice("RevocationMustBeDurable")?.revokedAt, null);
     assert.equal(await registry.authenticateDevice("RevocationMustBeDurable", secret), "account-owner");
   } finally {
+    await registry?.close();
+    await reloaded?.close();
     await rm(temp, { recursive: true, force: true });
   }
 });

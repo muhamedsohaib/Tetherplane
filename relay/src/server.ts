@@ -102,71 +102,76 @@ export class RelayServer {
         ? { stateFile: options.stateFile }
         : {},
     );
-    const router = new DeviceRouter({
-      registry,
-      ...(options.routeTimeoutMs === undefined
-        ? {}
-        : { timeoutMs: options.routeTimeoutMs }),
-    });
-    const deviceGateway = new DeviceWebSocketGateway({
-      registry,
-      router,
-    });
-    const accessLog = options.accessLogFile
-      ? new AccessLog({ file: options.accessLogFile })
-      : undefined;
-    const mcpGateway = new RemoteMcpHttpGateway({
-      router,
-      authenticator: options.authenticator,
-      ...(options.oauth ? { oauth: options.oauth } : {}),
-      ...(accessLog ? { accessLog } : {}),
-    });
-    const healthGateway = new RelayHealthHttpGateway();
-    const controlGateway = new RelayControlHttpGateway({
-      registry,
-      authenticator: options.authenticator,
-      disconnectDevice: (deviceId) =>
-        deviceGateway.disconnectDevice(deviceId),
-    });
-    const authLoginGateway =
-      options.authLoginBridgeToken === undefined
-        ? null
-        : new AuthLoginProofHttpGateway({
-            devices: registry,
-            proofs: new AuthLoginProofRegistry(),
-            bridgeToken: options.authLoginBridgeToken,
-          });
+    try {
+      const router = new DeviceRouter({
+        registry,
+        ...(options.routeTimeoutMs === undefined
+          ? {}
+          : { timeoutMs: options.routeTimeoutMs }),
+      });
+      const deviceGateway = new DeviceWebSocketGateway({
+        registry,
+        router,
+      });
+      const accessLog = options.accessLogFile
+        ? new AccessLog({ file: options.accessLogFile })
+        : undefined;
+      const mcpGateway = new RemoteMcpHttpGateway({
+        router,
+        authenticator: options.authenticator,
+        ...(options.oauth ? { oauth: options.oauth } : {}),
+        ...(accessLog ? { accessLog } : {}),
+      });
+      const healthGateway = new RelayHealthHttpGateway();
+      const controlGateway = new RelayControlHttpGateway({
+        registry,
+        authenticator: options.authenticator,
+        disconnectDevice: (deviceId) =>
+          deviceGateway.disconnectDevice(deviceId),
+      });
+      const authLoginGateway =
+        options.authLoginBridgeToken === undefined
+          ? null
+          : new AuthLoginProofHttpGateway({
+              devices: registry,
+              proofs: new AuthLoginProofRegistry(),
+              bridgeToken: options.authLoginBridgeToken,
+            });
 
-    const secure = options.tls !== undefined;
-    const server: NodeRelayServer =
-      options.tls === undefined
-        ? createHttpServer()
-        : createHttpsServer(options.tls);
+      const secure = options.tls !== undefined;
+      const server: NodeRelayServer =
+        options.tls === undefined
+          ? createHttpServer()
+          : createHttpsServer(options.tls);
 
-    const httpCompatible = server as unknown as HttpServer;
-    if (accessLog) {
-      attachAccessLogging(httpCompatible, accessLog);
+      const httpCompatible = server as unknown as HttpServer;
+      if (accessLog) {
+        attachAccessLogging(httpCompatible, accessLog);
+      }
+      healthGateway.attach(httpCompatible);
+      deviceGateway.attach(httpCompatible, "/device");
+      mcpGateway.attach(httpCompatible, "/mcp");
+      controlGateway.attach(httpCompatible);
+      authLoginGateway?.attach(httpCompatible);
+      attachUnmatchedFallback(httpCompatible);
+
+      return new RelayServer({
+        server,
+        secure,
+        allowInsecureLocalhost:
+          options.allowInsecureLocalhost ?? false,
+        registry,
+        router,
+        deviceGateway,
+        mcpGateway,
+        controlGateway,
+        healthGateway,
+        authLoginGateway,
+      });
+    } catch (error) {
+      await registry.close();
+      throw error;
     }
-    healthGateway.attach(httpCompatible);
-    deviceGateway.attach(httpCompatible, "/device");
-    mcpGateway.attach(httpCompatible, "/mcp");
-    controlGateway.attach(httpCompatible);
-    authLoginGateway?.attach(httpCompatible);
-    attachUnmatchedFallback(httpCompatible);
-
-    return new RelayServer({
-      server,
-      secure,
-      allowInsecureLocalhost:
-        options.allowInsecureLocalhost ?? false,
-      registry,
-      router,
-      deviceGateway,
-      mcpGateway,
-      controlGateway,
-      healthGateway,
-      authLoginGateway,
-    });
   }
 
   async listen(options: {
@@ -215,19 +220,23 @@ export class RelayServer {
     if (this.#closed) return;
     this.#closed = true;
 
-    this.healthGateway.close();
-    this.controlGateway.close();
-    this.authLoginGateway?.close();
-    await this.mcpGateway.close();
-    await this.deviceGateway.close();
+    try {
+      this.healthGateway.close();
+      this.controlGateway.close();
+      this.authLoginGateway?.close();
+      await this.mcpGateway.close();
+      await this.deviceGateway.close();
 
-    if (!this.#server.listening) return;
-    await new Promise<void>((resolve, reject) => {
-      this.#server.close((error) => {
-        if (error) reject(error);
-        else resolve();
+      if (!this.#server.listening) return;
+      await new Promise<void>((resolve, reject) => {
+        this.#server.close((error) => {
+          if (error) reject(error);
+          else resolve();
+        });
       });
-    });
+    } finally {
+      await this.registry.close();
+    }
   }
 
   #formatAddress(

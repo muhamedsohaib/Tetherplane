@@ -16,6 +16,8 @@ export class RelayControlHttpGateway {
   readonly #registry: DeviceRegistry;
   readonly #authenticator: ClientAuthenticator;
   readonly #disconnectDevice: (deviceId: string) => void;
+  readonly #startLimit: { maxRequests: number; windowMs: number; maxSources: number };
+  readonly #starts = new Map<string, { count: number; expiresAt: number }>();
   #attachedServer: Server | null = null;
   #requestHandler:
     | ((request: IncomingMessage, response: ServerResponse) => void)
@@ -25,7 +27,16 @@ export class RelayControlHttpGateway {
     registry: DeviceRegistry;
     authenticator: ClientAuthenticator;
     disconnectDevice(deviceId: string): void;
+    pairingStartRateLimit?: { maxRequests: number; windowMs: number; maxSources?: number };
   }) {
+    this.#startLimit = {
+      maxRequests: options.pairingStartRateLimit?.maxRequests ?? 10,
+      windowMs: options.pairingStartRateLimit?.windowMs ?? 60_000,
+      maxSources: options.pairingStartRateLimit?.maxSources ?? 1024,
+    };
+    if (Object.values(this.#startLimit).some((n) => !Number.isSafeInteger(n) || n < 1)) {
+      throw new Error("pairing start limits must be positive safe integers");
+    }
     this.#registry = options.registry;
     this.#authenticator = options.authenticator;
     this.#disconnectDevice = options.disconnectDevice;
@@ -48,6 +59,7 @@ export class RelayControlHttpGateway {
     }
     this.#attachedServer = null;
     this.#requestHandler = null;
+    this.#starts.clear();
   }
 
   async #handleRequest(
@@ -145,6 +157,29 @@ export class RelayControlHttpGateway {
     request: IncomingMessage,
     response: ServerResponse,
   ): Promise<void> {
+    const now = Date.now();
+    for (const [source, window] of this.#starts) {
+      if (window.expiresAt <= now) this.#starts.delete(source);
+    }
+    // Never trust caller-controlled forwarding headers. A reverse proxy's
+    // clients intentionally share its socket-source budget until a separately
+    // reviewed, trusted edge supplies its own admission control.
+    const source = request.socket.remoteAddress ?? "unknown";
+    let window = this.#starts.get(source);
+    if (!window) {
+      if (this.#starts.size < this.#startLimit.maxSources) {
+        window = { count: 0, expiresAt: now + this.#startLimit.windowMs };
+        this.#starts.set(source, window);
+      }
+    }
+    if (!window || window.count >= this.#startLimit.maxRequests) {
+      response.setHeader("retry-after", String(Math.max(1, Math.ceil(((window?.expiresAt ?? now + this.#startLimit.windowMs) - now) / 1000))));
+      response.setHeader("cache-control", "no-store");
+      writeJson(response, 429, { error: { code: "rate_limited", message: "too many pairing starts; retry after the indicated interval" } });
+      request.resume();
+      return;
+    }
+    window.count += 1;
     const body = await readObjectBody(request);
     const deviceId = stringField(body, "deviceId");
     const credentialHash = stringField(
