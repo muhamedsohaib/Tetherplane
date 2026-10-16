@@ -25,6 +25,34 @@ jobs:
         run: npm install --global --no-audit --no-fund @opencode/cli@2.0.30
       - name: Discover packaged skill in isolated OpenCode host
         run: python tests/skills/opencode_host_acceptance.py dist/agensi/tetherplane-starter.zip
+      - name: Record verified starter artifact provenance
+        env:
+          CANDIDATE_SHA: ${{ github.sha }}
+        run: |
+          python - <<'PY'
+          import hashlib, json, os, platform, shutil, zlib
+          from pathlib import Path
+          from zipfile import ZipFile
+          root = Path("dist/agensi")
+          package = root / "tetherplane-starter-0.1.0.zip"
+          shutil.copyfile(root / "tetherplane-starter.zip", package)
+          digest = hashlib.sha256(package.read_bytes()).hexdigest()
+          (root / (package.name + ".sha256")).write_text(digest + "  " + package.name + "\n", encoding="utf-8")
+          with ZipFile(package) as archive:
+              members = [{"path": member.filename, "bytes": member.file_size, "sha256": hashlib.sha256(archive.read(member)).hexdigest()} for member in archive.infolist()]
+          manifest = {"member_count": len(members), "members": members, "package": "tetherplane-starter", "version": "0.1.0", "source_commit": os.environ["CANDIDATE_SHA"], "filename": package.name, "bytes": package.stat().st_size, "sha256": digest, "python": platform.python_version(), "zlib": zlib.ZLIB_RUNTIME_VERSION, "host_discovery": "OpenCode 2.0.30; exact archive bytes copied after successful discovery; model invocation not tested"}
+          (root / "manifest.json").write_text(json.dumps(manifest, indent=2, sort_keys=True) + "\n", encoding="utf-8")
+          PY
+      - uses: actions/upload-artifact@v4
+        with:
+          name: tetherplane-starter-0.1.0
+          path: |
+            dist/agensi/tetherplane-starter-0.1.0.zip
+            dist/agensi/tetherplane-starter-0.1.0.zip.sha256
+            dist/agensi/manifest.json
+          if-no-files-found: error
+          retention-days: 30
+
 
   starter-integration:
     strategy:

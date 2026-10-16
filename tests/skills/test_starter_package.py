@@ -38,6 +38,30 @@ class StarterPackageTests(unittest.TestCase):
             package.build_starter_archive(ROOT, second)
             self.assertEqual(first.read_bytes(), second.read_bytes())
 
+    def test_rejects_source_file_output_without_overwrite(self):
+        package = load_package_module()
+        with tempfile.TemporaryDirectory() as td:
+            import shutil
+            src = Path(td) / "repo"
+            shutil.copytree(ROOT / "skills/tetherplane-starter", src / "skills/tetherplane-starter")
+            for name in ("LICENSE", "LICENSE-MIT", "LICENSE-APACHE"):
+                shutil.copy2(ROOT / name, src / name)
+            dest = src / "LICENSE"
+            original = dest.read_bytes()
+            with self.assertRaises(FileExistsError):
+                package.build_starter_archive(src, dest)
+            self.assertEqual(dest.read_bytes(), original)
+
+    def test_rejects_existing_output_without_overwrite(self):
+        package = load_package_module()
+        with tempfile.TemporaryDirectory() as td:
+            dest = Path(td) / "existing-output.txt"
+            original = b"Preserve this existing output sentinel.\n"
+            dest.write_bytes(original)
+            with self.assertRaises(FileExistsError):
+                package.build_starter_archive(ROOT, dest)
+            self.assertEqual(dest.read_bytes(), original)
+
     def test_rejects_unexpected_env_or_binary(self):
         package = load_package_module()
         with tempfile.TemporaryDirectory() as td:

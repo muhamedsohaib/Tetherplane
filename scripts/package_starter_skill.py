@@ -73,8 +73,10 @@ def build_starter_archive(repo_root: Path, output_path: Path) -> Path:
     output_path = output_path.resolve(strict=False)
     if output_path.is_relative_to(skill_dir):
         raise ValueError("output must be outside skill directory")
+    if output_path.exists():
+        raise FileExistsError("output already exists: " + str(output_path))
     output_path.parent.mkdir(parents=True, exist_ok=True)
-    with zipfile.ZipFile(output_path, "w") as archive:
+    with zipfile.ZipFile(output_path, "x") as archive:
         for member in sorted(sources):
             info = zipfile.ZipInfo(member, date_time=(1980, 1, 1, 0, 0, 0))
             info.compress_type = zipfile.ZIP_DEFLATED
