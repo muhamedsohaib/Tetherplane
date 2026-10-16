@@ -66,6 +66,11 @@ jobs:
         if: runner.os == 'Windows'
         run: cargo build --release -p tetherd
 
+      - name: Windows onboarding Pester acceptance
+        if: runner.os == 'Windows'
+        shell: powershell
+        run: powershell -NoProfile -ExecutionPolicy Bypass -File scripts/run-onboarding-tests.ps1
+
       - name: Windows package/install smoke
         if: runner.os == 'Windows'
         shell: pwsh
