@@ -51,3 +51,5 @@ The canonical design, roadmap, local-core plan, onboarding PLAN and HANDOFF gove
   are in REVIEW-20261016.md and CONTROLLED-ACCEPTANCE.md.
 - Existing protected processes, operator-observed coexistence, real Chromium
   cleanup, clean-device lifecycle and live relay deployment remain open.
+
+- Final recheck: old runner exited naturally with 107/108 relay tests and one wall-clock expiry-test race. Controlled-Date regression and relay typecheck now pass. Do not target former PID 772. Only the three orphan test Chromium trees remain cleanup targets; none were terminated.

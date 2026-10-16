@@ -47,13 +47,14 @@ test("simultaneous enrollment requests cannot mint two valid codes for one devic
   assert.equal(results.filter((result) => result.status === "rejected").length, 1);
 });
 
-test("a newly enrolled identity is possible after an abandoned code expires", async () => {
+test("a newly enrolled identity is possible after an abandoned code expires", async (t) => {
+  t.mock.timers.enable({ apis: ["Date"], now: 1000 });
   const registry = await DeviceRegistry.open({ pairingTtlMs: 5 });
   const first = await registry.startPairing({
     deviceId: DEVICE,
     credentialHash: FIRST_HASH,
   });
-  await new Promise((resolve) => setTimeout(resolve, 25));
+  t.mock.timers.tick(6);
   const second = await registry.startPairing({
     deviceId: DEVICE,
     credentialHash: SECOND_HASH,

@@ -5,14 +5,14 @@ Status: PREPARATION ONLY. No live changes or release approval.
 ## Next local gate: existing test-process cleanup
 
 Leno only; background_only. Existing protected resources identified during this
-continuation:
+continuation (only the three Chromium roots remain cleanup targets):
 
 | Root PID | Created UTC | Ownership evidence |
 | --- | --- | --- |
 | 3588 | 2026-10-16T03:55:33.0474010Z | Playwright Chromium 1244; tether-chromium-profile-rYezWH; launcher parent 12800 absent |
 | 10544 | 2026-10-16T04:05:22.4403260Z | Same executable; tether-chromium-profile-6Zw5rI; launcher parent 12584 absent |
 | 5360 | 2026-10-16T04:18:49.6856380Z | Same executable; tether-chromium-profile-wtZlaa; launcher parent 8388 absent |
-| 772 | 2026-10-16T04:04:15.6982480Z | Existing pnpm workspace test runner; Tetherplane handle proc_d555786b4fe04c8c8d873aab61fbd5bc |
+| 772 (historical only) | 2026-10-16T04:04:15.6982480Z | Runner exited naturally with code 1 during the final recheck. Do not terminate this former PID; it may be reused. |
 
 Revalidate PIDs, creation times, executable paths, arguments and descendant
 ownership immediately before any cleanup. A PID alone is not authorization.

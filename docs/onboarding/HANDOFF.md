@@ -21,8 +21,12 @@ no releases or external messages were performed.
 - Recovered clean linked worktree and matched GitHub at 55cdf78.
 - Original CI runs 38850537547 and 38850537487 completed successfully on all jobs;
   immutable original private kit artifact 12025496021 exists.
-- Reproduced protected stale runner and three orphan headless test-browser trees;
+- Reproduced the protected runner and three orphan headless test-browser trees;
   did not terminate or bypass the prior local-policy approval_required.
+- Final recheck: the old runner exited naturally with code 1 (107/108 relay tests;
+  the five-millisecond expiry test raced the wall clock). Its test now uses a
+  controlled Date clock and passes; the old PID is not a cleanup target. All
+  three orphan Chromium roots remain present, with unchanged creation times.
 - Fixed browser shutdown authority: use the fresh profile's private browser
   endpoint even when the launcher exited; require listener closure.
 - Added all-resource cleanup covering setup failures, preserved original errors,
@@ -64,10 +68,10 @@ the desktop.
 
 ## Exact stop boundary and next steps
 
-1. Obtain local authorization for the scoped existing test-process cleanup;
-   revalidate ownership first. Existing runner handle:
-   proc_d555786b4fe04c8c8d873aab61fbd5bc. Browser roots last observed 3588,
-   10544 and 5360 with the three HANDOFF test profiles.
+1. Obtain local authorization for scoped cleanup of the three existing Chromium
+   trees; revalidate ownership first. Roots 3588, 10544 and 5360 match the three
+   test profiles. Runner proc_d555786b4fe04c8c8d873aab61fbd5bc exited naturally;
+   do not target its former PID 772, which may be reused.
 2. Run isolated real Chromium flow and prove its full process/profile cleanup.
    A missing DevToolsActivePort after a detached launcher is still a reported
    cleanup blocker; no unsafe PID fallback is authorized.
