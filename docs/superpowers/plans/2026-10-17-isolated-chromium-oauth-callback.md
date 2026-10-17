@@ -69,3 +69,16 @@ The pinned Playwright 1.56.1 Chromium download completed on Ubuntu; its **first*
 The Windows pinned-Chromium job actually completed **nine** consecutive callback/CSP/teardown passes with zero skips, then failed on iteration 10 when `Page.navigate` exceeded the generic 5-second CDP request deadline. The correction adds a bounded **15-second deadline for Page.navigate only**, leaving the default per-request timeout unchanged and retaining all assertions. A synthetic WebSocket regression proves the per-call budget succeeds for delayed navigation while default CDP calls continue to time out as before.
 
 These are evidenced fixes for observed failures, not a claim of hosted acceptance. Require fresh ten-out-of-ten results on both OSes at the next exact head before unblocking this gate.
+
+## Verified dual-platform OAuth acceptance — GitHub run #826
+
+The source-bearing commit `2f4e541ef01eb8b3b9e4045e9f9df4fc9ce5a8a8` was tested by [GitHub-hosted CI #826](https://github.com/muhamedsohaib/Tetherplane/actions/runs/39064119536), using pinned Playwright Chromium 141.0.7390.37 (Playwright package 1.56.1). The real browser navigated through the synthetic OAuth authorization flow to a local loopback callback. Its assertions require the matching state, authorization-code presence, zero observed CSP violations, verified private CDP shutdown, and no remaining test-profile browser processes. Teardown failures fail the test.
+
+| Runner | Evidence | Actual repeated TAP results |
+| --- | --- | --- |
+| Ubuntu | [Job 117488041478](https://github.com/muhamedsohaib/Tetherplane/actions/runs/39064119536/job/117488041478) | **10 executed / 10 PASS / 0 FAIL / 0 SKIP** |
+| Windows | [Job 117488041649](https://github.com/muhamedsohaib/Tetherplane/actions/runs/39064119536/job/117488041649) | **10 executed / 10 PASS / 0 FAIL / 0 SKIP** |
+
+Both logs were independently inspected for all ten iteration markers, ten named `ok 1` results, ten `# pass 1`, ten `# fail 0`, and ten `# skipped 0`. No cleanup errors were reported. These hosted tests did not launch or alter Leno's Chromium sessions or installed Tetherplane agent.
+
+The ordinary GitHub quality jobs and final documentation-head checks are **separate gates**; this evidence documents the browser-specific acceptance on its source SHA, not completion of PR-wide release acceptance. PR #15 remains draft and unmerged. The operator-active UIA mouse-overlap measurement remains **waived**, not passed; clean-device installation/release verification and independent review remain held.
