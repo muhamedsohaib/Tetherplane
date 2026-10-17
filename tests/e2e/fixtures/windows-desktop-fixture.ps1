@@ -87,7 +87,7 @@ $invoke.Add_Click({
 
 $form.Controls.AddRange(@($value, $invoke, $selection, $status))
 
-$lifetime = [System.Diagnostics.Stopwatch]::StartNew()
+$lifetime = New-Object System.Diagnostics.Stopwatch
 $timer = New-Object System.Windows.Forms.Timer
 $timer.Interval = 100
 $timer.Add_Tick({
@@ -109,10 +109,16 @@ $timer.Add_Tick({
         $form.Close()
     }
 })
-$timer.Start()
-
 $form.Add_Shown({
+    # The WinForms timer must begin after the UI thread has shown the form.
+    # Its bounded lifetime is measured from readiness, not script startup.
+    $lifetime.Restart()
+    $timer.Start()
     if (-not $BackgroundOnly) { $form.Activate() }
+})
+$form.Add_FormClosed({
+    $timer.Stop()
+    $timer.Dispose()
 })
 
 [System.Windows.Forms.Application]::Run($form)
