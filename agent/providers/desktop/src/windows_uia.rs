@@ -158,9 +158,7 @@ impl WorkerState {
         let automation_id = element.get_automation_id().unwrap_or_default();
         let class_name = element.get_classname().unwrap_or_default();
         let name = element.get_name().unwrap_or_default();
-        let role = element
-            .get_localized_control_type()
-            .unwrap_or_else(|_| "unknown".to_owned());
+        let role = normalized_role(element.get_localized_control_type().ok().as_deref());
 
         let identity = ElementIdentity {
             process_id,
@@ -739,6 +737,14 @@ fn supported_patterns(element: &UIElement) -> Vec<DesktopPattern> {
     patterns
 }
 
+fn normalized_role(localized: Option<&str>) -> String {
+    localized
+        .map(str::trim)
+        .filter(|role| !role.is_empty())
+        .unwrap_or("unknown")
+        .to_owned()
+}
+
 fn non_empty(value: String) -> Option<String> {
     (!value.is_empty()).then_some(value)
 }
@@ -804,5 +810,23 @@ mod selection_notification_tests {
         );
         assert_eq!(winforms_selection_notification("ListBox"), None);
         assert_eq!(winforms_selection_notification("SysListView32"), None);
+    }
+}
+
+#[cfg(test)]
+mod role_normalization_tests {
+    use super::normalized_role;
+
+    #[test]
+    fn empty_or_unavailable_uia_localized_roles_fall_back_to_unknown() {
+        assert_eq!(normalized_role(None), "unknown");
+        assert_eq!(normalized_role(Some("")), "unknown");
+        assert_eq!(normalized_role(Some(" \t ")), "unknown");
+    }
+
+    #[test]
+    fn informative_uia_localized_role_is_preserved() {
+        assert_eq!(normalized_role(Some("button")), "button");
+        assert_eq!(normalized_role(Some("list item")), "list item");
     }
 }
