@@ -199,3 +199,114 @@ separately. Integration still needs final-head CI and review of the inherited
 stack; release/deployment additionally needs its own candidate-kit and clean-device
 lifecycle evidence and explicit authorization. No merge or production action is
 performed by this plan.
+
+## Prepared operator-active concurrent acceptance — 2026-10-17
+
+Status: **test harness prepared; NOT EXECUTED in operator-active mode**. The
+previous scoped foreground window expired; this preparation creates no new
+authorization and does not modify the installed Leno agent, production or
+human-owned applications.
+
+Implementation: `tests/e2e/windows-operator-concurrent.test.ts` is skipped
+unless both `TETHERPLANE_INTERACTIVE_DESKTOP_ACCEPTANCE=1` and
+`TETHERPLANE_OPERATOR_ACTIVE_ACCEPTANCE=1` are supplied along with a
+matching full `TETHERPLANE_APPROVED_CANDIDATE_SHA` and a future
+`TETHERPLANE_OPERATOR_APPROVAL_DEADLINE` within the next 15 minutes,
+with at least 90 seconds remaining. **These variables only guard the test:
+they are not a foreground lease or evidence of human approval.** Obtain new,
+explicit scoped consent and verify operator availability before setting them
+or running the live case. Never bypass a local policy denial.
+
+The helper `tests/e2e/fixtures/windows-operator-activity-probe.ps1` uses only
+read-only Win32 APIs (`GetCursorPos`, `GetLastInputInfo`,
+`GetForegroundWindow`, `GetWindowThreadProcessId`, and
+`GetClipboardSequenceNumber`). Its adjustable 20–50-ms sampler records only aggregate
+cursor-motion counts, input-tick change counts, clipboard-change counts,
+whether the test-owned fixture ever became foreground, elapsed time and phase
+sample counts. No keystrokes, clipboard contents, raw cursor coordinates,
+window titles, process handles or unredacted input times are stored in output.
+
+A candidate Compact MCP process owns only one off-screen, non-activating
+WinForms fixture with a 30-second lifetime fallback. The probe is also
+limited to 30 seconds. It requires operator movement during an initial
+baseline, acknowledges `set_value`, `invoke`, and `select` phase markers
+before each candidate semantic call, and closes the phase immediately when
+the RPC returns. It checks managed text, invoke status, exact `Beta`
+selection, one selection event, zero fixture focus/foreground samples and
+zero clipboard changes. Human cursor motion is *expected* during a genuine
+operator-active interval; the untouched-desktop equality assertions remain
+in their separate existing test.
+
+The runner signals two test-owned stop files, awaits the observer's exit
+and the fixture process's exit, and removes temporary state **only once both
+processes have exited**. If MCP or fixture cleanup fails, the stop signals
+remain available for the bounded fallback, and no unrelated process may be
+terminated. A missing overlap of input events and semantic actions is
+**inconclusive/failing**, never silently certified.
+
+Preparation verification must include RED→GREEN for the sampler and approval
+guard, E2E typecheck, ordinary test suite with this test skipped, and the
+complete repository gates. No live concurrent result, production rollout,
+PR merge or release authorization is implied by passing those tests.
+
+## Concurrent-test preparation verification and scheduling diagnosis
+
+The read-only sampler and approval/interlock logic were developed with
+observed RED→GREEN tests. The operator-overlap threshold requires at least
+three cursor-motion samples and three input-tick changes in **one**
+acknowledged semantic-action phase; distributing one late sample across
+three phases cannot pass. Live 20-ms probe polling is bounded and records
+only aggregate counts. The candidate is locked to hostname `Leno`, full
+Git SHA and a fresh, explicit short-lived operator approval. The hostname
+gate also failed first on `Surface`, then passed after correction.
+
+The *standard concurrent* `pnpm -r test` failed twice on Leno in the
+pre-existing browser bridge B6 Chromium integration test (download
+readiness timeout and 30-second test timeout). The same integration test
+passed in isolation (1/1), and the browser package passed independently
+(67/67). Full `pnpm -r --workspace-concurrency=1 test` passed including
+the new probe test and with the live operator-active case skipped.
+A new repository `.npmrc` sets `workspace-concurrency=1` to retain
+the same tests/coverage with deterministic cross-package scheduling.
+After that setting, ordinary `pnpm -r test` also passed. This avoids
+the observed cross-package Chromium startup pressure; it trades faster
+parallel package execution for reliable tests and builds.
+
+All live concurrent acceptance remains **NOT RUN**: it must be invoked
+only during new explicit scoped approval with operator present. The
+operator-active program must not claim a pass based on the sampler's
+background dry run or on the prior separate mouse-motion observation.
+
+## Final background-only B8 coexistence root-cause ruling (2026-10-17)
+
+B8's previous endpoint assertion conflated a physical cursor change with an
+agent-caused cursor change. The assertion ran against Leno's actively used
+human desktop; it could not attribute the movement. This failed on 2026-10-17
+with different cursor endpoints, while the candidate semantic operations
+and human-page ownership checks were otherwise successful. The new
+`background-desktop-observation` helper brackets the test with a read-only
+Windows `GetLastInputInfo` OS input tick and classifies a state change
+without intervening input as a **violation**. If input occurred and physical
+desktop state changed, the test is **inconclusive/skipped**, never passed.
+The tick may also advance for synthetic input, so it cannot prove the human
+caused the movement. Stable cursor, clipboard and foreground observations
+are still required for a verified coexistence result. The B8 browser
+fixture remains protected by resource ownership assertions and the test
+now surfaces machine-readable `browser.create_tab` errors rather than an
+undefined page ID.
+
+Full non-interactive repository gates on the final code tree:
+- `cargo fmt --all -- --check`: PASS
+- `cargo clippy --workspace --all-targets -- -D warnings`: PASS
+- `cargo test --workspace`: PASS
+- `pnpm -r build`: PASS
+- `pnpm -r typecheck`: PASS
+- `pnpm -r test`: PASS (E2E 46 total: 44 pass, 0 fail, 2
+  deliberate foreground/operator-active skips; B8 and B6 both passed)
+- `python scripts/check-no-unsafe.py`: PASS
+- `git diff --check`: PASS
+- PowerShell activity-sampler parser: PASS
+
+The final **operator-active simultaneous** test still requires renewed,
+scoped approval and an actively participating operator on Leno. Passing
+these background-safe gates is not its acceptance or deployment approval.
