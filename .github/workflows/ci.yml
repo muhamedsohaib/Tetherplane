@@ -48,6 +48,29 @@ jobs:
       - name: TypeScript tests
         run: pnpm -r test
 
+      # Isolate this acceptance stress gate to the draft Windows UIA branch.
+      # It runs on GitHub-hosted Windows, never on the user's active Leno desktop.
+      - name: Windows lifetime fixture stress (20 runs; UIA PR only)
+        if: runner.os == 'Windows' && github.event_name == 'pull_request' && github.head_ref == 'fix/windows-uia-selection-notify-20261017'
+        shell: pwsh
+        run: |
+          1..20 | ForEach-Object {
+            Write-Host "Lifetime fixture iteration $_ of 20"
+            node --test --test-concurrency=1 tests/e2e/windows-desktop-fixture-lifetime.test.ts
+            if ($LASTEXITCODE -ne 0) {
+              throw "Windows lifetime fixture failed on iteration $_"
+            }
+          }
+          $remaining = @(Get-CimInstance Win32_Process -Filter "Name='powershell.exe'" |
+            Where-Object {
+              $_.CommandLine -like '*windows-desktop-fixture.ps1*' -and
+              $_.CommandLine -like '*Tetherplane Lifetime Fixture*'
+            })
+          Write-Host "Remaining lifetime fixtures: $($remaining.Count)"
+          if ($remaining.Count -ne 0) {
+            throw "Test-owned WinForms lifetime fixture process did not exit"
+          }
+
       - name: TypeScript builds
         run: pnpm -r build
 
