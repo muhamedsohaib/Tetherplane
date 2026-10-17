@@ -1,0 +1,72 @@
+# Windows UIA background selection app-state regression — 2026-10-17
+
+Status: isolated TDD fix, **not deployed**. Branch: `fix/windows-uia-selection-notify-20261017`, based on verified `1f8e220`.
+
+## Canonical constraints
+Use the 2026-09-17 design, implementation roadmap, local core plan and 2026-09-20 Windows desktop plan. Exactly six MCP tools; local Policy Broker final; `background_only` and no physical keyboard/mouse/focus/global clipboard changes; no authored unsafe Rust.
+
+## Reproduced live failure (installed Leno agent 0.1.0)
+A test-owned off-screen WinForms ListBox was registered as `origin=tetherplane` and remained `focused=false`. Selecting its Beta item via `desktop.act(select)` returned `verified=true`, while:
+- native `LB_GETCURSEL` and managed `SelectedIndex` both became index 1;
+- managed `SelectedItem` was still Alpha;
+- `SelectedIndexChanged` event count remained zero, confirmed after >900 ms.
+
+The native provider currently sends `LB_SETCURSEL` but omits the parent `WM_COMMAND` / `LBN_SELCHANGE` notification. A separate test-owned diagnostic form confirmed that sending that notification with control ID zero makes managed `SelectedItem=Beta` and raises one event, without taking foreground focus. No fixture processes remained.
+
+## TDD and narrow fix
+1. Add a Rust Windows unit test requiring a WinForms-specific selection notification tuple (`WM_COMMAND=0x0111`, `LBN_SELCHANGE=1` in high word) and explicitly no claim for untested non-WinForms classes. Witness RED before implementing helper.
+2. Strengthen `tests/e2e/desktop-coexistence.test.ts` to require the exact requested selection `Owned Beta`, not merely a nonempty selected value. This remains an operator-observed interactive-Windows gate (skipped on headless CI by existing test contract).
+3. Change only the UIA background-native listbox selection path: after a successful `LB_SETCURSEL`, send a bounded notification to the list's UIA parent for recognized WinForms listboxes; return `verified=false` for other native list controls until their app-level notification semantics are established. Preserve detailed transport/notified metadata and ownership/policy controls.
+4. Run targeted regression, full Windows and Linux quality gates and all available non-interactive tests. Obtain fresh CI for exact SHA. Do not mark live acceptance passed merely because CI compiles.
+5. Re-test the actual candidate on an authorized isolated runtime on Leno after local policy permits a verified build, without modifying its installed agent or other user resources. If Code Integrity blocks fresh local Rust builds, preserve this blocker and keep the release gate **NO-GO**.
+
+## Out of scope
+No repo history rewrite, relay/OAuth/pairing changes, Agensi publication, provider-neutral semantics change, user-owned window mutation, foreground lease self-issue or other-device work.
+
+## 2026-10-17 isolated worktree verification
+
+- Confirmed branch fix/windows-uia-selection-notify-20261017 at 1f8e220, with the original three-file uncommitted state preserved.
+- RED: cargo test -p tether-desktop-provider --lib selection_notification_tests failed because winforms_selection_notification was unresolved.
+- GREEN: focused Rust selection-notification unit test passed after adding a WinForms-specific bounded WM_COMMAND/LBN_SELCHANGE path.
+- Selection result now records app_notified; other native list classes cannot claim verified application-level notification from LB_SETCURSEL alone.
+- Enhanced e2e expectation requires exact fixture managed state Owned Beta. The test is explicitly opt-in with TETHERPLANE_INTERACTIVE_DESKTOP_ACCEPTANCE=1 because the fixture activates a foreground window; it must not run in unattended background_only validation.
+- cargo fmt --all -- --check: PASS.
+- cargo clippy --workspace --all-targets -- -D warnings: PASS on final source.
+- cargo test --workspace: PASS.
+- pnpm install --frozen-lockfile --prefer-offline: PASS (fresh isolated-worktree dependencies).
+- pnpm -r build: PASS.
+- pnpm -r typecheck: PASS.
+- pnpm -r test: PASS with one interactive desktop acceptance test skipped.
+- git diff --check: PASS.
+- Interactive Leno candidate-runtime WinForms app-state/SelectedIndexChanged acceptance remains NOT RUN; native message transport delivery alone is not conclusive application-state verification. Release/production gate remains NO-GO.
+- No installed-agent replacement, foreground lease, production change, commit, or push was performed.
+
+
+## 2026-10-17 non-activating candidate-runtime acceptance on Leno
+
+The isolated worktree's freshly built target/debug/tetherd.exe was exercised through its own Compact MCP runtime. The installed Leno agent, production relay, other worktrees, and human-owned windows were not changed.
+
+An opt-in non-activating mode was added to the test-owned Windows Forms fixture: WS_EX_NOACTIVATE, ShowWithoutActivation, an off-screen manual position, no taskbar entry, and a bounded lifetime plus file-based graceful stop. The original foreground-taking fixture behavior remains available only under the existing explicit interactive acceptance switch.
+
+A new Windows-only candidate acceptance test performs a real process.run -> desktop.snapshot -> desktop.act(select) flow against a locally owned WinForms ListBox. It checks trusted ownership and all of the following:
+- initial managed SelectedItem = Background Alpha, SelectedIndex = 0, focused = false;
+- final managed SelectedItem = Background Beta, SelectedIndex = 1, and exactly one new SelectedIndexChanged event;
+- provider reported verified = true;
+- foreground HWND, physical cursor position, and global clipboard sequence were unchanged both on fixture creation and after selection;
+- the fixture process exited after its test-owned stop signal (zero remaining matching background fixture processes).
+
+The UIA native notification path now requires the WinForms listbox and its UIA parent window to belong to the same process before sending WM_COMMAND/LBN_SELCHANGE; unsupported classes remain explicitly unverified. Success in a particular WinForms fixture must not be interpreted as universal app-level verification for unrelated list-control classes.
+
+Fresh verification after the candidate acceptance and source guard:
+- cargo fmt --all -- --check: PASS
+- cargo clippy --workspace --all-targets -- -D warnings: PASS
+- cargo test --workspace: PASS
+- pnpm -r build: PASS
+- pnpm -r typecheck: PASS
+- pnpm -r test: PASS (e2e: 31 total, 30 pass, 1 intentionally skipped interactive desktop acceptance)
+- PowerShell fixture parser: PASS
+- Authored Rust unsafe scan: no unsafe blocks
+- git diff --check: PASS
+- Targeted background acceptance: 1 pass, 0 fail, 0 skip
+
+This closes the selection-notification app-state regression acceptance blocker for the controlled background-only WinForms fixture. The legacy foreground human-coexistence scenario remains an explicitly separate operator-observed gate, not a claimed pass. No installation, release, or production deployment is authorized by this test.

@@ -148,7 +148,8 @@ test(
     // interactive Windows machines such as Leno.
     skip:
       process.platform !== "win32" ||
-      process.env.GITHUB_ACTIONS === "true",
+      process.env.GITHUB_ACTIONS === "true" ||
+      process.env.TETHERPLANE_INTERACTIVE_DESKTOP_ACCEPTANCE !== "1",
   },
   async (t) => {
     const here = path.dirname(fileURLToPath(import.meta.url));
@@ -332,10 +333,11 @@ test(
         (state) =>
           state.text === "owned-semantic-value" &&
           state.status === "invoked" &&
-          typeof state.selected === "string",
+          state.selected === "Owned Beta",
       );
       assert.equal(ownedAfter.text, "owned-semantic-value");
       assert.equal(ownedAfter.status, "invoked");
+      assert.equal(ownedAfter.selected, "Owned Beta");
 
       await new Promise((resolve) => setTimeout(resolve, 200));
       assert.deepEqual(cursorPosition(), cursorBefore);
