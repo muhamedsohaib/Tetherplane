@@ -82,6 +82,7 @@ function Assert-ManagedDeviceDestinations {
     param([Parameter(Mandatory = $true)][string]$InstallPrefix)
     Assert-DevicePathNotRedirected -LiteralPath $InstallPrefix
     Assert-DevicePathNotRedirected -LiteralPath (Join-Path $InstallPrefix "config\install.json")
+    Assert-DevicePathNotRedirected -LiteralPath (Join-Path $InstallPrefix "config\agent-args.json")
     foreach ($file in $ManagedFiles) {
         Assert-DevicePathNotRedirected -LiteralPath (Join-Path $InstallPrefix $file)
     }

@@ -100,8 +100,25 @@ function Write-PairingRecord {
         [Parameter(Mandatory = $true)][string]$ExpiresAt
     )
     $state = [IO.Path]::GetFullPath($StateDir)
+    $recordPath = Join-Path $state "pairing.json"
+    # The standalone pairing script must validate both the leaf and its
+    # ancestors before creating a directory or following a redirected write.
+    $current = $recordPath
+    $root = [IO.Path]::GetPathRoot($current)
+    while ($current) {
+        $item = $null
+        try { $item = Get-Item -LiteralPath $current -Force -ErrorAction Stop }
+        catch [System.Management.Automation.ItemNotFoundException] { }
+        if ($item -and (($item.Attributes -band [IO.FileAttributes]::ReparsePoint) -ne 0)) {
+            throw "refusing redirected pairing path (reparse point): $current"
+        }
+        if ($current -eq $root) { break }
+        $parent = [IO.Path]::GetDirectoryName($current)
+        if ($parent -eq $current) { break }
+        $current = $parent
+    }
     New-Item -ItemType Directory -Force -Path $state | Out-Null
-    [ordered]@{ device_id = $DeviceId; userCode = $UserCode; expiresAt = $ExpiresAt } | ConvertTo-Json -Compress | Set-Content -LiteralPath (Join-Path $state "pairing.json") -Encoding Ascii
+    [ordered]@{ device_id = $DeviceId; userCode = $UserCode; expiresAt = $ExpiresAt } | ConvertTo-Json -Compress | Set-Content -LiteralPath $recordPath -Encoding Ascii
 }
 
 function New-PairingError {
