@@ -392,3 +392,46 @@ The operator's previously approved 19:35–19:50 Dubai window was used only for 
 **Outstanding acceptance:** Actual cursor and input activity must be recorded **inside one genuine semantic RPC** in a new approved, time-bounded operator window. Do not infer completion from the observed baseline activity, background UIA correctness, sampled input without RPC overlap, or CI. The 19:35–19:50 authorization has expired.
 
 The read-only fast sampler is a candidate test-only optimization, not a granted foreground capability. Independent final-head review, clean repository gates, focused commits, GitHub checks and clean-device lifecycle acceptance remain separate.
+
+## Leno operator window — 2026-10-17 21:14:29–21:29:29 Dubai time (not accepted)
+
+The operator confirmed availability for a fresh scoped 15-minute window.
+Candidate HEAD was `cadecffedac51021720fc583df55f797b76a304f`.
+Only the isolated branch's test-owned, off-screen WinForms fixture and
+read-only input sampler were involved. No foreground lease or physical
+input simulation was granted or attempted. The installed agent remained
+`background_only`.
+
+The controlled attempts failed closed for different reasons:
+
+1. Around 21:15, the activity sampler recorded substantial human motion
+   but exited when `ReadAllText` encountered a transient Windows
+   phase-marker sharing violation. This was reproduced deterministically
+   with a test-owned exclusive file lock (RED) and corrected by retaining
+   the prior phase only for an underlying `IOException` (GREEN).
+   Invalid phase content and other exceptions remain fatal.
+2. Around 21:19, the sampler stayed alive but the Node test runner's
+   `writeFile` of the phase marker returned `EBUSY`. A bounded retry
+   helper now retries only `EBUSY` (at most 40 attempts, 10 ms apart),
+   outside the measured semantic-RPC interval. New deterministic tests
+   verified RED before the retry and GREEN afterward; non-sharing errors
+   are immediately propagated and persistent contention remains fatal.
+3. Around 21:23, a subsequent live attempt collected 648 baseline
+   observations but detected zero physical cursor movements or
+   input-timestamp changes. It stopped *before* UIA semantic actions.
+   This does not establish a session mismatch or provider defect and
+   cannot certify concurrent human use.
+
+Fresh code verification on the patched tree: Rust fmt, Clippy and workspace
+tests, TypeScript build and typecheck, full `pnpm -r test` (E2E
+53 passed / 0 failed / 2 approval-gated skips), unsafe-code scan,
+`git diff --check`, and PowerShell parsing all exited successfully.
+Test-owned WinForms processes and windows were independently confirmed
+at **zero** after the runs. The fixes affect the acceptance harness only;
+the local Tetherplane agent and human-owned applications were unchanged.
+
+**Acceptance remains pending.** A new short-lived, explicit operator window
+and synchronized physical activity are required. Neither the passing
+synthetic lock regressions nor baseline activity outside a verified RPC
+can substitute for the live overlap gate. PR #15 must remain draft until
+all independent integration and release acceptance requirements are met.
