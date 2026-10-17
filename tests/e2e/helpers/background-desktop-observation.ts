@@ -36,31 +36,30 @@ export function classifyBackgroundDesktopObservation(
 /**
  * Read-only Windows LastInputInfo tick. No key data, pointer coordinates,
  * clipboard content or window identity is read or retained.
+ *
+ * Python ctypes invokes the existing OS API without the transient C# compile
+ * that made cold PowerShell Add-Type startup miss CI's 15-second bound.
+ * Python is already a repository CI prerequisite (check-no-unsafe.py).
  */
 export function readWindowsLastInputTick(): number {
   if (process.platform !== "win32") return 0;
   const script = [
-    "$ErrorActionPreference = 'Stop'",
-    "Add-Type -TypeDefinition @'",
-    "using System;",
-    "using System.Runtime.InteropServices;",
-    "public static class TetherplaneInputAgeProbe {",
-    " [StructLayout(LayoutKind.Sequential)] public struct LastInput {",
-    "   public uint cbSize; public uint dwTime;",
-    " }",
-    " [DllImport(\"user32.dll\")] private static extern bool GetLastInputInfo(ref LastInput info);",
-    " public static uint Read() {",
-    "   LastInput info = new LastInput { cbSize = (uint)Marshal.SizeOf(typeof(LastInput)) };",
-    "   if (!GetLastInputInfo(ref info)) throw new InvalidOperationException(\"input metadata unavailable\");",
-    "   return info.dwTime;",
-    " }",
-    "}",
-    "'@",
-    "[TetherplaneInputAgeProbe]::Read()",
+    "import ctypes",
+    "class LastInput(ctypes.Structure):",
+    "    _fields_ = [('cbSize', ctypes.c_uint32), ('dwTime', ctypes.c_uint32)]",
+    "info = LastInput()",
+    "info.cbSize = ctypes.sizeof(LastInput)",
+    "user32 = ctypes.WinDLL('user32', use_last_error=True)",
+    "read = user32.GetLastInputInfo",
+    "read.argtypes = [ctypes.POINTER(LastInput)]",
+    "read.restype = ctypes.c_int",
+    "if not read(ctypes.byref(info)):",
+    "    raise OSError(ctypes.get_last_error(), 'input metadata unavailable')",
+    "print(info.dwTime)",
   ].join("\n");
   const output = execFileSync(
-    "powershell.exe",
-    ["-NoProfile", "-NonInteractive", "-Command", script],
+    "python.exe",
+    ["-c", script],
     {
       encoding: "utf8",
       windowsHide: true,
