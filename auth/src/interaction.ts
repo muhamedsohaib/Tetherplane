@@ -18,6 +18,7 @@ export type TetherAuthInteractionDetails = {
   };
   params?: {
     client_id?: unknown;
+    redirect_uri?: unknown;
   };
   session?: {
     accountId?: unknown;
@@ -91,6 +92,7 @@ export type TetherAuthPendingInteraction =
       kind: "login";
       userCode: string;
       expiresAt: string;
+      callbackOrigin?: string;
     }
   | {
       kind: "consent";
@@ -100,6 +102,7 @@ export type TetherAuthPendingInteraction =
         resource: string;
         scopes: string[];
       }>;
+      callbackOrigin?: string;
     };
 
 type ValidatedConsent = {
@@ -112,6 +115,7 @@ type ValidatedConsent = {
     resource: string;
     scopes: string[];
   }>;
+  callbackOrigin?: string;
 };
 
 const ALLOWED_OIDC_SCOPES = new Set([
@@ -181,9 +185,15 @@ export class TetherAuthInteractionController {
       const pending = await this.#logins.start({
         interactionUid: details.uid,
       });
+      const callbackOrigin = callbackOriginForRedirectUri(
+        details.params?.redirect_uri,
+      );
       return {
         kind: "login",
         ...pending,
+        ...(callbackOrigin
+          ? { callbackOrigin }
+          : {}),
       };
     }
 
@@ -220,9 +230,16 @@ export class TetherAuthInteractionController {
         "login",
       );
 
-    return this.#logins.start({
-      interactionUid: details.uid,
-    });
+    const callbackOrigin =
+      callbackOriginForRedirectUri(
+        details.params?.redirect_uri,
+      );
+    return {
+      ...(await this.#logins.start({
+        interactionUid: details.uid,
+      })),
+      ...(callbackOrigin ? { callbackOrigin } : {}),
+    };
   }
 
   async completeLogin(
@@ -296,6 +313,9 @@ export class TetherAuthInteractionController {
             scopes: [...scopes],
           }),
         ),
+      ...(consent.callbackOrigin
+        ? { callbackOrigin: consent.callbackOrigin }
+        : {}),
     };
   }
 
@@ -458,16 +478,36 @@ export class TetherAuthInteractionController {
 
     const promptDetails =
       details.prompt.details ?? {};
-    const oidcScopes = parseStringArray(
+    const resourceScopes =
+      parseResourceScopes(
+        promptDetails.missingResourceScopes,
+        resource,
+      );
+    const grantedResourceScopes = new Set(
+      resourceScopes.flatMap((entry) => entry.scopes),
+    );
+    const oidcScopes: string[] = [];
+    for (const scope of parseStringArray(
       promptDetails.missingOIDCScope,
       "OIDC consent scope",
-    );
-    if (
-      oidcScopes.some(
-        (scope) =>
-          !ALLOWED_OIDC_SCOPES.has(scope),
-      )
-    ) {
+    )) {
+      if (ALLOWED_OIDC_SCOPES.has(scope)) {
+        oidcScopes.push(scope);
+        continue;
+      }
+      // The provider lists a resource scope in both scope
+      // collections when a resource indicator targets our
+      // canonical resource, and it only finishes the flow
+      // when the OIDC grant covers that scope as well. It is
+      // admitted exactly when the resource grant validated
+      // above already covers it for our resource.
+      if (
+        scope === ALLOWED_RESOURCE_SCOPE &&
+        grantedResourceScopes.has(scope)
+      ) {
+        oidcScopes.push(scope);
+        continue;
+      }
       throw new Error(
         "OIDC consent requested an unsupported scope",
       );
@@ -499,12 +539,6 @@ export class TetherAuthInteractionController {
       }
     }
 
-    const resourceScopes =
-      parseResourceScopes(
-        promptDetails.missingResourceScopes,
-        resource,
-      );
-
     let grantId: string | undefined;
     if (details.grantId !== undefined) {
       if (
@@ -518,6 +552,11 @@ export class TetherAuthInteractionController {
       grantId = details.grantId;
     }
 
+    const callbackOrigin =
+      callbackOriginForRedirectUri(
+        details.params?.redirect_uri,
+      );
+
     return {
       interactionUid: details.uid,
       clientId: clientId.trim(),
@@ -527,6 +566,7 @@ export class TetherAuthInteractionController {
         : {}),
       oidcScopes,
       resourceScopes,
+      ...(callbackOrigin ? { callbackOrigin } : {}),
     };
   }
 
@@ -674,4 +714,33 @@ function validateAccountId(
       "device-login account is invalid",
     );
   }
+}
+
+export function callbackOriginForRedirectUri(
+  value: unknown,
+): string | undefined {
+  if (typeof value !== "string") {
+    return undefined;
+  }
+  let parsed: URL;
+  try {
+    parsed = new URL(value);
+  } catch {
+    return undefined;
+  }
+  const host = parsed.hostname
+    .toLowerCase()
+    .replace(/^\[|\]$/g, "");
+  if (parsed.protocol === "http:") {
+    if (
+      host !== "127.0.0.1" &&
+      host !== "::1" &&
+      host !== "localhost"
+    ) {
+      return undefined;
+    }
+  } else if (parsed.protocol !== "https:") {
+    return undefined;
+  }
+  return parsed.origin;
 }

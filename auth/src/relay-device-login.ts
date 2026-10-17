@@ -9,6 +9,7 @@ export type RelayDeviceLoginProofClientOptions = {
   bridgeToken: string;
   allowInsecureLocalhost?: boolean;
   fetchImpl?: typeof fetch;
+  timeoutMs?: number;
 };
 
 export type DeviceLoginStartInput = {
@@ -26,6 +27,7 @@ export class RelayDeviceLoginProofClient
   readonly #baseUrl: string;
   readonly #bridgeToken: string;
   readonly #fetch: typeof fetch;
+  readonly #timeoutMs: number;
 
   constructor(
     options: RelayDeviceLoginProofClientOptions,
@@ -43,8 +45,18 @@ export class RelayDeviceLoginProofClient
         "relay device-login bridge value must contain at least 32 safe characters",
       );
     }
+    if (
+      options.timeoutMs !== undefined &&
+      (!Number.isInteger(options.timeoutMs) ||
+        options.timeoutMs < 1)
+    ) {
+      throw new Error(
+        "relay device-login bridge timeout must be a positive integer",
+      );
+    }
     this.#bridgeToken = options.bridgeToken;
     this.#fetch = options.fetchImpl ?? fetch;
+    this.#timeoutMs = options.timeoutMs ?? 5_000;
   }
 
   async start(
@@ -138,20 +150,35 @@ export class RelayDeviceLoginProofClient
     pathname: string,
     body: Record<string, unknown>,
   ): Promise<Response> {
-    return this.#fetch(
-      this.#baseUrl + pathname,
-      {
-        method: "POST",
-        headers: {
-          accept: "application/json",
-          "content-type": "application/json",
-          authorization:
-            `Bearer ${this.#bridgeToken}`,
+    try {
+      return await this.#fetch(
+        this.#baseUrl + pathname,
+        {
+          method: "POST",
+          headers: {
+            accept: "application/json",
+            "content-type": "application/json",
+            authorization:
+              `Bearer ${this.#bridgeToken}`,
+          },
+          body: JSON.stringify(body),
+          redirect: "error",
+          signal: AbortSignal.timeout(
+            this.#timeoutMs,
+          ),
         },
-        body: JSON.stringify(body),
-        redirect: "error",
-      },
-    );
+      );
+    } catch (error) {
+      if (
+        error instanceof DOMException &&
+        error.name === "TimeoutError"
+      ) {
+        throw new Error(
+          "relay device-login bridge request timed out",
+        );
+      }
+      throw error;
+    }
   }
 }
 

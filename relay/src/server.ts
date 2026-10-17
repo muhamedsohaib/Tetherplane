@@ -30,6 +30,11 @@ import {
   DeviceRouter,
 } from "./routing/device-router.ts";
 import { RelayHealthHttpGateway } from "./health-http.ts";
+import { isClaimed } from "./http-claim.ts";
+import {
+  AccessLog,
+  attachAccessLogging,
+} from "./access-log.ts";
 
 type NodeRelayServer =
   | ReturnType<typeof createHttpServer>
@@ -90,69 +95,83 @@ export class RelayServer {
     allowInsecureLocalhost?: boolean;
     routeTimeoutMs?: number;
     authLoginBridgeToken?: string;
+    accessLogFile?: string;
   }): Promise<RelayServer> {
     const registry = await DeviceRegistry.open(
       options.stateFile
         ? { stateFile: options.stateFile }
         : {},
     );
-    const router = new DeviceRouter({
-      registry,
-      ...(options.routeTimeoutMs === undefined
-        ? {}
-        : { timeoutMs: options.routeTimeoutMs }),
-    });
-    const deviceGateway = new DeviceWebSocketGateway({
-      registry,
-      router,
-    });
-    const mcpGateway = new RemoteMcpHttpGateway({
-      router,
-      authenticator: options.authenticator,
-      ...(options.oauth ? { oauth: options.oauth } : {}),
-    });
-    const healthGateway = new RelayHealthHttpGateway();
-    const controlGateway = new RelayControlHttpGateway({
-      registry,
-      authenticator: options.authenticator,
-      disconnectDevice: (deviceId) =>
-        deviceGateway.disconnectDevice(deviceId),
-    });
-    const authLoginGateway =
-      options.authLoginBridgeToken === undefined
-        ? null
-        : new AuthLoginProofHttpGateway({
-            devices: registry,
-            proofs: new AuthLoginProofRegistry(),
-            bridgeToken: options.authLoginBridgeToken,
-          });
+    try {
+      const router = new DeviceRouter({
+        registry,
+        ...(options.routeTimeoutMs === undefined
+          ? {}
+          : { timeoutMs: options.routeTimeoutMs }),
+      });
+      const deviceGateway = new DeviceWebSocketGateway({
+        registry,
+        router,
+      });
+      const accessLog = options.accessLogFile
+        ? new AccessLog({ file: options.accessLogFile })
+        : undefined;
+      const mcpGateway = new RemoteMcpHttpGateway({
+        router,
+        authenticator: options.authenticator,
+        ...(options.oauth ? { oauth: options.oauth } : {}),
+        ...(accessLog ? { accessLog } : {}),
+      });
+      const healthGateway = new RelayHealthHttpGateway();
+      const controlGateway = new RelayControlHttpGateway({
+        registry,
+        authenticator: options.authenticator,
+        disconnectDevice: (deviceId) =>
+          deviceGateway.disconnectDevice(deviceId),
+      });
+      const authLoginGateway =
+        options.authLoginBridgeToken === undefined
+          ? null
+          : new AuthLoginProofHttpGateway({
+              devices: registry,
+              proofs: new AuthLoginProofRegistry(),
+              bridgeToken: options.authLoginBridgeToken,
+            });
 
-    const secure = options.tls !== undefined;
-    const server: NodeRelayServer =
-      options.tls === undefined
-        ? createHttpServer()
-        : createHttpsServer(options.tls);
+      const secure = options.tls !== undefined;
+      const server: NodeRelayServer =
+        options.tls === undefined
+          ? createHttpServer()
+          : createHttpsServer(options.tls);
 
-    const httpCompatible = server as unknown as HttpServer;
-    healthGateway.attach(httpCompatible);
-    deviceGateway.attach(httpCompatible, "/device");
-    mcpGateway.attach(httpCompatible, "/mcp");
-    controlGateway.attach(httpCompatible);
-    authLoginGateway?.attach(httpCompatible);
+      const httpCompatible = server as unknown as HttpServer;
+      if (accessLog) {
+        attachAccessLogging(httpCompatible, accessLog);
+      }
+      healthGateway.attach(httpCompatible);
+      deviceGateway.attach(httpCompatible, "/device");
+      mcpGateway.attach(httpCompatible, "/mcp");
+      controlGateway.attach(httpCompatible);
+      authLoginGateway?.attach(httpCompatible);
+      attachUnmatchedFallback(httpCompatible);
 
-    return new RelayServer({
-      server,
-      secure,
-      allowInsecureLocalhost:
-        options.allowInsecureLocalhost ?? false,
-      registry,
-      router,
-      deviceGateway,
-      mcpGateway,
-      controlGateway,
-      healthGateway,
-      authLoginGateway,
-    });
+      return new RelayServer({
+        server,
+        secure,
+        allowInsecureLocalhost:
+          options.allowInsecureLocalhost ?? false,
+        registry,
+        router,
+        deviceGateway,
+        mcpGateway,
+        controlGateway,
+        healthGateway,
+        authLoginGateway,
+      });
+    } catch (error) {
+      await registry.close();
+      throw error;
+    }
   }
 
   async listen(options: {
@@ -201,19 +220,23 @@ export class RelayServer {
     if (this.#closed) return;
     this.#closed = true;
 
-    this.healthGateway.close();
-    this.controlGateway.close();
-    this.authLoginGateway?.close();
-    await this.mcpGateway.close();
-    await this.deviceGateway.close();
+    try {
+      this.healthGateway.close();
+      this.controlGateway.close();
+      this.authLoginGateway?.close();
+      await this.mcpGateway.close();
+      await this.deviceGateway.close();
 
-    if (!this.#server.listening) return;
-    await new Promise<void>((resolve, reject) => {
-      this.#server.close((error) => {
-        if (error) reject(error);
-        else resolve();
+      if (!this.#server.listening) return;
+      await new Promise<void>((resolve, reject) => {
+        this.#server.close((error) => {
+          if (error) reject(error);
+          else resolve();
+        });
       });
-    });
+    } finally {
+      await this.registry.close();
+    }
   }
 
   #formatAddress(
@@ -236,6 +259,19 @@ export class RelayServer {
       deviceWsUrl: `${wsScheme}://${authority}/device`,
     };
   }
+}
+
+function attachUnmatchedFallback(server: HttpServer): void {
+  server.on("request", (_request, response) => {
+    setImmediate(() => {
+      if (response.writableEnded || isClaimed(response)) return;
+      response.writeHead(404, {
+        "content-type": "application/json",
+        "cache-control": "no-store",
+      });
+      response.end(JSON.stringify({ error: "not_found" }));
+    });
+  });
 }
 
 function isLoopbackHost(host: string): boolean {

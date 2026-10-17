@@ -158,9 +158,7 @@ impl WorkerState {
         let automation_id = element.get_automation_id().unwrap_or_default();
         let class_name = element.get_classname().unwrap_or_default();
         let name = element.get_name().unwrap_or_default();
-        let role = element
-            .get_localized_control_type()
-            .unwrap_or_else(|_| "unknown".to_owned());
+        let role = normalized_role(element.get_localized_control_type().ok().as_deref());
 
         let identity = ElementIdentity {
             process_id,
@@ -445,13 +443,14 @@ fn execute_select(
         .get_pattern::<UISelectionItemPattern>()
         .map_err(|error| uia_action_error(&error))?;
 
-    if try_background_native_select(automation, walker, element)? {
+    if let Some(notified) = try_background_native_select(automation, walker, element)? {
         let selected = pattern.is_selected().unwrap_or(false);
         return Ok((
-            selected,
+            selected && notified,
             json!({
                 "action": "select",
                 "selected": selected,
+                "app_notified": notified,
                 "transport": "native_listbox_message",
             }),
         ));
@@ -486,28 +485,28 @@ fn try_background_native_select(
     automation: &UIAutomation,
     walker: &UITreeWalker,
     element: &UIElement,
-) -> Result<bool, CapabilityError> {
+) -> Result<Option<bool>, CapabilityError> {
     const LB_SETCURSEL: windows_win::sys::UINT = 0x0186;
     const LB_ERR: windows_win::sys::LRESULT = -1;
 
     let Ok(parent) = walker.get_parent(element) else {
-        return Ok(false);
+        return Ok(None);
     };
     let parent_role = parent.get_localized_control_type().unwrap_or_default();
     if !parent_role.eq_ignore_ascii_case("list") {
-        return Ok(false);
+        return Ok(None);
     }
 
     let Ok(handle) = parent.get_native_window_handle() else {
-        return Ok(false);
+        return Ok(None);
     };
     let raw: isize = handle.into();
     if raw == 0 {
-        return Ok(false);
+        return Ok(None);
     }
 
     let Ok(mut current) = walker.get_first_child(&parent) else {
-        return Ok(false);
+        return Ok(None);
     };
     let mut index = 0_usize;
     loop {
@@ -518,7 +517,7 @@ fn try_background_native_select(
             break;
         }
         let Ok(next) = walker.get_next_sibling(&current) else {
-            return Ok(false);
+            return Ok(None);
         };
         current = next;
         index = index.saturating_add(1);
@@ -540,9 +539,43 @@ fn try_background_native_select(
             details: serde_json::json!({}),
         });
     }
-    Ok(true)
+    let class_name = parent.get_classname().unwrap_or_default();
+    let Some((message, notification)) = winforms_selection_notification(&class_name) else {
+        return Ok(Some(false));
+    };
+    // Notify only the parent of a recognized WinForms listbox.
+    // The controlled fixture demonstrated control ID zero.
+    let Ok(window) = walker.get_parent(&parent) else {
+        return Ok(Some(false));
+    };
+    // A UIA tree edge must not authorize a native message to a different process.
+    match (parent.get_process_id(), window.get_process_id()) {
+        (Ok(list_pid), Ok(window_pid)) if list_pid == window_pid => {}
+        _ => return Ok(Some(false)),
+    }
+    let Ok(native_parent) = window.get_native_window_handle() else {
+        return Ok(Some(false));
+    };
+    let parent_raw: isize = native_parent.into();
+    if parent_raw == 0 {
+        return Ok(Some(false));
+    }
+    let notified = windows_win::raw::window::send_message(
+        parent_raw as windows_win::sys::HWND,
+        message,
+        notification,
+        raw,
+        Some(1_000),
+    )
+    .is_ok();
+    Ok(Some(notified))
 }
 
+fn winforms_selection_notification(class_name: &str) -> Option<(u32, usize)> {
+    class_name
+        .starts_with("WindowsForms10.LISTBOX.")
+        .then_some((0x0111, 0x0001_0000))
+}
 fn execute_toggle(element: &UIElement) -> Result<(bool, serde_json::Value), CapabilityError> {
     let pattern = element
         .get_pattern::<UITogglePattern>()
@@ -704,6 +737,14 @@ fn supported_patterns(element: &UIElement) -> Vec<DesktopPattern> {
     patterns
 }
 
+fn normalized_role(localized: Option<&str>) -> String {
+    localized
+        .map(str::trim)
+        .filter(|role| !role.is_empty())
+        .unwrap_or("unknown")
+        .to_owned()
+}
+
 fn non_empty(value: String) -> Option<String> {
     (!value.is_empty()).then_some(value)
 }
@@ -754,5 +795,38 @@ fn provider_failure(message: impl Into<String>) -> CapabilityError {
         message: message.into(),
         recovery_hint: None,
         details: serde_json::json!({}),
+    }
+}
+
+#[cfg(test)]
+mod selection_notification_tests {
+    use super::winforms_selection_notification;
+
+    #[test]
+    fn winforms_selection_notification_is_explicit_and_other_controls_are_unverified() {
+        assert_eq!(
+            winforms_selection_notification("WindowsForms10.LISTBOX.app.0.example"),
+            Some((0x0111, 0x0001_0000)),
+        );
+        assert_eq!(winforms_selection_notification("ListBox"), None);
+        assert_eq!(winforms_selection_notification("SysListView32"), None);
+    }
+}
+
+#[cfg(test)]
+mod role_normalization_tests {
+    use super::normalized_role;
+
+    #[test]
+    fn empty_or_unavailable_uia_localized_roles_fall_back_to_unknown() {
+        assert_eq!(normalized_role(None), "unknown");
+        assert_eq!(normalized_role(Some("")), "unknown");
+        assert_eq!(normalized_role(Some(" \t ")), "unknown");
+    }
+
+    #[test]
+    fn informative_uia_localized_role_is_preserved() {
+        assert_eq!(normalized_role(Some("button")), "button");
+        assert_eq!(normalized_role(Some("list item")), "list item");
     }
 }

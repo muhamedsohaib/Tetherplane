@@ -6,7 +6,10 @@ import type {
 } from "@tetherplane/protocol";
 
 import type { ClientIdentity } from "../auth/static-auth.ts";
-import type { DeviceRegistry } from "../devices/registry.ts";
+import type {
+  DeviceBinding,
+  DeviceRegistry,
+} from "../devices/registry.ts";
 
 export type RelayToDeviceMessage = {
   type: "invoke";
@@ -96,6 +99,16 @@ export class DeviceRouter {
 
   isOnline(deviceId: string): boolean {
     return this.#connections.has(deviceId);
+  }
+
+  async approveDevicePairing(input: {
+    accountId: string;
+    userCode: string;
+    expectedDeviceId: string;
+  }): Promise<DeviceBinding> {
+    // Check expected identity, rate limits and code consumption atomically in
+    // the registry; a separate peek would leave a check/use gap.
+    return this.#registry.approvePairing(input);
   }
 
   async call(

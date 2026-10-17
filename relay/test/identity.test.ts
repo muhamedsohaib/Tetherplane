@@ -17,8 +17,10 @@ test("pairing binds a locally generated credential hash to one account and persi
   const dir = await mkdtemp(path.join(os.tmpdir(), "tether-relay-id-"));
   const stateFile = path.join(dir, "devices.json");
   const secret = "device-secret-that-must-never-be-stored";
+  let registry: DeviceRegistry | undefined;
+  let reopened: DeviceRegistry | undefined;
   try {
-    const registry = await DeviceRegistry.open({ stateFile });
+    registry = await DeviceRegistry.open({ stateFile });
     const pending = await registry.startPairing({
       deviceId: "Leno",
       credentialHash: hashDeviceCredential(secret),
@@ -47,12 +49,15 @@ test("pairing binds a locally generated credential hash to one account and persi
     assert.doesNotMatch(persisted, /device-secret-that-must-never-be-stored/);
     assert.match(persisted, new RegExp(hashDeviceCredential(secret)));
 
-    const reopened = await DeviceRegistry.open({ stateFile });
+    await registry.close();
+    reopened = await DeviceRegistry.open({ stateFile });
     assert.equal(
       await reopened.authenticateDevice("Leno", secret),
       "account-a",
     );
   } finally {
+    await registry?.close();
+    await reopened?.close();
     await rm(dir, { recursive: true, force: true });
   }
 });

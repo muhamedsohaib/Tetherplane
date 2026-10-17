@@ -5,6 +5,25 @@ $root = (Resolve-Path (Join-Path $PSScriptRoot "..")).Path
 $tetherd = Join-Path $root "bin\tetherd.exe"
 $argsPath = Join-Path $root "config\agent-args.json"
 
+# One supervisor per install: a second copy exits instead of starting a
+# duplicate agent that would fight the first for the same device identity.
+$instanceKey = ([BitConverter]::ToString(
+    [Security.Cryptography.SHA256]::Create().ComputeHash(
+        [Text.Encoding]::UTF8.GetBytes($root.ToLowerInvariant())
+    )
+) -replace "-", "").Substring(0, 16)
+$instanceMutex = New-Object System.Threading.Mutex($false, "Local\TetherplaneAgent-$instanceKey")
+$ownsInstance = $false
+try {
+    $ownsInstance = $instanceMutex.WaitOne(0)
+} catch [System.Threading.AbandonedMutexException] {
+    $ownsInstance = $true
+}
+if (-not $ownsInstance) {
+    Write-Output "another Tetherplane agent supervisor already owns this install; exiting without starting a second agent"
+    exit 0
+}
+
 if (-not (Test-Path -LiteralPath $tetherd -PathType Leaf)) {
     throw "installed tetherd is missing: $tetherd"
 }

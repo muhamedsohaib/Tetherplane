@@ -127,6 +127,7 @@ export class BrowserBridgeService {
     }
 
     if (operation === "status") {
+      await this.#backend.pages();
       return {
         data: {
           available: true,

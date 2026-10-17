@@ -4,6 +4,8 @@ import type {
   ServerResponse,
 } from "node:http";
 
+import { markClaimed } from "./http-claim.ts";
+
 export class RelayHealthHttpGateway {
   #attachedServer: Server | null = null;
   #requestHandler:
@@ -49,6 +51,7 @@ export class RelayHealthHttpGateway {
     if (status === null) {
       return;
     }
+    markClaimed(response);
 
     if (request.method !== "GET") {
       response.statusCode = 405;

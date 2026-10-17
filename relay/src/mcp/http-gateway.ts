@@ -7,6 +7,8 @@ import type {
 } from "node:http";
 
 import { createCompactMcpServer } from "@tetherplane/compact-mcp";
+import { markClaimed } from "../http-claim.ts";
+import type { AccessLog } from "../access-log.ts";
 import { StreamableHTTPServerTransport } from "@modelcontextprotocol/sdk/server/streamableHttp.js";
 import { isInitializeRequest } from "@modelcontextprotocol/sdk/types.js";
 
@@ -26,6 +28,7 @@ export class RemoteMcpHttpGateway {
   readonly #router: DeviceRouter;
   readonly #oauth: OAuthResource | undefined;
   readonly #authenticator: ClientAuthenticator;
+  readonly #accessLog: AccessLog | undefined;
   readonly #sessions = new Map<string, McpSession>();
   #attachedServer: Server | null = null;
   #requestHandler:
@@ -36,10 +39,12 @@ export class RemoteMcpHttpGateway {
     router: DeviceRouter;
     authenticator: ClientAuthenticator;
     oauth?: OAuthResource;
+    accessLog?: AccessLog;
   }) {
     this.#oauth = options.oauth ? validateOAuthResource(options.oauth) : undefined;
     this.#router = options.router;
     this.#authenticator = options.authenticator;
+    this.#accessLog = options.accessLog;
   }
 
   attach(server: Server, pathname = "/mcp"): void {
@@ -80,6 +85,7 @@ export class RemoteMcpHttpGateway {
       `http://${request.headers.host ?? "localhost"}`,
     );
     if (this.#oauth && ["/.well-known/oauth-protected-resource", new URL(resourceMetadataUrl(this.#oauth)).pathname].includes(url.pathname)) {
+      markClaimed(response);
       if (request.method !== "GET") {
         response.writeHead(405, { allow: "GET" }).end();
       } else {
@@ -90,6 +96,7 @@ export class RemoteMcpHttpGateway {
     if (url.pathname !== pathname) {
       return;
     }
+    markClaimed(response);
 
     const identity = await this.#authenticate(request).catch(() => null);
     // OAuth discovery must work even when the client sends stale credentials.
@@ -140,9 +147,28 @@ export class RemoteMcpHttpGateway {
     identity: ClientIdentity | null,
   ): Promise<void> {
     const body = await readJsonBody(request);
+    if (
+      body &&
+      typeof body === "object" &&
+      !Array.isArray(body) &&
+      "method" in body
+    ) {
+      this.#accessLog?.noteMcpMethod(response, body.method);
+    }
     const sessionId = singleHeader(
       request.headers["mcp-session-id"],
     );
+    const approval = approvePairingCall(body);
+    if (approval) {
+      markClaimed(response);
+      await this.#handleApprovePairing(
+        response,
+        identity,
+        sessionId,
+        approval,
+      );
+      return;
+    }
 
     if (sessionId) {
       const session = this.#sessions.get(sessionId);
@@ -213,6 +239,122 @@ export class RemoteMcpHttpGateway {
 
     await compactServer.connect(transport as never);
     await transport.handleRequest(request, response, body);
+  }
+
+  async #handleApprovePairing(
+    response: ServerResponse,
+    identity: ClientIdentity | null,
+    sessionId: string | null,
+    approval: { id: unknown; userCode: unknown; expectedDeviceId: unknown; malformed: boolean },
+  ): Promise<void> {
+    const id =
+      typeof approval.id === "string" || typeof approval.id === "number"
+        ? approval.id
+        : null;
+    if (sessionId) {
+      const session = this.#sessions.get(sessionId);
+      if (!session) {
+        writeJson(response, 404, mcpSessionError("Unknown MCP session"));
+        return;
+      }
+      if (!identity) {
+        this.#rejectAuthentication(
+          response,
+          approvalBody(id, approval),
+        );
+        return;
+      }
+      if (
+        session.identity && !sameIdentity(session.identity, identity)
+      ) {
+        writeJson(
+          response,
+          403,
+          mcpSessionError("MCP session identity mismatch"),
+        );
+        return;
+      }
+      session.identity ??= { ...identity };
+    } else if (!identity) {
+      this.#rejectAuthentication(
+        response,
+        approvalBody(id, approval),
+      );
+      return;
+    }
+    if (
+      approval.malformed ||
+      typeof approval.userCode !== "string" ||
+      !approval.userCode.trim() ||
+      typeof approval.expectedDeviceId !== "string" ||
+      !approval.expectedDeviceId.trim()
+    ) {
+      writeJson(response, 200, {
+        jsonrpc: "2.0",
+        id,
+        result: {
+          isError: true,
+          content: [
+            {
+              type: "text",
+              text: "approve_pairing requires a non-empty userCode and expectedDeviceId",
+            },
+          ],
+        },
+      });
+      return;
+    }
+    const bound = identity;
+    if (!bound) {
+      this.#rejectAuthentication(
+        response,
+        approvalBody(id, approval),
+      );
+      return;
+    }
+    try {
+      // Identity and account come exclusively from the validated session
+      // bearer. Arguments can never override them.
+      const binding = await this.#router.approveDevicePairing({
+        accountId: bound.accountId,
+        userCode: approval.userCode.trim(),
+        expectedDeviceId: approval.expectedDeviceId.trim(),
+      });
+      writeJson(response, 200, {
+        jsonrpc: "2.0",
+        id,
+        result: {
+          content: [
+            {
+              type: "text",
+              text: `Paired device ${binding.deviceId}`,
+            },
+          ],
+          structuredContent: {
+            paired: true,
+            device_id: binding.deviceId,
+            account_id: binding.accountId,
+          },
+        },
+      });
+    } catch (error) {
+      writeJson(response, 200, {
+        jsonrpc: "2.0",
+        id,
+        result: {
+          isError: true,
+          content: [
+            {
+              type: "text",
+              text:
+                error instanceof Error
+                  ? error.message
+                  : "pairing approval failed",
+            },
+          ],
+        },
+      });
+    }
   }
 
   async #handleExistingSession(
@@ -297,6 +439,57 @@ function isDiscoveryRequest(body: unknown): boolean {
   return !!body && typeof body === "object" && !Array.isArray(body) &&
     "method" in body && typeof body.method === "string" &&
     ["tools/list", "notifications/initialized", "ping"].includes(body.method);
+}
+
+function approvePairingCall(body: unknown): {
+  id: unknown;
+  userCode: unknown;
+  expectedDeviceId: unknown;
+  malformed: boolean;
+} | null {
+  if (!body || typeof body !== "object" || Array.isArray(body)) return null;
+  if (!("method" in body) || body.method !== "tools/call") return null;
+  if (!("params" in body) || !body.params || typeof body.params !== "object" || Array.isArray(body.params)) {
+    return null;
+  }
+  const params = body.params as Record<string, unknown>;
+  if (params.name !== "device") return null;
+  if (!params.arguments || typeof params.arguments !== "object" || Array.isArray(params.arguments)) {
+    return null;
+  }
+  // The installed device tool schema exposes only op, args, device,
+  // response_mode and friends. Pairing values live inside args; account and
+  // principal overrides are never honored from any envelope level.
+  const outer = params.arguments as Record<string, unknown>;
+  if (outer.op !== "approve_pairing") return null;
+  const id = "id" in body ? (body as Record<string, unknown>).id : null;
+  if (!outer.args || typeof outer.args !== "object" || Array.isArray(outer.args)) {
+    // Recognized outer op with malformed args: fail locally instead of
+    // falling through to physical-device routing.
+    return { id, userCode: undefined, expectedDeviceId: undefined, malformed: true };
+  }
+  const args = outer.args as Record<string, unknown>;
+  return {
+    id,
+    userCode: args.userCode,
+    expectedDeviceId: args.expectedDeviceId,
+    malformed: false,
+  };
+}
+
+function approvalBody(
+  id: unknown,
+  approval: { userCode: unknown; expectedDeviceId: unknown },
+): Record<string, unknown> {
+  return {
+    jsonrpc: "2.0",
+    id,
+    method: "tools/call",
+    params: {
+      name: "device",
+      arguments: { op: "approve_pairing" },
+    },
+  };
 }
 
 function bearerToken(header: string | undefined): string | null {

@@ -48,6 +48,29 @@ jobs:
       - name: TypeScript tests
         run: pnpm -r test
 
+      # Isolate this acceptance stress gate to the draft Windows UIA branch.
+      # It runs on GitHub-hosted Windows, never on the user's active Leno desktop.
+      - name: Windows lifetime fixture stress (20 runs; UIA PR only)
+        if: runner.os == 'Windows' && github.event_name == 'pull_request' && github.head_ref == 'fix/windows-uia-selection-notify-20261017'
+        shell: pwsh
+        run: |
+          1..20 | ForEach-Object {
+            Write-Host "Lifetime fixture iteration $_ of 20"
+            node --test --test-concurrency=1 tests/e2e/windows-desktop-fixture-lifetime.test.ts
+            if ($LASTEXITCODE -ne 0) {
+              throw "Windows lifetime fixture failed on iteration $_"
+            }
+          }
+          $remaining = @(Get-CimInstance Win32_Process -Filter "Name='powershell.exe'" |
+            Where-Object {
+              $_.CommandLine -like '*windows-desktop-fixture.ps1*' -and
+              $_.CommandLine -like '*Tetherplane Lifetime Fixture*'
+            })
+          Write-Host "Remaining lifetime fixtures: $($remaining.Count)"
+          if ($remaining.Count -ne 0) {
+            throw "Test-owned WinForms lifetime fixture process did not exit"
+          }
+
       - name: TypeScript builds
         run: pnpm -r build
 
@@ -66,7 +89,77 @@ jobs:
         if: runner.os == 'Windows'
         run: cargo build --release -p tetherd
 
+      - name: Windows onboarding Pester acceptance
+        if: runner.os == 'Windows'
+        shell: powershell
+        run: powershell -NoProfile -ExecutionPolicy Bypass -File scripts/run-onboarding-tests.ps1
+
       - name: Windows package/install smoke
         if: runner.os == 'Windows'
         shell: pwsh
         run: ./tests/release/windows-package-smoke.ps1
+
+  chromium-oauth-callback:
+    name: Chromium OAuth callback (${{ matrix.os }})
+    if: github.event_name == 'pull_request'
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, windows-latest]
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 12
+    permissions:
+      contents: read
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+
+      - name: Enable Corepack
+        run: corepack enable
+
+      - name: Install pnpm 10
+        run: corepack prepare pnpm@10 --activate
+
+      - name: Install workspace
+        run: pnpm install --frozen-lockfile
+
+      # The CI-only, exact-lockfile Playwright browser avoids runner-image drift.
+      # Production continues to discover already-installed Chromium-family browsers.
+      - name: Install pinned Chromium in isolated runner
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = 'Stop'
+          if ('${{ runner.os }}' -eq 'Linux') {
+            pnpm exec playwright install --with-deps chromium
+          } else {
+            pnpm exec playwright install chromium
+          }
+          if ($LASTEXITCODE -ne 0) { throw "Pinned Chromium installation failed" }
+
+      # The real callback must execute and clean its profile ten consecutive times.
+      - name: Real Chromium OAuth callback, CSP and owned-browser cleanup
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = 'Stop'
+          if ('${{ runner.os }}' -eq 'Linux') {
+            # GitHub's AppArmor restricts unprivileged user namespaces on Ubuntu.
+            # This is test-only, trusted-localhost, disposable runner execution.
+            $env:TETHERPLANE_CI_CHROMIUM_UNSANDBOXED = '1'
+          }
+          $binary = node --input-type=module -e "import { chromium } from 'playwright'; process.stdout.write(chromium.executablePath());"
+          if ($LASTEXITCODE -ne 0 -or [string]::IsNullOrWhiteSpace($binary) -or -not (Test-Path -LiteralPath $binary)) {
+            throw 'Pinned Chromium executable missing for required OAuth callback test'
+          }
+          $env:TETHERPLANE_CHROMIUM_BIN = $binary.Trim()
+          $env:TETHERPLANE_CHROMIUM_REQUIRED = '1'
+          1..10 | ForEach-Object {
+            Write-Host "Isolated OAuth callback iteration $_ of 10"
+            node --test --test-reporter=tap --test-concurrency=1 relay/test/tether-auth-chromium.test.ts
+            if ($LASTEXITCODE -ne 0) {
+              throw "Real Chromium OAuth callback/CSP/cleanup acceptance failed on iteration $_"
+            }
+          }
