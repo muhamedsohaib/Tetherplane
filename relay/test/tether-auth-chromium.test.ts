@@ -1,5 +1,5 @@
 import assert from "node:assert/strict";
-import { execFileSync, spawn, type ChildProcess } from "node:child_process";
+import { spawn } from "node:child_process";
 import { existsSync, mkdtempSync } from "node:fs";
 import { createServer } from "node:http";
 import type { AddressInfo } from "node:net";
@@ -11,8 +11,8 @@ import { rm } from "node:fs/promises";
 
 import { createSqliteAdapter } from "../../auth/src/sqlite-adapter.ts";
 import { createTetherAuthRuntime } from "../../auth/src/runtime.ts";
-import { closeChromiumFromProfile, connectTestCdp, readChromiumDevToolsPort, withChromiumTestResources } from "./helpers/chromium-debug-port.ts";
-import { windowsChromiumImageName } from "./helpers/chromium-image-name.ts";
+import { connectTestCdp, withChromiumTestResources } from "./helpers/chromium-debug-port.ts";
+import { observeTestChromium, stopTestChromium, waitForTestChromiumDebugger, type ObservedTestChromium } from "./helpers/chromium-test-lifecycle.ts";
 
 function chromiumBinary(): string | null {
   const override = process.env.TETHERPLANE_CHROMIUM_BIN;
@@ -151,30 +151,12 @@ test(
     const profileDir = mkdtempSync(
       join(tmpdir(), "tether-chromium-profile-"),
     );
-    let chrome: ChildProcess | null = null;
+    let chrome: ObservedTestChromium | null = null;
     let browserClosed = false;
     defer(async () => { if (!chrome || browserClosed) await rm(profileDir, { recursive: true, force: true }); });
     defer(async () => {
       if (!chrome) return;
-      // No PID fallback after launcher exit: it could now be an unrelated
-      // process. Missing private debugger evidence remains a reported cleanup
-      // blocker requiring ownership-scoped operator recovery.
-      await closeChromiumFromProfile(profileDir);
-      if (process.platform === "win32") {
-        const literal = profileDir.replaceAll("'", "''");
-        const deadline = Date.now() + 10_000;
-        let remaining = "";
-        const imageName = windowsChromiumImageName(CHROME!);
-        do {
-          remaining = execFileSync("powershell.exe", [
-            "-NoProfile", "-NonInteractive", "-Command",
-            "@(Get-CimInstance Win32_Process -Filter \"Name='" + imageName + "'\" | Where-Object { $_.CommandLine -and $_.CommandLine.Contains('" + literal + "') }).Count",
-          ], { encoding: "utf8", windowsHide: true, timeout: 5000 }).trim();
-          if (Number(remaining) === 0) break;
-          await new Promise((resolve) => setTimeout(resolve, 100));
-        } while (Date.now() < deadline);
-        assert.equal(Number(remaining), 0, "test-owned Chromium profile processes must all exit");
-      }
+      await stopTestChromium(profileDir, chrome, CHROME!);
       browserClosed = true;
     });
     const violations: Array<string> = [];
@@ -189,44 +171,20 @@ test(
         }
       }
     };
-    chrome = spawn(
-        CHROME!,
-        [
-          "--headless=new",
-          "--no-first-run",
-          "--no-default-browser-check",
-          "--disable-gpu",
-          "--remote-debugging-port=0",
-          `--user-data-dir=${profileDir}`,
-          "about:blank",
-        ],
-        { stdio: "ignore", windowsHide: true },
-      );
-      let debuggerUrl = "";
-      let debugPort = 0;
-      for (let i = 0; i < 75 && !debuggerUrl; i += 1) {
-        await new Promise((resolve) =>
-          setTimeout(resolve, 200),
-        );
-        try {
-          // A unique, freshly-created Chrome profile is the authority for
-          // its ephemeral CDP port. Never attach to a shared fixed port.
-          debugPort = await readChromiumDevToolsPort(profileDir);
-          const version = (await (
-            await fetch(
-              `http://127.0.0.1:${debugPort}/json/version`,
-              { signal: AbortSignal.timeout(1000) },
-            )
-          ).json()) as { webSocketDebuggerUrl: string };
-          debuggerUrl = version.webSocketDebuggerUrl;
-        } catch {
-          debuggerUrl = "";
-        }
-      }
-      assert.ok(
-        debuggerUrl,
-        "chromium remote debugging must become available",
-      );
+    chrome = observeTestChromium(spawn(
+      CHROME!,
+      [
+        "--headless=new",
+        "--no-first-run",
+        "--no-default-browser-check",
+        "--disable-gpu",
+        "--remote-debugging-port=0",
+        `--user-data-dir=${profileDir}`,
+        "about:blank",
+      ],
+      { stdio: ["ignore", "ignore", "pipe"], windowsHide: true },
+    ));
+    const { port: debugPort } = await waitForTestChromiumDebugger(profileDir, chrome);
       const targets = (await (
         await fetch(
           `http://127.0.0.1:${debugPort}/json/list`, { signal: AbortSignal.timeout(2000) },

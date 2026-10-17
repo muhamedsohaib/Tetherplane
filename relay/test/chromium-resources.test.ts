@@ -44,6 +44,8 @@ test("one teardown failure does not skip other resources or hide the original se
   }), (error: unknown) => {
     assert.ok(error instanceof AggregateError);
     assert.deepEqual(error.errors, [original, cleanup]);
+    assert.match(error.message, /registration failed/i);
+    assert.match(error.message, /browser cleanup failed/i);
     return true;
   });
   assert.deepEqual(cleaned, ["browser", "storage"]);

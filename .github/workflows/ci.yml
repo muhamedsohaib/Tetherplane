@@ -127,22 +127,34 @@ jobs:
       - name: Install workspace
         run: pnpm install --frozen-lockfile
 
-      # The ordinary suite can skip the Chromium callback without Playwright.
-      # This isolated PR job must find an installed compatible browser, run the
-      # actual loopback OAuth flow, and fail on CSP, callback or cleanup errors.
-      # No Leno/browser profile or production resource is accessed.
+      # The CI-only, exact-lockfile Playwright browser avoids runner-image drift.
+      # Production continues to discover already-installed Chromium-family browsers.
+      - name: Install pinned Chromium in isolated runner
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = 'Stop'
+          if ('${{ runner.os }}' -eq 'Linux') {
+            pnpm exec playwright install --with-deps chromium
+          } else {
+            pnpm exec playwright install chromium
+          }
+          if ($LASTEXITCODE -ne 0) { throw "Pinned Chromium installation failed" }
+
+      # The real callback must execute and clean its profile ten consecutive times.
       - name: Real Chromium OAuth callback, CSP and owned-browser cleanup
         shell: pwsh
         run: |
           $ErrorActionPreference = 'Stop'
-          $binary = node --input-type=module -e "import { findInstalledChromium } from './browser/bridge/src/cdp-control.ts'; const binary = findInstalledChromium(); if (!binary) process.exit(2); process.stdout.write(binary);"
+          $binary = node --input-type=module -e "import { chromium } from 'playwright'; process.stdout.write(chromium.executablePath());"
           if ($LASTEXITCODE -ne 0 -or [string]::IsNullOrWhiteSpace($binary) -or -not (Test-Path -LiteralPath $binary)) {
-            throw 'No compatible installed Chromium executable available for required OAuth callback test'
+            throw 'Pinned Chromium executable missing for required OAuth callback test'
           }
           $env:TETHERPLANE_CHROMIUM_BIN = $binary.Trim()
           $env:TETHERPLANE_CHROMIUM_REQUIRED = '1'
-          Write-Host 'Executing isolated OAuth callback/CSP test with a private temporary browser profile'
-          node --test --test-reporter=tap --test-concurrency=1 relay/test/tether-auth-chromium.test.ts
-          if ($LASTEXITCODE -ne 0) {
-            throw 'Real Chromium OAuth callback/CSP/cleanup acceptance failed'
+          1..10 | ForEach-Object {
+            Write-Host "Isolated OAuth callback iteration $_ of 10"
+            node --test --test-reporter=tap --test-concurrency=1 relay/test/tether-auth-chromium.test.ts
+            if ($LASTEXITCODE -ne 0) {
+              throw "Real Chromium OAuth callback/CSP/cleanup acceptance failed on iteration $_"
+            }
           }

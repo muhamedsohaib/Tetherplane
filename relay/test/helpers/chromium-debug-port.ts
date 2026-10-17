@@ -4,7 +4,7 @@ import path from "node:path";
 import { setTimeout as delay } from "node:timers/promises";
 import WebSocket from "ws";
 
-async function readEndpoint(profileDir: string): Promise<{ port: number; browserPath: string }> {
+export async function readChromiumBrowserEndpoint(profileDir: string): Promise<{ port: number; browserPath: string }> {
   const content = await readFile(path.join(profileDir, "DevToolsActivePort"), "utf8");
   const [first = "", browserPath = ""] = content.split(/\r?\n/);
   const port = Number(first);
@@ -16,7 +16,7 @@ async function readEndpoint(profileDir: string): Promise<{ port: number; browser
 
 /** Read only the port assigned to this freshly created, test-owned profile. */
 export async function readChromiumDevToolsPort(profileDir: string): Promise<number> {
-  return (await readEndpoint(profileDir)).port;
+  return (await readChromiumBrowserEndpoint(profileDir)).port;
 }
 
 /**
@@ -25,7 +25,7 @@ export async function readChromiumDevToolsPort(profileDir: string): Promise<numb
  * by port alone, enumerate arbitrary browsers, or silently swallow cleanup failure.
  */
 export async function closeChromiumFromProfile(profileDir: string, timeoutMs = 10_000): Promise<void> {
-  const { port, browserPath } = await readEndpoint(profileDir);
+  const { port, browserPath } = await readChromiumBrowserEndpoint(profileDir);
   if (!/^\/devtools\/browser\/[A-Za-z0-9-]+$/.test(browserPath)) {
     throw new Error("invalid Chromium browser endpoint in the test profile");
   }
@@ -92,7 +92,14 @@ export async function withChromiumTestResources<T>(
       try { await cleanup(); } catch (error) { errors.push(error); }
     }
     if (errors.length) {
-      throw new AggregateError([...(failed ? [original] : []), ...errors], "Chromium test resource cleanup failed");
+      const causes = [...(failed ? [original] : []), ...errors];
+      const summary = causes.map((cause) => {
+        const message = cause instanceof Error ? cause.message : "unknown resource failure";
+        return message.replace(/https?:\/\/[^\s]+/g, "[redacted-url]")
+          .replace(/(?:bearer\s+|token[=:]\s*)[^\s]+/gi, "[redacted-secret]")
+          .slice(0, 250);
+      }).join("; ").slice(0, 600);
+      throw new AggregateError(causes, "Chromium test resource cleanup failed: " + summary);
     }
   }
 }

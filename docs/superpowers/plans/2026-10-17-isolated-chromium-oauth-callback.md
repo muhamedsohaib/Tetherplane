@@ -47,3 +47,17 @@ The test asserts actual arrival at the localhost callback, exact OAuth state and
 The isolated Leno worktree's browser-free focused regression command completed **7 passed / 0 failed / 0 skipped**. `pnpm --filter @tetherplane/relay typecheck` passed. No real Chromium OAuth test was launched on Leno; only GitHub-hosted isolated runners performed that browser execution.
 
 The original operator-active UIA mouse-overlap measurement remains explicitly **waived**, not passed. PR #15 remains draft and unmerged; independent PR-wide approval, exact-head release acceptance, and clean-device validation are separate held gates. No production deployment or installed-agent modification is included in this acceptance.
+
+## CI #822 failure remediation (2026-10-17)
+
+On commit `17beb46`, [hosted workflow #822](https://github.com/muhamedsohaib/Tetherplane/actions/runs/39060178396) failed its required Ubuntu OAuth job twice: initial attempt timed out before the private DevTools endpoint became usable; the retry surfaced `Chromium test resource cleanup failed` without revealing its underlying cause. These are distinct observed symptoms, **not** a proven single root cause. Windows OAuth and both ordinary quality matrix jobs passed; acceptance remains blocked on Ubuntu.
+
+The follow-up change targets deterministic isolated setup and actionable fail-closed diagnostics:
+- Pin `playwright@1.56.1` as a root development-only dependency in the lockfile and install that browser explicitly inside the hosted acceptance job (including Linux dependencies); select exactly its executable rather than trusting runner-image Chromium.
+- Fail if its private profile-associated DevTools endpoint does not appear or does not match the profile's browser endpoint. Capture a bounded, redacted startup stderr excerpt and process exit status.
+- Handle the no-CDP launch failure without trying to close a nonexistent endpoint. Only the directly created child handle may be signaled; platform-specific audits must confirm no Chromium process remains associated with the unique private profile. Any unresolved resources or cleanup errors fail the test.
+- Preserve original and cleanup failures in bounded, redacted TAP diagnostics instead of replacing both with a generic aggregate message.
+- Require **ten consecutive full OAuth callback/CSP/cleanup PASS results, zero SKIP** per hosted OS. Ordinary quality gates must pass on the **same final source SHA**.
+- Leno runs only synthetic/browser-free regressions and code-quality checks; its installed Chromium/browser sessions are never launched or touched for this test.
+
+The existing UIA mouse-overlap operator measurement remains **waived**, not passed. PR #15 remains draft and unmerged. No production runtime browser dependency, policy change, deployment, credential handling or other device is introduced.
