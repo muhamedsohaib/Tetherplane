@@ -98,3 +98,51 @@ jobs:
         if: runner.os == 'Windows'
         shell: pwsh
         run: ./tests/release/windows-package-smoke.ps1
+
+  chromium-oauth-callback:
+    name: Chromium OAuth callback (${{ matrix.os }})
+    if: github.event_name == 'pull_request'
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, windows-latest]
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 12
+    permissions:
+      contents: read
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+
+      - name: Enable Corepack
+        run: corepack enable
+
+      - name: Install pnpm 10
+        run: corepack prepare pnpm@10 --activate
+
+      - name: Install workspace
+        run: pnpm install --frozen-lockfile
+
+      # The ordinary suite can skip the Chromium callback without Playwright.
+      # This isolated PR job must find an installed compatible browser, run the
+      # actual loopback OAuth flow, and fail on CSP, callback or cleanup errors.
+      # No Leno/browser profile or production resource is accessed.
+      - name: Real Chromium OAuth callback, CSP and owned-browser cleanup
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = 'Stop'
+          $binary = node --input-type=module -e "import { findInstalledChromium } from './browser/bridge/src/cdp-control.ts'; const binary = findInstalledChromium(); if (!binary) process.exit(2); process.stdout.write(binary);"
+          if ($LASTEXITCODE -ne 0 -or [string]::IsNullOrWhiteSpace($binary) -or -not (Test-Path -LiteralPath $binary)) {
+            throw 'No compatible installed Chromium executable available for required OAuth callback test'
+          }
+          $env:TETHERPLANE_CHROMIUM_BIN = $binary.Trim()
+          $env:TETHERPLANE_CHROMIUM_REQUIRED = '1'
+          Write-Host 'Executing isolated OAuth callback/CSP test with a private temporary browser profile'
+          node --test --test-reporter=tap --test-concurrency=1 relay/test/tether-auth-chromium.test.ts
+          if ($LASTEXITCODE -ne 0) {
+            throw 'Real Chromium OAuth callback/CSP/cleanup acceptance failed'
+          }
