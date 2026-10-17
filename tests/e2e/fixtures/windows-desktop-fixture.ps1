@@ -87,7 +87,7 @@ $invoke.Add_Click({
 
 $form.Controls.AddRange(@($value, $invoke, $selection, $status))
 
-$startedAt = [Environment]::TickCount64
+$lifetime = [System.Diagnostics.Stopwatch]::StartNew()
 $timer = New-Object System.Windows.Forms.Timer
 $timer.Interval = 100
 $timer.Add_Tick({
@@ -104,7 +104,7 @@ $timer.Add_Tick({
     [System.IO.File]::WriteAllText($StatePath, $state)
     if ($BackgroundOnly -and (
         ($StopPath -and [System.IO.File]::Exists($StopPath)) -or
-        ($LifetimeMs -gt 0 -and ([Environment]::TickCount64 - $startedAt) -ge $LifetimeMs)
+        ($LifetimeMs -gt 0 -and $lifetime.ElapsedMilliseconds -ge $LifetimeMs)
     )) {
         $form.Close()
     }
