@@ -26,7 +26,12 @@ test("exited test-owned browser exposes bounded startup error and cleans missing
         return true;
       },
     );
-    await stopTestChromium(profile, browser, "chrome.exe", 1500);
+    const audits: Array<[string, string]> = [];
+    await stopTestChromium(profile, browser, "chrome.exe", 1500, (ownedProfile, image) => {
+      audits.push([ownedProfile, image]);
+      return 0;
+    });
+    assert.deepEqual(audits, [[profile, "chrome.exe"]]);
     assert.ok(browser.child.exitCode !== null || browser.child.signalCode !== null);
   } finally {
     if (browser.child.exitCode === null && browser.child.signalCode === null) browser.child.kill();
@@ -41,10 +46,44 @@ test("missing CDP with a live test-owned child is bounded, terminates only that 
   ], { stdio: ["ignore", "ignore", "pipe"], windowsHide: true }));
   try {
     await assert.rejects(waitForTestChromiumDebugger(profile, browser, 350), /private Chromium DevTools endpoint.*unavailable/i);
-    await stopTestChromium(profile, browser, "chrome.exe", 2000);
+    const audits: Array<[string, string]> = [];
+    await stopTestChromium(profile, browser, "chrome.exe", 2000, (ownedProfile, image) => {
+      audits.push([ownedProfile, image]);
+      return 0;
+    });
+    assert.deepEqual(audits, [[profile, "chrome.exe"]]);
     assert.ok(browser.child.exitCode !== null || browser.child.signalCode !== null);
   } finally {
     if (browser.child.exitCode === null && browser.child.signalCode === null) browser.child.kill();
+    rmSync(profile, { recursive: true, force: true });
+  }
+});
+
+test("synthetic profile audit still fails closed when owned processes remain", async () => {
+  const profile = mkdtempSync(join(tmpdir(), "tether-chromium-audit-"));
+  const child = spawn(process.execPath, ["-e", "process.exit(0)"], {
+    stdio: ["ignore", "ignore", "pipe"],
+    windowsHide: true,
+  });
+  const browser = observeTestChromium(child);
+  try {
+    await new Promise<void>((resolve, reject) => {
+      child.once("exit", () => resolve());
+      child.once("error", reject);
+    });
+    let auditCalls = 0;
+    await assert.rejects(
+      stopTestChromium(profile, browser, "chrome.exe", 150, (ownedProfile, image) => {
+        assert.equal(ownedProfile, profile);
+        assert.equal(image, "chrome.exe");
+        auditCalls++;
+        return 2;
+      }),
+      /test-owned Chromium profile still has 2 running browser processes/,
+    );
+    assert.ok(auditCalls >= 1);
+  } finally {
+    if (child.exitCode === null && child.signalCode === null) child.kill();
     rmSync(profile, { recursive: true, force: true });
   }
 });

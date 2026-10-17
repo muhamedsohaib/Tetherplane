@@ -123,6 +123,7 @@ export async function stopTestChromium(
   browser: ObservedTestChromium,
   browserImage: string,
   timeoutMs = 10_000,
+  auditProfileProcesses: (ownedProfile: string, image: string) => number = countProfileBrowsers,
 ): Promise<void> {
   const hasEndpoint = existsSync(join(profileDir, "DevToolsActivePort"));
   if (hasEndpoint) {
@@ -135,7 +136,7 @@ export async function stopTestChromium(
   const deadline = Date.now() + timeoutMs;
   let remaining = 0;
   do {
-    remaining = countProfileBrowsers(profileDir, browserImage);
+    remaining = auditProfileProcesses(profileDir, browserImage);
     if (remaining === 0) return;
     await delay(Math.min(100, Math.max(1, deadline - Date.now())));
   } while (Date.now() < deadline);
