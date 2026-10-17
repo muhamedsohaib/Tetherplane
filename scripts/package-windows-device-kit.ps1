@@ -17,6 +17,21 @@ Set-StrictMode -Version Latest
 
 $repo = (Resolve-Path (Join-Path $PSScriptRoot "..")).Path
 $output = [IO.Path]::GetFullPath($OutputPath)
+$existingRoot = Get-Item -LiteralPath $output -Force -ErrorAction SilentlyContinue
+if ($existingRoot -and (($existingRoot.Attributes -band [IO.FileAttributes]::ReparsePoint) -ne 0)) {
+    throw "kit output directory is a redirected path; refusing to replace it: $output"
+}
+
+# ZIP and checksum may be unrelated human files. Fail before touching the
+# previous kit directory, even for an otherwise authorized kit rebuild.
+if ($Zip) {
+    foreach ($artifact in @($output + ".zip", $output + ".zip.sha256")) {
+        if ((Get-Item -LiteralPath $artifact -Force -ErrorAction SilentlyContinue) -or
+            (Test-Path -LiteralPath $artifact)) {
+            throw "archive destination already exists; choose a new OutputPath rather than overwriting it: $artifact"
+        }
+    }
+}
 if (-not $TetherdPath) { $TetherdPath = Join-Path $repo "target\release\tetherd.exe" }
 
 if (-not $SkipBuild) {
@@ -200,8 +215,8 @@ if ($Zip) {
     Add-Type -AssemblyName System.IO.Compression
     Add-Type -AssemblyName System.IO.Compression.FileSystem
     $zipPath = $output + ".zip"
-    Remove-Item -LiteralPath $zipPath -Force -ErrorAction SilentlyContinue
-    $zipStream = [IO.File]::Open($zipPath, [IO.FileMode]::Create, [IO.FileAccess]::ReadWrite)
+
+    $zipStream = [IO.File]::Open($zipPath, [IO.FileMode]::CreateNew, [IO.FileAccess]::ReadWrite)
     $archive = New-Object IO.Compression.ZipArchive($zipStream, [IO.Compression.ZipArchiveMode]::Create)
     try {
         foreach ($file in @(Get-ChildItem -LiteralPath $output -Recurse -File | Sort-Object FullName)) {
@@ -213,7 +228,14 @@ if ($Zip) {
         $zipStream.Dispose()
     }
     $zipHash = (Get-FileHash -LiteralPath $zipPath -Algorithm SHA256).Hash.ToLowerInvariant()
-    [IO.File]::WriteAllText(($zipPath + ".sha256"), ("$zipHash  " + (Split-Path -Leaf $zipPath) + "`n"), $utf8NoBom)
+    $shaLine = "$zipHash  " + (Split-Path -Leaf $zipPath) + "`n"
+    $shaBytes = $utf8NoBom.GetBytes($shaLine)
+    $shaStream = [IO.File]::Open(($zipPath + ".sha256"), [IO.FileMode]::CreateNew, [IO.FileAccess]::Write, [IO.FileShare]::None)
+    try {
+        $shaStream.Write($shaBytes, 0, $shaBytes.Length)
+    } finally {
+        $shaStream.Dispose()
+    }
     Write-Output "TETHERPLANE_DEVICE_KIT_ZIP $zipPath"
 }
 Write-Output "TETHERPLANE_DEVICE_KIT_OK $output"

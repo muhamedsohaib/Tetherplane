@@ -127,3 +127,48 @@ Describe "rebuilding a device kit does not delete unrelated or modified files" {
         (Confirm-DevicePackage -PackagePath $script:kit).ok | Should Be $true
     }
 }
+
+Describe "device-kit packaging protects unrelated existing archive paths" {
+    BeforeEach {
+        $script:tempRoot = Join-Path ([IO.Path]::GetTempPath()) ("tp-archive-" + [Guid]::NewGuid().ToString("N"))
+        New-Item -ItemType Directory -Force -Path $script:tempRoot | Out-Null
+        $script:kit = Build-TestKit $script:tempRoot
+        $script:builder = Join-Path $repo "scripts\package-windows-device-kit.ps1"
+        $script:fake = Join-Path $script:tempRoot "fake\tetherd.exe"
+    }
+    AfterEach {
+        if ($script:tempRoot) { Remove-Item -LiteralPath $script:tempRoot -Recurse -Force -ErrorAction SilentlyContinue }
+    }
+
+    It "refuses to overwrite an unrelated existing ZIP" {
+        $zip = $script:kit + ".zip"
+        Set-Content -LiteralPath $zip -Value "unrelated-private-archive" -Encoding Ascii
+        { & $script:builder -OutputPath $script:kit -SkipBuild -TetherdPath $script:fake -Zip | Out-Null } | Should Throw
+        (Get-Content -LiteralPath $zip -Raw).Trim() | Should Be "unrelated-private-archive"
+    }
+
+    It "refuses to overwrite an unrelated checksum sidecar without a ZIP" {
+        $sidecar = $script:kit + ".zip.sha256"
+        Set-Content -LiteralPath $sidecar -Value "unrelated-archive-checksum" -Encoding Ascii
+        { & $script:builder -OutputPath $script:kit -SkipBuild -TetherdPath $script:fake -Zip | Out-Null } | Should Throw
+        (Get-Content -LiteralPath $sidecar -Raw).Trim() | Should Be "unrelated-archive-checksum"
+    }
+}
+
+Describe "device-kit packaging does not follow a redirected output root" {
+    It "refuses a junction to an otherwise valid prior kit before replacing anything" {
+        $tempRoot = Join-Path ([IO.Path]::GetTempPath()) ("tp-kit-root-link-" + [Guid]::NewGuid().ToString("N"))
+        New-Item -ItemType Directory -Path $tempRoot -Force | Out-Null
+        try {
+            $target = Build-TestKit $tempRoot
+            $alias = Join-Path $tempRoot "linked-kit"
+            New-Item -ItemType Junction -Path $alias -Target $target | Out-Null
+            $builder = Join-Path $repo "scripts\package-windows-device-kit.ps1"
+            $fake = Join-Path $tempRoot "fake\tetherd.exe"
+            { & $builder -OutputPath $alias -SkipBuild -TetherdPath $fake | Out-Null } | Should Throw
+            Test-Path -LiteralPath (Join-Path $target "bin\tetherd.exe") | Should Be $true
+        } finally {
+            Remove-Item -LiteralPath $tempRoot -Recurse -Force -ErrorAction SilentlyContinue
+        }
+    }
+}
