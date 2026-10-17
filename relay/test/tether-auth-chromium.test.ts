@@ -12,6 +12,7 @@ import { rm } from "node:fs/promises";
 import { createSqliteAdapter } from "../../auth/src/sqlite-adapter.ts";
 import { createTetherAuthRuntime } from "../../auth/src/runtime.ts";
 import { closeChromiumFromProfile, connectTestCdp, readChromiumDevToolsPort, withChromiumTestResources } from "./helpers/chromium-debug-port.ts";
+import { windowsChromiumImageName } from "./helpers/chromium-image-name.ts";
 
 function chromiumBinary(): string | null {
   const override = process.env.TETHERPLANE_CHROMIUM_BIN;
@@ -51,8 +52,9 @@ const CHROME = chromiumBinary();
 
 test(
   "chromium completes the browser flow to a loopback callback without CSP violations",
-  { skip: CHROME === null, timeout: 90_000 },
+  { skip: CHROME === null && process.env.TETHERPLANE_CHROMIUM_REQUIRED !== "1", timeout: 90_000 },
   async () => withChromiumTestResources(async (defer) => {
+    assert.ok(CHROME, "required Chromium executable unavailable");
     const keys = await generateKeyPair("RS256", {
       extractable: true,
     });
@@ -162,10 +164,11 @@ test(
         const literal = profileDir.replaceAll("'", "''");
         const deadline = Date.now() + 10_000;
         let remaining = "";
+        const imageName = windowsChromiumImageName(CHROME!);
         do {
           remaining = execFileSync("powershell.exe", [
             "-NoProfile", "-NonInteractive", "-Command",
-            "@(Get-CimInstance Win32_Process -Filter \"Name='chrome.exe'\" | Where-Object { $_.CommandLine -and $_.CommandLine.Contains('" + literal + "') }).Count",
+            "@(Get-CimInstance Win32_Process -Filter \"Name='" + imageName + "'\" | Where-Object { $_.CommandLine -and $_.CommandLine.Contains('" + literal + "') }).Count",
           ], { encoding: "utf8", windowsHide: true, timeout: 5000 }).trim();
           if (Number(remaining) === 0) break;
           await new Promise((resolve) => setTimeout(resolve, 100));
