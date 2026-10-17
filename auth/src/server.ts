@@ -287,13 +287,20 @@ export class TetherAuthServer {
         request.method === "POST" &&
         consentMatch?.[1]
       ) {
+        const bodyKind = interactionBodyKind(request);
+        if (bodyKind === undefined) {
+          writeJson(response, 415, {
+            error: { code: "unsupported_media_type" },
+          });
+          return;
+        }
         try {
           if (!this.#interactions.completeConsent) {
             throw new Error(
               "consent interaction is not supported",
             );
           }
-          if (isForm(request)) {
+          if (bodyKind === "form") {
             const form = await readForm(request);
             if (!this.#verifyForm(consentMatch[1], "consent", form)) {
               response.writeHead(400).end();
@@ -334,11 +341,18 @@ export class TetherAuthServer {
         request.method === "POST" &&
         completeMatch?.[1]
       ) {
+        const bodyKind = interactionBodyKind(request);
+        if (bodyKind === undefined) {
+          writeJson(response, 415, {
+            error: { code: "unsupported_media_type" },
+          });
+          return;
+        }
         try {
-          const body = isForm(request)
+          const body = bodyKind === "form"
             ? await readForm(request)
             : await readObjectBody(request);
-          if (isForm(request) && !this.#verifyForm(completeMatch[1], "login", body)) {
+          if (bodyKind === "form" && !this.#verifyForm(completeMatch[1], "login", body)) {
             response.writeHead(400).end();
             return;
           }
@@ -361,7 +375,7 @@ export class TetherAuthServer {
 
           if (result === "pending") {
             if (!response.writableEnded) {
-              if (isForm(request)) {
+              if (bodyKind === "form") {
                 response.statusCode = 202;
                 writeHtml(response, shell("Device approval pending", "<p>Waiting for approval on your paired device. Return to the previous page after approving and submit again.</p>"));
               } else {
@@ -642,8 +656,11 @@ function formatAddress(
 function wantsHtml(request: IncomingMessage): boolean {
   return (request.headers.accept ?? "").includes("text/html");
 }
-function isForm(request: IncomingMessage): boolean {
-  return (request.headers["content-type"] ?? "").split(";")[0]?.trim().toLowerCase() === "application/x-www-form-urlencoded";
+function interactionBodyKind(request: IncomingMessage): "form" | "json" | undefined {
+  const contentType = (request.headers["content-type"] ?? "").split(";")[0]?.trim().toLowerCase();
+  if (contentType === "application/x-www-form-urlencoded") return "form";
+  if (contentType === "application/json") return "json";
+  return undefined;
 }
 async function readForm(request: IncomingMessage): Promise<Record<string, unknown>> {
   let body = "";
