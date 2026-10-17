@@ -107,13 +107,25 @@ try {
     while ($clock.ElapsedMilliseconds -lt $LifetimeMs -and
            -not [System.IO.File]::Exists($StopPath)) {
         if ([System.IO.File]::Exists($MarkerPath)) {
-            $marker = [System.IO.File]::ReadAllText($MarkerPath).Trim()
-            if ($phases -contains $marker) {
-                $activePhase = $marker
-            } elseif ($marker -match "^prepare:(set_value|invoke|select)$") {
-                $activePhase = $marker
-            } elseif ($marker.Length -gt 0) {
-                throw "invalid activity-phase marker"
+            $marker = $null
+            try {
+                $marker = [System.IO.File]::ReadAllText($MarkerPath).Trim()
+            } catch {
+                # Node can briefly hold an exclusive handle while writing
+                # the test-owned phase marker. Do not kill a read-only
+                # sampler for that temporary sharing violation; preserve
+                # the prior phase. Any real access or parse error still fails.
+                $cause = $_.Exception.GetBaseException()
+                if (-not ($cause -is [System.IO.IOException])) { throw }
+            }
+            if ($null -ne $marker) {
+                if ($phases -contains $marker) {
+                    $activePhase = $marker
+                } elseif ($marker -match "^prepare:(set_value|invoke|select)$") {
+                    $activePhase = $marker
+                } elseif ($marker.Length -gt 0) {
+                    throw "invalid activity-phase marker"
+                }
             }
         }
         $current = [TetherplaneOperatorActivityProbe]::Observe()

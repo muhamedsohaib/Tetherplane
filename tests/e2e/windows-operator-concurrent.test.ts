@@ -9,6 +9,7 @@ import { fileURLToPath } from "node:url";
 import type { Client } from "@modelcontextprotocol/sdk/client/index.js";
 import { hasActionPhaseOverlap, operatorAcceptanceAllowed, operatorAcceptanceHostAllowed } from "./helpers/operator-acceptance-gate.ts";
 import { startLocalCompact, type LocalCompactHarness } from "./helpers/start-local.ts";
+import { writePhaseMarker } from "./helpers/operator-phase-marker.ts";
 
 type Metrics = { sample_count: number; cursor_motion_samples: number; input_change_samples: number; first_sample_ms: number; last_sample_ms: number };
 type Snapshot = {
@@ -165,7 +166,7 @@ test("operator-active candidate UIA actions occur concurrently with genuine huma
     assert.equal(before.focused, false);
     assert.equal(before.selected_index, 0);
 
-    await writeFile(marker, "baseline", "utf8");
+    await writePhaseMarker(marker, "baseline");
     sampler = spawn("powershell.exe", [
       "-NoProfile", "-NonInteractive", "-ExecutionPolicy", "Bypass",
       "-File", path.join(here, "fixtures", "windows-operator-activity-probe.ps1"),
@@ -205,10 +206,10 @@ test("operator-active candidate UIA actions occur concurrently with genuine huma
       ensureApprovedTime();
       const beforeMarker = await waitForJson<Snapshot>(snapshotPath, (s) => s.ready);
       // Acknowledge readiness without counting pre-dispatch movement.
-      await writeFile(marker, "prepare:" + phase, "utf8");
+      await writePhaseMarker(marker, "prepare:" + phase);
       await waitForJson<Snapshot>(snapshotPath, (s) =>
         s.active_phase === "prepare:" + phase && s.sample_count > beforeMarker.sample_count);
-      await writeFile(marker, phase, "utf8");
+      await writePhaseMarker(marker, phase);
       const startedAt = Date.now();
       const result = await call(local!.client, "desktop", {
         op: "act", args: { reference: target.reference, action: phase, ...(proposedValue ?
@@ -217,7 +218,7 @@ test("operator-active candidate UIA actions occur concurrently with genuine huma
       actionIntervals[phase] = { started_at_ms: startedAt, finished_at_ms: Date.now() };
       // Close the action window before idle follow-up observation. Operator
       // movement only after the RPC must not count as concurrent input.
-      await writeFile(marker, "baseline", "utf8");
+      await writePhaseMarker(marker, "baseline");
       assert.equal(result.isError, undefined, phase + " rejected");
       const response = structured(result);
       if (phase !== "invoke") {
@@ -240,7 +241,7 @@ test("operator-active candidate UIA actions occur concurrently with genuine huma
     await runAction("set_value", value, "concurrent-semantic-value");
     await runAction("invoke", invoke);
     await runAction("select", beta);
-    await writeFile(marker, "post", "utf8");
+    await writePhaseMarker(marker, "post");
     await new Promise((resolve) => setTimeout(resolve, 250));
 
     const finalState = await waitForJson<Fixture>(fixtureState, (s) =>
