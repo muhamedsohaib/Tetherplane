@@ -30,22 +30,29 @@ export class AccessLog {
   readonly #file: string;
   readonly #maxBytes: number;
   #disabled = false;
+  #writeStopped = false;
+  #remainingBytes: number;
+  #writes: Promise<void> = Promise.resolve();
 
   constructor(options: AccessLogOptions) {
     this.#file = options.file;
     this.#maxBytes =
       options.maxBytes ?? DEFAULT_MAX_BYTES;
+    if (!Number.isSafeInteger(this.#maxBytes) || this.#maxBytes < 1) {
+      throw new Error("access log maxBytes must be a positive safe integer");
+    }
+    this.#remainingBytes = this.#maxBytes;
   }
 
   requestStarted(
     response: ServerResponse,
     method: string,
     rawUrl: string,
-  ): void {
-    if (this.#disabled) return;
+  ): Promise<void> {
+    if (this.#disabled) return Promise.resolve();
     const id = nextId++;
     inFlight.set(response, { id, startMs: Date.now() });
-    void this.#append({
+    return this.#append({
       id,
       event: "start",
       ts: new Date().toISOString(),
@@ -57,14 +64,14 @@ export class AccessLog {
   requestFinished(
     response: ServerResponse,
     status: number,
-  ): void {
+  ): Promise<void> {
     const tracked = inFlight.get(response);
     if (!tracked || this.#disabled) {
       inFlight.delete(response);
-      return;
+      return Promise.resolve();
     }
     inFlight.delete(response);
-    void this.#append({
+    return this.#append({
       id: tracked.id,
       event: "finish",
       ts: new Date().toISOString(),
@@ -73,14 +80,14 @@ export class AccessLog {
     });
   }
 
-  requestAborted(response: ServerResponse): void {
+  requestAborted(response: ServerResponse): Promise<void> {
     const tracked = inFlight.get(response);
     if (!tracked || this.#disabled) {
       inFlight.delete(response);
-      return;
+      return Promise.resolve();
     }
     inFlight.delete(response);
-    void this.#append({
+    return this.#append({
       id: tracked.id,
       event: "abort",
       ts: new Date().toISOString(),
@@ -91,12 +98,12 @@ export class AccessLog {
   noteMcpMethod(
     response: ServerResponse,
     raw: unknown,
-  ): void {
-    if (this.#disabled) return;
-    if (typeof raw !== "string" || !MCP_METHODS.has(raw)) return;
+  ): Promise<void> {
+    if (this.#disabled) return Promise.resolve();
+    if (typeof raw !== "string" || !MCP_METHODS.has(raw)) return Promise.resolve();
     const tracked = inFlight.get(response);
-    if (!tracked) return;
-    void this.#append({
+    if (!tracked) return Promise.resolve();
+    return this.#append({
       id: tracked.id,
       event: "mcp",
       ts: new Date().toISOString(),
@@ -104,26 +111,39 @@ export class AccessLog {
     });
   }
 
-  async #append(
+  #append(
     entry: Record<string, string | number>,
   ): Promise<void> {
-    try {
-      const current = await stat(this.#file).catch(() => null);
-      if (
-        current &&
-        current.size >= this.#maxBytes
-      ) {
-        this.#disabled = true;
-        return;
-      }
-      await appendFile(
-        this.#file,
-        JSON.stringify(entry) + "\n",
-        "utf8",
-      );
-    } catch {
+    if (this.#disabled) return Promise.resolve();
+    const line = JSON.stringify(entry) + "\n";
+    const bytes = Buffer.byteLength(line, "utf8");
+    // Reserve before adding a promise to the queue: pending content shares the
+    // lifetime byte budget, so slow I/O cannot grow an unbounded write queue.
+    if (bytes > this.#remainingBytes) {
       this.#disabled = true;
+      return Promise.resolve();
     }
+    this.#remainingBytes -= bytes;
+    this.#writes = this.#writes.then(async () => {
+      if (this.#writeStopped) return;
+      try {
+        const current = await stat(this.#file).catch((error: NodeJS.ErrnoException) => {
+          if (error.code === "ENOENT") return null;
+          throw error;
+        });
+        if ((current?.size ?? 0) + bytes > this.#maxBytes) {
+          this.#disabled = true;
+          this.#writeStopped = true;
+          return;
+        }
+        await appendFile(this.#file, line, "utf8");
+      } catch {
+        // Diagnostic failures never reject the HTTP event or future completions.
+        this.#disabled = true;
+        this.#writeStopped = true;
+      }
+    });
+    return this.#writes;
   }
 }
 
