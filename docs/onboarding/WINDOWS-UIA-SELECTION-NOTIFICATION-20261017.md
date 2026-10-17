@@ -120,6 +120,38 @@ Fresh local continuation evidence after the fixture fix:
   or bypassed. The local release/Pester gate remains blocked; old CI cannot
   replace final-head verification.
 
+## Inherited-stack review and availability corrections
+
+The main-target integration review inspected all 30 inventoried inherited
+production/configuration files and confirmed two P2 availability findings:
+abandoned browser CSRF proofs were retained without a bound, and the provider's
+registration route aliases bypassed the exact-path registration throttle.
+`docs/superpowers/plans/2026-10-17-inherited-auth-resource-bounds.md` records the
+implementation plan, RED/GREEN evidence and review decisions.
+
+The correction caps active form proofs at 1,024, prunes expired proofs before
+issuance, preserves existing live proofs and UID refresh, and rejects additional
+forms with 503/Retry-After. `/REG`, `/reg/` and `/ReG/` now share the canonical
+registration budget. Real HTTP and real OIDC-provider/SQLite tests failed before
+the correction and passed afterward. A focused independent completion review
+found no concrete blocker. Identity, scopes, account/device bindings, grants,
+local policy and deployment configuration were not changed.
+
+Fresh final local gates: Rust format/Clippy and 138 workspace tests PASS;
+whole-workspace TypeScript typecheck/build PASS; 378 non-E2E Node tests PASS
+(auth 82/82, relay 130/130 including real isolated Chromium); safe E2E 29/29 PASS
+including background UIA managed state, one event, preserved human metadata and
+fixture exit; unsafe scan/diff hygiene PASS. Zero failures/skips in these
+selections. Three operator-observed E2E files remain deferred. The local
+release/Pester gate is still blocked by the Code Integrity denial described above.
+Both PR and push CI passed on Windows/Ubuntu for preceding `b130db9`; this does
+not predeclare CI for the subsequent auth correction.
+
+The inherited review's four disclosed Minor release findings remain: power-loss
+durability/fsync, exact existing-task adoption/restart verification, premature
+pairing-code cache expiry, and the optional doctor's device-identity correlation.
+The review did not certify physical lifecycle, scheduler deployment or production.
+
 ## Phase 2 operator-observed acceptance plan — not started
 
 Use Leno only, the final reviewed SHA, and a separate candidate Compact MCP

@@ -51,6 +51,8 @@ const DEFAULT_DCR_RATE_LIMIT = {
   maxRequests: 30,
   windowMs: 3_600_000,
 };
+const MAX_FORM_PROOFS = 1024;
+const FORM_PROOF_TTL_MS = 5 * 60_000;
 
 export type TetherAuthListenOptions = {
   host: string;
@@ -233,8 +235,12 @@ export class TetherAuthServer {
                 };
 
           if (!response.writableEnded && wantsHtml(request)) {
-            const csrf = randomBytes(32).toString("hex");
-            this.#formProofs.set(loginMatch[1], { csrf, kind: pending.kind, expiresAt: Date.now() + 5 * 60_000 });
+            const csrf = this.#issueFormProof(loginMatch[1], pending.kind);
+            if (csrf === undefined) {
+              response.setHeader("retry-after", String(FORM_PROOF_TTL_MS / 1000));
+              writeJson(response, 503, { error: { code: "temporarily_unavailable" } });
+              return;
+            }
             response.statusCode = 200;
             writeHtml(response, pending.kind === "consent"
               ? consentPage(loginMatch[1], pending.clientId, pending.oidcScopes, pending.resourceScopes, csrf)
@@ -391,7 +397,7 @@ export class TetherAuthServer {
 
     if (
       request.method === "POST" &&
-      pathname === "/reg" &&
+      /^\/reg\/?$/i.test(pathname) &&
       !this.#consumeDcrBudget()
     ) {
       const retryAfterSeconds = this.#dcrRetryAfterSeconds();
@@ -441,6 +447,19 @@ export class TetherAuthServer {
       1,
       Math.ceil(remainingMs / 1000),
     );
+  }
+
+  #issueFormProof(uid: string, kind: "login" | "consent"): string | undefined {
+    const now = Date.now();
+    for (const [key, proof] of this.#formProofs) {
+      if (proof.expiresAt < now) this.#formProofs.delete(key);
+    }
+    if (!this.#formProofs.has(uid) && this.#formProofs.size >= MAX_FORM_PROOFS) {
+      return undefined;
+    }
+    const csrf = randomBytes(32).toString("hex");
+    this.#formProofs.set(uid, { csrf, kind, expiresAt: now + FORM_PROOF_TTL_MS });
+    return csrf;
   }
 
   #verifyForm(uid: string, kind: "login" | "consent", form: Record<string, unknown>): boolean {
