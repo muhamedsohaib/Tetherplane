@@ -376,3 +376,19 @@ Operator-active UIA acceptance is still unverified because no sustained
 cursor motion was observed overlapping an action in a completed run.
 Do not substitute the background-only invoke/selection regression or
 an input-timestamp change for physical operator co-activity.
+
+## Chat-mode recovery and bounded acceptance attempt — 2026-10-17, 19:35–19:50 Dubai
+
+After Work usage was exhausted, the uncommitted final-head review changes were recovered **in situ** on Leno's isolated `fix/windows-uia-selection-notify-20261017` worktree. Production, installed agents, foreign worktrees and local policy were not changed.
+
+The operator's previously approved 19:35–19:50 Dubai window was used only for test-owned, off-screen WinForms fixtures and a read-only input sampler. No ForegroundLease, foreground activation, clipboard write, synthetic mouse/keyboard input or human-owned window operation was attempted.
+
+- The 19:35 run sampled six physical cursor changes and twenty input-timestamp changes, with zero owned foreground observations and zero clipboard changes. It stopped at a phase acknowledgment issue, before semantic action.
+- The diagnostic rerun completed managed `set_value`, `invoke` and `select` state checks, but the original observer captured 0, 1 and 1 samples in RPC intervals lasting 25, 29 and 51 ms. The assertion demanding a sample in *every* action was removed as inconsistent with the planned requirement: **at least one** independently witnessed overlapping RPC. The actual-overlap predicate remains strict and fail-closed.
+- The read-only sampler had an effective tick period too slow for short semantic RPCs because every PowerShell iteration serialized JSON. A new focused TDD regression rejected `-SampleIntervalMs 2` before modification (RED), then passed after allowing a 2ms requested interval and publishing aggregate JSON less often, with immediate phase acknowledgments (GREEN). All read-only counters still exclude raw cursor locations, clipboard contents and keystroke values.
+- At 19:46 the faster sampler captured 648 observations in approximately 11.4 seconds but **no physical cursor changes or input activity**; the operator-activity precondition failed, so no UIA action was run. This is not evidence of an agent or UIA failure. It does not prove live coexistence.
+- Fresh focused evidence: 16/16 relay/access-log/auth media-type tests, 9/9 operator-gate/sampler tests, and 7/7 Pester Windows onboarding security tests. Rust fmt/Clippy/workspace tests also passed. Repository-wide TS gates must be verified separately after all edits.
+
+**Outstanding acceptance:** Actual cursor and input activity must be recorded **inside one genuine semantic RPC** in a new approved, time-bounded operator window. Do not infer completion from the observed baseline activity, background UIA correctness, sampled input without RPC overlap, or CI. The 19:35–19:50 authorization has expired.
+
+The read-only fast sampler is a candidate test-only optimization, not a granted foreground capability. Independent final-head review, clean repository gates, focused commits, GitHub checks and clean-device lifecycle acceptance remain separate.
