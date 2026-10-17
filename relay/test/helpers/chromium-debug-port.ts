@@ -105,7 +105,7 @@ export async function withChromiumTestResources<T>(
 }
 
 export type TestCdp = {
-  send<T = unknown>(method: string, params?: unknown): Promise<T>;
+  send<T = unknown>(method: string, params?: unknown, requestTimeoutMs?: number): Promise<T>;
   onEvent(listener: (method: string, text: string) => void): void;
   close(): void;
 };
@@ -162,14 +162,15 @@ export async function connectTestCdp(url: string, timeoutMs = 5000): Promise<Tes
     }
   });
   return {
-    send<T>(method: string, params?: unknown): Promise<T> {
+    send<T>(method: string, params?: unknown, requestTimeoutMs = timeoutMs): Promise<T> {
       if (socket.readyState !== WebSocket.OPEN) return Promise.reject(new Error("CDP connection closed"));
+      if (!Number.isInteger(requestTimeoutMs) || requestTimeoutMs < 1 || requestTimeoutMs > 20_000) return Promise.reject(new Error("invalid bounded CDP request deadline"));
       const id = nextId++;
       return new Promise<T>((resolve, reject) => {
         const timer = setTimeout(() => {
           pending.delete(id);
           reject(new Error("CDP request timed out: " + method));
-        }, timeoutMs);
+        }, requestTimeoutMs);
         pending.set(id, { resolve: resolve as (value: unknown) => void, reject, timer });
         socket.send(JSON.stringify({ id, method, params }), (error) => {
           if (!error) return;

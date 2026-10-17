@@ -13,6 +13,7 @@ import { createSqliteAdapter } from "../../auth/src/sqlite-adapter.ts";
 import { createTetherAuthRuntime } from "../../auth/src/runtime.ts";
 import { connectTestCdp, withChromiumTestResources } from "./helpers/chromium-debug-port.ts";
 import { observeTestChromium, stopTestChromium, waitForTestChromiumDebugger, type ObservedTestChromium } from "./helpers/chromium-test-lifecycle.ts";
+import { chromiumTestLaunchArgs } from "./helpers/chromium-runner-flags.ts";
 
 function chromiumBinary(): string | null {
   const override = process.env.TETHERPLANE_CHROMIUM_BIN;
@@ -173,15 +174,7 @@ test(
     };
     chrome = observeTestChromium(spawn(
       CHROME!,
-      [
-        "--headless=new",
-        "--no-first-run",
-        "--no-default-browser-check",
-        "--disable-gpu",
-        "--remote-debugging-port=0",
-        `--user-data-dir=${profileDir}`,
-        "about:blank",
-      ],
+      chromiumTestLaunchArgs(profileDir),
       { stdio: ["ignore", "ignore", "pipe"], windowsHide: true },
     ));
     const { port: debugPort } = await waitForTestChromiumDebugger(profileDir, chrome);
@@ -216,7 +209,7 @@ test(
         };
         await cdp.send("Page.navigate", {
           url: `${address.url}/auth?${authParams.toString()}`,
-        });
+        }, 15_000);
         const deadline = Date.now() + 45_000;
         let lastUrl = "";
         while (Date.now() < deadline && !callbackHit) {

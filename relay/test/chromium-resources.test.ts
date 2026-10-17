@@ -8,7 +8,7 @@ import * as chromium from "./helpers/chromium-debug-port.ts";
 type Defer = (cleanup: () => void | Promise<void>) => void;
 type Scope = <T>(body: (defer: Defer) => Promise<T>) => Promise<T>;
 const scope = (chromium as unknown as { withChromiumTestResources?: Scope }).withChromiumTestResources;
-type Client = { send(method: string): Promise<unknown>; close(): void };
+type Client = { send(method: string, params?: unknown, requestTimeoutMs?: number): Promise<unknown>; close(): void };
 const connect = (chromium as unknown as { connectTestCdp?: (url: string, timeoutMs?: number) => Promise<Client> }).connectTestCdp;
 
 test("registration setup failure releases both acquired HTTP listeners without starting Chromium", async () => {
@@ -63,6 +63,32 @@ test("CDP request deadlines and explicit close reject outstanding work without h
     const pending = client.send("Runtime.enable");
     client.close();
     await assert.rejects(pending, /closed/i);
+  } finally {
+    client?.close();
+    for (const socket of server.clients) socket.terminate();
+    await new Promise<void>((resolve) => server.close(() => resolve()));
+  }
+});
+
+test("slow synthetic CDP navigation can use a bounded per-request deadline without relaxing defaults", async () => {
+  const server = new WebSocketServer({ host: "127.0.0.1", port: 0 });
+  await once(server, "listening");
+  let client: Client | undefined;
+  try {
+    server.on("connection", (socket) => {
+      socket.on("message", (raw) => {
+        const call = JSON.parse(String(raw)) as { id: number; method: string };
+        if (call.method === "Page.navigate") {
+          setTimeout(() => {
+            if (socket.readyState === socket.OPEN) socket.send(JSON.stringify({ id: call.id, result: {} }));
+          }, 230);
+        }
+      });
+    });
+    const port = (server.address() as { port: number }).port;
+    client = await connect!("ws://127.0.0.1:" + port, 100);
+    await client.send("Page.navigate", { url: "about:blank" }, 500);
+    await assert.rejects(client.send("Runtime.enable"), /timed out/i);
   } finally {
     client?.close();
     for (const socket of server.clients) socket.terminate();

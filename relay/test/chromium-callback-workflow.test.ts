@@ -30,4 +30,5 @@ test("hosted OAuth gate installs a pinned CI Chromium binary instead of trusting
   assert.match(job, /chromium\.executablePath\(\)/);
   assert.doesNotMatch(job, /findInstalledChromium/);
   assert.match(job, /1\.\.10\s*\|\s*ForEach-Object/, "ten consecutive hosted OAuth flows are required");
+  assert.match(job, /TETHERPLANE_CI_CHROMIUM_UNSANDBOXED/, "Linux sandbox exception must require a job-scoped opt-in");
 });

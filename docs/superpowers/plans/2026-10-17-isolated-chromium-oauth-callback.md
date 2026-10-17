@@ -61,3 +61,11 @@ The follow-up change targets deterministic isolated setup and actionable fail-cl
 - Leno runs only synthetic/browser-free regressions and code-quality checks; its installed Chromium/browser sessions are never launched or touched for this test.
 
 The existing UIA mouse-overlap operator measurement remains **waived**, not passed. PR #15 remains draft and unmerged. No production runtime browser dependency, policy change, deployment, credential handling or other device is introduced.
+
+### Hosted diagnostic results — CI #824
+
+The pinned Playwright 1.56.1 Chromium download completed on Ubuntu; its **first** launch then exited with SIGABRT. The bounded stderr explicitly identified Ubuntu's AppArmor restriction on unprivileged user namespaces, which prevented Chromium's normal sandbox initialization. The correction allows `--no-sandbox` **only** for this synthetic localhost OAuth browser fixture when *all* of `platform=linux`, `CI=true`, `GITHUB_ACTIONS=true`, and the dedicated job-local `TETHERPLANE_CI_CHROMIUM_UNSANDBOXED=1` opt-in are present. The hosted runner is disposable and has `contents: read`; production and local browser launches retain their normal sandbox. This exception does **not** alter CSP, OAuth, cleanup or local Tetherplane policy assertions.
+
+The Windows pinned-Chromium job actually completed **nine** consecutive callback/CSP/teardown passes with zero skips, then failed on iteration 10 when `Page.navigate` exceeded the generic 5-second CDP request deadline. The correction adds a bounded **15-second deadline for Page.navigate only**, leaving the default per-request timeout unchanged and retaining all assertions. A synthetic WebSocket regression proves the per-call budget succeeds for delayed navigation while default CDP calls continue to time out as before.
+
+These are evidenced fixes for observed failures, not a claim of hosted acceptance. Require fresh ten-out-of-ten results on both OSes at the next exact head before unblocking this gate.

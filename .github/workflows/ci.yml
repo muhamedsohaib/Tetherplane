@@ -145,6 +145,11 @@ jobs:
         shell: pwsh
         run: |
           $ErrorActionPreference = 'Stop'
+          if ('${{ runner.os }}' -eq 'Linux') {
+            # GitHub's AppArmor restricts unprivileged user namespaces on Ubuntu.
+            # This is test-only, trusted-localhost, disposable runner execution.
+            $env:TETHERPLANE_CI_CHROMIUM_UNSANDBOXED = '1'
+          }
           $binary = node --input-type=module -e "import { chromium } from 'playwright'; process.stdout.write(chromium.executablePath());"
           if ($LASTEXITCODE -ne 0 -or [string]::IsNullOrWhiteSpace($binary) -or -not (Test-Path -LiteralPath $binary)) {
             throw 'Pinned Chromium executable missing for required OAuth callback test'
