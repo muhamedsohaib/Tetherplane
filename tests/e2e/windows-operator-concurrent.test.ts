@@ -213,9 +213,21 @@ test("operator-active candidate UIA actions occur concurrently with genuine huma
       // movement only after the RPC must not count as concurrent input.
       await writeFile(marker, "baseline", "utf8");
       assert.equal(result.isError, undefined, phase + " rejected");
-      assert.equal(structured(result).verified, true, phase + " not verified");
-      await new Promise((resolve) => setTimeout(resolve, 350));
-      const state = await waitForJson<Fixture>(fixtureState, (s) => s.ready);
+      const response = structured(result);
+      if (phase !== "invoke") {
+        // Native invoke reports executed_unverified by design. Verify the
+        // application-observed effect, never mislabel its transport as verified.
+        assert.equal(response.verified, true, phase + " not verified");
+      } else {
+        assert.equal(response.verified, false, "invoke provider verification contract changed");
+      }
+      const state = await waitForJson<Fixture>(fixtureState, (s) => {
+        if (!s.ready) return false;
+        if (phase === "set_value") return s.text === proposedValue;
+        if (phase === "invoke") return s.status === "invoked";
+        return s.selected === "Concurrent Beta" && s.selected_index === 1 &&
+          s.selection_events === before.selection_events + 1;
+      });
       assert.equal(state.focused, false, "test-owned fixture stole foreground focus");
     }
 

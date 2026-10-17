@@ -310,3 +310,69 @@ Full non-interactive repository gates on the final code tree:
 The final **operator-active simultaneous** test still requires renewed,
 scoped approval and an actively participating operator on Leno. Passing
 these background-safe gates is not its acceptance or deployment approval.
+
+
+## 2026-10-17 controlled concurrent-acceptance diagnostic
+
+The user explicitly authorized a 15-minute operator-active acceptance window on
+Leno, ending 17:38:41 Dubai time, and confirmed they were at Leno moving
+the mouse. The installed agent remained in `background_only`, and only
+test-owned, off-screen, non-activating WinForms fixtures were launched.
+
+Observed live attempts (no live acceptance pass claimed):
+
+- The first attempts stopped at the operator-activity baseline: zero sampled
+  cursor motion and zero input changes; no semantic action occurred.
+- One operator-active attempt passed baseline and `set_value`, then stopped
+  at `invoke`: the test wrongly required `outcome.verified === true`.
+  Inspection of `agent/providers/desktop/src/windows_uia.rs` showed that
+  `execute_invoke` deliberately returns `verified: false` after sending
+  a native button message, because transport success alone does not prove
+  application-level state reconciliation.
+- The concurrent test now preserves the provider's
+  `executed_unverified` contract and checks the application-owned
+  `status === "invoked"` before continuing. For `set_value` and `select`,
+  it still requires verified transport and expected managed state.
+- A subsequent attempt observed 28 input-timestamp changes but zero cursor
+  movement. Separate input-desktop inspection confirmed the read-only
+  observer was in active Windows console session 1 on desktop `Default`
+  (matching `OpenInputDesktop`). This does **not** establish what caused
+  the missing movement; no simulated input was substituted.
+- The final synchronized motion gate again detected no cursor activity
+  and launched no fixture. Execution was stopped before the approval window
+  expired. Cleanup checks found zero matching test fixture processes/windows.
+
+Fresh post-window background-only regression:
+`node --test --test-concurrency=1 windows-uia-selection-background.test.ts`
+exited 0 (1 passed / 0 failed). The extended test confirmed that a native
+`invoke` returns `verified: false` as designed **and** the controlled
+WinForms application reaches managed `status === "invoked"` without focus.
+The same run verified `Background Beta` selection, one managed
+`SelectedIndexChanged` event, no focus/clipboard/cursor/foreground change,
+and test-owned process shutdown.
+
+**Remaining hard gate:** operator cursor-motion evidence must be sustained
+during at least one semantic action in the same approved live run. The
+post-window background-only verification does not satisfy this live gate.
+Do not merge PR #15 or deploy based on these observations alone.
+
+
+### Browser-bridge startup contention diagnosed during final verification
+
+The first post-acceptance `pnpm -r test` rerun failed in the existing B6
+Chromium operational integration after its 30-second test timeout. In that
+run, a separate Chromium fallback test took about 33.9 seconds and B6
+elapsed about 30.3 seconds: both were scheduled by the browser package's
+default parallel Node test-file runner, despite PNPM workspaces being
+serialized. Running that exact browser package test set with
+`node --test --test-concurrency=1 test/*.test.ts` passed all 67 tests,
+0 failures, in 49.4 seconds. To eliminate concurrent Chromium launches
+within the package, its `test` script now sets `--test-concurrency=1`.
+No Chromium acceptance tests, assertions, or timeouts were removed or
+weakened. Passing this single-package comparison is not a substitute for
+the final repository-wide verification gate, which must be rerun.
+
+Operator-active UIA acceptance is still unverified because no sustained
+cursor motion was observed overlapping an action in a completed run.
+Do not substitute the background-only invoke/selection regression or
+an input-timestamp change for physical operator co-activity.

@@ -11,6 +11,7 @@ import { startLocalCompact } from "./helpers/start-local.ts";
 type State = {
   ready: boolean; focused: boolean; selected: string | null;
   selected_index: number; selection_events: number; pid: number;
+  status: string;
 };
 type Node = {
   reference: string; name: string; patterns: string[];
@@ -116,6 +117,20 @@ test("Windows background-only UIA selection reconciles managed state without foc
       node.patterns.includes("selection") && node.name.includes("Beta"));
     assert.ok(beta, "owned offscreen WinForms Beta item absent from UIA snapshot");
     assert.equal(beta.origin, "tetherplane", "candidate must authorize selection from trusted ownership");
+
+    const invoke = nodes.find((node) => node.patterns.includes("invoke") &&
+      node.name.includes("Invoke") && node.origin === "tetherplane");
+    assert.ok(invoke, "owned WinForms Invoke target absent from UIA snapshot");
+    const invokedResult = await call(local.client, "desktop", {
+      op: "act", args: { reference: invoke.reference, action: "invoke" },
+    });
+    assert.equal(invokedResult.isError, undefined, "background invoke rejected");
+    const invokedOutcome = structured(invokedResult);
+    assert.equal(invokedOutcome.verified, false,
+      "native invoke must keep its documented executed_unverified transport result");
+    const invokedState = await waitForState(statePath, (s) => s.status === "invoked");
+    assert.equal(invokedState.focused, false,
+      "native invoke must not take foreground focus");
 
     const result = await call(local.client, "desktop", {
       op: "act", args: { reference: beta.reference, action: "select" },
