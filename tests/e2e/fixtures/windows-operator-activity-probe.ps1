@@ -3,7 +3,7 @@ param(
     [Parameter(Mandatory = $true)][string]$SnapshotPath,
     [Parameter(Mandatory = $true)][string]$StopPath,
     [ValidateRange(250, 120000)][int]$LifetimeMs = 30000,
-    [ValidateRange(20, 1000)][int]$SampleIntervalMs = 50,
+    [ValidateRange(1, 1000)][int]$SampleIntervalMs = 50,
     [ValidateRange(0, 2147483647)][int]$OwnedPid = 0
 )
 
@@ -70,6 +70,8 @@ foreach ($phase in $phases) {
         sample_count = 0
         cursor_motion_samples = 0
         input_change_samples = 0
+        first_sample_ms = $null
+        last_sample_ms = $null
     }
 }
 $sampleCount = 0
@@ -78,6 +80,7 @@ $inputCount = 0
 $clipboardCount = 0
 $ownedForegroundCount = 0
 $activePhase = "baseline"
+$lastPublishedPhase = ""
 $finished = $false
 $clock = [System.Diagnostics.Stopwatch]::StartNew()
 $previous = [TetherplaneOperatorActivityProbe]::Observe()
@@ -107,20 +110,27 @@ try {
             $marker = [System.IO.File]::ReadAllText($MarkerPath).Trim()
             if ($phases -contains $marker) {
                 $activePhase = $marker
+            } elseif ($marker -match "^prepare:(set_value|invoke|select)$") {
+                $activePhase = $marker
             } elseif ($marker.Length -gt 0) {
                 throw "invalid activity-phase marker"
             }
         }
         $current = [TetherplaneOperatorActivityProbe]::Observe()
-        $bucket = $phaseSamples[$activePhase]
+        $bucketPhase = if ($activePhase.StartsWith("prepare:")) { "baseline" } else { $activePhase }
+        $bucket = $phaseSamples[$bucketPhase]
+        $firstSample = $null -eq $bucket.first_sample_ms
+        $sampleTime = [System.DateTimeOffset]::UtcNow.ToUnixTimeMilliseconds()
+        if ($firstSample) { $bucket.first_sample_ms = $sampleTime }
+        $bucket.last_sample_ms = $sampleTime
         $bucket.sample_count++
         $sampleCount++
 
-        if ($current.X -ne $previous.X -or $current.Y -ne $previous.Y) {
+        if (-not $firstSample -and ($current.X -ne $previous.X -or $current.Y -ne $previous.Y)) {
             $motionCount++
             $bucket.cursor_motion_samples++
         }
-        if ($current.InputTick -ne $previous.InputTick) {
+        if (-not $firstSample -and $current.InputTick -ne $previous.InputTick) {
             $inputCount++
             $bucket.input_change_samples++
         }
@@ -131,7 +141,12 @@ try {
             $ownedForegroundCount++
         }
         $previous = $current
-        Write-Observation
+        # Sampling must stay faster than short semantic RPCs. Serialize JSON
+        # less often, but publish each phase transition for acknowledgment.
+        if ($activePhase -ne $lastPublishedPhase -or ($sampleCount % 8) -eq 0) {
+            Write-Observation
+            $lastPublishedPhase = $activePhase
+        }
         Start-Sleep -Milliseconds $SampleIntervalMs
     }
 } finally {

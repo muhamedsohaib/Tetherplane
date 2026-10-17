@@ -11,6 +11,8 @@ type PhaseMetrics = {
   sample_count: number;
   cursor_motion_samples: number;
   input_change_samples: number;
+  first_sample_ms: number;
+  last_sample_ms: number;
 };
 type ProbeSnapshot = {
   ready: boolean;
@@ -71,10 +73,16 @@ test("Windows sampler records only bounded read-only phase aggregates and closes
     const baseline = await waitForSnapshot(snapshot,
       (s) => s.ready && s.active_phase === "baseline" && s.sample_count > 0);
     assert.equal(baseline.finished, false);
+    await writeFile(marker, "prepare:select", "utf8");
+    const prepared = await waitForSnapshot(snapshot, (s) => s.active_phase === "prepare:select");
+    assert.equal(prepared.phase_samples.select?.sample_count, 0,
+      "readiness acknowledgment must not enter the measured action phase");
     await writeFile(marker, "select", "utf8");
     const selected = await waitForSnapshot(snapshot,
       (s) => s.active_phase === "select" && (s.phase_samples.select?.sample_count ?? 0) > 0);
     assert.ok(selected.sample_count >= baseline.sample_count);
+    assert.ok(Number.isSafeInteger(selected.phase_samples.select?.first_sample_ms));
+    assert.ok(Number.isSafeInteger(selected.phase_samples.select?.last_sample_ms));
     await writeFile(stop, "stop", "utf8");
     const exitCode = await Promise.race([exited, new Promise<never>((_, reject) => {
       exitTimeout = setTimeout(() => reject(new Error("Windows sampler ignored stop signal")), 5_000);

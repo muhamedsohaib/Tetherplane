@@ -40,26 +40,49 @@ test("operator activity test rejects mismatched candidate SHAs", () => {
 
 test("operator overlap requires sustained cursor motion and input changes inside one action phase", () => {
   const phase = (sample_count: number, cursor_motion_samples: number, input_change_samples: number) =>
-    ({ sample_count, cursor_motion_samples, input_change_samples });
+    ({ sample_count, cursor_motion_samples, input_change_samples, first_sample_ms: 110, last_sample_ms: 190 });
+  const intervals = Object.fromEntries(["set_value", "invoke", "select"].map((phase) =>
+    [phase, { started_at_ms: 100, finished_at_ms: 200 }]));
   assert.equal(hasActionPhaseOverlap({
     baseline: phase(20, 20, 20),
     set_value: phase(0, 0, 0),
     invoke: phase(0, 0, 0),
     select: phase(0, 0, 0),
-  }), false, "movement before actions does not count");
+  }, intervals), false, "movement before actions does not count");
   assert.equal(hasActionPhaseOverlap({
     set_value: phase(1, 1, 1),
     invoke: phase(1, 1, 1),
     select: phase(1, 1, 1),
-  }), false, "one late sample per action cannot certify concurrency");
+  }, intervals), false, "one late sample per action cannot certify concurrency");
   assert.equal(hasActionPhaseOverlap({
     set_value: phase(0, 0, 0),
     invoke: phase(5, 3, 3),
     select: phase(0, 0, 0),
-  }), true, "one sustained interval during an actual RPC qualifies");
+  }, intervals), true, "one sustained interval during an actual RPC qualifies");
 });
 
 test("operator activity test permits only a matching short-lived, explicitly gated candidate", () => {
   assert.equal(operatorAcceptanceAllowed(valid, sha, now), true);
   assert.equal(operatorAcceptanceAllowed(valid, sha, now + 2 * 60_000), true);
+});
+
+test("operator overlap excludes samples outside the actual semantic RPC interval", () => {
+  const metrics = {
+    invoke: {
+      sample_count: 4, cursor_motion_samples: 4, input_change_samples: 4,
+      first_sample_ms: 50, last_sample_ms: 110,
+    },
+  };
+  const intervals = { invoke: { started_at_ms: 100, finished_at_ms: 200 } };
+  assert.equal(hasActionPhaseOverlap(metrics, intervals), false,
+    "movement during phase acknowledgment must not count as concurrent RPC activity");
+  assert.equal(hasActionPhaseOverlap({
+    invoke: { ...metrics.invoke, first_sample_ms: 110, last_sample_ms: 210 },
+  }, intervals), false, "movement after the RPC must not count");
+  assert.equal(hasActionPhaseOverlap({
+    invoke: { ...metrics.invoke, first_sample_ms: 110, last_sample_ms: 190 },
+  }, intervals), true, "sustained samples wholly inside the real RPC qualify");
+  assert.equal(hasActionPhaseOverlap({
+    invoke: { sample_count: 4, cursor_motion_samples: 4, input_change_samples: 4 },
+  }, intervals), false, "missing timing evidence must not certify concurrency");
 });
