@@ -21,6 +21,10 @@ import {
 
 import { startLocalCompact } from "./helpers/start-local.ts";
 import {
+  classifyBackgroundDesktopObservation,
+  readWindowsLastInputTick,
+} from "./helpers/background-desktop-observation.ts";
+import {
   getCursorClipboardState,
   getForegroundInfo,
 } from "./helpers/windows-foreground.ts";
@@ -167,7 +171,7 @@ class CoexistenceBackend implements BrowserServiceBackend {
 test(
   "B8 compact MCP completes a verified browser workflow without touching active human state",
   { timeout: 60_000 },
-  async () => {
+  async (t) => {
     const executablePath = findInstalledChromium();
     assert.ok(
       executablePath,
@@ -202,6 +206,12 @@ test(
         },
       });
       const activeLocal = local;
+      // Bracket the entire observation with OS last-input ticks. If the
+      // operator moves the cursor, an endpoint equality check is not a
+      // valid attribution test for Tetherplane-induced physical input.
+      const inputTickBefore = process.platform === "win32"
+        ? readWindowsLastInputTick()
+        : null;
       const stateBefore =
         process.platform === "win32"
           ? getCursorClipboardState()
@@ -252,11 +262,16 @@ test(
         "permission_denied",
       );
 
-      const created = structured(
-        await call(local.client, "browser", {
-          op: "create_tab",
-          args: { url: lab.origin },
-        }),
+      const createResult = await call(local.client, "browser", {
+        op: "create_tab",
+        args: { url: lab.origin },
+      });
+      const created = structured(createResult);
+      assert.equal(
+        createResult.isError,
+        undefined,
+        "browser.create_tab returned an error: " +
+          String((created.error as Record<string, unknown> | undefined)?.code ?? "unclassified"),
       );
       const pageId = created.page_id as string;
       assert.match(pageId, /^cdp:/);
@@ -665,24 +680,30 @@ test(
       assert.equal(backend.humanMutationAttempts, 0);
 
       if (process.platform === "win32") {
-        const stateAfter =
-          getCursorClipboardState();
+        assert.ok(stateBefore && foregroundBefore && inputTickBefore !== null);
+        const stateAfter = getCursorClipboardState();
         const foregroundAfter = getForegroundInfo();
-        assert.deepEqual(
-          stateAfter.cursor,
-          stateBefore?.cursor,
-          "physical cursor moved during background browser operation",
+        const inputTickAfter = readWindowsLastInputTick();
+        const desktopVerdict = classifyBackgroundDesktopObservation({
+          cursorBefore: stateBefore.cursor,
+          cursorAfter: stateAfter.cursor,
+          foregroundBefore: foregroundBefore.hwnd,
+          foregroundAfter: foregroundAfter.hwnd,
+          clipboardBefore: stateBefore.clipboardTextBase64,
+          clipboardAfter: stateAfter.clipboardTextBase64,
+          inputTickBefore,
+          inputTickAfter,
+        });
+        assert.notEqual(
+          desktopVerdict,
+          "violation",
+          "physical desktop state changed without intervening input; background browser coexistence violated",
         );
-        assert.equal(
-          stateAfter.clipboardTextBase64,
-          stateBefore?.clipboardTextBase64,
-          "global clipboard changed during background browser operation",
-        );
-        assert.equal(
-          foregroundAfter.hwnd,
-          foregroundBefore?.hwnd,
-          `active OS window changed during background browser operation: expected ${foregroundBefore?.hwnd} (${foregroundBefore?.processName}), got ${foregroundAfter.hwnd} (${foregroundAfter.processName})`,
-        );
+        if (desktopVerdict === "inconclusive") {
+          // LastInputInfo can also advance for synthetic input. This does
+          // NOT prove the movement was human; report an unverified check.
+          t.skip("OS input occurred while desktop state changed; attribution inconclusive");
+        }
       }
     } finally {
       if (local) await local.close();

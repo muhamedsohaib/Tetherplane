@@ -106,6 +106,7 @@ test("tether-auth presents consent before explicit confirmation and then resumes
       {
         method: "POST",
         redirect: "manual",
+        headers: { "content-type": "application/json" },
       },
     );
     assert.equal(confirmed.status, 302);

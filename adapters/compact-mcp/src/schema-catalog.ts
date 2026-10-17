@@ -20,6 +20,15 @@ function objectSchema(
 const CATALOG: Record<string, JsonSchema> = {
   "device.status": objectSchema([], {}),
   "device.capabilities": objectSchema([], {}),
+  "device.approve_pairing": {
+    ...objectSchema(["userCode", "expectedDeviceId"], {
+      userCode: string,
+      expectedDeviceId: string,
+    }),
+    description:
+      "Approve a pending device pairing for the authenticated account. Relay-side account mutation; never read-only and never routed to a device.",
+    "x-tetherplane-side-effect": "external_mutation",
+  },
   "filesystem.read": objectSchema(["path"], {
     path: string,
     offset: integer,

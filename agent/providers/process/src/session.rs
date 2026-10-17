@@ -5,7 +5,7 @@ use std::time::Duration;
 
 use portable_pty::{CommandBuilder, MasterPty, PtySize, native_pty_system};
 use serde_json::json;
-use sysinfo::{Pid, System};
+use sysinfo::{Pid, ProcessRefreshKind, RefreshKind, System};
 use tether_core::{CapabilityError, ErrorCode};
 use tokio::io::{AsyncRead, AsyncReadExt, AsyncWriteExt};
 use tokio::process::{Child, Command};
@@ -436,7 +436,12 @@ impl ProcessSession {
 }
 
 fn kill_descendants(root_pid: u32) {
-    let system = System::new_all();
+    // Only process identities and parent links are needed for tree ownership.
+    // Refreshing CPU, memory, users, command lines and environments for every
+    // system process can stall force termination on a busy Windows desktop.
+    let system = System::new_with_specifics(
+        RefreshKind::nothing().with_processes(ProcessRefreshKind::nothing().without_tasks()),
+    );
     let root = Pid::from_u32(root_pid);
     let mut descendants: Vec<(usize, Pid)> = system
         .processes()

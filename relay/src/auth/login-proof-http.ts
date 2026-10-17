@@ -14,6 +14,8 @@ import type {
   AuthLoginProofRegistry,
 } from "./login-proof-registry.ts";
 
+import { markClaimed } from "../http-claim.ts";
+
 const DEVICE_ID_HEADER = "x-tetherplane-device-id";
 
 export class AuthLoginProofHttpGateway {
@@ -82,6 +84,15 @@ export class AuthLoginProofHttpGateway {
       request.url ?? "/",
       `http://${request.headers.host ?? "localhost"}`,
     );
+
+    if (
+      request.method === "POST" &&
+      (url.pathname === "/auth/device-login/start" ||
+        url.pathname === "/auth/device-login/approve" ||
+        url.pathname === "/auth/device-login/consume")
+    ) {
+      markClaimed(response);
+    }
 
     try {
       if (
