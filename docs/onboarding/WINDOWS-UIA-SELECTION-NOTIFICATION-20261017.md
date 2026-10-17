@@ -435,3 +435,20 @@ and synchronized physical activity are required. Neither the passing
 synthetic lock regressions nor baseline activity outside a verified RPC
 can substitute for the live overlap gate. PR #15 must remain draft until
 all independent integration and release acceptance requirements are met.
+
+## 2026-10-17 project-owner decision — concurrent-input test waived, not passed
+
+The owner explicitly accepts the residual risk from the missing precise
+operator-input/RPC overlap trace. For this PR #15 release candidate,
+**further runs of `windows-operator-concurrent.test.ts` are waived as an
+acceptance prerequisite**. Previous live runs remain *inconclusive*, not
+passing. The owner reports successful real use of Tetherplane for
+LinkedIn work while simultaneously using Leno without noticeable cursor
+or foreground interruption; that observation is operator-reported.
+
+The complete scope, evidence, limitations and non-waived policy gates are
+recorded in `docs/onboarding/WINDOWS-UIA-ACCEPTANCE-WAIVER-20261017.md`.
+This owner decision authorizes progression to independent review and
+remaining release acceptance, **not** a local policy bypass, foreground
+lease, production deployment or PR merge. B8 browser coexistence passed;
+the separately skipped Chromium OAuth callback/cleanup test remains open.

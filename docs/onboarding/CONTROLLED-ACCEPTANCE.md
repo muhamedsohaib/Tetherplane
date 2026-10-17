@@ -113,3 +113,26 @@ Do not automatically rewind the registry backup: that can undo subsequent
 revocations or lose new approvals. Restoring state needs a separately reviewed
 reconciliation of changes since the backup. Keep all diagnostic evidence
 redacted. No public release, tag or announcement is included in deployment approval.
+
+## 2026-10-17 owner exception to one UIA measurement prerequisite
+
+For PR #15's reviewed candidate, the project owner has explicitly waived
+the requirement to repeat/pass the **operator-active simultaneous Windows
+UIA RPC overlap measurement**. The existing controlled-acceptance procedure
+above remains the technical ideal and any historical unverified results
+remain unverified; do not convert skipped or inconclusive tests to passes.
+
+The scope and residual risk accepted are documented in
+`WINDOWS-UIA-ACCEPTANCE-WAIVER-20261017.md`. This exception permits
+advancement beyond that one measurement gate but does not weaken
+`background_only`, human-owned resource protections, clipboard/focus
+restrictions or the local Policy Broker. It does not approve foreground
+control, device/relay deployment, or merge.
+
+**Other acceptance remains open**, specifically the Chromium OAuth
+loopback-callback/CSP and owned-browser cleanup gate, the clean-device
+Windows lifecycle, independent PR-wide review and explicit production
+approval. The previously recorded Chromium PIDs are historical only:
+revalidate identity/ownership before acting on any process. B8 browser
+coexistence is a distinct passing integration test, not proof of the
+separately skipped OAuth callback flow.
