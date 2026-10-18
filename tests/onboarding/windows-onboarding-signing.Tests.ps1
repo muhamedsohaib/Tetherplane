@@ -101,7 +101,7 @@ Describe "publicly trusted Authenticode gate" {
         $manifest = Get-Content -LiteralPath (Join-Path $kit "manifest.json") -Raw | ConvertFrom-Json
         $manifest.signature.scheme | Should Be "authenticode-public-trust-v1"
         $manifest.signature.publisher_subject | Should Be "CN=Tetherplane Test Publisher"
-        (Confirm-DevicePackage -PackagePath $kit).ok | Should Be $true
+        (Confirm-DevicePackage -PackagePath $kit -ExpectedPublisherSubject "CN=Tetherplane Test Publisher").ok | Should Be $true
     }
 
     It "rejects a forged signed manifest even when all SHA-256 entries match" {
@@ -120,6 +120,28 @@ Describe "publicly trusted Authenticode gate" {
         $manifest | ConvertTo-Json -Depth 5 | Set-Content -LiteralPath $manifestPath
         Write-TestSha256 $kit
         { Confirm-DevicePackage -PackagePath $kit } | Should Throw
+    }
+
+    It "requires an independently supplied publisher when a kit claims to be signed" {
+        Mock Get-AuthenticodeSignature {
+            [pscustomobject]@{
+                Status = "Valid"; SignatureType = "Authenticode"
+                SignerCertificate = [pscustomobject]@{ Subject = "CN=Different CA Publisher"; Thumbprint = "0123456789ABCDEF0123456789ABCDEF01234567" }
+                TimeStamperCertificate = [pscustomobject]@{ Subject = "CN=Time Stamping CA" }
+            }
+        }
+        $kit = New-TestPackage $script:root
+        $manifestPath = Join-Path $kit "manifest.json"
+        $manifest = Get-Content -LiteralPath $manifestPath -Raw | ConvertFrom-Json
+        $manifest | Add-Member -NotePropertyName signature -NotePropertyValue ([pscustomobject]@{
+            scheme = "authenticode-public-trust-v1"
+            publisher_subject = "CN=Different CA Publisher"
+            signer_thumbprint = "0123456789ABCDEF0123456789ABCDEF01234567"
+        })
+        $manifest | ConvertTo-Json -Depth 5 | Set-Content -LiteralPath $manifestPath
+        Write-TestSha256 $kit
+        { Confirm-DevicePackage -PackagePath $kit } | Should Throw
+        { Confirm-DevicePackage -PackagePath $kit -ExpectedPublisherSubject "CN=Tetherplane Test Publisher" } | Should Throw
     }
 
     It "does not promote an unsigned private development kit to a signed release" {
