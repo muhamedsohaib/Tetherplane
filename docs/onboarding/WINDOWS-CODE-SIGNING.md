@@ -69,6 +69,13 @@ PE and PowerShell files. Comparing that digest before and after signing detects
 an adapter that substitutes older or different code signed by the same
 certificate; a valid signature alone would not detect that provenance error.
 
+The SIP helper explicitly acquires a SHA-256-capable `PROV_RSA_AES` hashing
+context with a null container and `CRYPT_VERIFYCONTEXT | CRYPT_SILENT`. It holds
+that context through both native calls and releases it in `finally`. This is
+hashing without a persistent key container; it neither creates a signing
+identity nor accesses the provider's private signing key. Native errors, an
+unexpected digest algorithm or malformed digest output fail the request.
+
 ## Approving and provisioning a provider
 
 The orchestration is provider-neutral. An administrator installs the provider
@@ -314,6 +321,9 @@ checks must run without skipped or inconclusive tests.
 
 - [Microsoft SignTool reference](https://learn.microsoft.com/en-us/windows/win32/seccrypto/signtool)
 - [Get-AuthenticodeSignature](https://learn.microsoft.com/en-us/powershell/module/microsoft.powershell.security/get-authenticodesignature?view=powershell-7.6)
+- [Windows SIP content hashing](https://learn.microsoft.com/en-us/windows/win32/api/mssip/nf-mssip-cryptsipcreateindirectdata)
+- [PROV_RSA_AES algorithms](https://learn.microsoft.com/en-us/windows/win32/seccrypto/prov-rsa-aes)
+- [CryptAcquireContext hashing context flags](https://learn.microsoft.com/en-us/windows/win32/api/wincrypt/nf-wincrypt-cryptacquirecontextw)
 - [Smart App Control signing](https://learn.microsoft.com/en-us/windows/apps/develop/smart-app-control/code-signing-for-smart-app-control)
 - [Testing with Smart App Control](https://learn.microsoft.com/en-us/windows/apps/develop/smart-app-control/test-your-app-with-smart-app-control)
 - [GitHub deployment environments](https://docs.github.com/en/actions/reference/workflows-and-actions/deployments-and-environments)
