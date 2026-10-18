@@ -6,6 +6,8 @@
 # https://learn.microsoft.com/windows/win32/api/mssip/nf-mssip-cryptsipcreateindirectdata
 # https://learn.microsoft.com/windows/win32/api/mssip/ns-mssip-sip_subjectinfo
 # https://learn.microsoft.com/windows/win32/api/mssip/ns-mssip-sip_indirect_data
+# https://learn.microsoft.com/windows/win32/api/wincrypt/nf-wincrypt-cryptacquirecontextw
+# https://learn.microsoft.com/windows/win32/seccrypto/prov-rsa-aes
 
 function Initialize-WindowsSigningContent {
     if ('Tetherplane.WindowsSigningContent' -as [type]) { return }
@@ -60,6 +62,14 @@ namespace Tetherplane {
         [DefaultDllImportSearchPaths(DllImportSearchPath.System32)]
         [return: MarshalAs(UnmanagedType.Bool)]
         private static extern bool CryptSIPCreateIndirectData(ref SubjectInfo subject, ref uint size, IntPtr data);
+        [DllImport("advapi32.dll", CharSet = CharSet.Unicode, ExactSpelling = true, SetLastError = true)]
+        [DefaultDllImportSearchPaths(DllImportSearchPath.System32)]
+        [return: MarshalAs(UnmanagedType.Bool)]
+        private static extern bool CryptAcquireContextW(out IntPtr provider, string container, string providerName, uint providerType, uint flags);
+        [DllImport("advapi32.dll", ExactSpelling = true, SetLastError = true)]
+        [DefaultDllImportSearchPaths(DllImportSearchPath.System32)]
+        [return: MarshalAs(UnmanagedType.Bool)]
+        private static extern bool CryptReleaseContext(IntPtr provider, uint flags);
 
         private static Exception NativeFailure(string operation) {
             // Capture before formatting or performing any further native work.
@@ -78,7 +88,16 @@ namespace Tetherplane {
             IntPtr fileName = IntPtr.Zero;
             IntPtr algorithm = IntPtr.Zero;
             IntPtr buffer = IntPtr.Zero;
+            IntPtr provider = IntPtr.Zero;
             try {
+                // PowerShell's SIP needs a SHA-256-capable provider; its default
+                // can reject SHA-256 with NTE_BAD_ALGID. This is hashing only:
+                // PROV_RSA_AES, NULL container, CRYPT_VERIFYCONTEXT | CRYPT_SILENT.
+                // No keys or persistent containers are opened or created.
+                if (!CryptAcquireContextW(out provider, null,
+                    "Microsoft Enhanced RSA and AES Cryptographic Provider", 24, 0xF0000040)) {
+                    throw NativeFailure("hash provider acquisition");
+                }
                 guid = Marshal.AllocHGlobal(Marshal.SizeOf(typeof(Guid)));
                 Marshal.StructureToPtr(subjectGuid, guid, false);
                 fileName = Marshal.StringToHGlobalUni(path);
@@ -90,6 +109,7 @@ namespace Tetherplane {
                 subject.pgSubjectType = guid;
                 subject.hFile = new IntPtr(-1); // file-name storage: INVALID_HANDLE_VALUE
                 subject.pwsFileName = fileName;
+                subject.hProv = provider;
                 subject.DigestAlgorithm.pszObjId = algorithm;
                 subject.dwEncodingType = 0x00010001; // X509_ASN_ENCODING | PKCS_7_ASN_ENCODING
                 uint size = 0;
@@ -116,6 +136,7 @@ namespace Tetherplane {
                 if (algorithm != IntPtr.Zero) { Marshal.FreeHGlobal(algorithm); }
                 if (fileName != IntPtr.Zero) { Marshal.FreeHGlobal(fileName); }
                 if (guid != IntPtr.Zero) { Marshal.FreeHGlobal(guid); }
+                if (provider != IntPtr.Zero && !CryptReleaseContext(provider, 0)) { throw NativeFailure("hash provider release"); }
             }
         }
     }
