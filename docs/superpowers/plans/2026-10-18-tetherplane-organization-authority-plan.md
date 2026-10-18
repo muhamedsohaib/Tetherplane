@@ -66,8 +66,11 @@ Implementation must preserve the canonical `InvocationEnvelope` provider semanti
 - Durable tables: `users`, `oidc_identities`, `organizations`, `memberships`, `teams`, `groups`, `group_members`, `role_assignments`, `service_principals`, `devices`, `complete_grants`, `authority_revisions`, `policy_outbox`, `policy_receipts`, `audit_events`, `bootstrap_claims`. All tenant-owned joins and mutation keys qualify `organization_id`.
 
 - [ ] **Step 1: Write failing tests** `loaded_sqlite_runtime_must_be_patched`, `second_writer_refuses_start`, `transactional_change_and_outbox_commit_or_rollback_together`, `foreign_tenant_reference_rejected`, and `bootstrap_claim_single_use_after_concurrent_attempts`.
+
+**Test assertion contract:** `assert.throws(() => openManagementStore(vulnerableRuntime), /SQLite|patched/); assert.equal(committedOutboxCount, 1);`
+
 - [ ] **Step 2: Confirm RED.** Run `pnpm --filter @tetherplane/management test`. Expected: missing package/store and tests fail; verify failure is not unrelated toolchain absence.
-- [ ] **Step 3: Implement minimum** patched `node:sqlite`-backed (or a reviewed equivalent with identical runtime verification) store, startup `sqlite_version()`/source verification, WAL/FULL/foreign keys, exclusive lifetime writer guard, bounded busy handling, migrations and atomic transactions. If the loaded Node SQLite is unpatched, fail production startup rather than weakening the guard; packaging selects a supported patched runtime.
+- [ ] **Step 3: Implement minimum** patched `node:sqlite`-backed store with an enforced loaded SQLite version gate, startup `sqlite_version()`/source verification, WAL/FULL/foreign keys, exclusive lifetime writer guard, bounded busy handling, migrations and atomic transactions. If the loaded Node SQLite is unpatched, fail production startup rather than weakening the guard; packaging selects a supported patched runtime.
 - [ ] **Step 4: Confirm GREEN** on a runtime verified to carry the patch: `pnpm --filter @tetherplane/management typecheck`, `pnpm --filter @tetherplane/management test`. Expected: zero failures including crash/rollback/tenant joins.
 - [ ] **Step 5: Review/commit.** Check schema tenancy and absence of logged secrets; commit `git commit -m "feat(management): establish patched tenant-safe SQLite authority store"`.
 
@@ -75,13 +78,16 @@ Implementation must preserve the canonical `InvocationEnvelope` provider semanti
 
 **Files:**
 - Create: `management/src/{identity,membership}.ts`, `management/test/{identity,membership}.test.ts`
-- Modify: `management/src/store.ts`; adapt `auth/src/account.ts` only if needed for verified issuer/subject exposure
+- Modify: `management/src/store.ts`. Resolve the existing OIDC verifier's validated issuer/subject from a trusted authentication result; do not modify `auth/src/account.ts` to derive identity from email or mutable user claims.
 
 **Interfaces:**
 - Produce: `resolveOidcUser(tx: ManagementTransaction, claim: { issuer: string; subject: string; email?: string }): UserIdentity`; `linkOidcIdentity(tx, ownerUserId, verifiedNewClaim, freshProof)`; `acceptInvitation(tx, invitedIdentity, invitationId)`; `registerServicePrincipal(tx, orgId, sponsorMembershipId, credentialBinding)`.
 - First owner uses an authenticated local `claimFirstOwner(tx, localClaimProof, verifiedUser)` compare-and-set, never an open internet signup endpoint. Service principals have an independently revocable credential identity and accountable active human sponsor.
 
 - [ ] **Step 1: Write failing tests** `same_email_different_issuer_subject_never_merges`; `link_requires_fresh_dual_control`; `unauthenticated_or_racing_initial_owner_rejected`; `pending_revoked_or_wrong_identity_invitation_denied`; `sponsor_departure_suspends_service_and_revokes_sessions`.
+
+**Test assertion contract:** `assert.notEqual(userForIssuerA.id, userForIssuerB.id); assert.equal(acceptedOwnerClaims, 1);`
+
 - [ ] **Step 2: Confirm RED.** Run `node --test management/test/identity.test.ts management/test/membership.test.ts`. Expected: new identity/membership operations missing.
 - [ ] **Step 3: Implement minimum** exact `iss/sub` identities and link proof, invitation lifecycle, one-member personal-org bootstrap, sponsor acceptance/reassignment, suspension and last active human-owner protection. Authorized recovery cannot use matching email or reset to open bootstrap.
 - [ ] **Step 4: Confirm GREEN.** Repeat targeted tests and `pnpm --filter @tetherplane/management typecheck`. Expected: valid identities work, forged/racing/departed identities and orphaned services fail.
@@ -99,6 +105,9 @@ Implementation must preserve the canonical `InvocationEnvelope` provider semanti
 - Produce: `matchCompleteGrant(request: CanonicalExecutionRequest, grants: readonly CompleteGrant[]): GrantMatch | Denied`. A complete grant binds subject, exact capability, client, device/resource, profile, offline eligibility, expiry and approvals; distinct grants cannot union privileges.
 
 - [ ] **Step 1: Write failing tests** `delegated_group_update_cannot_self_escalate`, `admin_role_does_not_grant_machine_execution`, `fragmented_grants_never_union_into_permission`, `wrong_device_profile_client_or_expiry_denied`, `owner_cannot_remove_last_active_owner`.
+
+**Test assertion contract:** `assert.equal(adminRoleHasProcessExecution, false); assert.equal(combineTwoPartialGrants.allowed, false);`
+
 - [ ] **Step 2: Confirm RED.** Run `pnpm --filter @tetherplane/management test` and `cargo test -p tether-core --test organization_policy`; expected target assertions fail because scope/match logic is absent.
 - [ ] **Step 3: Implement minimum** independent role templates, current delegation checks for *each* role/group/invitation/credential/grant mutation and exact resource match. The Rust broker intersects accepted organization grants with immutable device-local ceilings and applicable denials. Keep role assignment separate from machine execution.
 - [ ] **Step 4: Confirm GREEN.** Repeat targeted suites and `cargo test -p tether-core --test principal_policy`. Expected: legitimate scoped grants pass; all escalation paths deny.
@@ -107,17 +116,20 @@ Implementation must preserve the canonical `InvocationEnvelope` provider semanti
 ### Task 4: Trusted organization execution binding across relay, adapter and device
 
 **Files:**
-- Create: `agent/tether-core/src/organization.rs`, `agent/tetherd/src/authenticated_execution.rs`, `relay/test/organization-routing.test.ts`
+- Create: `agent/tether-core/src/organization.rs`, `agent/tetherd/src/authenticated_execution.rs`, `agent/tetherd/tests/organization_policy.rs`, `relay/test/organization-routing.test.ts`
 - Modify: `agent/tether-core/src/{envelope,lib}.rs`, `agent/tetherd/src/{runtime,relay_ws,stdio_rpc}.rs`
 - Modify: `relay/src/{auth/oidc-auth,routing/device-router,mcp/http-gateway,devices/registry,devices/ws-gateway}.ts`
 - Modify: `protocol/schemas/invocation.schema.json`, `protocol/src/index.ts` and regenerated types as required
 
 **Interfaces:**
 - Produce: `AuthenticatedExecutionContext { instance_id, organization_id, principal_id, client_id, credential_id, session_id, device_id, enrollment_generation }` constructed from authenticated transport and locally enrolled trust (not untrusted request JSON).
-- Produce: `AgentRuntime::execute_authenticated(invocation: InvocationEnvelope, context: AuthenticatedExecutionContext) -> ResultEnvelope`; legacy `execute` remains bound to a separately authorized local stdio launch identity only.
+- Produce: `AgentRuntime::execute_authenticated(&self, invocation: InvocationEnvelope, context: AuthenticatedExecutionContext) -> ResultEnvelope` as an async method; legacy `execute` remains bound to a separately authorized local stdio launch identity only.
 - Relay routing consumes an authenticated context for organization-aware device ownership; `ClientIdentity` from existing relay cannot select an organization just by reusing its old `accountId`.
 
 - [ ] **Step 1: Write failing tests** `forged_tenant_arg_does_not_select_context`, `two_memberships_same_user_have_distinct_authority`, `foreign_enrollment_generation_rejected`, `unknown_peer_version_denied_not_downgraded`, and `local_stdio_launch_binding_remains_explicit`.
+
+**Test assertion contract:** `assert.equal(forgedTenantResult.status, 'permission_denied'); assert.equal(localStdioPrincipal, launchBoundPrincipal);`
+
 - [ ] **Step 2: Confirm RED.** Run `node --test relay/test/organization-routing.test.ts`, `cargo test -p tetherd --test organization_policy` (new) and `pnpm --filter @tetherplane/protocol test`. Expected: missing trusted binding/tenant checks.
 - [ ] **Step 3: Implement minimum** authenticated context minting/forwarding, device enrollment generation and one-org ownership, explicit protocol negotiation and local validation before provider execution. Keep caller model names as provenance only. Remove one-global-principal substitution from organization-managed runtime; deny incompatible peers and wrong-tenant reconnects.
 - [ ] **Step 4: Confirm GREEN.** Re-run new suites plus `pnpm --filter @tetherplane/relay test` and `cargo test -p tetherd --test stdio_rpc`. Expected: secure remote and preserved local explicit launch behavior.
@@ -127,7 +139,8 @@ Implementation must preserve the canonical `InvocationEnvelope` provider semanti
 
 **Files:**
 - Create: `protocol/src/policy-snapshot.ts`, `protocol/fixtures/policy-snapshot-v1.json`, `management/src/policy-publisher.ts`, `management/test/policy-publisher.test.ts`
-- Create: `agent/tetherd/src/policy_snapshot.rs`, `agent/tetherd/tests/organization_policy.rs`
+- Create: `agent/tetherd/src/policy_snapshot.rs`
+- Modify: `agent/tetherd/tests/organization_policy.rs` (created in Task 4)
 - Modify: `agent/tetherd/src/security_state.rs` from Plan 1, `agent/tetherd/Cargo.toml` and `protocol/src/index.ts`
 
 **Interfaces:**
@@ -135,6 +148,9 @@ Implementation must preserve the canonical `InvocationEnvelope` provider semanti
 - `payloadType` is exactly `application/vnd.tetherplane.policy-snapshot.v1+json`. DSSE signs exact JCS payload with PAE; `policy_body_digest` hashes canonical policy body, while `snapshot_digest` hashes complete signed payload bytes; neither hash is recursive.
 
 - [ ] **Step 1: Write failing independent fixture tests** `rust_and_typescript_agree_on_dsse_jcs_bytes_and_digests`, `duplicate_equal_sequence_does_not_extend_expiry`, `equal_sequence_conflicting_digest_rejected`, `higher_sequence_lower_permission_revision_rejected`, `unknown_signer_schema_or_audience_denied` and `crash_before_atomic_activation_never_admits_old_broad_grant`.
+
+**Test assertion contract:** `assert.equal(snapshotDigestRust, snapshotDigestTypeScript); assert.equal(duplicateDelivery.expiry, originalExpiry); assert.equal(rollbackResult.status, 'permission_denied');`
+
 - [ ] **Step 2: Confirm RED.** Run `pnpm --filter @tetherplane/protocol test`, `node --test management/test/policy-publisher.test.ts` and `cargo test -p tetherd --test organization_policy`. Expected: missing typed snapshot and verifier behaviors.
 - [ ] **Step 3: Implement minimum** reviewed Ed25519 DSSE/JCS interoperable encoding/verification, strict audience/algorithm/schema checks, version/high-water and active policy atomic transaction via Plan 1 `SecurityState`, authenticated acknowledgements, key transitions and fail-closed unsupported requirements. Do not trust a key ID alone or copy code-signing trust roots.
 - [ ] **Step 4: Confirm GREEN.** Re-run all targeted tests with fixed cross-language vectors, corrupted/expired/frozen/rollback fixtures, and simulated interrupted SQLite transactions. Expected: only valid eligible version advances become effective.
@@ -153,6 +169,9 @@ Implementation must preserve the canonical `InvocationEnvelope` provider semanti
 - `MonotonicGrantDeadline` enforces max 300 seconds from last authenticated freshness, renewal target ~60 seconds, no offline approval dispatch.
 
 - [ ] **Step 1: Write failing tests** `revocation_wins_snapshot_renewal_race`, `stale_or_replayed_ack_not_current_enforcement`, `offline_expiry_blocks_access_and_requests_owned_tree_stop`, `clock_rollback_resume_restart_requires_resync`, `new_unenforceable_snapshot_blocks_broad_old_policy`.
+
+**Test assertion contract:** `assert.equal(renewalAfterRevocation.allowed, false); assert.equal(staleAck.confirmed, false); assert.equal(expiredGrant.newAccessAllowed, false);`
+
 - [ ] **Step 2: Confirm RED.** Run `node --test management/test/policy-outbox.test.ts` and `cargo test -p tetherd --test revocation`. Expected: missing revision ordering and monotonic receipt barriers.
 - [ ] **Step 3: Implement minimum** transactional mutation/audit outbox, authenticated policy delivery/receipt, freshness renewal and revocation priority, bounded clock/suspend behavior, affected session/job/approval/lease invalidation, owned-tree stop initiation without false confirmation, and local emergency-stop interoperability. The agent cannot claim fresh enforcement from transport delivery.
 - [ ] **Step 4: Confirm GREEN.** Repeat focused tests and targeted `cargo test -p tetherd`. Expected: races, outages, replayed receipts and clock changes fail closed with truthful statuses.
@@ -170,6 +189,9 @@ Implementation must preserve the canonical `InvocationEnvelope` provider semanti
 - Consumes: Task 4 authenticated context and Task 5/6 locally activated authority; unauthorized cached results must not be returned before policy reevaluation.
 
 - [ ] **Step 1: Write failing tests** `revoked_retry_must_not_reveal_cached_result`, `idempotency_key_same_name_different_tenant_isolated`, `foreign_job_checkpoint_handle_and_audit_denied`, `lease_does_not_create_grant`, `batch_child_cannot_select_other_org` and `audit_write_failure_denies_sensitive_dispatch`.
+
+**Test assertion contract:** `assert_eq!(revoked_cached_result.error.code, ErrorCode::PermissionDenied); assert!(foreign_org_handle.is_err());`
+
 - [ ] **Step 2: Confirm RED.** Run `cargo test -p tetherd --test organization_resources` and `cargo test -p tether-core --test batch`. Expected: existing global JSON metadata/replay path fails required tenant checks.
 - [ ] **Step 3: Implement minimum** tenant-qualified persistent records and handles, fresh reauthorization on reads/inputs/continuations/idempotent retries, transactional security/audit intent for sensitive operations (extending Plan 1 store), and explicit migrations from legacy JSON rather than overwriting records. Do not log secrets or hidden model reasoning.
 - [ ] **Step 4: Confirm GREEN.** Repeat new tests and `cargo test -p tetherd --test job_state`, `cargo test -p tetherd --test idempotency`, `cargo test -p tetherd --test audit`. Expected: authorized same-org sharing only when separately granted; cross-tenant and revoked sessions denied.
@@ -187,6 +209,9 @@ Implementation must preserve the canonical `InvocationEnvelope` provider semanti
 - Acceptance focus: `AC-01` through `AC-05`, `AC-09` through `AC-11`, `AC-14`, `AC-15`, `AC-18` and tenant-related `AC-20`; full admin/approval/UI and `AC-22` remain Plan 3.
 
 - [ ] **Step 1: Write failing E2E tests** `two_orgs_concurrent_authorized_and_foreign_denied`, `sponsor_departure_loses_machine_access`, `outage_renewal_revocation_expiry_truthful`, `wrong_org_reconnect_and_cached_output_denied` and `self_escalation_group_rotation_denied`.
+
+**Test assertion contract:** `assert.equal(crossTenantDenialCount, expectedCrossTenantDenials); assert.equal(confirmedRevocationsWithoutAgentReceipt, 0);`
+
 - [ ] **Step 2: Confirm RED.** Run `node --test tests/e2e/organizations-authority.test.ts` after the existing `pnpm --filter @tetherplane/e2e build:deps`. Expected: incomplete E2E flow fails on the intended identity/policy assertion, never because credentials or real devices are missing.
 - [ ] **Step 3: Integrate** full management→relay→agent harness with synthetic identities and signed policy vectors. Require exact device-local enforcement/acknowledgement evidence; connect no real Surface, Vaulter, RTX or production relay.
 - [ ] **Step 4: Confirm GREEN and broader gates.** Run `cargo fmt --all -- --check`, `cargo clippy --workspace --all-targets -- -D warnings`, `cargo test --workspace -- --test-threads=1`, `python scripts/check-no-unsafe.py`, `pnpm -r typecheck`, `pnpm -r test`, `pnpm -r build`. Obtain fresh Windows/Ubuntu hosted CI at one SHA; track any integration/profile gap as blocker.
