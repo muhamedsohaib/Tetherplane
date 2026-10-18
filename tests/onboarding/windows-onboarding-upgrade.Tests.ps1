@@ -40,8 +40,12 @@ function Set-UpgradeCandidate($Package) {
 }
 
 Describe "managed upgrade preservation and recovery" {
+    # Pester 3 retains function-mock wrappers until Describe exits. Reloading
+    # the implementation in BeforeEach would overwrite those wrappers and
+    # silently prevent the later race injections from running.
+    . (Join-Path $repo "scripts/setup-windows-device.ps1")
+    $script:upgradeRealManagedHash = (Get-Command Get-ManagedDeviceFileHash -CommandType Function).ScriptBlock
     BeforeEach {
-        . (Join-Path $repo "scripts/setup-windows-device.ps1")
         $script:upgradeRoot = Join-Path ([IO.Path]::GetTempPath()) ("tp-upgrade-" + [Guid]::NewGuid().ToString("N"))
         New-Item -ItemType Directory -Path $script:upgradeRoot | Out-Null
         $script:upgradePackage = New-TestPackage $script:upgradeRoot
@@ -187,7 +191,6 @@ Describe "managed upgrade preservation and recovery" {
         Install-ManagedDeviceFiles -PackagePath $script:upgradePackage -InstallPrefix $script:upgradeInstall | Out-Null
         $before = Get-UpgradeSnapshot $script:upgradeInstall
         Set-UpgradeCandidate $script:upgradePackage
-        $script:upgradeRealManagedHash = (Get-Command Get-ManagedDeviceFileHash -CommandType Function).ScriptBlock
         $script:upgradeLateWriteInjected = $false
         Mock Get-ManagedDeviceFileHash {
             $hash = & $script:upgradeRealManagedHash -LiteralPath $LiteralPath
@@ -217,7 +220,6 @@ Describe "managed upgrade preservation and recovery" {
     }
 
     It "retains a human write arriving after the final rollback deletion hash" {
-        $script:upgradeRealManagedHash = (Get-Command Get-ManagedDeviceFileHash -CommandType Function).ScriptBlock
         $script:upgradeRollbackStarted = $false
         $script:upgradeRollbackDestinationReads = 0
         $script:upgradeLateWriteInjected = $false
@@ -257,7 +259,6 @@ Describe "managed upgrade preservation and recovery" {
         Install-ManagedDeviceFiles -PackagePath $script:upgradePackage -InstallPrefix $script:upgradeInstall | Out-Null
         $before = Get-UpgradeSnapshot $script:upgradeInstall
         Set-UpgradeCandidate $script:upgradePackage
-        $script:upgradeRealManagedHash = (Get-Command Get-ManagedDeviceFileHash -CommandType Function).ScriptBlock
         $script:upgradeLateWriteInjected = $false
         $script:upgradeRacedJournalPath = ""
         Mock Get-ManagedDeviceFileHash {
@@ -333,7 +334,7 @@ Describe "managed upgrade preservation and recovery" {
         Install-ManagedDeviceFiles -PackagePath $script:upgradePackage -InstallPrefix $script:upgradeInstall | Out-Null
         $before = Get-UpgradeSnapshot $script:upgradeInstall
         Set-UpgradeCandidate $script:upgradePackage
-        $script:upgradeHashCommand = Get-Command Get-FileHash -CommandType Cmdlet
+        $script:upgradeHashCommand = Get-Command Get-FileHash -CommandType Cmdlet, Function
         $script:upgradeEditPending = $true
         Mock Get-FileHash {
             if ($script:upgradeEditPending -and [string]$LiteralPath -eq (Join-Path $script:upgradePackage "bin/tetherd.exe")) {

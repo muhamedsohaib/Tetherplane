@@ -186,7 +186,8 @@ Describe "trusted ZIP verification before package execution" {
         # Pester 3 and 4 run mocks called by another script in that script's
         # scope. Keep the injected boundary state in one cleaned-up fixture.
         $global:TetherplaneZipRaceFixture = @{
-            hash_command = Get-Command Get-FileHash -CommandType Cmdlet
+            # Windows PowerShell 5.1 exposes this as a function; Core uses a cmdlet.
+            hash_command = Get-Command Get-FileHash -CommandType Cmdlet, Function
             archive_path = $script:raceArchive
             replacement_path = $script:replacementArchive
             mutation_attempted = $false
