@@ -23,5 +23,12 @@ test-support = []
 tempfile = "3"
 tether-process-provider = { path = ".", features = ["test-support"] }
 
+[target.'cfg(windows)'.dependencies]
+sandboxrs-windows = "=0.1.1"
+
+[[test]]
+name = "windows_isolation"
+harness = false
+
 [lints]
 workspace = true
