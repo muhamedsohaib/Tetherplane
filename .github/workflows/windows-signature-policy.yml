@@ -7,17 +7,19 @@ on:
     branches:
       - "feature/windows-repeatable-onboarding-**"
     paths:
-      - "scripts/setup-windows-device.ps1"
-      - "scripts/package-windows-device-kit.ps1"
-      - "scripts/verify-windows-device-kit.ps1"
-      - "tests/onboarding/windows-onboarding-signing.Tests.ps1"
+      - "scripts/*windows*.ps1"
+      - "scripts/run-onboarding-tests.ps1"
+      - "tests/onboarding/**"
+      - ".github/workflows/windows-trusted-signing.yml"
+      - ".github/workflows/release.yml"
       - ".github/workflows/windows-signature-policy.yml"
   pull_request:
     paths:
-      - "scripts/setup-windows-device.ps1"
-      - "scripts/package-windows-device-kit.ps1"
-      - "scripts/verify-windows-device-kit.ps1"
-      - "tests/onboarding/windows-onboarding-signing.Tests.ps1"
+      - "scripts/*windows*.ps1"
+      - "scripts/run-onboarding-tests.ps1"
+      - "tests/onboarding/**"
+      - ".github/workflows/windows-trusted-signing.yml"
+      - ".github/workflows/release.yml"
       - ".github/workflows/windows-signature-policy.yml"
   workflow_dispatch:
 
@@ -28,8 +30,29 @@ jobs:
   signature-policy:
     runs-on: windows-latest
     timeout-minutes: 15
+    strategy:
+      fail-fast: false
+      matrix:
+        engine: [powershell.exe, pwsh.exe]
     steps:
-      - uses: actions/checkout@v4
-      - name: Verify signed/unsigned kit policy with isolated Pester fixtures
-        shell: powershell
-        run: powershell -NoProfile -ExecutionPolicy Bypass -File scripts/run-onboarding-tests.ps1 -TestsPath tests/onboarding/windows-onboarding-signing.Tests.ps1
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        with:
+          persist-credentials: false
+      - name: Verify signing, packaging, preservation, and runner failure behavior
+        shell: pwsh
+        env:
+          TEST_ENGINE: ${{ matrix.engine }}
+        run: |
+          $ErrorActionPreference = 'Stop'
+          $engine = (Get-Command $env:TEST_ENGINE -CommandType Application -ErrorAction Stop).Source
+          foreach ($suite in @(
+            'windows-onboarding-signing.Tests.ps1',
+            'windows-signature-enforcement.Tests.ps1',
+            'windows-signing-package.Tests.ps1',
+            'windows-signing-pipeline.Tests.ps1',
+            'windows-onboarding-upgrade.Tests.ps1',
+            'windows-onboarding-runner.Tests.ps1'
+          )) {
+            & $engine -NoProfile -NonInteractive -File scripts/run-onboarding-tests.ps1 -TestsPath "tests/onboarding/$suite"
+            if ($LASTEXITCODE -ne 0) { throw "Required onboarding suite failed: $suite" }
+          }

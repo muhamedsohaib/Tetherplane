@@ -5,47 +5,87 @@
 param(
     [Parameter(Mandatory = $true)][string]$ZipPath,
     [switch]$RequireTrustedSignature,
-    [string]$ExpectedPublisherSubject = ""
+    [string]$ExpectedPublisherSubject = "",
+    [string]$ExpectedSignerThumbprint = "",
+    [string]$ExpectedSourceCommit = "",
+    [string]$ExpectedZipSha256 = "",
+    [string]$SignToolPath = "",
+    [switch]$VerifyOnly
 )
 
 $ErrorActionPreference = "Stop"
 Set-StrictMode -Version Latest
 
+# Dot-sourced entrypoint parameters must never replace the caller's trust pins.
+# The verifier itself comes from the trusted checkout, never from the archive.
+$verificationPolicy = @{
+    RequireTrustedSignature = [bool]$RequireTrustedSignature
+    ExpectedPublisherSubject = $ExpectedPublisherSubject
+    ExpectedSignerThumbprint = $ExpectedSignerThumbprint
+    ExpectedSourceCommit = $ExpectedSourceCommit
+    SignToolPath = $SignToolPath
+}
+$verificationOnly = [bool]$VerifyOnly
+$trustedSetupPath = Join-Path $PSScriptRoot "setup-windows-device.ps1"
+. $trustedSetupPath
+
 $zip = (Resolve-Path -LiteralPath $ZipPath).Path
+Assert-DevicePathNotRedirected -LiteralPath $zip
 $sidecar = $zip + ".sha256"
 if (-not (Test-Path -LiteralPath $sidecar -PathType Leaf)) { throw "missing checksum file: $sidecar" }
 $recorded = ((Get-Content -LiteralPath $sidecar -Raw).Trim() -split "\s+")[0].ToLowerInvariant()
-$actual = (Get-FileHash -LiteralPath $zip -Algorithm SHA256).Hash.ToLowerInvariant()
-if ($recorded -ne $actual) { throw "zip SHA-256 does not match its checksum file" }
-
-$work = Join-Path ([IO.Path]::GetTempPath()) ("tp-kit-verify-" + [Guid]::NewGuid().ToString("N"))
-New-Item -ItemType Directory -Force -Path $work | Out-Null
+$work = ""
+$archiveStream = $null
+$archive = $null
 $agent = $null
 try {
+    # Keep one file handle from the hash through extraction. On Windows this
+    # sharing mode also denies writes/deletion while the archive is checked.
+    # Reopening the original path could otherwise extract a substituted ZIP
+    # while reporting the independently approved digest of its predecessor.
+    $archiveStream = [IO.File]::Open($zip, [IO.FileMode]::Open, [IO.FileAccess]::Read, [IO.FileShare]::Read)
+    $actual = (Get-FileHash -InputStream $archiveStream -Algorithm SHA256).Hash.ToLowerInvariant()
+    if ($recorded -notmatch "^[a-f0-9]{64}$" -or $recorded -ne $actual) { throw "zip SHA-256 does not match its checksum file" }
+    if ($ExpectedZipSha256 -and ($ExpectedZipSha256 -notmatch "^[a-fA-F0-9]{64}$" -or $actual -ine $ExpectedZipSha256)) {
+        throw "zip SHA-256 differs from the independently approved archive digest"
+    }
+    $work = Join-Path ([IO.Path]::GetTempPath()) ("tp-kit-verify-" + [Guid]::NewGuid().ToString("N"))
+    New-Item -ItemType Directory -Path $work | Out-Null
+    Add-Type -AssemblyName System.IO.Compression
     Add-Type -AssemblyName System.IO.Compression.FileSystem
     $kit = Join-Path $work "kit"
-    [IO.Compression.ZipFile]::ExtractToDirectory($zip, $kit)
+    $archiveStream.Position = 0
+    $archive = New-Object IO.Compression.ZipArchive($archiveStream, [IO.Compression.ZipArchiveMode]::Read, $true)
+    [IO.Compression.ZipFileExtensions]::ExtractToDirectory($archive, $kit)
+    $archive.Dispose()
+    $archive = $null
+    $archiveStream.Dispose()
+    $archiveStream = $null
 
     $setup = Join-Path $kit "setup-windows-device.ps1"
-    . $setup
-    $verified = Confirm-DevicePackage -PackagePath $kit -ExpectedPublisherSubject $ExpectedPublisherSubject
-    if ($RequireTrustedSignature -and [string]::IsNullOrWhiteSpace($ExpectedPublisherSubject)) { throw "independently confirmed -ExpectedPublisherSubject is required for signed verification" }
-    if ($RequireTrustedSignature -and -not $verified.trusted_signature_verified) {
-        throw "this is an unsigned development kit, not a trusted signed distribution"
+    $verified = Confirm-DevicePackage -PackagePath $kit @verificationPolicy
+    if ($verificationOnly) {
+        if (-not $verified.trusted_signature_verified) { throw "signature-only verification requires a trusted signed candidate" }
+        Write-Output ("TETHERPLANE_DEVICE_KIT_SIGNATURES_VERIFIED sha256={0} commit={1}" -f $actual, $verified.source_commit)
+        return
     }
     $manifest = Get-Content -LiteralPath (Join-Path $kit "manifest.json") -Raw | ConvertFrom-Json
 
     $install = Join-Path $work "install"
     $state = Join-Path $work "state"
-    $result = & $setup -DeviceId "KITVERIFY01" -InstallPrefix $install -StateDir $state -ExpectedPublisherSubject $ExpectedPublisherSubject | ConvertFrom-Json
+    # Only execute shipped setup after the trusted verifier has accepted it.
+    # Unsigned mode is deliberately limited to developer/test distributions.
+    $result = & $setup -DeviceId "KITVERIFY01" -InstallPrefix $install -StateDir $state -ExpectedPublisherSubject $verificationPolicy.ExpectedPublisherSubject -ExpectedSignerThumbprint $verificationPolicy.ExpectedSignerThumbprint -ExpectedSourceCommit $verificationPolicy.ExpectedSourceCommit -RequireTrustedSignature:$verificationPolicy.RequireTrustedSignature | ConvertFrom-Json
     if (-not $result.ok) { throw "setup from the unpacked kit did not report ok" }
 
     $installedAgent = Join-Path $install "bin\tetherd.exe"
     $shipped = (Get-FileHash -LiteralPath (Join-Path $kit "bin\tetherd.exe") -Algorithm SHA256).Hash
     $installedHash = (Get-FileHash -LiteralPath $installedAgent -Algorithm SHA256).Hash
     if ($shipped -ne $installedHash) { throw "installed agent differs from the shipped agent" }
-    if ($RequireTrustedSignature) {
-        $checked = Assert-TrustedDeviceSignature -Path $installedAgent -ExpectedPublisherSubject $ExpectedPublisherSubject -ExpectedSignerThumbprint ([string]$manifest.signature.signer_thumbprint)
+    if ($verified.trusted_signature_verified) {
+        foreach ($relative in $SignedDeviceCodeFiles) {
+            $checked = Assert-TrustedDeviceSignature -Path (Join-Path $install $relative) -ExpectedPublisherSubject $verificationPolicy.ExpectedPublisherSubject -ExpectedSignerThumbprint $verificationPolicy.ExpectedSignerThumbprint -SignToolPath $verificationPolicy.SignToolPath
+        }
     }
 
     $requestId = [Guid]::NewGuid().ToString()
@@ -81,10 +121,12 @@ try {
 
     Write-Output ("TETHERPLANE_DEVICE_KIT_VERIFIED sha256={0} commit={1} dirty={2} agent={3}/{4} policy={5}" -f $actual, $verified.source_commit, $manifest.source_tree_dirty, $status.data.os, $status.data.arch, $status.data.policy_mode)
 } finally {
+    if ($archive) { $archive.Dispose() }
+    if ($archiveStream) { $archiveStream.Dispose() }
     if ($agent) {
         if (-not $agent.HasExited) { try { $agent.Kill() } catch { } }
         try { [void]$agent.WaitForExit(5000) } catch { }
         $agent.Dispose()
     }
-    Remove-Item -LiteralPath $work -Recurse -Force -ErrorAction SilentlyContinue
+    if ($work) { Remove-Item -LiteralPath $work -Recurse -Force -ErrorAction SilentlyContinue }
 }

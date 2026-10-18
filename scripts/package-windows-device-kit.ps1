@@ -11,7 +11,13 @@ param(
     [switch]$Zip,
     [string]$Version = "0.1.0",
     [switch]$RequireTrustedSignature,
-    [string]$ExpectedPublisherSubject = ""
+    [string]$ExpectedPublisherSubject = "",
+    [string]$ExpectedSignerThumbprint = "",
+    [string]$ExpectedSourceCommit = "",
+    [string]$SignedPayloadPath = "",
+    [string]$SigningRequestPath = "",
+    [string]$ExpectedSigningRequestSha256 = "",
+    [string]$UnsignedPayloadPath = ""
 )
 
 $ErrorActionPreference = "Stop"
@@ -19,6 +25,41 @@ Set-StrictMode -Version Latest
 
 $repo = (Resolve-Path (Join-Path $PSScriptRoot "..")).Path
 $output = [IO.Path]::GetFullPath($OutputPath)
+$finalOutput = $output
+# Dot-sourcing loads only the reviewed checkout helper. Preserve caller policy
+# separately: the setup script has its own parameter defaults in this scope.
+$packagingPolicy = @{
+    RequireTrustedSignature = [bool]$RequireTrustedSignature
+    ExpectedPublisherSubject = $ExpectedPublisherSubject
+    ExpectedSignerThumbprint = $ExpectedSignerThumbprint
+    ExpectedSourceCommit = $ExpectedSourceCommit
+}
+. (Join-Path $repo "scripts/setup-windows-device.ps1")
+if ($packagingPolicy.RequireTrustedSignature) { . (Join-Path $repo "scripts/new-windows-signing-request.ps1") }
+Assert-DevicePathNotRedirected -LiteralPath $output
+if (-not $packagingPolicy.RequireTrustedSignature -and ($SignedPayloadPath -or
+    $SigningRequestPath -or $ExpectedSigningRequestSha256 -or $UnsignedPayloadPath -or
+    $packagingPolicy.ExpectedPublisherSubject -or $packagingPolicy.ExpectedSignerThumbprint -or
+    $packagingPolicy.ExpectedSourceCommit)) {
+    throw "signing inputs require -RequireTrustedSignature; select unsigned development packaging explicitly"
+}
+if ($packagingPolicy.RequireTrustedSignature) {
+    if ([string]::IsNullOrWhiteSpace($packagingPolicy.ExpectedPublisherSubject)) {
+        throw "signed distribution requires an independently approved publisher subject"
+    }
+    if ($packagingPolicy.ExpectedSignerThumbprint -notmatch "^[a-fA-F0-9]{40}$") {
+        throw "signed distribution requires an independently approved signer thumbprint"
+    }
+    if ($packagingPolicy.ExpectedSourceCommit -notmatch "^[a-fA-F0-9]{40}$") {
+        throw "signed distribution requires an independently selected source revision"
+    }
+    if (-not $SignedPayloadPath) { throw "signed distribution requires -SignedPayloadPath containing all five signed code files" }
+    if (-not $SigningRequestPath -or $ExpectedSigningRequestSha256 -notmatch "^[a-fA-F0-9]{64}$" -or -not $UnsignedPayloadPath) {
+        throw "signed distribution requires the independently hashed signing request and its original unsigned payload"
+    }
+    if (-not $SkipBuild) { throw "signed packaging requires -SkipBuild; build and sign before packaging final bytes" }
+    if (Test-Path -LiteralPath $output) { throw "signed output already exists; choose a new immutable artifact path" }
+}
 $existingRoot = Get-Item -LiteralPath $output -Force -ErrorAction SilentlyContinue
 if ($existingRoot -and (($existingRoot.Attributes -band [IO.FileAttributes]::ReparsePoint) -ne 0)) {
     throw "kit output directory is a redirected path; refusing to replace it: $output"
@@ -49,27 +90,51 @@ if (-not (Test-Path -LiteralPath $TetherdPath -PathType Leaf)) {
     throw "agent binary is missing: $TetherdPath (build it with: cargo build --release -p tetherd)"
 }
 
-$signedAgent = $null
-if ($RequireTrustedSignature) {
-    if ([string]::IsNullOrWhiteSpace($ExpectedPublisherSubject)) {
-        throw "signed distribution requires -ExpectedPublisherSubject from an independently approved signing identity"
-    }
-    $approvedPublisherSubject = $ExpectedPublisherSubject
-    . (Join-Path $repo "scripts\setup-windows-device.ps1") -ExpectedPublisherSubject $approvedPublisherSubject
-    $signedAgent = Assert-TrustedDeviceSignature -Path $TetherdPath -ExpectedPublisherSubject $approvedPublisherSubject
-}
-
 $sourceCommit = ""
 $sourceDirty = $true
-Push-Location $repo
-try {
-    $sourceCommit = ((git rev-parse HEAD) | Out-String).Trim()
-    $sourceDirty = [bool]((git status --porcelain) | Out-String).Trim()
-} finally {
-    Pop-Location
-}
+$sourceCommit = ((& git -C $repo rev-parse HEAD) | Out-String).Trim()
+if ($LASTEXITCODE -ne 0) { throw "could not read source revision from Git" }
+$sourceDirty = [bool](((& git -C $repo status --porcelain --untracked-files=normal) | Out-String).Trim())
+if ($LASTEXITCODE -ne 0) { throw "could not inspect source checkout status" }
 if ($sourceCommit -notmatch "^[0-9a-f]{40}$") {
     throw "could not determine the source commit; build the kit from a Git checkout"
+}
+
+function Assert-SignedPackagingSource {
+    $currentCommit = ((& git -C $repo rev-parse HEAD) | Out-String).Trim()
+    if ($LASTEXITCODE -ne 0 -or $currentCommit -ine $packagingPolicy.ExpectedSourceCommit) {
+        throw "checkout source revision differs from the independently selected source revision"
+    }
+    $status = ((& git -C $repo status --porcelain --untracked-files=normal) | Out-String).Trim()
+    if ($LASTEXITCODE -ne 0 -or $status) { throw "signed packaging requires a clean source checkout" }
+}
+
+if ($packagingPolicy.RequireTrustedSignature) {
+    Assert-SignedPackagingSource
+    $signingProvenance = @{
+        RequestPath = $SigningRequestPath
+        ExpectedRequestSha256 = $ExpectedSigningRequestSha256
+        ExpectedSourceCommit = $packagingPolicy.ExpectedSourceCommit
+        UnsignedPayloadPath = $UnsignedPayloadPath
+    }
+    Confirm-WindowsSignedPayload @signingProvenance -SignedPayloadPath $SignedPayloadPath | Out-Null
+    $signedPayload = [IO.Path]::GetFullPath($SignedPayloadPath)
+    Assert-DevicePathNotRedirected -LiteralPath $signedPayload
+    if (-not (Test-Path -LiteralPath $signedPayload -PathType Container)) { throw "SignedPayloadPath is missing" }
+    if ([IO.Path]::GetFullPath($TetherdPath) -ine [IO.Path]::GetFullPath((Join-Path $signedPayload "bin/tetherd.exe"))) {
+        throw "TetherdPath differs from the isolated signed payload binary"
+    }
+    foreach ($entry in @(Get-ChildItem -LiteralPath $signedPayload -Recurse -Force)) {
+        Assert-DevicePathNotRedirected -LiteralPath $entry.FullName
+        $relative = $entry.FullName.Substring($signedPayload.TrimEnd([IO.Path]::DirectorySeparatorChar).Length + 1).Replace("\", "/")
+        if (($entry.PSIsContainer -and @("bin", "launch") -cnotcontains $relative) -or
+            (-not $entry.PSIsContainer -and $SignedDeviceCodeFiles -cnotcontains $relative)) {
+            throw "unexpected signing payload entry: $relative"
+        }
+    }
+    foreach ($relative in $SignedDeviceCodeFiles) {
+        Assert-TrustedDeviceSignature -Path (Join-Path $signedPayload $relative) -ExpectedPublisherSubject $packagingPolicy.ExpectedPublisherSubject -ExpectedSignerThumbprint $packagingPolicy.ExpectedSignerThumbprint | Out-Null
+    }
 }
 
 function Assert-PriorDeviceKitIntegrity {
@@ -162,16 +227,40 @@ if (Test-Path -LiteralPath $output) {
     }
 }
 
+if ($packagingPolicy.RequireTrustedSignature) { $output = $finalOutput + ".staging-" + [Guid]::NewGuid().ToString("N") }
+try {
 New-Item -ItemType Directory -Force -Path (Join-Path $output "bin"),(Join-Path $output "launch") | Out-Null
-Copy-Item -LiteralPath $TetherdPath -Destination (Join-Path $output "bin\tetherd.exe")
-Copy-Item -LiteralPath (Join-Path $repo "packaging\windows\tetherplane-agent.ps1") -Destination (Join-Path $output "launch\tetherplane-agent.ps1")
-foreach ($script in @("setup-windows-device.ps1", "pair-windows-device.ps1", "doctor-tetherplane.ps1")) {
-    Copy-Item -LiteralPath (Join-Path $repo "scripts\$script") -Destination (Join-Path $output $script)
+if ($packagingPolicy.RequireTrustedSignature) {
+    foreach ($relative in $SignedDeviceCodeFiles) {
+        Copy-Item -LiteralPath (Join-Path $signedPayload $relative) -Destination (Join-Path $output $relative)
+    }
+    # Bind staged code to the independently hashed build request before adding
+    # package metadata. Retain byte hashes to prove it stays identical through
+    # final manifests and publication, when this folder also contains metadata.
+    Confirm-WindowsSignedPayload @signingProvenance -SignedPayloadPath $output | Out-Null
+    $stagedSignedHashes = @{}
+    foreach ($relative in $SignedDeviceCodeFiles) {
+        $stagedSignedHashes[$relative] = (Get-FileHash -LiteralPath (Join-Path $output $relative) -Algorithm SHA256).Hash
+    }
+} else {
+    Copy-Item -LiteralPath $TetherdPath -Destination (Join-Path $output "bin\tetherd.exe")
+    Copy-Item -LiteralPath (Join-Path $repo "packaging\windows\tetherplane-agent.ps1") -Destination (Join-Path $output "launch\tetherplane-agent.ps1")
+    foreach ($script in @("setup-windows-device.ps1", "pair-windows-device.ps1", "doctor-tetherplane.ps1")) {
+        Copy-Item -LiteralPath (Join-Path $repo "scripts\$script") -Destination (Join-Path $output $script)
+    }
 }
 Copy-Item -LiteralPath (Join-Path $repo "docs\remote\connection-profile.json") -Destination (Join-Path $output "connection-profile.json")
+if ($packagingPolicy.RequireTrustedSignature) {
+    foreach ($relative in $SignedDeviceCodeFiles) {
+        Assert-TrustedDeviceSignature -Path (Join-Path $output $relative) -ExpectedPublisherSubject $packagingPolicy.ExpectedPublisherSubject -ExpectedSignerThumbprint $packagingPolicy.ExpectedSignerThumbprint | Out-Null
+    }
+    Assert-SignedPackagingSource
+}
 
 $utf8NoBom = New-Object System.Text.UTF8Encoding($false)
-[IO.File]::WriteAllText((Join-Path $output "setup.cmd"), "@echo off`r`npowershell.exe -NoProfile -ExecutionPolicy Bypass -File `"%~dp0setup-windows-device.ps1`" %*`r`n", $utf8NoBom)
+if (-not $packagingPolicy.RequireTrustedSignature) {
+    [IO.File]::WriteAllText((Join-Path $output "setup.cmd"), "@echo off`r`npowershell.exe -NoProfile -ExecutionPolicy Bypass -File `"%~dp0setup-windows-device.ps1`" %*`r`n", $utf8NoBom)
+}
 
 $readme = @"
 Tetherplane device kit (Windows x64, per-user, no build tools needed)
@@ -203,6 +292,30 @@ New installs start with the least-privilege profile (device.status only, no
 allowed folders). Widening access is a deliberate local decision, never done by
 setup.
 "@
+if ($packagingPolicy.RequireTrustedSignature) {
+    $readme = @"
+Tetherplane signed Windows candidate (x64, per-user)
+
+Source revision: $sourceCommit
+All five shipped code files passed the independently approved publisher and
+certificate checks before this package's final checksums were produced.
+
+Before running any packaged code, obtain the publisher subject, certificate
+thumbprint, source revision, and ZIP SHA-256 from the independently approved
+workflow run. Use scripts/verify-windows-device-kit.ps1 from a trusted checkout
+with -VerifyOnly -RequireTrustedSignature and those independent values.
+
+Run setup-windows-device.ps1 with -Run, -RequireTrustedSignature,
+-ExpectedPublisherSubject, -ExpectedSignerThumbprint and -ExpectedSourceCommit.
+Use -Pair and then -Finalize only for the intended new device. Existing device
+upgrades preserve local identity and require complete ownership evidence.
+
+The target must already be on the relay's Tailscale tailnet. New devices keep
+the device.status-only profile and background_only operation. No credential
+is included. Do not disable Smart App Control. Valid Authenticode checks do
+not establish Smart App Control acceptance; record live target evidence.
+"@
+}
 [IO.File]::WriteAllText((Join-Path $output "README.txt"), ($readme -replace "`r?`n", "`r`n"), $utf8NoBom)
 
 $manifest = [ordered]@{
@@ -216,11 +329,13 @@ $manifest = [ordered]@{
     node_runtime_required = $false
     default_mcp_tools = @("device", "files", "process", "browser", "desktop", "batch")
 }
-if ($RequireTrustedSignature) {
+if ($packagingPolicy.RequireTrustedSignature) {
     $manifest["signature"] = [ordered]@{
-        scheme = "authenticode-public-trust-v1"
-        publisher_subject = $signedAgent.signer_subject
-        signer_thumbprint = $signedAgent.signer_thumbprint
+        scheme = "authenticode-public-trust-v2"
+        publisher_subject = $packagingPolicy.ExpectedPublisherSubject
+        signer_thumbprint = $packagingPolicy.ExpectedSignerThumbprint.ToUpperInvariant()
+        signed_files = $SignedDeviceCodeFiles
+        signing_request_sha256 = $ExpectedSigningRequestSha256.ToLowerInvariant()
     }
 }
 [IO.File]::WriteAllText((Join-Path $output "manifest.json"), (($manifest | ConvertTo-Json -Depth 4) + "`n"), $utf8NoBom)
@@ -233,6 +348,18 @@ foreach ($file in $files) {
     $hashLines += "$hash  $relative"
 }
 [IO.File]::WriteAllText((Join-Path $output "manifest.sha256"), (($hashLines -join "`n") + "`n"), $utf8NoBom)
+
+if ($packagingPolicy.RequireTrustedSignature) {
+    Confirm-DevicePackage -PackagePath $output -RequireTrustedSignature -ExpectedPublisherSubject $packagingPolicy.ExpectedPublisherSubject -ExpectedSignerThumbprint $packagingPolicy.ExpectedSignerThumbprint -ExpectedSourceCommit $packagingPolicy.ExpectedSourceCommit | Out-Null
+    foreach ($relative in $SignedDeviceCodeFiles) {
+        if ((Get-FileHash -LiteralPath (Join-Path $output $relative) -Algorithm SHA256).Hash -cne $stagedSignedHashes[$relative]) {
+            throw "staged code changed after its signing request was verified"
+        }
+    }
+    Assert-SignedPackagingSource
+    [IO.Directory]::Move($output, $finalOutput)
+    $output = $finalOutput
+}
 
 if ($Zip) {
     Add-Type -AssemblyName System.IO.Compression
@@ -262,3 +389,8 @@ if ($Zip) {
     Write-Output "TETHERPLANE_DEVICE_KIT_ZIP $zipPath"
 }
 Write-Output "TETHERPLANE_DEVICE_KIT_OK $output"
+} finally {
+    if ($packagingPolicy.RequireTrustedSignature -and $output -ne $finalOutput -and (Test-Path -LiteralPath $output)) {
+        Remove-Item -LiteralPath $output -Recurse -Force
+    }
+}

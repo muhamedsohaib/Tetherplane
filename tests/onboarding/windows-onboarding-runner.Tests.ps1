@@ -6,7 +6,9 @@ function Invoke-Runner($testsPath, [switch]$AllowInconclusive) {
     $errFile = Join-Path $testsPath "..\runner-err.txt"
     $arguments = '-NoProfile -NonInteractive -ExecutionPolicy Bypass -File "{0}" -TestsPath "{1}"' -f $runner, $testsPath
     if ($AllowInconclusive) { $arguments += " -AllowInconclusive" }
-    $process = Start-Process -FilePath "powershell.exe" -ArgumentList $arguments -RedirectStandardOutput $outFile -RedirectStandardError $errFile -WindowStyle Hidden -PassThru
+    # Exercise the same PowerShell edition as this suite, including Core.
+    $engine = (Get-Process -Id $PID).Path
+    $process = Start-Process -FilePath $engine -ArgumentList $arguments -RedirectStandardOutput $outFile -RedirectStandardError $errFile -PassThru
     $null = $process.Handle
     if (-not $process.WaitForExit(180000)) {
         try { $process.Kill() } catch { }

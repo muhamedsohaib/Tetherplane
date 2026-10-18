@@ -1,6 +1,8 @@
 # Runs every onboarding Pester suite and exits nonzero from FailedCount.
 #
-# Pester 3.4 is required (the suites use its Should syntax). This entrypoint
+# Windows PowerShell uses its pinned Pester 3.4 suite. PowerShell Core uses
+# Pester 4.10.1, which supports the same assertion syntax without removed WMI
+# cmdlets. This entrypoint
 # never trusts Invoke-Pester's pipeline or $LASTEXITCODE: it inspects the
 # returned result object, and also fails when no test ran or a required
 # acceptance test finished inconclusive/pending.
@@ -21,12 +23,14 @@ if ($PSVersionTable.PSEdition -eq "Desktop") {
     }
 }
 
-$available = @(Get-Module -ListAvailable -Name Pester | Where-Object { $_.Version -eq [Version]"3.4.0" })
+$pesterVersion = if ($PSVersionTable.PSEdition -eq "Desktop") { "3.4.0" } else { "4.10.1" }
+$available = @(Get-Module -ListAvailable -Name Pester | Where-Object { $_.Version -eq [Version]$pesterVersion })
 if ($available.Count -eq 0) {
-    Write-Output "Pester 3.4.0 is not installed; installing it for the current user."
-    Install-Module -Name Pester -RequiredVersion 3.4.0 -Scope CurrentUser -Force -SkipPublisherCheck
+    Write-Output "Pester $pesterVersion is not installed; installing it for the current user."
+    Install-Module -Name Pester -RequiredVersion $pesterVersion -Scope CurrentUser -Force -SkipPublisherCheck
 }
-Import-Module Pester -RequiredVersion 3.4.0 -Force
+Import-Module Pester -RequiredVersion $pesterVersion -Force
+Write-Output ("ONBOARDING_TEST_RUNTIME powershell={0} pester={1}" -f $PSVersionTable.PSVersion, $pesterVersion)
 
 $resolved = (Resolve-Path -LiteralPath $TestsPath).Path
 $result = Invoke-Pester -Path $resolved -PassThru
