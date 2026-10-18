@@ -1,0 +1,46 @@
+name: Windows Store MSIX feasibility (no signing)
+on:
+  push:
+    branches:
+      - "feature/windows-store-msix-feasibility-*"
+  pull_request:
+    paths:
+      - "scripts/package-windows-store-msix.ps1"
+      - "tests/release/windows-msix-feasibility.ps1"
+      - "tests/release/windows-msix-candidate-contract.ps1"
+      - "scripts/build-windows-store-candidate.ps1"
+      - ".github/workflows/windows-msix-feasibility.yml"
+permissions:
+  contents: read
+jobs:
+  package:
+    runs-on: windows-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v4
+      - name: Fail-closed MSIX source preflight
+        shell: powershell
+        run: powershell -NoProfile -File tests/release/windows-msix-feasibility.ps1 -PreflightOnly
+      - name: Source-bound artifact contract (fail first)
+        shell: powershell
+        run: powershell -NoProfile -File tests/release/windows-msix-candidate-contract.ps1 -PreflightOnly
+      - uses: dtolnay/rust-toolchain@stable
+      - name: Build native agent
+        shell: powershell
+        run: cargo build --release -p tetherd
+      - name: Build and inspect unsigned MSIX candidate
+        shell: powershell
+        run: powershell -NoProfile -File tests/release/windows-msix-feasibility.ps1 -TetherdPath target\release\tetherd.exe
+      - name: Produce immutable unsigned Store candidate and independently verify
+        shell: powershell
+        run: |
+          powershell.exe -NoProfile -File tests/release/windows-msix-candidate-contract.ps1 -TetherdPath target\release\tetherd.exe -OutputDirectory "$env:RUNNER_TEMP\tetherplane-unsigned-store-candidate" -SourceCommit "$env:GITHUB_SHA"
+          if ($LASTEXITCODE -ne 0) { throw "source-bound Store candidate verification failed" }
+      - name: Upload UNSIGNED MSIX Store proof only (NOT installable)
+        uses: actions/upload-artifact@v4
+        with:
+          name: tetherplane-UNSIGNED-msix-store-proof-${{ github.sha }}
+          path: ${{ runner.temp }}/tetherplane-unsigned-store-candidate/*
+          if-no-files-found: error
+          retention-days: 7
+      # No install, certificate enrollment, public release, device, or relay changes.
