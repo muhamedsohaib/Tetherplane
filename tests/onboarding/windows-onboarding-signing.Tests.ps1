@@ -105,6 +105,10 @@ Describe "publicly trusted Authenticode gate" {
     }
 
     It "rejects a forged signed manifest even when all SHA-256 entries match" {
+        # Explicitly reset the signature mock; Pester 3 mocks can survive dot-sourcing.
+        Mock Get-AuthenticodeSignature {
+            [pscustomobject]@{ Status = "NotSigned"; SignatureType = "None"; SignerCertificate = $null; TimeStamperCertificate = $null }
+        }
         $kit = New-TestPackage $script:root
         $manifestPath = Join-Path $kit "manifest.json"
         $manifest = Get-Content -LiteralPath $manifestPath -Raw | ConvertFrom-Json
