@@ -27,12 +27,20 @@
 //!   the child suspended, attaches the Job Object, and resumes only afterwards
 //!   (the crate's backend performs that ordering and terminates and reaps on
 //!   every failure path);
-//! - clears the environment and passes only a minimal explicit set (system
-//!   root and `windir`, system drive, a system-directory `PATH`, and
-//!   `TEMP`/`TMP` pointed at the scratch root; the crate additionally adds
+//! - clears the environment and passes only a fixed explicit allowlist: the
+//!   system root and `windir`, system drive, a system-directory `PATH`, and
+//!   `TEMP`/`TMP` pointed at the scratch root, plus the remaining system and
+//!   user-profile variables that the pinned crate itself supplies for cleared
+//!   blocks (its guard adds them only when a cleared block would otherwise be
+//!   empty; this consumer's block never is, so the same vetted names are
+//!   provided here — without them `CreateProcessW` fails with Win32 error 203
+//!   before any child is created; see the `ESSENTIAL_ENVIRONMENT_VARIABLES`
+//!   constant below).
+//!   Values are read from this agent's environment one fixed name at a time;
+//!   no other host environment value is inherited and the crate's own probe
+//!   variable cannot leak into sandboxed children. The crate additionally adds
 //!   hidden drive-current-directory markers, which carry no credential
-//!   material), so host environment values and the crate's own probe variable
-//!   cannot leak into sandboxed children;
+//!   material;
 //! - reports every setup or launch failure as `capability_unavailable` with
 //!   zero fallback to ambient spawning, a shell, or another backend.
 //!
@@ -299,9 +307,56 @@ fn validate_roots(config: &WindowsSandboxConfig) -> Result<(), CapabilityError> 
     Ok(())
 }
 
-/// Explicit minimal environment for sandboxed children: system locations only,
-/// with `TEMP`/`TMP` redirected into the private scratch root. No inherited
-/// host environment is passed through. The crate additionally appends hidden
+/// Environment variable names the pinned crate's `AppContainer` backend itself
+/// supplies for a cleared block (`sandboxrs-windows` 0.1.1
+/// `essential_env_entries()`, following upstream commit `693e7f1d`). The
+/// crate's guard adds that list only when a cleared block would otherwise be
+/// empty; this consumer's block never is (the crate seeds it with the host's
+/// hidden drive markers and this module supplies the sandboxed overrides), so
+/// the names are provided here instead. Without them `CreateProcessW` fails
+/// with Win32 error 203 (`ERROR_ENVVAR_NOT_FOUND`; see Microsoft KB 305136,
+/// `CreateEnvironmentBlock` and unloadable user environment) before any child
+/// is created. Values are read from the host environment one fixed name at a
+/// time — nothing outside this list is ever passed.
+const ESSENTIAL_ENVIRONMENT_VARIABLES: [&str; 30] = [
+    "SystemRoot",
+    "windir",
+    "SystemDrive",
+    "ComSpec",
+    "PATHEXT",
+    "TEMP",
+    "TMP",
+    "PATH",
+    "USERPROFILE",
+    "HOMEDRIVE",
+    "HOMEPATH",
+    "ALLUSERSPROFILE",
+    "APPDATA",
+    "LOCALAPPDATA",
+    "PROGRAMDATA",
+    "PROGRAMFILES",
+    "PROGRAMFILES(X86)",
+    "CommonProgramFiles",
+    "CommonProgramFiles(X86)",
+    "OS",
+    "NUMBER_OF_PROCESSORS",
+    "PROCESSOR_ARCHITECTURE",
+    "PROCESSOR_IDENTIFIER",
+    "PROCESSOR_LEVEL",
+    "PROCESSOR_REVISION",
+    "PUBLIC",
+    "COMPUTERNAME",
+    "USERNAME",
+    "USERDOMAIN",
+    "SESSIONNAME",
+];
+
+/// Explicit minimal environment for sandboxed children: the sandboxed
+/// overrides (`TEMP`/`TMP` redirected into the private scratch root, a
+/// system-directory-only `PATH`, the system root and drive) plus the remaining
+/// vetted essential names from [`ESSENTIAL_ENVIRONMENT_VARIABLES`] (host
+/// values read by name; a missing name is skipped). No other host environment
+/// value is passed through. The crate additionally appends hidden
 /// drive-current-directory markers (`=X:`) that its public API cannot
 /// suppress; they carry host drive paths, not credential material.
 fn minimal_environment(
@@ -322,14 +377,26 @@ fn minimal_environment(
     let system32 = format!("{system_root}\\System32");
     let scratch = config.scratch_path.display().to_string();
 
-    Ok(vec![
+    let mut environment = vec![
         ("SystemRoot".to_owned(), system_root.clone()),
         ("windir".to_owned(), system_root.clone()),
         ("SystemDrive".to_owned(), system_drive),
         ("PATH".to_owned(), format!("{system32};{system_root}")),
         ("TEMP".to_owned(), scratch.clone()),
         ("TMP".to_owned(), scratch),
-    ])
+    ];
+    for name in ESSENTIAL_ENVIRONMENT_VARIABLES {
+        if environment
+            .iter()
+            .any(|(existing, _)| existing.eq_ignore_ascii_case(name))
+        {
+            continue;
+        }
+        if let Some(value) = std::env::var_os(name) {
+            environment.push((name.to_owned(), value.to_string_lossy().into_owned()));
+        }
+    }
+    Ok(environment)
 }
 
 /// OS build string taken from the local operating system for evidence.
@@ -612,5 +679,159 @@ fn provider_error(message: &str) -> CapabilityError {
         message: message.to_owned(),
         recovery_hint: None,
         details: serde_json::json!({}),
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    //! Pure construction tests for the cleared sandbox environment.
+    //!
+    //! These tests never launch a sandbox and never execute a child process:
+    //! they build the explicit environment list and assert its contract. The
+    //! related native failure (`CreateProcessW` Win32 error 203 before any
+    //! child is created) is only adjudicated by the frozen `windows_isolation`
+    //! suite on the hosted runner, never on a developer desktop.
+
+    use std::collections::{BTreeMap, BTreeSet};
+
+    use super::{PathBuf, WindowsSandboxConfig, minimal_environment};
+
+    /// Independent copy of the vetted essential environment names
+    /// (`sandboxrs-windows` 0.1.1 `essential_env_entries()`, following
+    /// upstream commit `693e7f1d`). Duplicated here on purpose: the test pins
+    /// the required contract while the implementation mirrors the crate. An
+    /// extra implementation name fails the allowlist check below; a missing
+    /// one fails the host-supply check whenever the host provides that name.
+    const VETTED_ESSENTIAL_NAMES: [&str; 30] = [
+        "SystemRoot",
+        "windir",
+        "SystemDrive",
+        "ComSpec",
+        "PATHEXT",
+        "TEMP",
+        "TMP",
+        "PATH",
+        "USERPROFILE",
+        "HOMEDRIVE",
+        "HOMEPATH",
+        "ALLUSERSPROFILE",
+        "APPDATA",
+        "LOCALAPPDATA",
+        "PROGRAMDATA",
+        "PROGRAMFILES",
+        "PROGRAMFILES(X86)",
+        "CommonProgramFiles",
+        "CommonProgramFiles(X86)",
+        "OS",
+        "NUMBER_OF_PROCESSORS",
+        "PROCESSOR_ARCHITECTURE",
+        "PROCESSOR_IDENTIFIER",
+        "PROCESSOR_LEVEL",
+        "PROCESSOR_REVISION",
+        "PUBLIC",
+        "COMPUTERNAME",
+        "USERNAME",
+        "USERDOMAIN",
+        "SESSIONNAME",
+    ];
+
+    /// The names this module always overrides with sandboxed values; host
+    /// values for these names are never passed through.
+    const SANDBOXED_OVERRIDES: [&str; 6] =
+        ["SystemRoot", "windir", "SystemDrive", "PATH", "TEMP", "TMP"];
+
+    fn fixture_config() -> WindowsSandboxConfig {
+        // The environment builder only reads `scratch_path` as a string; no
+        // filesystem access happens in these tests.
+        WindowsSandboxConfig {
+            workspace_resource_id: "fixture-workspace".to_owned(),
+            workspace_path: PathBuf::from(r"C:\tether-fixture\workspace"),
+            scratch_resource_id: "fixture-scratch".to_owned(),
+            scratch_path: PathBuf::from(r"C:\tether-fixture\scratch"),
+        }
+    }
+
+    fn built_environment() -> BTreeMap<String, String> {
+        minimal_environment(&fixture_config())
+            .expect("the minimal environment builds when SystemRoot is present")
+            .into_iter()
+            .collect()
+    }
+
+    /// Every vetted essential name present on the host must be supplied from
+    /// the host environment (except the sandboxed overrides). Before the
+    /// 203-defect fix this fails: the block only carried the overrides, so a
+    /// cleared `AppContainer` launch could not resolve the user environment.
+    #[test]
+    fn essential_variables_present_on_the_host_are_supplied() {
+        let environment = built_environment();
+        let mut checked = 0usize;
+        for name in VETTED_ESSENTIAL_NAMES {
+            if SANDBOXED_OVERRIDES.contains(&name) {
+                continue;
+            }
+            if let Some(value) = std::env::var_os(name) {
+                let value = value.to_string_lossy().into_owned();
+                assert_eq!(
+                    environment.get(name),
+                    Some(&value),
+                    "{name} is set on the host and must be supplied in the cleared environment"
+                );
+                checked += 1;
+            }
+        }
+        assert!(
+            checked >= 5,
+            "expected the host to provide several essential variables; checked {checked}"
+        );
+    }
+
+    /// The explicit sandboxed values must survive the allowlist extension:
+    /// `TEMP`/`TMP` point at the private scratch root, the system paths at the
+    /// host system locations, and the exactly derived system drive.
+    #[test]
+    fn explicit_sandboxed_overrides_are_never_replaced_by_host_values() {
+        let environment = built_environment();
+        let config = fixture_config();
+        let scratch = config.scratch_path.display().to_string();
+        let system_root =
+            std::env::var("SystemRoot").expect("SystemRoot is present on Windows hosts");
+        let system_drive = std::env::var("SystemDrive")
+            .ok()
+            .filter(|value| !value.is_empty())
+            .unwrap_or_else(|| system_root.chars().take(2).collect());
+        let expected = [
+            ("SystemRoot", system_root.clone()),
+            ("windir", system_root.clone()),
+            ("SystemDrive", system_drive),
+            ("PATH", format!("{system_root}\\System32;{system_root}")),
+            ("TEMP", scratch.clone()),
+            ("TMP", scratch),
+        ];
+        for (name, value) in expected {
+            assert_eq!(
+                environment.get(name),
+                Some(&value),
+                "{name} must keep its explicit sandboxed value"
+            );
+        }
+    }
+
+    /// No name outside the vetted allowlist may enter the cleared environment
+    /// (no blanket host inheritance), and no name may appear twice.
+    #[test]
+    fn only_the_fixed_allowlist_enters_the_cleared_environment() {
+        let environment = built_environment();
+        let mut seen = BTreeSet::new();
+        for name in environment.keys() {
+            assert!(
+                VETTED_ESSENTIAL_NAMES.contains(&name.as_str()),
+                "unexpected environment name in the cleared block: {name}"
+            );
+            assert!(
+                seen.insert(name.to_ascii_uppercase()),
+                "duplicate environment name in the cleared block: {name}"
+            );
+        }
     }
 }
