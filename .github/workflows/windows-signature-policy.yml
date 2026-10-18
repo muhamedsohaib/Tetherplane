@@ -1,0 +1,35 @@
+name: Windows Authenticode policy gate
+
+# Fast, isolated Pester tests: never signs, publishes, installs on a personal
+# computer, or changes Windows application-control policy.
+on:
+  push:
+    branches:
+      - "feature/windows-repeatable-onboarding-**"
+    paths:
+      - "scripts/setup-windows-device.ps1"
+      - "scripts/package-windows-device-kit.ps1"
+      - "scripts/verify-windows-device-kit.ps1"
+      - "tests/onboarding/windows-onboarding-signing.Tests.ps1"
+      - ".github/workflows/windows-signature-policy.yml"
+  pull_request:
+    paths:
+      - "scripts/setup-windows-device.ps1"
+      - "scripts/package-windows-device-kit.ps1"
+      - "scripts/verify-windows-device-kit.ps1"
+      - "tests/onboarding/windows-onboarding-signing.Tests.ps1"
+      - ".github/workflows/windows-signature-policy.yml"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  signature-policy:
+    runs-on: windows-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+      - name: Verify signed/unsigned kit policy with isolated Pester fixtures
+        shell: powershell
+        run: powershell -NoProfile -ExecutionPolicy Bypass -File scripts/run-onboarding-tests.ps1 -TestsPath tests/onboarding/windows-onboarding-signing.Tests.ps1
