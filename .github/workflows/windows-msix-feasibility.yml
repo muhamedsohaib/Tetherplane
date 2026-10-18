@@ -9,6 +9,7 @@ on:
       - "scripts/package-windows-store-msix.ps1"
       - "distribution/windows-store/**"
       - "tests/release/windows-msix-feasibility.ps1"
+      - "tests/release/windows-msix-brand-assets.Tests.ps1"
       - "tests/release/windows-msix-candidate-contract.ps1"
       - "scripts/build-windows-store-candidate.ps1"
       - ".github/workflows/windows-msix-feasibility.yml"
@@ -33,6 +34,9 @@ jobs:
       - name: Build and inspect unsigned MSIX candidate
         shell: powershell
         run: powershell -NoProfile -File tests/release/windows-msix-feasibility.ps1 -TetherdPath target\release\tetherd.exe
+      - name: Verify original logo tile embedding (test first)
+        shell: powershell
+        run: powershell -NoProfile -File tests/release/windows-msix-brand-assets.Tests.ps1 -TetherdPath target\release\tetherd.exe
       - name: Produce immutable unsigned Store candidate and independently verify
         shell: powershell
         run: |
