@@ -9,6 +9,10 @@ mod output;
 mod session;
 #[cfg(feature = "test-support")]
 pub mod test_support;
+// Windows isolation backend (Task 3): an `AppContainer`-backed
+// `IsolatedLauncher` that stays fail-closed until a runtime injects it.
+#[cfg(windows)]
+pub mod windows_sandbox;
 
 pub use isolation::{
     CommissionedLaunchAuthorizer, DenyUnsupportedLauncher, IsolatedLauncher,

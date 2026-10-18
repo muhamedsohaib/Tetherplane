@@ -1,4 +1,4 @@
-#[cfg(feature = "test-support")]
+#[cfg(any(feature = "test-support", windows))]
 use std::io::Read;
 use std::io::{self, Write};
 #[cfg(feature = "test-support")]
@@ -23,6 +23,8 @@ use tokio::task::JoinHandle;
 use tokio::time;
 
 use crate::output::OutputBuffer;
+#[cfg(windows)]
+use crate::windows_sandbox::SandboxProcess;
 
 #[derive(Clone, Copy)]
 struct TerminalExit {
@@ -30,9 +32,9 @@ struct TerminalExit {
     reason: &'static str,
 }
 
-// Both variants are constructed only by the feature-gated fixture spawn path.
-// Production builds keep the shared status/terminate/input logic but can never
-// create a session until a verified isolation backend lands in a later task.
+// The piped and PTY variants are constructed only by the feature-gated fixture
+// spawn path; the Windows sandbox variant only by `windows_sandbox.rs`. The
+// shared status/terminate/input logic serves all three backends.
 #[cfg_attr(not(feature = "test-support"), allow(dead_code))]
 enum ProcessBackend {
     Piped(Box<AsyncMutex<Child>>),
@@ -41,6 +43,11 @@ enum ProcessBackend {
         writer: Arc<Mutex<Option<Box<dyn Write + Send>>>>,
         master: Mutex<Option<Box<dyn MasterPty + Send>>>,
     },
+    /// Windows `AppContainer` session: the sandboxed child owns raw OS handles
+    /// and stays on its dedicated owner thread, so the session only carries
+    /// requests to that thread.
+    #[cfg(windows)]
+    Sandbox(SandboxProcess),
 }
 
 #[cfg(feature = "test-support")]
@@ -143,24 +150,26 @@ impl ProcessSession {
                     .unwrap_or_else(std::sync::PoisonError::into_inner)
                     .take();
             }
+            #[cfg(windows)]
+            ProcessBackend::Sandbox(process) => process.close_input(),
         }
     }
 
     async fn force_kill(&self) -> Result<(), CapabilityError> {
-        let pid = self.pid;
-        tokio::task::spawn_blocking(move || kill_descendants(pid))
-            .await
-            .map_err(|error| {
-                provider_error_message(&format!("process-tree kill task failed: {error}"), "")
-            })?;
-
         match &self.backend {
+            // The AppContainer backend owns the whole sandboxed process tree
+            // through its Job Object; PID-based descendant discovery must not
+            // be used for this variant.
+            #[cfg(windows)]
+            ProcessBackend::Sandbox(process) => process.terminate().await,
             ProcessBackend::Piped(child) => {
+                kill_descendants_blocking(self.pid).await?;
                 child.lock().await.start_kill().map_err(|error| {
                     provider_error("failed to force terminate process", "", &error)
                 })
             }
             ProcessBackend::Pty { child, .. } => {
+                kill_descendants_blocking(self.pid).await?;
                 let child = Arc::clone(child);
                 tokio::task::spawn_blocking(move || {
                     child
@@ -221,6 +230,10 @@ impl ProcessSession {
                 })?
                 .map_err(|error| provider_error("failed writing PTY input", "", &error))?;
             }
+            #[cfg(windows)]
+            ProcessBackend::Sandbox(process) => {
+                process.write_input(data).await?;
+            }
         }
         Ok(data.len())
     }
@@ -263,6 +276,11 @@ impl ProcessSession {
                     None => return Ok((true, None)),
                 }
             }
+            #[cfg(windows)]
+            ProcessBackend::Sandbox(process) => match process.try_exit_code().await? {
+                Some(code) => Some(i64::from(code)),
+                None => return Ok((true, None)),
+            },
         };
 
         self.set_terminal(exit_code, "exited");
@@ -455,6 +473,68 @@ impl ProcessSession {
             pid: spawned.pid,
         })
     }
+}
+
+#[cfg(windows)]
+impl ProcessSession {
+    /// Wraps an already-launched Windows sandboxed child. Called only by
+    /// `windows_sandbox.rs`: the child itself stays on its owner thread and is
+    /// reached through the supplied [`SandboxProcess`] handle.
+    pub(crate) fn from_sandbox(
+        pid: u32,
+        process: SandboxProcess,
+        stdout: Option<Box<dyn Read + Send>>,
+        stderr: Option<Box<dyn Read + Send>>,
+    ) -> Self {
+        let stdout_buffer = Arc::new(OutputBuffer::new());
+        let stderr_buffer = Arc::new(OutputBuffer::new());
+        let mut readers = Vec::new();
+        if let Some(reader) = stdout {
+            let output = Arc::clone(&stdout_buffer);
+            readers.push(tokio::task::spawn_blocking(move || {
+                pump_blocking_output(reader, &output)
+            }));
+        }
+        if let Some(reader) = stderr {
+            let output = Arc::clone(&stderr_buffer);
+            readers.push(tokio::task::spawn_blocking(move || {
+                pump_blocking_output(reader, &output)
+            }));
+        }
+
+        Self {
+            backend: ProcessBackend::Sandbox(process),
+            stdout: stdout_buffer,
+            stderr: stderr_buffer,
+            stdout_cursor: Mutex::new(0),
+            stderr_cursor: Mutex::new(0),
+            terminal: Mutex::new(None),
+            readers: AsyncMutex::new(readers),
+            pid,
+        }
+    }
+}
+
+/// Drains a blocking sandboxed-stdio reader into the bounded output buffer,
+/// mirroring the async pump used for the fixture backends.
+#[cfg(windows)]
+fn pump_blocking_output(mut reader: Box<dyn Read + Send>, output: &OutputBuffer) -> io::Result<()> {
+    let mut chunk = [0_u8; 4096];
+    loop {
+        let read = reader.read(&mut chunk)?;
+        if read == 0 {
+            return Ok(());
+        }
+        output.append(&chunk[..read]);
+    }
+}
+
+async fn kill_descendants_blocking(pid: u32) -> Result<(), CapabilityError> {
+    tokio::task::spawn_blocking(move || kill_descendants(pid))
+        .await
+        .map_err(|error| {
+            provider_error_message(&format!("process-tree kill task failed: {error}"), "")
+        })
 }
 
 fn kill_descendants(root_pid: u32) {
