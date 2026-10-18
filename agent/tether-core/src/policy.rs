@@ -4,8 +4,12 @@ use std::fs;
 use std::path::{Component, Path, PathBuf};
 
 use serde_json::json;
+use uuid::Uuid;
 
-use crate::{CapabilityError, ErrorCode, InvocationEnvelope, PrincipalProfile, ResourceOrigin};
+use crate::{
+    CapabilityError, ErrorCode, ExecutionBinding, ExecutionProfile, ExecutionResourceCeiling,
+    InvocationEnvelope, PrincipalProfile, ResourceOrigin,
+};
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub enum SideEffectClass {
@@ -46,6 +50,10 @@ pub struct LocalPolicyConfig {
     pub background_only: bool,
     pub operation_classes: HashMap<String, SideEffectClass>,
     pub principal: Option<PrincipalProfile>,
+    /// Trusted local commissioning only; request arguments cannot set authority.
+    pub execution_binding: Option<ExecutionBinding>,
+    pub execution_grants: Vec<ExecutionProfile>,
+    pub execution_ceiling: Option<ExecutionResourceCeiling>,
 }
 
 impl LocalPolicyConfig {
@@ -66,6 +74,9 @@ impl LocalPolicyConfig {
             background_only: true,
             operation_classes,
             principal: None,
+            execution_binding: None,
+            execution_grants: vec![],
+            execution_ceiling: None,
         }
     }
 
@@ -73,6 +84,60 @@ impl LocalPolicyConfig {
     pub fn with_principal(mut self, principal: PrincipalProfile) -> Self {
         self.principal = Some(principal);
         self
+    }
+
+    /// Installs local commissioning authority, independently of OS support.
+    /// Call only from trusted local configuration, never from an invocation.
+    #[must_use]
+    pub fn with_execution_authority(
+        mut self,
+        binding: ExecutionBinding,
+        complete_grants: Vec<ExecutionProfile>,
+        ceiling: ExecutionResourceCeiling,
+    ) -> Self {
+        self.execution_binding = Some(binding);
+        self.execution_grants = complete_grants;
+        self.execution_ceiling = Some(ceiling);
+        self
+    }
+}
+
+/// Broker-issued configuration authorization, not proof of OS containment.
+/// This value is request-bound and cannot be constructed from caller JSON.
+///
+/// ```compile_fail,E0277
+/// use tether_core::AuthorizedLaunch;
+/// let forged: AuthorizedLaunch = serde_json::from_str("{}").unwrap();
+/// ```
+///
+/// ```compile_fail,E0277
+/// use tether_core::AuthorizedLaunch;
+/// fn serialize(launch: &AuthorizedLaunch) {
+///     serde_json::to_value(launch).unwrap();
+/// }
+/// ```
+///
+/// ```compile_fail,E0451
+/// use tether_core::{AuthorizedLaunch, ExecutionProfile};
+/// fn forge(profile: ExecutionProfile) -> AuthorizedLaunch {
+///     AuthorizedLaunch { profile, request_id: uuid::Uuid::new_v4() }
+/// }
+/// ```
+#[derive(Debug)]
+pub struct AuthorizedLaunch {
+    profile: ExecutionProfile,
+    request_id: Uuid,
+}
+
+impl AuthorizedLaunch {
+    #[must_use]
+    pub fn profile(&self) -> &ExecutionProfile {
+        &self.profile
+    }
+
+    #[must_use]
+    pub fn request_id(&self) -> Uuid {
+        self.request_id
     }
 }
 
@@ -85,6 +150,77 @@ impl LocalPolicyBroker {
     #[must_use]
     pub fn new(config: LocalPolicyConfig) -> Self {
         Self { config }
+    }
+
+    /// Authorizes a complete restricted profile against trusted local authority.
+    /// Caller assertions of isolation or identity in arguments have no authority.
+    /// A provider must separately establish OS containment before execution.
+    ///
+    /// # Errors
+    /// Returns `permission_denied` for absent or mismatched authority, unsupported
+    /// requirements, or local policy that does not independently allow execution.
+    pub fn authorize_launch(
+        &self,
+        invocation: &InvocationEnvelope,
+        profile: &ExecutionProfile,
+    ) -> Result<AuthorizedLaunch, CapabilityError> {
+        let deny = |message: &str| CapabilityError {
+            code: ErrorCode::PermissionDenied,
+            message: message.into(),
+            recovery_hint: None,
+            details: json!({}),
+        };
+        let binding = self
+            .config
+            .execution_binding
+            .as_ref()
+            .ok_or_else(|| deny("restricted execution requires trusted local commissioning"))?;
+        if invocation.capability != "process.run"
+            || self.config.principal.is_none()
+            || invocation.principal_id.as_deref() != Some(binding.principal_id.as_str())
+            || invocation.device_id.as_deref() != Some(binding.device_id.as_str())
+            || profile.organization_id != binding.organization_id
+            || profile.principal_id != binding.principal_id
+            || profile.device_id != binding.device_id
+            || profile.enrollment_generation != binding.enrollment_generation
+        {
+            return Err(deny("launch identity does not match trusted local binding"));
+        }
+        if self.evaluate(invocation) != PolicyDecision::Allow
+            || self.side_effect_class(&invocation.capability)
+                == SideEffectClass::ForegroundDisruptive
+        {
+            return Err(deny(
+                "launch is not allowed by local principal and operation policy",
+            ));
+        }
+        if !profile.is_supported_restricted_shape() {
+            return Err(deny(
+                "execution profile has unsupported or invalid requirements",
+            ));
+        }
+        if !self
+            .config
+            .execution_grants
+            .iter()
+            .any(|grant| grant == profile)
+        {
+            return Err(deny(
+                "execution profile does not match one complete local grant",
+            ));
+        }
+        if !self
+            .config
+            .execution_ceiling
+            .as_ref()
+            .is_some_and(|ceiling| ceiling.permits(profile))
+        {
+            return Err(deny("execution profile exceeds the separate local ceiling"));
+        }
+        Ok(AuthorizedLaunch {
+            profile: profile.clone(),
+            request_id: invocation.request_id,
+        })
     }
 
     #[must_use]

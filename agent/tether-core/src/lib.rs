@@ -4,6 +4,7 @@ mod batch;
 mod budget;
 mod envelope;
 mod error;
+mod execution_profile;
 mod handles;
 mod ownership;
 mod policy;
@@ -17,11 +18,15 @@ pub use envelope::{
     VerificationStatus,
 };
 pub use error::{CapabilityError, ErrorCode};
+pub use execution_profile::{
+    ExecutionBinding, ExecutionEffect, ExecutionProfile, ExecutionResourceCeiling, ProfileResource,
+    ResourceAccess,
+};
 pub use handles::HandleRegistry;
 pub use ownership::{ResourceKey, ResourceOrigin, TrustedOwnershipRegistry};
 pub use policy::{
-    ApprovalScope, LocalPolicyBroker, LocalPolicyConfig, PolicyBroker, PolicyDecision,
-    SideEffectClass, authorize_path,
+    ApprovalScope, AuthorizedLaunch, LocalPolicyBroker, LocalPolicyConfig, PolicyBroker,
+    PolicyDecision, SideEffectClass, authorize_path,
 };
 pub use principal::{PrincipalAuthentication, PrincipalProfile};
 pub use provider::{CapabilityProvider, ProviderResult};
