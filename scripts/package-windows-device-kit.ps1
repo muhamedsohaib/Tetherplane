@@ -54,8 +54,9 @@ if ($RequireTrustedSignature) {
     if ([string]::IsNullOrWhiteSpace($ExpectedPublisherSubject)) {
         throw "signed distribution requires -ExpectedPublisherSubject from an independently approved signing identity"
     }
-    . (Join-Path $repo "scripts\setup-windows-device.ps1")
-    $signedAgent = Assert-TrustedDeviceSignature -Path $TetherdPath -ExpectedPublisherSubject $ExpectedPublisherSubject
+    $approvedPublisherSubject = $ExpectedPublisherSubject
+    . (Join-Path $repo "scripts\setup-windows-device.ps1") -ExpectedPublisherSubject $approvedPublisherSubject
+    $signedAgent = Assert-TrustedDeviceSignature -Path $TetherdPath -ExpectedPublisherSubject $approvedPublisherSubject
 }
 
 $sourceCommit = ""
