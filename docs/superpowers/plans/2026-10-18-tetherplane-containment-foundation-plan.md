@@ -43,7 +43,7 @@
 | Modify `agent/tether-core/src/lib.rs` | Export canonical types only |
 | Create `agent/providers/process/src/isolation.rs` | `IsolatedLauncher` boundary and deny-by-default unsupported backend |
 | Create `agent/providers/process/src/windows_sandbox.rs` (Windows-only) | Verify and create OS-confined process using a reviewed safe platform API |
-| Modify `agent/providers/process/src/{lib,session}.rs` | Require trusted launch, retain process ownership, disallow unchecked PTY |
+| Modify `agent/providers/process/src/{lib,session}.rs` | Require a trusted runtime-injected launch authorizer, retain process ownership, disallow unchecked PTY |
 | Create `agent/tetherd/src/security_state.rs` | Durable, guarded local stop/ownership state and transaction foundation |
 | Create `agent/tetherd/src/emergency_stop.rs` | Local-only stop/recovery path independent of organization service |
 | Modify `agent/providers/filesystem/src/{lib,read,write}.rs` | Stable target identity/preconditions and deny reparse/concurrent substitution |
@@ -68,6 +68,9 @@ These interface names are decisions for this plan; implementers must preserve ca
 - `AuthorizedLaunch` is a non-serializable, privately constructed trusted value, never accepted from request JSON; the broker may issue it only after complete-grant/local-ceiling checks.
 
 - [ ] **Step 1: Write the failing tests.** `restricted_process_rejects_caller_asserted_isolation`: with an authorized filesystem root but no validated execution profile, a `process.run` whose JSON contains fake `profile_id` and ``andbox_verified` is denied before provider call. `complete_profile_matches_org_principal_device_and_revision`: mismatched identities/resources/effects deny. `principal_policy.rs` retains caller-model neutrality.
+
+**Test assertion contract:** `assert!(broker.authorize_launch(&forged_request, &unverified_profile).is_err());`
+
 - [ ] **Step 2: Confirm RED.** Run `cargo test -p tether-core --test execution_profile -- --nocapture`. Expected: test compilation fails because `ExecutionProfile`/`authorize_launch` are absent; the failure is not a broken fixture.
 - [ ] **Step 3: Implement the minimum.** Add the exact types/function above; enforce read-only workspace vs scratch write modes, exact identity matching, no effect union from fragmented grants, and fail closed on unverified profile or unknown requirement. Keep constructor authority inside broker; no `serde::Deserialize` for `AuthorizedLaunch`.
 - [ ] **Step 4: Confirm GREEN.** Run `cargo test -p tether-core --test execution_profile` and `cargo test -p tether-core --test principal_policy`. Expected: zero failures, including forged caller assertions and full-profile mismatch.
@@ -81,11 +84,14 @@ These interface names are decisions for this plan; implementers must preserve ca
 
 **Interfaces:**
 - Produce: `IsolatedLauncher::launch(&self, authority: &AuthorizedLaunch, program: &str, args: &[String], pty: bool) -> Result<ProcessSession, CapabilityError>`; a test-only fixture launcher can be injected through `ProcessProvider::with_isolated_launcher(...)`.
-- Consume: Task 1's `AuthorizedLaunch`; the internal provider/run boundary receives it out of band from untrusted `InvocationEnvelope.arguments`. Update `CapabilityRouter`/provider dispatch narrowly if necessary so plain JSON cannot recreate trusted launch authorization.
+- Consume: Task 1's `AuthorizedLaunch`. Produce `TrustedLaunchAuthorizer::authorize(&self, invocation: &InvocationEnvelope) -> Result<AuthorizedLaunch, CapabilityError>`; `ProcessProvider::with_authorizer(ownership: Arc<TrustedOwnershipRegistry>, authorizer: Arc<dyn TrustedLaunchAuthorizer>, launcher: Arc<dyn IsolatedLauncher>) -> Self`. Only `AgentRuntime` constructs the authorizer from locally trusted configuration and transport-bound identity; the provider calls it immediately before isolated launch. JSON arguments cannot provide or replace the authorizer. Do not change `CapabilityProvider::execute` or the six external MCP tools merely to transport a claimed privilege token.
 
 - [ ] **Step 1: Write the failing tests.** `restricted_process_requires_injected_authorized_launch`, `unsupported_pty_returns_capability_unavailable_without_spawn` and `bad_isolation_setup_never_calls_host_command`. Adapt existing shell/output tests to the explicit test-isolated launcher, without a production privileged fallback.
+
+**Test assertion contract:** `assert_eq!(fake_host_spawn_count(), 0); assert_eq!(result.error.code, ErrorCode::CapabilityUnavailable);`
+
 - [ ] **Step 2: Confirm RED.** Run `cargo test -p tether-process-provider --test isolation`. Expected: missing isolated launcher contract and accidental host-launch test failure.
-- [ ] **Step 3: Implement the minimum.** Route all restricted `process.run` through the trusted launcher, retain current bounded output/read/input semantics, prohibit ordinary `tokio::process::Command::spawn` and `portable_pty` in restricted production dispatch, and keep unverified PTY unavailable.
+- [ ] **Step 3: Implement the minimum.** Route all restricted `process.run` through the runtime-injected `TrustedLaunchAuthorizer` and then the trusted launcher. Retain current bounded output/read/input semantics, prohibit ordinary `tokio::process::Command::spawn` and `portable_pty` in restricted production dispatch, and keep unverified PTY unavailable.
 - [ ] **Step 4: Confirm GREEN.** Run `cargo test -p tether-process-provider --test isolation` and `cargo test -p tether-process-provider --test process -- --test-threads=1`. Expected: zero failures; existing process output tests use the isolated fixture.
 - [ ] **Step 5: Review/commit.** Run `git diff --check` and `python scripts/check-no-unsafe.py`; commit `git commit -m "feat(process): close ambient subprocess fallback"`.
 
@@ -100,6 +106,9 @@ These interface names are decisions for this plan; implementers must preserve ca
 - The first supported profile has no network, loopback, privileged IPC, host credentials, human-interface access, or host-workspace writes; launch and Job Object attachment must precede untrusted execution.
 
 - [ ] **Step 1: Write Windows RED tests** with fixture-owned files and process markers: `read_only_workspace_and_private_scratch_are_enforced`, `failed_setup_never_executes_child`, `loopback_network_and_host_credentials_denied`, `human_input_clipboard_window_read_denied`, `unsupported_pty_denied`.
+
+**Test assertion contract:** `assert!(permitted_scratch_artifact.exists()); assert!(!test_owned_forbidden_marker.exists()); assert!(!can_connect_loopback);`
+
 - [ ] **Step 2: Confirm RED.** On an isolated Windows CI runner, run `cargo test -p tether-process-provider --test windows_isolation -- --nocapture`. Expected: profile unavailable / tests fail for a missing implementation; do not switch to an unrestricted launch.
 - [ ] **Step 3: Implement the minimum OS backend** using a reviewed safe Windows API abstraction for LPAC/AppContainer-capable access isolation plus lifecycle controls. Verify token, access-check restrictions, handle inheritance, desktop/window station isolation, and Job Object assignment **before resume/execution**. The implementation must not mutate human ACLs or install a general privileged bridge. If a safe backend is impossible under the existing authored-unsafe ban, STOP: publish feasibility evidence and seek a separate narrowly scoped security-design decision.
 - [ ] **Step 4: Confirm GREEN only with native evidence.** Run the same `cargo test -p tether-process-provider --test windows_isolation -- --nocapture` on the supported Windows build. Expected: permitted read/compute/scratch write plus all negative checks succeed. Record OS build, executable version, profile revision; distinguish proven piped mode from unavailable PTY.
@@ -117,6 +126,9 @@ These interface names are decisions for this plan; implementers must preserve ca
 - Consume: Task 3 verified sandbox backend and Task 2 session handles.
 
 - [ ] **Step 1: Write failing tests.** `descendants_remain_confined_after_supervisor_exit`, `cross_principal_scratch_and_handles_denied`, `child_cannot_inherit_privileged_pipe`, and `wrong_organization_cannot_input_or_terminate_handle`. Tests use disposable synthetic Windows processes.
+
+**Test assertion contract:** `assert!(foreign_owner_read.is_err()); assert!(!unowned_process_was_terminated); assert!(descendant_is_still_confined);`
+
 - [ ] **Step 2: Confirm RED.** Run `cargo test -p tether-process-provider --test isolation_lifecycle` on hosted Windows. Expected: ownership/lifecycle checks fail correctly.
 - [ ] **Step 3: Implement minimum ownership and OS lifecycle** with non-reused sandbox identities, private temporary resources, bounded descendant tree, inherited-handle allowlist, OS-held job containment, and verifiable termination evidence. No PID-only ownership decision and no access to privileged Tetherplane endpoints.
 - [ ] **Step 4: Confirm GREEN.** Re-run the focused Windows suite and `cargo test -p tether-core --test ownership`. Expected: all assertions pass without manipulating human processes.
@@ -134,7 +146,10 @@ These interface names are decisions for this plan; implementers must preserve ca
 - Consume: Task 1 `ExecutionProfile` and Task 4 sandbox owner; Plan 2 provides organization-bound context before organization deployment.
 
 - [ ] **Step 1: Write failing tests.** `reparse_swap_cannot_escape_workspace` with a redirected test-owned junction/symlink, `read_only_workspace_refuses_delete_or_replace`, `search_batch_upload_cannot_access_sibling_root`, and `forbidden_effect_cannot_be_reclassified_as_process_run`.
-- [ ] **Step 2: Confirm RED.** Run `cargo test -p tether-filesystem filesystem_tests` and `node --test tests/e2e/organization-effect-isolation.test.ts` (after building existing e2e dependencies). Expected: missing handle/effect confinement assertion fails.
+
+**Test assertion contract:** `assert!(reparse_escape_read.is_err()); assert!(readonly_workspace_write.is_err()); assert!(foreign_batch_child.is_err());`
+
+- [ ] **Step 2: Confirm RED.** Run `cargo test -p tether-filesystem-provider` and `node --test tests/e2e/organization-effect-isolation.test.ts` (after building existing e2e dependencies). Expected: missing handle/effect confinement assertion fails.
 - [ ] **Step 3: Implement minimum** stable-handle/OS-enforced reparse-safe open and destination precondition semantics. Recheck authority at actual access, not only initial canonicalization. Prevent confined programs from reaching more-privileged browser bridges, document helpers, search or network-enabled endpoints. Maintain existing per-file functionality outside explicitly unavailable execution profiles.
 - [ ] **Step 4: Confirm GREEN.** Re-run the targeted Rust and Node tests. Expected: no off-scope reads/writes, symlink/reparse escape, cross-tool bypass, or silent ACL broadening.
 - [ ] **Step 5: Review/commit.** Run `cargo fmt --all -- --check`, `git diff --check`; commit `git commit -m "feat(files): recheck actual resource and effect boundaries"`.
@@ -151,9 +166,12 @@ These interface names are decisions for this plan; implementers must preserve ca
 - Device state uses a transactionally durable security store with verified patched SQLite (bundled audited library), guarded single-owner use and no authored unsafe Rust. Future Plans 2/3 extend this store rather than forking it.
 
 - [ ] **Step 1: Write failing tests.** `emergency_stop_persists_offline_and_restart`; `stop_rejects_reused_or_unowned_pid`; `failed_stop_latch_commit_reports_unverified`; `artifact_export_rejects_changed_digest_or_destination` and `read_only_attached_workspace_never_mutated_by_export_process`.
+
+**Test assertion contract:** `assert!(stop_state_is_durable); assert!(!reused_pid_process_was_killed); assert!(changed_export_digest_is_denied);`
+
 - [ ] **Step 2: Confirm RED.** Run `cargo test -p tetherd --test emergency_stop`. Expected: absent durable stop and verified owned-tree status make the tests fail.
 - [ ] **Step 3: Implement minimum** authenticated local-only emergency stop (not a public unauthenticated RPC), bounded owned-tree termination, durable stop latch and explicit recovery, and brokered artifact export binding source/destination identities and preconditions. Never overwrite Leno's unmanaged installation or let an agent outage clear the latch. Extend `security_state` with transactional schema for Plan 2 snapshots and Plan 3 approval/idempotency, without implementing those features prematurely.
-- [ ] **Step 4: Confirm GREEN.** Run `cargo test -p tetherd --test emergency_stop` and `cargo test -p tether-filesystem`. Expected: stop survives restart, unowned processes untouched, export verified, storage errors fail closed.
+- [ ] **Step 4: Confirm GREEN.** Run `cargo test -p tetherd --test emergency_stop` and `cargo test -p tether-filesystem-provider`. Expected: stop survives restart, unowned processes untouched, export verified, storage errors fail closed.
 - [ ] **Step 5: Review/commit.** Check no secrets and no blanket ACL changes; commit `git commit -m "feat(device): add durable local stop and verified exports"`.
 
 ### Task 7: Native containment integration and first security handoff
@@ -168,6 +186,9 @@ These interface names are decisions for this plan; implementers must preserve ca
 - AC coverage: `AC-06`, `AC-07`, `AC-08`, `AC-17` and relevant `AC-19`/`AC-20`; others remain blocked pending Plans 2/3.
 
 - [ ] **Step 1: Write failing end-to-end checks.** `permitted_read_compute_and_export`; `negative_offscope_symlink_network_ipc_credentials_human_observation`; `descendant_crash_tree_and_stop`; `batch_and_browser_bridge_no_escalation`. Tests use only runner-owned synthetic fixtures.
+
+**Test assertion contract:** `assert_eq!(native_negative_failures, 0); assert!(positive_artifact_verified); assert_eq!(published_profile.os, test_os_build);`
+
 - [ ] **Step 2: Confirm RED.** Run `node --test tests/e2e/windows-containment.test.ts` on an isolated GitHub-hosted Windows job after compiling the current agent. Expected: unsatisfied native isolation assertions, not arbitrary setup failure.
 - [ ] **Step 3: Integrate profile probing and evidence** into the existing CI without granting untrusted code elevated privileges or touching a human workstation. Pin supported commands and documented disabled modes; publish concise test reports. Leno live/human-active acceptance stays a separately authorized gate.
 - [ ] **Step 4: Confirm GREEN and broader gates.** Run `cargo fmt --all -- --check`, `cargo clippy --workspace --all-targets -- -D warnings`, `cargo test --workspace -- --test-threads=1`, `python scripts/check-no-unsafe.py`, `pnpm -r typecheck`, `pnpm -r test` and `pnpm -r build`. Obtain fresh hosted Windows and Ubuntu results for the same SHA. Any failing test stops the task.
