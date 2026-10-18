@@ -13,14 +13,16 @@ jobs:
     runs-on: windows-latest
 
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        with:
+          persist-credentials: false
 
       - name: Install Rust toolchain
-        uses: dtolnay/rust-toolchain@stable
+        uses: dtolnay/rust-toolchain@b725eda525362e7cf34af9a7243cac1e3f01a7ec # stable
         with:
           components: rustfmt, clippy
 
-      - uses: actions/setup-node@v4
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4
         with:
           node-version: 22
 
@@ -49,6 +51,32 @@ jobs:
           ./scripts/package-windows.ps1 -OutputPath dist/Tetherplane-Windows-x64
           ./tests/release/windows-package-smoke.ps1
 
+      # This legacy full-package build does not sign artifacts. It must fail
+      # here until approved signed payload promotion has been implemented;
+      # the separate signing workflow produces candidates, not public releases.
+      - name: Require trusted Authenticode before any Windows release artifact
+        shell: pwsh
+        env:
+          PUBLISHER_SUBJECT: ${{ vars.TETHERPLANE_PUBLISHER_SUBJECT }}
+          SIGNER_THUMBPRINT: ${{ vars.TETHERPLANE_SIGNER_THUMBPRINT }}
+        run: |
+          $ErrorActionPreference = 'Stop'
+          if ([string]::IsNullOrWhiteSpace($env:PUBLISHER_SUBJECT) -or $env:SIGNER_THUMBPRINT -notmatch '^[a-fA-F0-9]{40}$') {
+            throw 'Public Windows releases require independently approved publisher and signer certificate pins.'
+          }
+          $tools = @(Get-ChildItem -LiteralPath "${env:ProgramFiles(x86)}/Windows Kits/10/bin" -Filter signtool.exe -Recurse | Where-Object { $_.Directory.Name -eq 'x64' } | Sort-Object FullName -Descending)
+          if ($tools.Count -eq 0) { throw 'Windows SDK SignTool is required for public releases.' }
+          $signTool = $tools[0].FullName
+          . ./scripts/setup-windows-device.ps1
+          $package = (Resolve-Path -LiteralPath 'dist/Tetherplane-Windows-x64').Path
+          $code = @(Get-ChildItem -LiteralPath $package -Recurse -File -Force | Where-Object { @('.exe', '.dll', '.ps1') -contains $_.Extension.ToLowerInvariant() })
+          if (-not (Test-Path -LiteralPath (Join-Path $package 'bin/tetherd.exe') -PathType Leaf) -or $code.Count -eq 0) {
+            throw 'Public Windows release is missing its executable payload.'
+          }
+          foreach ($file in $code) {
+            [void](Assert-TrustedDeviceSignature -Path $file.FullName -ExpectedPublisherSubject $env:PUBLISHER_SUBJECT -ExpectedSignerThumbprint $env:SIGNER_THUMBPRINT -SignToolPath $signTool)
+          }
+
       - name: Create archive and checksum
         shell: pwsh
         run: |
@@ -56,7 +84,7 @@ jobs:
           $hash = (Get-FileHash Tetherplane-Windows-x64.zip -Algorithm SHA256).Hash.ToLowerInvariant()
           "$hash  Tetherplane-Windows-x64.zip" | Set-Content SHA256SUMS.txt -Encoding ascii
 
-      - uses: actions/upload-artifact@v4
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
         with:
           name: Tetherplane-Windows-x64
           path: |
@@ -67,4 +95,7 @@ jobs:
         shell: pwsh
         env:
           GH_TOKEN: ${{ github.token }}
-        run: gh release create "${{ github.ref_name }}" Tetherplane-Windows-x64.zip SHA256SUMS.txt --generate-notes
+          RELEASE_TAG: ${{ github.ref_name }}
+        run: |
+          gh release create $env:RELEASE_TAG Tetherplane-Windows-x64.zip SHA256SUMS.txt --generate-notes
+          if ($LASTEXITCODE -ne 0) { throw 'GitHub release publication failed.' }

@@ -16,6 +16,7 @@ on:
       - "Cargo.toml"
       - "Cargo.lock"
       - "packaging/windows/**"
+      - "scripts/*windows*.ps1"
       - "scripts/*device*.ps1"
       - "scripts/*onboarding*.ps1"
       - "scripts/*doctor*.ps1"
