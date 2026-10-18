@@ -7,6 +7,8 @@ on:
     paths:
       - "scripts/package-windows-store-msix.ps1"
       - "tests/release/windows-msix-feasibility.ps1"
+      - "tests/release/windows-msix-candidate-contract.ps1"
+      - "scripts/build-windows-store-candidate.ps1"
       - ".github/workflows/windows-msix-feasibility.yml"
 permissions:
   contents: read
@@ -19,6 +21,9 @@ jobs:
       - name: Fail-closed MSIX source preflight
         shell: powershell
         run: powershell -NoProfile -File tests/release/windows-msix-feasibility.ps1 -PreflightOnly
+      - name: Source-bound artifact contract (fail first)
+        shell: powershell
+        run: powershell -NoProfile -File tests/release/windows-msix-candidate-contract.ps1 -PreflightOnly
       - uses: dtolnay/rust-toolchain@stable
       - name: Build native agent
         shell: powershell
