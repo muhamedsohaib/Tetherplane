@@ -3,7 +3,8 @@
 [CmdletBinding()]
 param(
     [Parameter(Mandatory = $true)][string]$TetherdPath,
-    [Parameter(Mandatory = $true)][string]$OutputPath
+    [Parameter(Mandatory = $true)][string]$OutputPath,
+    [string]$BrandAssetsDirectory = ""
 )
 $ErrorActionPreference = "Stop"
 Set-StrictMode -Version Latest
@@ -45,6 +46,41 @@ $parent = Split-Path -Parent $target
 if (-not (Test-Path -LiteralPath $parent -PathType Container)) {
     throw "output parent must be an existing isolated build directory"
 }
+
+# A caller may supply pixel-exact artwork derived from the owner's original mark.
+# Never substitute a placeholder silently after the caller selected branded mode.
+$brandFiles = @{}
+if ($BrandAssetsDirectory) {
+    if (-not [IO.Path]::IsPathRooted($BrandAssetsDirectory)) {
+        throw "BrandAssetsDirectory must be an absolute directory path"
+    }
+    $brandPath = (Resolve-Path -LiteralPath $BrandAssetsDirectory -ErrorAction Stop).Path
+    $brandDirectory = Get-Item -LiteralPath $brandPath -Force -ErrorAction Stop
+    if (-not $brandDirectory.PSIsContainer -or
+        (($brandDirectory.Attributes -band [IO.FileAttributes]::ReparsePoint) -ne 0)) {
+        throw "brand asset directory must be an ordinary directory, not a reparse point"
+    }
+    Add-Type -AssemblyName System.Drawing -ErrorAction Stop
+    foreach ($size in @(44, 50, 150)) {
+        $src = Join-Path $brandPath ("tetherplane-" + $size + ".png")
+        if (-not (Test-Path -LiteralPath $src -PathType Leaf)) {
+            throw "missing required approved Store brand PNG: tetherplane-$size.png"
+        }
+        $entry = Get-Item -LiteralPath $src -Force -ErrorAction Stop
+        if (($entry.Attributes -band [IO.FileAttributes]::ReparsePoint) -ne 0) {
+            throw "refusing redirected Store brand artwork"
+        }
+        $img = [Drawing.Image]::FromFile($entry.FullName)
+        try {
+            if ($img.Width -ne $size -or $img.Height -ne $size -or
+                $img.RawFormat.Guid -ne [Drawing.Imaging.ImageFormat]::Png.Guid) {
+                throw "incorrect size or type for Store brand tile tetherplane-$size.png"
+            }
+        } finally { $img.Dispose() }
+        $brandFiles[$size] = $entry.FullName
+    }
+}
+
 $makeappx = Get-WindowsMakeAppx
 $stage = Join-Path $env:TEMP ("tetherplane-msix-stage-" + [guid]::NewGuid().ToString("N"))
 New-Item -ItemType Directory -Path (Join-Path $stage "bin") -Force -ErrorAction Stop | Out-Null
@@ -91,15 +127,24 @@ try {
 '@
     $utf8 = New-Object System.Text.UTF8Encoding($false)
     [IO.File]::WriteAllText((Join-Path $stage "AppxManifest.xml"), $manifest, $utf8)
-    Add-Type -AssemblyName System.Drawing -ErrorAction Stop
-    foreach ($entry in @(@("Logo50.png",50),@("Logo44.png",44),@("Logo150.png",150))) {
-        $size = [int]$entry[1]
-        $bmp = New-Object System.Drawing.Bitmap($size, $size)
-        try {
-            $g = [Drawing.Graphics]::FromImage($bmp)
-            try { $g.Clear([Drawing.Color]::FromArgb(38, 43, 54)) } finally { $g.Dispose() }
-            $bmp.Save((Join-Path (Join-Path $stage "Assets") ([string]$entry[0])), [Drawing.Imaging.ImageFormat]::Png)
-        } finally { $bmp.Dispose() }
+    if ($brandFiles.Count -gt 0) {
+        foreach ($size in @(44, 50, 150)) {
+            # Copy, don't decode/re-encode: embedded art equals the approved
+            # supplied input byte-for-byte, so original brand ownership stays intact.
+            Copy-Item -LiteralPath $brandFiles[$size] -Destination (Join-Path (Join-Path $stage "Assets") ("Logo" + $size + ".png")) -ErrorAction Stop
+        }
+    } else {
+        # Fallback is for unsigned CI proofs only, never a public Store submission.
+        Add-Type -AssemblyName System.Drawing -ErrorAction Stop
+        foreach ($entry in @(@("Logo50.png",50),@("Logo44.png",44),@("Logo150.png",150))) {
+            $size = [int]$entry[1]
+            $bmp = New-Object System.Drawing.Bitmap($size, $size)
+            try {
+                $g = [Drawing.Graphics]::FromImage($bmp)
+                try { $g.Clear([Drawing.Color]::FromArgb(38, 43, 54)) } finally { $g.Dispose() }
+                $bmp.Save((Join-Path (Join-Path $stage "Assets") ([string]$entry[0])), [Drawing.Imaging.ImageFormat]::Png)
+            } finally { $bmp.Dispose() }
+        }
     }
     & $makeappx pack /d $stage /p $target
     if ($LASTEXITCODE -ne 0 -or -not (Test-Path -LiteralPath $target -PathType Leaf)) {
