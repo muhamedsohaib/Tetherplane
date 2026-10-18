@@ -1,0 +1,29 @@
+name: Windows Store MSIX feasibility (no signing)
+on:
+  push:
+    branches:
+      - "feature/windows-store-msix-feasibility-*"
+  pull_request:
+    paths:
+      - "scripts/package-windows-store-msix.ps1"
+      - "tests/release/windows-msix-feasibility.ps1"
+      - ".github/workflows/windows-msix-feasibility.yml"
+permissions:
+  contents: read
+jobs:
+  package:
+    runs-on: windows-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v4
+      - name: Fail-closed MSIX source preflight
+        shell: powershell
+        run: powershell -NoProfile -File tests/release/windows-msix-feasibility.ps1 -PreflightOnly
+      - uses: dtolnay/rust-toolchain@stable
+      - name: Build native agent
+        shell: powershell
+        run: cargo build --release -p tetherd
+      - name: Build and inspect unsigned MSIX candidate
+        shell: powershell
+        run: powershell -NoProfile -File tests/release/windows-msix-feasibility.ps1 -TetherdPath target\release\tetherd.exe
+      # No artifacts, device installs, signing keys, trust-store changes, or deployment.
