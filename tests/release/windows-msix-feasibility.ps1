@@ -58,6 +58,14 @@ try {
         throw "MSIX does not declare an explicit native-agent logon startup task"
     }
     if ($null -eq $fullTrust) { throw "MSIX lacks the full-trust desktop capability" }
+    $publicName = $manifest.SelectSingleNode("//*[local-name()='Package']/*[local-name()='Properties']/*[local-name()='DisplayName']")
+    $visualElements = $manifest.SelectSingleNode("//*[local-name()='VisualElements']")
+    $startupTask = $manifest.SelectSingleNode("//*[local-name()='StartupTask']")
+    if ($null -eq $publicName -or [string]$publicName.InnerText -cne "tetherplane" -or
+        $null -eq $visualElements -or [string]$visualElements.DisplayName -cne "tetherplane" -or
+        $null -eq $startupTask -or [string]$startupTask.DisplayName -cne "tetherplane") {
+        throw "Windows Store package must show exact lowercase tetherplane in every public app label"
+    }
     if ($null -ne $manifest.SelectSingleNode("//*[local-name()='StartupTask' and @Enabled='true']")) {
         throw "MSIX must not silently auto-enable agent startup in the feasibility prototype"
     }
