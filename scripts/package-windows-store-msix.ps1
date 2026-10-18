@@ -61,7 +61,7 @@ try {
   <Identity Name="Tetherplane.OpenSource.Proof" Publisher="CN=Tetherplane Prototype"
     Version="0.1.0.0" ProcessorArchitecture="x64" />
   <Properties>
-    <DisplayName>Tetherplane MSIX feasibility prototype</DisplayName>
+    <DisplayName>tetherplane</DisplayName>
     <PublisherDisplayName>Tetherplane prototype (not trusted)</PublisherDisplayName>
     <Logo>Assets\Logo50.png</Logo>
   </Properties>
@@ -73,13 +73,13 @@ try {
   </Dependencies>
   <Applications>
     <Application Id="TetherplaneAgent" Executable="bin\tetherd.exe" EntryPoint="Windows.FullTrustApplication">
-      <uap:VisualElements DisplayName="Tetherplane (prototype)"
-        Description="Tetherplane device agent MSIX packaging experiment"
+      <uap:VisualElements DisplayName="tetherplane"
+        Description="tetherplane Windows device agent (development candidate)"
         BackgroundColor="transparent" Square150x150Logo="Assets\Logo150.png"
         Square44x44Logo="Assets\Logo44.png" />
       <Extensions>
         <uap5:Extension Category="windows.startupTask" Executable="bin\tetherd.exe" EntryPoint="Windows.FullTrustApplication">
-          <uap5:StartupTask TaskId="TetherplaneAgentAtLogon" Enabled="false" DisplayName="Tetherplane background agent" />
+          <uap5:StartupTask TaskId="TetherplaneAgentAtLogon" Enabled="false" DisplayName="tetherplane" />
         </uap5:Extension>
       </Extensions>
     </Application>
