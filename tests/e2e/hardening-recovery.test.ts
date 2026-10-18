@@ -14,12 +14,10 @@ function structured(result: Awaited<ReturnType<typeof call>>): Record<string, un
   return result.structuredContent as Record<string, unknown>;
 }
 
-test("process handles are runtime-scoped and cannot rebind after agent restart", async () => {
-  let first: Awaited<ReturnType<typeof startLocalCompact>> | undefined;
-  let second: Awaited<ReturnType<typeof startLocalCompact>> | undefined;
+test("restricted process run denies fail-closed without minting a handle", async () => {
+  const local = await startLocalCompact();
 
   try {
-    first = await startLocalCompact();
     const processArgs =
       process.platform === "win32"
         ? {
@@ -35,30 +33,21 @@ test("process handles are runtime-scoped and cannot rebind after agent restart",
             pty: false,
           };
 
-    const started = structured(
-      await call(first.client, "process", {
-        op: "run",
-        args: processArgs,
-      }),
-    );
-    const oldHandle = String(started.handle);
-    assert.match(oldHandle, /^proc_/);
-
-    await first.close();
-    first = undefined;
-
-    second = await startLocalCompact();
-    const stale = await call(second.client, "process", {
-      op: "read",
-      args: { handle: oldHandle, timeout_ms: 50 },
+    const denied = await call(local.client, "process", {
+      op: "run",
+      args: processArgs,
     });
-    assert.equal(stale.isError, true);
+    assert.equal(denied.isError, true, "restricted process run must fail closed");
+    const body = structured(denied);
     assert.equal(
-      (structured(stale).error as Record<string, unknown>).code,
-      "invalid_arguments",
+      (body.error as Record<string, unknown>).code,
+      "capability_unavailable",
     );
+    assert.equal(body.handle, undefined, "denied run must not mint a handle");
+    // Positive runtime-scoped handle coverage (spawn, agent restart,
+    // stale-handle rejection) returns when a verified isolation backend is
+    // commissioned (containment Task 7).
   } finally {
-    await first?.close().catch(() => undefined);
-    await second?.close().catch(() => undefined);
+    await local.close();
   }
 });

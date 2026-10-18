@@ -202,61 +202,20 @@ test(
         process.platform === "win32"
           ? "cmd.exe /Q /K"
           : "node -i";
-      const interactiveInput =
-        process.platform === "win32"
-          ? "echo GOT:hello"
-          : 'console.log("GOT:hello")';
-
-      const started = data(
-        await call(harness.client, "start_process", {
-          command: interactiveCommand,
-          timeout_ms: 500,
-        }),
-      );
-      const compatPid = started.pid;
-      assert.equal(typeof compatPid, "number");
-
-      const interacted = await call(
-        harness.client,
-        "interact_with_process",
-        {
-          pid: compatPid,
-          input: interactiveInput,
-          timeout_ms: 2_000,
-        },
-      );
-      assert.equal(interacted.isError, undefined);
-      let interactiveOutput = String(
-        data(interacted).stdout ?? "",
-      );
-      for (
-        let attempt = 0;
-        attempt < 6 && !/GOT:hello/i.test(interactiveOutput);
-        attempt += 1
-      ) {
-        const next = data(
-          await call(
-            harness.client,
-            "read_process_output",
-            {
-              pid: compatPid,
-              offset: 0,
-              timeout_ms: 500,
-            },
-          ),
-        );
-        interactiveOutput += String(next.stdout ?? "");
-      }
-      assert.match(interactiveOutput, /GOT:hello/i);
-
-      const sessions = data(
-        await call(harness.client, "list_sessions", {}),
-      );
-      assert.ok(
+      const started = await call(harness.client, "start_process", {
+        command: interactiveCommand,
+        timeout_ms: 500,
+      });
+      assert.equal(started.isError, true, "restricted process launch must fail closed");
+      assert.equal(
         (
-          sessions.sessions as Array<Record<string, unknown>>
-        ).some((entry) => entry.pid === compatPid),
+          data(started).error as Record<string, unknown>
+        ).code,
+        "capability_unavailable",
       );
+      // Positive interactive-process compatibility coverage (start, interact,
+      // progressive reads, listed session for the live pid) returns when a
+      // verified isolation backend is commissioned (containment Task 7).
 
       const arbitraryKill = await call(
         harness.client,

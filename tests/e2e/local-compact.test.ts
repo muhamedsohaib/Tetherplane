@@ -38,7 +38,7 @@ test("local compact MCP proves the complete local-core workflow", async () => {
 
     await proveFileLifecycle(local.client, local.root);
     await proveProgressiveSearch(local.client, local.root);
-    await provePersistentProcess(local.client);
+    await proveRestrictedProcessUnavailable(local.client);
     await proveBatch(local.client, local.root);
     await proveUnavailableProviders(local.client);
   } finally {
@@ -195,7 +195,7 @@ async function proveProgressiveSearch(client: Client, root: string) {
   );
 }
 
-async function provePersistentProcess(client: Client) {
+async function proveRestrictedProcessUnavailable(client: Client) {
   const processArgs =
     process.platform === "win32"
       ? {
@@ -217,47 +217,18 @@ async function provePersistentProcess(client: Client) {
           pty: false,
         };
 
-  const started = structured(
-    await call(client, "process", {
-      op: "run",
-      args: processArgs,
-    }),
+  const denied = await call(client, "process", {
+    op: "run",
+    args: processArgs,
+  });
+  assert.equal(denied.isError, true, "restricted process run must fail closed");
+  assert.equal(
+    (structured(denied).error as Record<string, unknown>).code,
+    "capability_unavailable",
   );
-  const handle = started.handle as string;
-  assert.match(handle, /^proc_/);
-
-  const first = structured(
-    await call(client, "process", {
-      op: "read",
-      args: { handle, timeout_ms: 1_500 },
-    }),
-  );
-  const firstStdout = first.stdout as string;
-  assert.match(firstStdout, /one/);
-  assert.doesNotMatch(firstStdout, /two/);
-
-  const second = structured(
-    await call(client, "process", {
-      op: "read",
-      args: { handle, timeout_ms: 2_000 },
-    }),
-  );
-  const secondStdout = second.stdout as string;
-  assert.doesNotMatch(secondStdout, /one/);
-  assert.match(secondStdout, /two/);
-
-  let terminal = second;
-  if (second.running === true) {
-    terminal = structured(
-      await call(client, "process", {
-        op: "read",
-        args: { handle, timeout_ms: 1_500 },
-      }),
-    );
-    const terminalStdout = terminal.stdout as string;
-    assert.doesNotMatch(terminalStdout, /one|two/);
-  }
-  assert.equal(terminal.running, false);
+  // Positive persistent-output coverage (progressive one/two reads across a
+  // live handle) returns when a verified isolation backend is commissioned
+  // (containment Task 7).
 }
 
 async function proveBatch(client: Client, root: string) {
