@@ -1227,7 +1227,9 @@ dependencies = [
  "portable-pty",
  "serde_json",
  "sysinfo",
+ "tempfile",
  "tether-core",
+ "tether-process-provider",
  "tokio",
 ]
 

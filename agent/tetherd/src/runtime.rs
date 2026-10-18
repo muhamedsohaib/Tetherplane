@@ -18,7 +18,9 @@ use tether_desktop_provider::{
     WindowsPhysicalDesktopExecutor, WindowsUiaBackend,
 };
 use tether_filesystem_provider::FilesystemProvider;
-use tether_process_provider::ProcessProvider;
+use tether_process_provider::{
+    CommissionedLaunchAuthorizer, DenyUnsupportedLauncher, ProcessProvider,
+};
 use tether_search_provider::SearchProvider;
 use tokio::sync::Mutex;
 
@@ -80,6 +82,12 @@ impl AgentRuntime {
             policy_config = policy_config.with_principal(profile);
         }
         let policy = Arc::new(LocalPolicyBroker::new(policy_config));
+        // The authorizer is constructed here from locally trusted
+        // configuration only; caller JSON can neither supply nor replace it.
+        let process_authorizer = Arc::new(CommissionedLaunchAuthorizer::new(
+            Arc::clone(&policy),
+            Vec::new(),
+        ));
         let mut router = CapabilityRouter::with_policy(policy);
         let ownership = Arc::new(TrustedOwnershipRegistry::new());
         #[cfg(windows)]
@@ -105,9 +113,16 @@ impl AgentRuntime {
         )))?;
         router.register(Arc::new(FilesystemProvider::new()))?;
         router.register(Arc::new(SearchProvider::new()))?;
-        router.register(Arc::new(ProcessProvider::with_ownership(Arc::clone(
-            &ownership,
-        ))))?;
+        // tetherd commissions no execution profiles yet: every restricted
+        // launch request fails closed (`capability_unavailable`) until a later
+        // task wires locally trusted commissioning configuration and Task 3
+        // verifies a native isolation backend. The deny-unsupported backend
+        // never spawns.
+        router.register(Arc::new(ProcessProvider::with_authorizer(
+            Arc::clone(&ownership),
+            process_authorizer,
+            Arc::new(DenyUnsupportedLauncher),
+        )))?;
         if let Some(state_dir) = state_dir.as_ref() {
             router.register(Arc::new(JobProvider::new(state_dir)?))?;
         } else {

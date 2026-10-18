@@ -1,7 +1,20 @@
 #![forbid(unsafe_code)]
 
+mod isolation;
+// Readers stay active for handles created by a future verified backend; in
+// feature-off builds only the feature-gated fixture pumps can append, so the
+// write-side items are unreferenced there.
+#[cfg_attr(not(feature = "test-support"), allow(dead_code))]
 mod output;
 mod session;
+#[cfg(feature = "test-support")]
+pub mod test_support;
+
+pub use isolation::{
+    CommissionedLaunchAuthorizer, DenyUnsupportedLauncher, IsolatedLauncher,
+    TrustedLaunchAuthorizer,
+};
+pub use session::ProcessSession;
 
 use std::collections::BTreeSet;
 use std::sync::{Arc, Mutex};
@@ -16,12 +29,12 @@ use tether_core::{
     VerificationStatus,
 };
 
-use session::ProcessSession;
-
 pub struct ProcessProvider {
     sessions: HandleRegistry<Arc<ProcessSession>>,
     handles: Mutex<BTreeSet<String>>,
     ownership: Arc<TrustedOwnershipRegistry>,
+    authorizer: Option<Arc<dyn TrustedLaunchAuthorizer>>,
+    launcher: Option<Arc<dyn IsolatedLauncher>>,
 }
 
 impl ProcessProvider {
@@ -36,6 +49,41 @@ impl ProcessProvider {
             sessions: HandleRegistry::new(),
             handles: Mutex::new(BTreeSet::new()),
             ownership,
+            authorizer: None,
+            launcher: None,
+        }
+    }
+
+    /// The only launch-capable constructor (production): every restricted run
+    /// must first obtain broker-issued authority from the runtime-injected
+    /// authorizer and is then created only by the injected isolation backend.
+    #[must_use]
+    pub fn with_authorizer(
+        ownership: Arc<TrustedOwnershipRegistry>,
+        authorizer: Arc<dyn TrustedLaunchAuthorizer>,
+        launcher: Arc<dyn IsolatedLauncher>,
+    ) -> Self {
+        Self {
+            sessions: HandleRegistry::new(),
+            handles: Mutex::new(BTreeSet::new()),
+            ownership,
+            authorizer: Some(authorizer),
+            launcher: Some(launcher),
+        }
+    }
+
+    /// Fixture probe: an isolated launcher alone, with no trusted authorizer,
+    /// must still deny. Compiled only under the non-default `test-support`
+    /// feature and never used by production code.
+    #[cfg(feature = "test-support")]
+    #[must_use]
+    pub fn with_isolated_launcher(launcher: Arc<dyn IsolatedLauncher>) -> Self {
+        Self {
+            sessions: HandleRegistry::new(),
+            handles: Mutex::new(BTreeSet::new()),
+            ownership: Arc::new(TrustedOwnershipRegistry::new()),
+            authorizer: None,
+            launcher: Some(launcher),
         }
     }
 
@@ -48,7 +96,23 @@ impl ProcessProvider {
         let args = string_array_argument(arguments, "args")?;
         let wait_ms = u64_argument(arguments, "wait_ms", 250)?;
         let pty = bool_argument(arguments, "pty", false)?;
-        let session = Arc::new(ProcessSession::spawn(program, &args, pty).await?);
+        // Restricted execution never falls back to ambient host-account
+        // launch: a trusted runtime-injected authorizer must issue the launch
+        // authority first, and only then may the injected isolation backend
+        // create the session. Any denial or launcher error propagates
+        // unchanged with no retry through another path.
+        let Some(authorizer) = &self.authorizer else {
+            return Err(capability_unavailable(
+                "restricted process execution requires a trusted launch authorizer",
+            ));
+        };
+        let authority = authorizer.authorize(invocation).await?;
+        let Some(launcher) = &self.launcher else {
+            return Err(capability_unavailable(
+                "no supported isolation backend is installed",
+            ));
+        };
+        let session = Arc::new(launcher.launch(&authority, program, &args, pty).await?);
         self.ownership.register(
             ResourceKey::Process(session.pid()),
             ResourceOrigin::Tetherplane,
@@ -331,6 +395,15 @@ fn bool_argument(arguments: &Value, key: &str, default: bool) -> Result<bool, Ca
         None | Some(Value::Null) => Ok(default),
         Some(Value::Bool(value)) => Ok(*value),
         Some(_) => Err(invalid_arguments(&format!("{key} must be a boolean"))),
+    }
+}
+
+pub(crate) fn capability_unavailable(message: &str) -> CapabilityError {
+    CapabilityError {
+        code: ErrorCode::CapabilityUnavailable,
+        message: message.to_owned(),
+        recovery_hint: None,
+        details: serde_json::json!({}),
     }
 }
 

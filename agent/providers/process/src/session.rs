@@ -1,14 +1,23 @@
-use std::io::{self, Read, Write};
+#[cfg(feature = "test-support")]
+use std::io::Read;
+use std::io::{self, Write};
+#[cfg(feature = "test-support")]
 use std::process::Stdio;
 use std::sync::{Arc, Mutex};
 use std::time::Duration;
 
-use portable_pty::{CommandBuilder, MasterPty, PtySize, native_pty_system};
+use portable_pty::MasterPty;
+#[cfg(feature = "test-support")]
+use portable_pty::{CommandBuilder, PtySize, native_pty_system};
 use serde_json::json;
 use sysinfo::{Pid, ProcessRefreshKind, RefreshKind, System};
 use tether_core::{CapabilityError, ErrorCode};
-use tokio::io::{AsyncRead, AsyncReadExt, AsyncWriteExt};
-use tokio::process::{Child, Command};
+use tokio::io::AsyncWriteExt;
+#[cfg(feature = "test-support")]
+use tokio::io::{AsyncRead, AsyncReadExt};
+use tokio::process::Child;
+#[cfg(feature = "test-support")]
+use tokio::process::Command;
 use tokio::sync::Mutex as AsyncMutex;
 use tokio::task::JoinHandle;
 use tokio::time;
@@ -21,6 +30,10 @@ struct TerminalExit {
     reason: &'static str,
 }
 
+// Both variants are constructed only by the feature-gated fixture spawn path.
+// Production builds keep the shared status/terminate/input logic but can never
+// create a session until a verified isolation backend lands in a later task.
+#[cfg_attr(not(feature = "test-support"), allow(dead_code))]
 enum ProcessBackend {
     Piped(Box<AsyncMutex<Child>>),
     Pty {
@@ -30,6 +43,7 @@ enum ProcessBackend {
     },
 }
 
+#[cfg(feature = "test-support")]
 struct PtySpawn {
     master: Box<dyn MasterPty + Send>,
     child: Box<dyn portable_pty::Child + Send + Sync>,
@@ -38,7 +52,9 @@ struct PtySpawn {
     pid: u32,
 }
 
-pub(crate) struct ProcessSession {
+/// Opaque public handle to a running process session. All operations stay
+/// crate-internal; external code only passes the handle back to the provider.
+pub struct ProcessSession {
     backend: ProcessBackend,
     stdout: Arc<OutputBuffer>,
     stderr: Arc<OutputBuffer>,
@@ -50,91 +66,6 @@ pub(crate) struct ProcessSession {
 }
 
 impl ProcessSession {
-    pub(crate) async fn spawn(
-        program: &str,
-        args: &[String],
-        pty: bool,
-    ) -> Result<Self, CapabilityError> {
-        if pty {
-            return Self::spawn_pty(program.to_owned(), args.to_vec()).await;
-        }
-        Self::spawn_piped(program, args)
-    }
-
-    fn spawn_piped(program: &str, args: &[String]) -> Result<Self, CapabilityError> {
-        let mut command = Command::new(program);
-        command
-            .args(args)
-            .stdin(Stdio::piped())
-            .stdout(Stdio::piped())
-            .stderr(Stdio::piped());
-
-        let mut child = command
-            .spawn()
-            .map_err(|error| provider_error("failed to spawn process", program, &error))?;
-        let pid = child
-            .id()
-            .ok_or_else(|| provider_error_message("spawned process has no pid", program))?;
-        let stdout_stream = child
-            .stdout
-            .take()
-            .ok_or_else(|| provider_error_message("stdout pipe unavailable", program))?;
-        let stderr_stream = child
-            .stderr
-            .take()
-            .ok_or_else(|| provider_error_message("stderr pipe unavailable", program))?;
-
-        let stdout = Arc::new(OutputBuffer::new());
-        let stderr = Arc::new(OutputBuffer::new());
-        let readers = vec![
-            tokio::spawn(pump_output(stdout_stream, Arc::clone(&stdout))),
-            tokio::spawn(pump_output(stderr_stream, Arc::clone(&stderr))),
-        ];
-
-        Ok(Self {
-            backend: ProcessBackend::Piped(Box::new(AsyncMutex::new(child))),
-            stdout,
-            stderr,
-            stdout_cursor: Mutex::new(0),
-            stderr_cursor: Mutex::new(0),
-            terminal: Mutex::new(None),
-            readers: AsyncMutex::new(readers),
-            pid,
-        })
-    }
-
-    async fn spawn_pty(program: String, args: Vec<String>) -> Result<Self, CapabilityError> {
-        let spawned = tokio::task::spawn_blocking(move || spawn_pty_blocking(&program, &args))
-            .await
-            .map_err(|error| {
-                provider_error_message(&format!("PTY spawn task failed: {error}"), "")
-            })??;
-
-        let stdout = Arc::new(OutputBuffer::new());
-        let stderr = Arc::new(OutputBuffer::new());
-        let output = Arc::clone(&stdout);
-        let writer = Arc::new(Mutex::new(Some(spawned.writer)));
-        let reader_writer = Arc::clone(&writer);
-        let reader = spawned.reader;
-        let reader_handle =
-            tokio::task::spawn_blocking(move || pump_pty_output(reader, &output, &reader_writer));
-
-        Ok(Self {
-            backend: ProcessBackend::Pty {
-                child: Arc::new(Mutex::new(spawned.child)),
-                writer,
-                master: Mutex::new(Some(spawned.master)),
-            },
-            stdout,
-            stderr,
-            stdout_cursor: Mutex::new(0),
-            stderr_cursor: Mutex::new(0),
-            terminal: Mutex::new(None),
-            readers: AsyncMutex::new(vec![reader_handle]),
-            pid: spawned.pid,
-        })
-    }
-
     pub(crate) const fn pid(&self) -> u32 {
         self.pid
     }
@@ -435,6 +366,97 @@ impl ProcessSession {
     }
 }
 
+#[cfg(feature = "test-support")]
+impl ProcessSession {
+    /// Fixture-only ambient spawn used exclusively by the `test-support`
+    /// launcher. Production dispatch never calls this path and feature-off
+    /// builds do not contain it.
+    pub(crate) async fn spawn(
+        program: &str,
+        args: &[String],
+        pty: bool,
+    ) -> Result<Self, CapabilityError> {
+        if pty {
+            return Self::spawn_pty(program.to_owned(), args.to_vec()).await;
+        }
+        Self::spawn_piped(program, args)
+    }
+
+    fn spawn_piped(program: &str, args: &[String]) -> Result<Self, CapabilityError> {
+        let mut command = Command::new(program);
+        command
+            .args(args)
+            .stdin(Stdio::piped())
+            .stdout(Stdio::piped())
+            .stderr(Stdio::piped());
+
+        let mut child = command
+            .spawn()
+            .map_err(|error| provider_error("failed to spawn process", program, &error))?;
+        let pid = child
+            .id()
+            .ok_or_else(|| provider_error_message("spawned process has no pid", program))?;
+        let stdout_stream = child
+            .stdout
+            .take()
+            .ok_or_else(|| provider_error_message("stdout pipe unavailable", program))?;
+        let stderr_stream = child
+            .stderr
+            .take()
+            .ok_or_else(|| provider_error_message("stderr pipe unavailable", program))?;
+
+        let stdout = Arc::new(OutputBuffer::new());
+        let stderr = Arc::new(OutputBuffer::new());
+        let readers = vec![
+            tokio::spawn(pump_output(stdout_stream, Arc::clone(&stdout))),
+            tokio::spawn(pump_output(stderr_stream, Arc::clone(&stderr))),
+        ];
+
+        Ok(Self {
+            backend: ProcessBackend::Piped(Box::new(AsyncMutex::new(child))),
+            stdout,
+            stderr,
+            stdout_cursor: Mutex::new(0),
+            stderr_cursor: Mutex::new(0),
+            terminal: Mutex::new(None),
+            readers: AsyncMutex::new(readers),
+            pid,
+        })
+    }
+
+    async fn spawn_pty(program: String, args: Vec<String>) -> Result<Self, CapabilityError> {
+        let spawned = tokio::task::spawn_blocking(move || spawn_pty_blocking(&program, &args))
+            .await
+            .map_err(|error| {
+                provider_error_message(&format!("PTY spawn task failed: {error}"), "")
+            })??;
+
+        let stdout = Arc::new(OutputBuffer::new());
+        let stderr = Arc::new(OutputBuffer::new());
+        let output = Arc::clone(&stdout);
+        let writer = Arc::new(Mutex::new(Some(spawned.writer)));
+        let reader_writer = Arc::clone(&writer);
+        let reader = spawned.reader;
+        let reader_handle =
+            tokio::task::spawn_blocking(move || pump_pty_output(reader, &output, &reader_writer));
+
+        Ok(Self {
+            backend: ProcessBackend::Pty {
+                child: Arc::new(Mutex::new(spawned.child)),
+                writer,
+                master: Mutex::new(Some(spawned.master)),
+            },
+            stdout,
+            stderr,
+            stdout_cursor: Mutex::new(0),
+            stderr_cursor: Mutex::new(0),
+            terminal: Mutex::new(None),
+            readers: AsyncMutex::new(vec![reader_handle]),
+            pid: spawned.pid,
+        })
+    }
+}
+
 fn kill_descendants(root_pid: u32) {
     // Only process identities and parent links are needed for tree ownership.
     // Refreshing CPU, memory, users, command lines and environments for every
@@ -474,6 +496,7 @@ fn descendant_depth(system: &System, pid: Pid, root: Pid) -> Option<usize> {
     None
 }
 
+#[cfg(feature = "test-support")]
 fn spawn_pty_blocking(program: &str, args: &[String]) -> Result<PtySpawn, CapabilityError> {
     let pty_system = native_pty_system();
     let pair = pty_system
@@ -513,9 +536,12 @@ fn spawn_pty_blocking(program: &str, args: &[String]) -> Result<PtySpawn, Capabi
     })
 }
 
+#[cfg(feature = "test-support")]
 const CURSOR_QUERY: &[u8] = b"\x1b[6n";
+#[cfg(feature = "test-support")]
 const CURSOR_REPLY: &[u8] = b"\x1b[1;1R";
 
+#[cfg(feature = "test-support")]
 fn pump_pty_output(
     mut reader: Box<dyn Read + Send>,
     output: &OutputBuffer,
@@ -538,6 +564,7 @@ fn pump_pty_output(
     }
 }
 
+#[cfg(feature = "test-support")]
 fn process_pty_bytes(
     pending: &mut Vec<u8>,
     output: &OutputBuffer,
@@ -571,6 +598,7 @@ fn process_pty_bytes(
     Ok(())
 }
 
+#[cfg(feature = "test-support")]
 fn find_bytes(haystack: &[u8], needle: &[u8]) -> Option<usize> {
     haystack
         .windows(needle.len())
@@ -586,6 +614,7 @@ fn take_stream(output: &OutputBuffer, cursor: &Mutex<u64>) -> (String, bool) {
     (text, dropped)
 }
 
+#[cfg(feature = "test-support")]
 async fn pump_output<R>(mut reader: R, output: Arc<OutputBuffer>) -> io::Result<()>
 where
     R: AsyncRead + Unpin,

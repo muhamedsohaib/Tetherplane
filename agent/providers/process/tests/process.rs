@@ -6,13 +6,16 @@ use tether_core::{
     TrustedOwnershipRegistry,
 };
 use tether_process_provider::ProcessProvider;
+use tether_process_provider::test_support::{
+    TEST_DEVICE_ID, TEST_PRINCIPAL_ID, TestIsolatedLauncher, fixture_authorizer,
+};
 
 fn invocation_for(capability: &str, arguments: Value) -> InvocationEnvelope {
     InvocationEnvelope {
         protocol_version: "1.0".into(),
         request_id: "00000000-0000-4000-8000-000000000008".parse().unwrap(),
-        device_id: Some("Leno".into()),
-        principal_id: None,
+        device_id: Some(TEST_DEVICE_ID.into()),
+        principal_id: Some(TEST_PRINCIPAL_ID.into()),
         job_id: None,
         capability: capability.into(),
         arguments,
@@ -30,6 +33,17 @@ fn invocation_for(capability: &str, arguments: Value) -> InvocationEnvelope {
 
 fn invocation(arguments: Value) -> InvocationEnvelope {
     invocation_for("process.run", arguments)
+}
+
+/// Spawn-dependent regression tests execute through the test-isolated
+/// launcher fixture: the provider must obtain broker-issued authority and
+/// launch only via the injected backend, exactly like production wiring.
+fn fixture_provider() -> ProcessProvider {
+    ProcessProvider::with_authorizer(
+        Arc::new(TrustedOwnershipRegistry::new()),
+        fixture_authorizer(),
+        Arc::new(TestIsolatedLauncher::new()),
+    )
 }
 
 #[cfg(windows)]
@@ -64,7 +78,12 @@ const LONG_SCRIPT: &str = "printf 'one\\n'; sleep 1; printf 'two\\n'";
 
 #[tokio::test]
 async fn short_command_returns_complete_bounded_output_and_exit_code() {
-    let provider = ProcessProvider::new();
+    let launcher = Arc::new(TestIsolatedLauncher::new());
+    let provider = ProcessProvider::with_authorizer(
+        Arc::new(TrustedOwnershipRegistry::new()),
+        fixture_authorizer(),
+        launcher.clone(),
+    );
 
     let result = provider
         .execute(&invocation(shell_arguments(SHORT_SCRIPT, 2_000)))
@@ -76,11 +95,16 @@ async fn short_command_returns_complete_bounded_output_and_exit_code() {
     assert!(result.data["handle"].as_str().unwrap().starts_with("proc_"));
     assert!(result.data["stdout"].as_str().unwrap().contains("short"));
     assert!(result.data["stderr"].as_str().is_some());
+    assert_eq!(launcher.host_spawn_count(), 1);
+    assert_eq!(
+        launcher.last_profile_id().as_deref(),
+        Some("fixture-restricted-profile")
+    );
 }
 
 #[tokio::test]
 async fn long_command_returns_persistent_handle_after_initial_wait_budget() {
-    let provider = ProcessProvider::new();
+    let provider = fixture_provider();
 
     let result = provider
         .execute(&invocation(shell_arguments(LONG_SCRIPT, 100)))
@@ -103,7 +127,7 @@ const INCREMENTAL_SCRIPT: &str = "sleep 1; printf 'one\\n'; sleep 1; printf 'two
 
 #[tokio::test]
 async fn default_reads_return_only_output_not_previously_delivered() {
-    let provider = ProcessProvider::new();
+    let provider = fixture_provider();
     let started = provider
         .execute(&invocation(shell_arguments(INCREMENTAL_SCRIPT, 0)))
         .await
@@ -138,7 +162,7 @@ const READBACK_SCRIPT: &str = "printf 'alpha\\nbeta\\n'";
 
 #[tokio::test]
 async fn absolute_read_can_replay_buffered_output_without_changing_unseen_cursor() {
-    let provider = ProcessProvider::new();
+    let provider = fixture_provider();
     let started = provider
         .execute(&invocation(shell_arguments(READBACK_SCRIPT, 2_000)))
         .await
@@ -166,7 +190,7 @@ async fn absolute_read_can_replay_buffered_output_without_changing_unseen_cursor
 
 #[tokio::test]
 async fn tail_read_returns_only_requested_end_of_buffer() {
-    let provider = ProcessProvider::new();
+    let provider = fixture_provider();
     let started = provider
         .execute(&invocation(shell_arguments(READBACK_SCRIPT, 2_000)))
         .await
@@ -208,7 +232,7 @@ fn interactive_arguments(wait_ms: u64) -> Value {
 
 #[tokio::test]
 async fn process_input_writes_to_persistent_session_stdin() {
-    let provider = ProcessProvider::new();
+    let provider = fixture_provider();
     let started = provider
         .execute(&invocation(interactive_arguments(0)))
         .await
@@ -268,7 +292,7 @@ const PTY_INPUT: &str = "printf 'pty:hello\\n'\nexit\n";
 
 #[tokio::test]
 async fn requested_pty_session_supports_interactive_input() {
-    let provider = ProcessProvider::new();
+    let provider = fixture_provider();
     let started = provider
         .execute(&invocation(pty_interactive_arguments()))
         .await
@@ -331,7 +355,7 @@ fn pty_short_arguments() -> Value {
 
 #[tokio::test]
 async fn pty_short_command_completes_without_exposing_cursor_query() {
-    let provider = ProcessProvider::new();
+    let provider = fixture_provider();
     let result = provider
         .execute(&invocation(pty_short_arguments()))
         .await
@@ -351,7 +375,7 @@ const TERMINATION_SCRIPT: &str = "sleep 5";
 
 #[tokio::test]
 async fn list_sessions_marks_registered_processes_as_tetherplane_origin() {
-    let provider = ProcessProvider::new();
+    let provider = fixture_provider();
     let started = provider
         .execute(&invocation(shell_arguments(TERMINATION_SCRIPT, 0)))
         .await
@@ -407,7 +431,7 @@ async fn terminate_rejects_unregistered_system_pid() {
 
 #[tokio::test]
 async fn terminate_registered_session_force_fallback_records_terminal_reason() {
-    let provider = ProcessProvider::new();
+    let provider = fixture_provider();
     let started = provider
         .execute(&invocation(shell_arguments(TERMINATION_SCRIPT, 0)))
         .await
@@ -447,7 +471,7 @@ async fn terminate_registered_session_force_fallback_records_terminal_reason() {
 
 #[tokio::test]
 async fn terminate_pty_session_gracefully_without_force() {
-    let provider = ProcessProvider::new();
+    let provider = fixture_provider();
     let started = provider
         .execute(&invocation(pty_interactive_arguments()))
         .await
@@ -484,7 +508,11 @@ const OWNERSHIP_SCRIPT: &str = "sleep 30";
 #[tokio::test]
 async fn spawned_process_registers_trusted_ownership_and_termination_revokes_it() {
     let ownership = Arc::new(TrustedOwnershipRegistry::new());
-    let provider = ProcessProvider::with_ownership(Arc::clone(&ownership));
+    let provider = ProcessProvider::with_authorizer(
+        Arc::clone(&ownership),
+        fixture_authorizer(),
+        Arc::new(TestIsolatedLauncher::new()),
+    );
 
     let started = provider
         .execute(&invocation(shell_arguments(OWNERSHIP_SCRIPT, 0)))
