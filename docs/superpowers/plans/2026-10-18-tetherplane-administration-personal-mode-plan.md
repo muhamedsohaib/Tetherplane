@@ -70,6 +70,9 @@ API paths selected here: `/api/v1/organizations/:organizationId/...` with curren
 - Bind immutable intent to organization, principal, client/credential/session, device generation, capability/args, resolved binary/script/bundle digests, resource revisions, execution profile, side-effect class, current grant/authority revision and expiry.
 
 - [ ] **Step 1: Write failing tests** `jcs_cross_language_intent_digest_stable`; `mutated_script_invalidates_approval`; `missing_eligible_grant_cannot_request_approval`; `linked_identity_cannot_self_approve_independent_human_action`; `approval_expired_after_600s`; `review_description_matches_exact_action`.
+
+**Test assertion contract:** `assert.equal(hashApprovalIntent(validTypedIntent), expectedSha256); assert.equal(mutatedScriptDecision, 'permission_denied'); assert.equal(selfApproval.allowed, false);`
+
 - [ ] **Step 2: Confirm RED.** Run `pnpm --filter @tetherplane/protocol test` and `node --test management/test/approvals.test.ts`. Expected: missing intent/digest and eligible approval functions; verify fixtures are valid.
 - [ ] **Step 3: Implement minimum** typed canonicalization (reject ambiguous numbers/duplicate keys), exact executable identity/digest, current scoped approver authority and separation-of-duties, immutable reviewable summary free of secrets or model-written substitution. A pending request conveys no execution permission.
 - [ ] **Step 4: Confirm GREEN.** Run both targeted suites and `pnpm --filter @tetherplane/management typecheck`. Expected: forgery, expiry, substitution and self-escalation denied.
@@ -87,6 +90,9 @@ API paths selected here: `/api/v1/organizations/:organizationId/...` with curren
 - Produce: `consumeAuthorizationAndReserve(&self, approval: VerifiedApproval, idempotency: IdempotencyIdentity) -> Result<DispatchPermit, CapabilityError>` in a single device-security transaction. An uncertain dispatch is a first-class queryable outcome, not an automatic retry token.
 
 - [ ] **Step 1: Write failing tests** `revocation_committed_first_prevents_reservation`; `concurrent_approval_consumers_exactly_one_wins`; `crash_after_reservation_never_replays_effect`; `expired_or_wrong_boot_dispatch_reservation_denied`; `audit_failure_blocks_nonemergency_dispatch`.
+
+**Test assertion contract:** `assert.equal(concurrentPermits.length, 1); assert.equal(replayedSideEffects, 0); assert.equal(crashOutcome, 'uncertain');`
+
 - [ ] **Step 2: Confirm RED.** Run `node --test management/test/approval-reservations.test.ts` and `cargo test -p tetherd --test approvals`. Expected: missing atomic durable reservation/recheck operations.
 - [ ] **Step 3: Implement minimum** server-ordered revocation vs reservation, verified fresh challenge, single-use nonce, local serialized final admission, atomic consume/idempotency/audit intent, actual dispatch/outcome recording, and explicit `uncertain` crash recovery. Do not claim a distributed transaction with external websites.
 - [ ] **Step 4: Confirm GREEN.** Rerun targeted tests, inject power-loss/storage-full/restart and parallel consumers, and `cargo test -p tetherd --test idempotency`. Expected: exactly one dispatch permit and no duplicate action.
@@ -110,6 +116,9 @@ API paths selected here: `/api/v1/organizations/:organizationId/...` with curren
 - The server obtains tenant/principal/role from authenticated session and registered membership, never from path alone; mutations take `If-Match` or an explicit expected revision.
 
 - [ ] **Step 1: Write failing tests** `stale_if_match_grant_change_returns_resource_conflict`; `cross_org_url_and_cached_context_denied`; `csrf_missing_token_rejected`; `fixated_session_rejected_after_login`; `sensitive_change_requires_fresh_auth`; `effective_access_distinguishes_pending_from_confirmed`.
+
+**Test assertion contract:** `assert.equal(staleGrantResponse.status, 409); assert.equal(crossTenantResponse.status, 403); assert.equal(noCsrfResponse.status, 403);`
+
 - [ ] **Step 2: Confirm RED.** Run `node --test management/test/admin-routes.test.ts management/test/sessions.test.ts`. Expected: missing route/session authorization.
 - [ ] **Step 3: Implement minimum** authenticated sessions, CSRF/clickjacking controls, strict input validation, per-request tenant/delegation and record version checks, bounded responses and redaction; expose distinct configured/committed/delivered/applied/exit/cleanup evidence. No misleading `success` on accepted-but-undelivered policy.
 - [ ] **Step 4: Confirm GREEN.** Re-run suites and `pnpm --filter @tetherplane/management typecheck`. Expected: authorized CRUD works; forged/cross-tenant/stale/sensitive requests deny or conflict.
@@ -128,6 +137,9 @@ API paths selected here: `/api/v1/organizations/:organizationId/...` with curren
 - Every page exposes actual first-release workflows, including human/team/group lifecycle, accountable service principals, device enrollment and confirmed enforcement, complete grants, exact-action approvals, operations/job/export evidence, redacted audit search/export, recovery.
 
 - [ ] **Step 1: Write failing Playwright tests** `tenant_switch_clears_drafts_and_protected_cache`; `invite_suspend_group_delegate_and_sponsor_reassign`; `device_grant_displays_saved_awaiting_ack`; `approve_exact_intent_or_show_uncertain_outcome`; `audit_redacted_export_enforces_scope`. Use synthetic served management API fixtures; never human-owned tabs.
+
+**Test assertion contract:** `assert.equal(visibleEnforcementStatus, 'awaiting_device_ack'); assert.equal(protectedDraftsAfterTenantSwitch, 0); assert.equal(leakedCredentials, 0);`
+
 - [ ] **Step 2: Confirm RED.** Run `node --test tests/e2e/admin-console.test.ts` after installing/building test dependencies. Expected: missing screens/actions cause assertion failures; not missing browser setup.
 - [ ] **Step 3: Implement minimum** accessible typed React/Vite flows with explicit organization selector, current authorization/effective access, revisions/timestamps, review-and-confirm for consequential changes, guarded refresh on `resource_conflict` and no secret display. Browser client is non-authoritative.
 - [ ] **Step 4: Confirm GREEN.** Re-run fixture browser suite, `pnpm --filter @tetherplane/console typecheck` and `pnpm --filter @tetherplane/console build`. Expected: UI workflows complete and server still independently rejects tampered requests.
@@ -145,6 +157,9 @@ API paths selected here: `/api/v1/organizations/:organizationId/...` with curren
 - Produce: explicit `enableOrganizationAdministration(personalOrgId, authenticatedOwner)` UI transition; no credential reset, new tenant, re-pair, automatic permission broadening or local-ceiling change.
 
 - [ ] **Step 1: Write failing tests** `first_time_personal_user_completes_onboarding_without_enterprise_forms`; `personal_can_enroll_devices_create_ai_grant_revoke_and_read_audit`; `personal_to_org_does_not_expand_device_access`; `personal_owner_cannot_bypass_independent_approval`; `switching_personal_and_other_org_does_not_leak_context`.
+
+**Test assertion contract:** `assert.equal(enterpriseQuestionsRequiredForPersonalSetup, 0); assert.equal(personalOrgIdAfterTransition, personalOrgIdBefore); assert.equal(grantsAfterTransition, grantsBefore);`
+
 - [ ] **Step 2: Confirm RED.** Run `node --test tests/e2e/personal-mode.test.ts` against synthetic account/device fixtures. Expected: no personal onboarding and safe transition implemented yet.
 - [ ] **Step 3: Implement minimum** personal navigation `My devices`, `My AI agents`, `Permissions`, `Approvals` and `Activity`; first-owner commissioning and device-local grant confirmation; optional advanced administration toggle over the **same** organization. Do not require SaaS account, team invites or privileged unconfined process access.
 - [ ] **Step 4: Confirm GREEN.** Re-run focused end-to-end and server-side forged personal-owner tests. Expected: full AC-22 personal workflow plus preserved AC-01/AC-02 cross-tenant barriers.
@@ -162,6 +177,9 @@ API paths selected here: `/api/v1/organizations/:organizationId/...` with curren
 - Source integrity includes monotonic source event sequence and integrity checkpoints, identifies missing/duplicate/conflicting events without fabricating recovered history.
 
 - [ ] **Step 1: Write failing tests** `different_org_cannot_query_audit`; `auditor_without_payload_scope_sees_redacted_records`; `missing_sequence_remains_visible`; `audit_storage_full_blocks_approval_but_not_emergency_stop`; `approval_uncertain_outcome_does_not_change_to_verified_without_observation`.
+
+**Test assertion contract:** `assert.equal(foreignAuditQuery.status, 403); assert.equal(secretFieldsInAuditExport, 0); assert.equal(missingSequenceReported, true);`
+
 - [ ] **Step 2: Confirm RED.** Run `node --test management/test/audit-query.test.ts tests/e2e/approval-resume.test.ts`. Expected: redacted tenant query/continuity unavailable.
 - [ ] **Step 3: Implement minimum** tenant-filtered audit queries, separately approved exports, bounded retention with visible collection gaps, checkpoint verification and device-level required-commit barrier. Emergency stop remains callable during storage failure and later records *uncertainty*, not invented events.
 - [ ] **Step 4: Confirm GREEN.** Re-run tests and `cargo test -p tetherd --test audit`. Expected: no cross-tenant disclosure or silent evidence loss.
@@ -179,6 +197,9 @@ API paths selected here: `/api/v1/organizations/:organizationId/...` with curren
 - Produce: `stageLegacyMigration(inventory: LegacyInventory, mapping: ExplicitOrganizationMapping): MigrationPreview`; missing owner, receipt, credential or state history must block application.
 
 - [ ] **Step 1: Write failing tests** `restore_cannot_reactivate_consumed_or_revoked_approval`; `restored_counter_requires_fresh_authority_reconciliation`; `missing_legacy_receipt_preserves_bytes_and_blocks_install`; `concurrent_file_change_aborts_migration`; `recovered_emergency_stop_remains_latched`.
+
+**Test assertion contract:** `assert.equal(restoredApproval.status, 'blocked'); assert.equal(overwrittenUnownedFiles, 0); assert.equal(recoveredStopLatch, true);`
+
 - [ ] **Step 2: Confirm RED.** Run `node --test management/test/backup.test.ts management/test/recovery.test.ts management/test/migration.test.ts`. Expected: blocked restore and migration preview unavailable.
 - [ ] **Step 3: Implement minimum** supported transactionally consistent SQLite snapshot API, protected keys/backup state, blocked-on-restore startup, version/trust reconciliation and preservation-first migration previews. No automatic overwrite, device enrollment reset, re-pair, counter reset or broad compatibility grant; Leno's incomplete receipt is an explicit negative test fixture, not an excuse to touch its installation.
 - [ ] **Step 4: Confirm GREEN.** Re-run focused tests with synthetic protected backup and fake incomplete receipt plus existing `pnpm --filter @tetherplane/management test`. Expected: safe restores only after independent trust proof; unauthorized/ambiguous migrations remain blocked.
@@ -196,6 +217,9 @@ API paths selected here: `/api/v1/organizations/:organizationId/...` with curren
 - Human-active overlap remains a *separately approved* test window; completing this task's synthetic tests does not grant foreground control.
 
 - [ ] **Step 1: Write failing tests** `device_local_stop_works_with_management_offline`; `remote_cannot_clear_stop_latch`; `transfer_requires_old_state_revocation_and_disposition`; `two_writer_collision_fails_safely`; `interrupted_install_preserves_unmanaged_files`.
+
+**Test assertion contract:** `assert.equal(remoteClearStop.status, 403); assert.equal(unownedTerminatedProcesses, 0); assert.equal(transferBeforeRevocation.allowed, false);`
+
 - [ ] **Step 2: Confirm RED.** Run `cargo test -p tetherd --test emergency_stop` and `node --test tests/e2e/organizations-release.test.ts`. Expected: at least new transfer/recovery assertions fail on intended missing semantics.
 - [ ] **Step 3: Implement minimum** secure local recovery and transfer, truthful persisted ownership and revocation status, single-writer startup runbook, and non-destructive supported test-owned installer fixtures. No installed Leno tasks/files are altered or remote production action submitted by this plan alone.
 - [ ] **Step 4: Confirm GREEN.** Re-run targeted suites plus Windows onboarding Pester tests (`powershell -NoProfile -ExecutionPolicy Bypass -File scripts/run-onboarding-tests.ps1` in an isolated supported Windows runner). Expected: exact owned resources restored, unknown ownership never overwritten, stop latch locally controlled.
@@ -204,7 +228,7 @@ API paths selected here: `/api/v1/organizations/:organizationId/...` with curren
 ### Task 9: Release-wide AC-01–AC-22 verification and independent acceptance ledger
 
 **Files:**
-- Create: `tests/e2e/organizations-release.test.ts` if not already created in Task 8; extend dedicated acceptance assertions
+- Modify: `tests/e2e/organizations-release.test.ts` (created in Task 8), extending dedicated acceptance assertions
 - Modify: `.github/workflows/ci.yml` only to incorporate real synthetic Windows/Ubuntu requirement-specific gates
 - Complete: `docs/security/ORGANIZATIONS-RELEASE-ACCEPTANCE.md` and `docs/onboarding/ORGANIZATIONS-SELF-HOSTED.md`
 
@@ -213,6 +237,9 @@ API paths selected here: `/api/v1/organizations/:organizationId/...` with curren
 - `AC-22` requires real functional Personal Mode and safe optional organization transition, not screenshots or mere role metadata.
 
 - [ ] **Step 1: Write failing gate test** `all_22_acceptance_requirements_have_fresh_evidence_or_explicit_blocker` plus the full synthetic multi-org and personal UI/API/agent negative matrix. Include clock/renewal/race, forged identity, corrupted snapshot, unconfined process, forged approval, audit storage failure, unsafe restore, incomplete installation, and coexistence fixtures.
+
+**Test assertion contract:** `assert.equal(acceptanceItems.length, 22); assert.equal(falsePassesForUnverifiedGates, 0); assert.equal(allRequiredEvidenceVerified, true);`
+
 - [ ] **Step 2: Confirm RED.** Run `node --test tests/e2e/organizations-release.test.ts` on the current branch. Expected: outstanding evidence produces honest failure/blocker state, never a fabricated successful release.
 - [ ] **Step 3: Integrate and collect independent results** from Plan 1 native OS profile and Plan 2 authority suites, Plan 3 UI/approval flows, synthetic two-tenant device tests and a clean self-host instance. Require a scoped fresh human-active Leno test authorization before observing the user workstation; no background permission implies such a window. Record separate Windows public trust/SignPath eligibility and installed-agent recovery gates.
 - [ ] **Step 4: Confirm broad gates at exact candidate SHA:** `cargo fmt --all -- --check`, `cargo clippy --workspace --all-targets -- -D warnings`, `cargo test --workspace -- --test-threads=1`, `python scripts/check-no-unsafe.py`, `pnpm -r typecheck`, `pnpm -r test`, `pnpm -r build`, full Windows onboarding Pester, Windows package smoke, patched SQLite WAL stress, native process sandbox tests, genuine Playwright browser tests, and fresh hosted Windows/Ubuntu CI. A single missing/failed gate is an explicit blocker.
