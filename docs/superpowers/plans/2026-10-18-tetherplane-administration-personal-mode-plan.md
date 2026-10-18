@@ -156,7 +156,7 @@ API paths selected here: `/api/v1/organizations/:organizationId/...` with curren
 - Produce: `PersonalModeFlow` that creates **one member organization** using the single-use authenticated local bootstrap, then uses the same scoped devices/principals/grants/approvals/audit endpoints.
 - Produce: explicit `enableOrganizationAdministration(personalOrgId, authenticatedOwner)` UI transition; no credential reset, new tenant, re-pair, automatic permission broadening or local-ceiling change.
 
-- [ ] **Step 1: Write failing tests** `first_time_personal_user_completes_onboarding_without_enterprise_forms`; `personal_can_enroll_devices_create_ai_grant_revoke_and_read_audit`; `personal_to_org_does_not_expand_device_access`; `personal_owner_cannot_bypass_independent_approval`; `switching_personal_and_other_org_does_not_leak_context`.
+- [ ] **Step 1: Write failing tests** `first_time_personal_user_completes_onboarding_without_enterprise_forms`; `personal_can_enroll_two_devices_create_ai_grant_revoke_and_read_audit`; `personal_to_org_does_not_expand_device_access`; `personal_owner_cannot_bypass_independent_approval`; `switching_personal_and_other_org_does_not_leak_context`.
 
 **Test assertion contract:** `assert.equal(enterpriseQuestionsRequiredForPersonalSetup, 0); assert.equal(personalOrgIdAfterTransition, personalOrgIdBefore); assert.equal(grantsAfterTransition, grantsBefore);`
 
@@ -233,7 +233,7 @@ API paths selected here: `/api/v1/organizations/:organizationId/...` with curren
 - Complete: `docs/security/ORGANIZATIONS-RELEASE-ACCEPTANCE.md` and `docs/onboarding/ORGANIZATIONS-SELF-HOSTED.md`
 
 **Interfaces:**
-- Produce one acceptance matrix indexed `AC-01` ... `AC-22`, with exact commit, OS/build, supported Windows profile/program/runtime/piped-or-PTY, test command, numerical totals, side-effect verification, signer status, independent reviewer, exclusions and unresolved blockers.
+- Produce one acceptance matrix indexed `AC-01` ... `AC-22`, with exact commit, OS/build, supported Windows profile/program/runtime/piped-or-PTY, test command, numerical totals, measured memory/CPU/latency/resource budgets, side-effect verification, signer status, independent reviewer, exclusions and unresolved blockers.
 - `AC-22` requires real functional Personal Mode and safe optional organization transition, not screenshots or mere role metadata.
 
 - [ ] **Step 1: Write failing gate test** `all_22_acceptance_requirements_have_fresh_evidence_or_explicit_blocker` plus the full synthetic multi-org and personal UI/API/agent negative matrix. Include clock/renewal/race, forged identity, corrupted snapshot, unconfined process, forged approval, audit storage failure, unsafe restore, incomplete installation, and coexistence fixtures.
