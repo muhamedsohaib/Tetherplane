@@ -43,7 +43,7 @@ external application requires separate authorization.
    \`\`\`powershell
    $publisher = '<independently approved exact X.509 subject DN>'
    powershell -NoProfile -ExecutionPolicy Bypass -File scripts/package-windows-device-kit.ps1 -OutputPath dist/tetherplane-signed-device-kit -TetherdPath target\release\tetherd.exe -SkipBuild -RequireTrustedSignature -ExpectedPublisherSubject $publisher -Zip
-   powershell -NoProfile -ExecutionPolicy Bypass -File scripts/verify-windows-device-kit.ps1 -ZipPath dist/tetherplane-signed-device-kit.zip -RequireTrustedSignature
+   powershell -NoProfile -ExecutionPolicy Bypass -File scripts/verify-windows-device-kit.ps1 -ZipPath dist/tetherplane-signed-device-kit.zip -RequireTrustedSignature -ExpectedPublisherSubject $publisher
    \`\`\`
 
 5. Preserve ZIP SHA-256, signed executable digest, source commit, signer
@@ -51,8 +51,10 @@ external application requires separate authorization.
 
 The signed packaging mode refuses unsigned, invalid, unexpected-publisher,
 catalog-only and missing-timestamp signatures. Signed-kit manifests include
-the subject/thumbprint and cause automatic signature verification before
-managed installation. The \`-RequireTrustedSignature\` verifier switch
+the subject/thumbprint and require an independently confirmed
+`-ExpectedPublisherSubject` during managed installation. A kit manifest is
+untrusted input: the installer rejects signed claims if this external
+publisher pin is absent or does not match. The \`-RequireTrustedSignature\` verifier switch
 prevents an unsigned private test kit being misrepresented as signed.
 \`Get-AuthenticodeSignature\` validates against the current Windows trust
 store; final **Smart App Control On** acceptance on the actual controlled

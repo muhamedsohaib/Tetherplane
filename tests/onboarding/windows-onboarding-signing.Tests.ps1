@@ -119,7 +119,7 @@ Describe "publicly trusted Authenticode gate" {
         })
         $manifest | ConvertTo-Json -Depth 5 | Set-Content -LiteralPath $manifestPath
         Write-TestSha256 $kit
-        { Confirm-DevicePackage -PackagePath $kit } | Should Throw
+        { Confirm-DevicePackage -PackagePath $kit -ExpectedPublisherSubject "CN=Tetherplane Test Publisher" } | Should Throw
     }
 
     It "requires an independently supplied publisher when a kit claims to be signed" {

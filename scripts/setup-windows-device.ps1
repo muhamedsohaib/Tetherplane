@@ -15,6 +15,7 @@ param(
     [string]$StateDir = "",
     [string]$RelayUrl = "wss://vaulter.tailf65eba.ts.net:10000/device",
     [string]$PairingOrigin = "https://vaulter.tailf65eba.ts.net",
+    [string]$ExpectedPublisherSubject = "",
     [switch]$Pair,
     [switch]$Finalize
 )
@@ -155,7 +156,7 @@ function Assert-TrustedDeviceSignature {
 }
 
 function Confirm-DevicePackage {
-    param([Parameter(Mandatory = $true)][string]$PackagePath)
+    param([Parameter(Mandatory = $true)][string]$PackagePath, [string]$ExpectedPublisherSubject = "")
     $package = [IO.Path]::GetFullPath($PackagePath)
     $manifestPath = Join-Path $package "manifest.json"
     if (-not (Test-Path -LiteralPath $manifestPath -PathType Leaf)) {
@@ -218,6 +219,7 @@ function Confirm-DevicePackage {
     $trustedSignatureVerified = $false
     $signatureField = $manifest.PSObject.Properties["signature"]
     if ($null -ne $signatureField) {
+        if ([string]::IsNullOrWhiteSpace($ExpectedPublisherSubject)) { throw "signed device kits require an independently confirmed -ExpectedPublisherSubject" }
         $claimed = $signatureField.Value
         if ($null -eq $claimed -or [string]$claimed.scheme -cne "authenticode-public-trust-v1") {
             throw "device-kit signing scheme is not recognized"
@@ -226,7 +228,8 @@ function Confirm-DevicePackage {
             [string]$claimed.signer_thumbprint -notmatch "^[a-fA-F0-9]{40}$") {
             throw "device-kit signed publisher or thumbprint metadata is incomplete"
         }
-        $checked = Assert-TrustedDeviceSignature -Path (Join-Path $package "bin\tetherd.exe") -ExpectedPublisherSubject ([string]$claimed.publisher_subject) -ExpectedSignerThumbprint ([string]$claimed.signer_thumbprint)
+        if ([string]$claimed.publisher_subject -cne $ExpectedPublisherSubject) { throw "signed kit publisher differs from the independently confirmed expected publisher" }
+        $checked = Assert-TrustedDeviceSignature -Path (Join-Path $package "bin\tetherd.exe") -ExpectedPublisherSubject $ExpectedPublisherSubject -ExpectedSignerThumbprint ([string]$claimed.signer_thumbprint)
         $trustedSignatureVerified = $true
     }
     return [ordered]@{
@@ -241,12 +244,13 @@ function Confirm-DevicePackage {
 function Install-ManagedDeviceFiles {
     param(
         [Parameter(Mandatory = $true)][string]$PackagePath,
-        [Parameter(Mandatory = $true)][string]$InstallPrefix
+        [Parameter(Mandatory = $true)][string]$InstallPrefix,
+        [string]$ExpectedPublisherSubject = ""
     )
     $package = [IO.Path]::GetFullPath($PackagePath)
     $install = [IO.Path]::GetFullPath($InstallPrefix)
     Assert-ManagedDeviceDestinations -InstallPrefix $install
-    Confirm-DevicePackage -PackagePath $package | Out-Null
+    Confirm-DevicePackage -PackagePath $package -ExpectedPublisherSubject $ExpectedPublisherSubject | Out-Null
     $receiptPath = Join-Path $install "config\install.json"
     if ((Test-Path -LiteralPath $install)) {
         $existing = @(Get-ChildItem -LiteralPath $install -Force -ErrorAction SilentlyContinue)
@@ -256,7 +260,7 @@ function Install-ManagedDeviceFiles {
         }
         if ($existing.Count -gt 0 -and $managed) {
             Confirm-ManagedDeviceReceipt -InstallPrefix $install
-            Repair-ManagedDeviceFiles -PackagePath $package -InstallPrefix $install
+            Repair-ManagedDeviceFiles -PackagePath $package -InstallPrefix $install -ExpectedPublisherSubject $ExpectedPublisherSubject
             return [ordered]@{ ok = $true; repaired = $true; install_prefix = $install }
         }
     }
@@ -272,20 +276,21 @@ function Install-ManagedDeviceFiles {
     if (-not (Test-Path -LiteralPath $tetherd -PathType Leaf)) {
         throw "managed install failed: agent binary is missing after copy"
     }
-    Write-InstallReceipt -PackagePath $package -InstallPrefix $install
+    Write-InstallReceipt -PackagePath $package -InstallPrefix $install -ExpectedPublisherSubject $ExpectedPublisherSubject
     return [ordered]@{ ok = $true; repaired = $false; install_prefix = $install }
 }
 
 function Repair-ManagedDeviceFiles {
     param(
         [Parameter(Mandatory = $true)][string]$PackagePath,
-        [Parameter(Mandatory = $true)][string]$InstallPrefix
+        [Parameter(Mandatory = $true)][string]$InstallPrefix,
+        [string]$ExpectedPublisherSubject = ""
     )
     $package = [IO.Path]::GetFullPath($PackagePath)
     $install = [IO.Path]::GetFullPath($InstallPrefix)
     Assert-ManagedDeviceDestinations -InstallPrefix $install
     Confirm-ManagedDeviceReceipt -InstallPrefix $install
-    Confirm-DevicePackage -PackagePath $package | Out-Null
+    Confirm-DevicePackage -PackagePath $package -ExpectedPublisherSubject $ExpectedPublisherSubject | Out-Null
     foreach ($file in $ManagedFiles) {
         $source = Join-Path $package $file
         if (-not (Test-Path -LiteralPath $source -PathType Leaf)) { continue }
@@ -298,19 +303,20 @@ function Repair-ManagedDeviceFiles {
         }
         if ($refresh) { Copy-Item -LiteralPath $source -Destination $destination -Force }
     }
-    Write-InstallReceipt -PackagePath $package -InstallPrefix $install
+    Write-InstallReceipt -PackagePath $package -InstallPrefix $install -ExpectedPublisherSubject $ExpectedPublisherSubject
 }
 
 function Write-InstallReceipt {
     param(
         [Parameter(Mandatory = $true)][string]$PackagePath,
-        [Parameter(Mandatory = $true)][string]$InstallPrefix
+        [Parameter(Mandatory = $true)][string]$InstallPrefix,
+        [string]$ExpectedPublisherSubject = ""
     )
     $tetherd = Join-Path ([IO.Path]::GetFullPath($InstallPrefix)) "bin\tetherd.exe"
     $receipt = [ordered]@{
         install_prefix = [IO.Path]::GetFullPath($InstallPrefix)
         managed_by = "setup-windows-device.ps1"
-        source_commit = (Confirm-DevicePackage -PackagePath $PackagePath).source_commit
+        source_commit = (Confirm-DevicePackage -PackagePath $PackagePath -ExpectedPublisherSubject $ExpectedPublisherSubject).source_commit
         tetherd_sha256 = (Get-FileHash -LiteralPath $tetherd -Algorithm SHA256).Hash.ToLowerInvariant()
     }
     Write-Utf8NoBomJson -Value $receipt -LiteralPath (Join-Path ([IO.Path]::GetFullPath($InstallPrefix)) "config\install.json")
@@ -511,8 +517,8 @@ if ($MyInvocation.InvocationName -ne ".") {
     if (-not $DeviceId) { $DeviceId = $env:COMPUTERNAME }
     if (-not $InstallPrefix) { $InstallPrefix = Join-Path $env:LOCALAPPDATA "Programs\Tetherplane" }
     if (-not $StateDir) { $StateDir = Join-Path $env:LOCALAPPDATA "Tetherplane\device-state" }
-    $manifest = Confirm-DevicePackage -PackagePath $PackagePath
-    $install = Install-ManagedDeviceFiles -PackagePath $PackagePath -InstallPrefix $InstallPrefix
+    $manifest = Confirm-DevicePackage -PackagePath $PackagePath -ExpectedPublisherSubject $ExpectedPublisherSubject
+    $install = Install-ManagedDeviceFiles -PackagePath $PackagePath -InstallPrefix $InstallPrefix -ExpectedPublisherSubject $ExpectedPublisherSubject
     $identity = Install-DeviceIdentity -StateDir $StateDir -DeviceId $DeviceId
     $result = [ordered]@{ ok = $true; package = $manifest; install = $install; identity = $identity }
     if ($Pair) {

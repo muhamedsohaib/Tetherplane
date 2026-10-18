@@ -4,7 +4,8 @@
 # Nothing outside the temporary directory is modified.
 param(
     [Parameter(Mandatory = $true)][string]$ZipPath,
-    [switch]$RequireTrustedSignature
+    [switch]$RequireTrustedSignature,
+    [string]$ExpectedPublisherSubject = ""
 )
 
 $ErrorActionPreference = "Stop"
@@ -27,7 +28,8 @@ try {
 
     $setup = Join-Path $kit "setup-windows-device.ps1"
     . $setup
-    $verified = Confirm-DevicePackage -PackagePath $kit
+    $verified = Confirm-DevicePackage -PackagePath $kit -ExpectedPublisherSubject $ExpectedPublisherSubject
+    if ($RequireTrustedSignature -and [string]::IsNullOrWhiteSpace($ExpectedPublisherSubject)) { throw "independently confirmed -ExpectedPublisherSubject is required for signed verification" }
     if ($RequireTrustedSignature -and -not $verified.trusted_signature_verified) {
         throw "this is an unsigned development kit, not a trusted signed distribution"
     }
@@ -35,7 +37,7 @@ try {
 
     $install = Join-Path $work "install"
     $state = Join-Path $work "state"
-    $result = & $setup -DeviceId "KITVERIFY01" -InstallPrefix $install -StateDir $state | ConvertFrom-Json
+    $result = & $setup -DeviceId "KITVERIFY01" -InstallPrefix $install -StateDir $state -ExpectedPublisherSubject $ExpectedPublisherSubject | ConvertFrom-Json
     if (-not $result.ok) { throw "setup from the unpacked kit did not report ok" }
 
     $installedAgent = Join-Path $install "bin\tetherd.exe"
@@ -43,7 +45,7 @@ try {
     $installedHash = (Get-FileHash -LiteralPath $installedAgent -Algorithm SHA256).Hash
     if ($shipped -ne $installedHash) { throw "installed agent differs from the shipped agent" }
     if ($RequireTrustedSignature) {
-        $checked = Assert-TrustedDeviceSignature -Path $installedAgent -ExpectedPublisherSubject ([string]$manifest.signature.publisher_subject) -ExpectedSignerThumbprint ([string]$manifest.signature.signer_thumbprint)
+        $checked = Assert-TrustedDeviceSignature -Path $installedAgent -ExpectedPublisherSubject $ExpectedPublisherSubject -ExpectedSignerThumbprint ([string]$manifest.signature.signer_thumbprint)
     }
 
     $requestId = [Guid]::NewGuid().ToString()
