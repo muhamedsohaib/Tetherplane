@@ -31,4 +31,16 @@ jobs:
       - name: Build and inspect unsigned MSIX candidate
         shell: powershell
         run: powershell -NoProfile -File tests/release/windows-msix-feasibility.ps1 -TetherdPath target\release\tetherd.exe
-      # No artifacts, device installs, signing keys, trust-store changes, or deployment.
+      - name: Produce immutable unsigned Store candidate and independently verify
+        shell: powershell
+        run: |
+          powershell.exe -NoProfile -File tests/release/windows-msix-candidate-contract.ps1 -TetherdPath target\release\tetherd.exe -OutputDirectory "$env:RUNNER_TEMP\tetherplane-unsigned-store-candidate" -SourceCommit "$env:GITHUB_SHA"
+          if ($LASTEXITCODE -ne 0) { throw "source-bound Store candidate verification failed" }
+      - name: Upload UNSIGNED MSIX Store proof only (NOT installable)
+        uses: actions/upload-artifact@v4
+        with:
+          name: tetherplane-UNSIGNED-msix-store-proof-${{ github.sha }}
+          path: ${{ runner.temp }}/tetherplane-unsigned-store-candidate/*
+          if-no-files-found: error
+          retention-days: 7
+      # No install, certificate enrollment, public release, device, or relay changes.
