@@ -107,6 +107,53 @@ function Get-CurrentUserSid {
     return ([Security.Principal.WindowsIdentity]::GetCurrent()).User.Value
 }
 
+function Assert-TrustedDeviceSignature {
+    param(
+        [Parameter(Mandatory = $true)][string]$Path,
+        [Parameter(Mandatory = $true)][string]$ExpectedPublisherSubject,
+        [string]$ExpectedSignerThumbprint = ""
+    )
+    if ([string]::IsNullOrWhiteSpace($ExpectedPublisherSubject)) {
+        throw "trusted signing requires an independently approved publisher subject"
+    }
+    if (-not (Test-Path -LiteralPath $Path -PathType Leaf)) {
+        throw "signed agent binary is missing: $Path"
+    }
+    $file = Get-Item -LiteralPath $Path -Force
+    if (($file.Attributes -band [IO.FileAttributes]::ReparsePoint) -ne 0) {
+        throw "refusing redirected signed agent binary: $Path"
+    }
+    $signature = Get-AuthenticodeSignature -LiteralPath $Path
+    if ([string]$signature.Status -cne "Valid") {
+        throw "agent Authenticode signature is not trusted: $($signature.Status)"
+    }
+    if ([string]$signature.SignatureType -cne "Authenticode") {
+        throw "agent requires an embedded Authenticode signature, not a catalog signature"
+    }
+    if ($null -eq $signature.SignerCertificate) {
+        throw "trusted signing has no publisher certificate"
+    }
+    $subject = [string]$signature.SignerCertificate.Subject
+    if ($subject -cne $ExpectedPublisherSubject) {
+        throw "agent publisher does not match the independently approved signer identity"
+    }
+    if ($null -eq $signature.TimeStamperCertificate) {
+        throw "trusted agent signature is missing a verified timestamp certificate"
+    }
+    $thumbprint = ([string]$signature.SignerCertificate.Thumbprint).ToUpperInvariant()
+    if ($thumbprint -notmatch "^[A-F0-9]{40}$") {
+        throw "trusted agent signature has an invalid signer thumbprint"
+    }
+    if ($ExpectedSignerThumbprint -and $thumbprint -cne $ExpectedSignerThumbprint.ToUpperInvariant()) {
+        throw "trusted agent signature does not match the expected signer thumbprint"
+    }
+    return [pscustomobject]@{
+        signer_subject = $subject
+        signer_thumbprint = $thumbprint
+        timestamp_subject = [string]$signature.TimeStamperCertificate.Subject
+    }
+}
+
 function Confirm-DevicePackage {
     param([Parameter(Mandatory = $true)][string]$PackagePath)
     $package = [IO.Path]::GetFullPath($PackagePath)
@@ -168,11 +215,26 @@ function Confirm-DevicePackage {
             throw "package is missing required artifact: $required"
         }
     }
+    $trustedSignatureVerified = $false
+    $signatureField = $manifest.PSObject.Properties["signature"]
+    if ($null -ne $signatureField) {
+        $claimed = $signatureField.Value
+        if ($null -eq $claimed -or [string]$claimed.scheme -cne "authenticode-public-trust-v1") {
+            throw "device-kit signing scheme is not recognized"
+        }
+        if ([string]::IsNullOrWhiteSpace([string]$claimed.publisher_subject) -or
+            [string]$claimed.signer_thumbprint -notmatch "^[a-fA-F0-9]{40}$") {
+            throw "device-kit signed publisher or thumbprint metadata is incomplete"
+        }
+        $checked = Assert-TrustedDeviceSignature -Path (Join-Path $package "bin\tetherd.exe") -ExpectedPublisherSubject ([string]$claimed.publisher_subject) -ExpectedSignerThumbprint ([string]$claimed.signer_thumbprint)
+        $trustedSignatureVerified = $true
+    }
     return [ordered]@{
         ok = $true
         name = [string]$manifest.name
         version = [string]$manifest.version
         source_commit = [string]$manifest.source_commit
+        trusted_signature_verified = $trustedSignatureVerified
     }
 }
 

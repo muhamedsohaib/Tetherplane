@@ -3,7 +3,8 @@
 # temporary prefix, and the shipped agent binary answering device.status.
 # Nothing outside the temporary directory is modified.
 param(
-    [Parameter(Mandatory = $true)][string]$ZipPath
+    [Parameter(Mandatory = $true)][string]$ZipPath,
+    [switch]$RequireTrustedSignature
 )
 
 $ErrorActionPreference = "Stop"
@@ -27,6 +28,9 @@ try {
     $setup = Join-Path $kit "setup-windows-device.ps1"
     . $setup
     $verified = Confirm-DevicePackage -PackagePath $kit
+    if ($RequireTrustedSignature -and -not $verified.trusted_signature_verified) {
+        throw "this is an unsigned development kit, not a trusted signed distribution"
+    }
     $manifest = Get-Content -LiteralPath (Join-Path $kit "manifest.json") -Raw | ConvertFrom-Json
 
     $install = Join-Path $work "install"
@@ -38,6 +42,9 @@ try {
     $shipped = (Get-FileHash -LiteralPath (Join-Path $kit "bin\tetherd.exe") -Algorithm SHA256).Hash
     $installedHash = (Get-FileHash -LiteralPath $installedAgent -Algorithm SHA256).Hash
     if ($shipped -ne $installedHash) { throw "installed agent differs from the shipped agent" }
+    if ($RequireTrustedSignature) {
+        $checked = Assert-TrustedDeviceSignature -Path $installedAgent -ExpectedPublisherSubject ([string]$manifest.signature.publisher_subject) -ExpectedSignerThumbprint ([string]$manifest.signature.signer_thumbprint)
+    }
 
     $requestId = [Guid]::NewGuid().ToString()
     $request = @{

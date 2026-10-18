@@ -9,7 +9,9 @@ param(
     [string]$TetherdPath = "",
     [switch]$SkipBuild,
     [switch]$Zip,
-    [string]$Version = "0.1.0"
+    [string]$Version = "0.1.0",
+    [switch]$RequireTrustedSignature,
+    [string]$ExpectedPublisherSubject = ""
 )
 
 $ErrorActionPreference = "Stop"
@@ -45,6 +47,15 @@ if (-not $SkipBuild) {
 }
 if (-not (Test-Path -LiteralPath $TetherdPath -PathType Leaf)) {
     throw "agent binary is missing: $TetherdPath (build it with: cargo build --release -p tetherd)"
+}
+
+$signedAgent = $null
+if ($RequireTrustedSignature) {
+    if ([string]::IsNullOrWhiteSpace($ExpectedPublisherSubject)) {
+        throw "signed distribution requires -ExpectedPublisherSubject from an independently approved signing identity"
+    }
+    . (Join-Path $repo "scripts\setup-windows-device.ps1")
+    $signedAgent = Assert-TrustedDeviceSignature -Path $TetherdPath -ExpectedPublisherSubject $ExpectedPublisherSubject
 }
 
 $sourceCommit = ""
@@ -183,6 +194,10 @@ Add this computer
 Re-running setup is safe: it repairs managed files, keeps your credential and
 identity, and never replaces a task or folder it did not create.
 
+This private development kit may contain unsigned code. Do not bypass Smart App
+Control to install it. Publicly trusted signed releases require Authenticode,
+a verified publisher, and a timestamp before packaging or installation.
+
 New installs start with the least-privilege profile (device.status only, no
 allowed folders). Widening access is a deliberate local decision, never done by
 setup.
@@ -199,6 +214,13 @@ $manifest = [ordered]@{
     architecture = "x64"
     node_runtime_required = $false
     default_mcp_tools = @("device", "files", "process", "browser", "desktop", "batch")
+}
+if ($RequireTrustedSignature) {
+    $manifest["signature"] = [ordered]@{
+        scheme = "authenticode-public-trust-v1"
+        publisher_subject = $signedAgent.signer_subject
+        signer_thumbprint = $signedAgent.signer_thumbprint
+    }
 }
 [IO.File]::WriteAllText((Join-Path $output "manifest.json"), (($manifest | ConvertTo-Json -Depth 4) + "`n"), $utf8NoBom)
 

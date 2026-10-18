@@ -122,6 +122,6 @@ Describe "publicly trusted Authenticode gate" {
         $kit = Join-Path $script:root "kit"
         & (Join-Path $repo "scripts\package-windows-device-kit.ps1") -OutputPath $kit -SkipBuild -TetherdPath $script:exe | Out-Null
         $manifest = Get-Content -LiteralPath (Join-Path $kit "manifest.json") -Raw | ConvertFrom-Json
-        ($null -eq $manifest.signature) | Should Be $true
+        ($null -eq $manifest.PSObject.Properties["signature"]) | Should Be $true
     }
 }
