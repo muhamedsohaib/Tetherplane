@@ -461,6 +461,16 @@ Describe "native Windows signing content digests" {
     }
     AfterEach { Remove-Item -LiteralPath $script:nativeRoot -Recurse -Force -ErrorAction SilentlyContinue }
 
+    It "preserves a native failure code in diagnostic text without requiring Windows" {
+        Initialize-WindowsSigningContent
+        $factory = [Tetherplane.WindowsSigningContent].GetMethod('NativeFailure', [Reflection.BindingFlags]'NonPublic, Static')
+        $failure = $factory.Invoke($null, @('digest sizing'))
+        ($failure -is [ComponentModel.Win32Exception]) | Should Be $true
+        $code = $failure.NativeErrorCode
+        $hex = [BitConverter]::ToUInt32([BitConverter]::GetBytes([int]$code), 0).ToString('X8')
+        $failure.Message | Should Be "Windows SIP digest sizing failed (native code $code; 0x$hex)"
+    }
+
     It "uses native SHA-256 SIP on Windows and explicitly rejects unavailable platforms" {
         $path = Join-Path $nativeRoot 'unsigned.ps1'
         [IO.File]::WriteAllText($path, "# native fixture`r`nWrite-Output 'never executed'`r`n")

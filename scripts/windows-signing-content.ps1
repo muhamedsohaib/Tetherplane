@@ -62,7 +62,12 @@ namespace Tetherplane {
         private static extern bool CryptSIPCreateIndirectData(ref SubjectInfo subject, ref uint size, IntPtr data);
 
         private static Exception NativeFailure(string operation) {
-            return new Win32Exception(Marshal.GetLastWin32Error(), "Windows SIP " + operation + " failed");
+            // Capture before formatting or performing any further native work.
+            // NativeErrorCode alone is omitted by common PowerShell test logs.
+            int code = Marshal.GetLastWin32Error();
+            return new Win32Exception(code, "Windows SIP " + operation + " failed (native code " +
+                code.ToString(System.Globalization.CultureInfo.InvariantCulture) + "; 0x" +
+                unchecked((uint)code).ToString("X8", System.Globalization.CultureInfo.InvariantCulture) + ")");
         }
 
         public static string Compute(string path) {

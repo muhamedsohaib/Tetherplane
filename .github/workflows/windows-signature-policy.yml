@@ -46,10 +46,10 @@ jobs:
           $ErrorActionPreference = 'Stop'
           $engine = (Get-Command $env:TEST_ENGINE -CommandType Application -ErrorAction Stop).Source
           foreach ($suite in @(
+            'windows-signing-pipeline.Tests.ps1',
             'windows-onboarding-signing.Tests.ps1',
             'windows-signature-enforcement.Tests.ps1',
             'windows-signing-package.Tests.ps1',
-            'windows-signing-pipeline.Tests.ps1',
             'windows-onboarding-upgrade.Tests.ps1',
             'windows-onboarding-runner.Tests.ps1'
           )) {
