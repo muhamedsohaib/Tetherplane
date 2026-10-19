@@ -1,0 +1,37 @@
+name: Agensi skill package (review only)
+on:
+  push:
+    branches:
+      - "feature/dual-marketplace-release-kits-*"
+  pull_request:
+    paths:
+      - "distribution/agensi/**"
+      - "scripts/package-agensi-skill.py"
+      - "tests/distribution/test_agensi_skill.py"
+      - ".github/workflows/agensi-skill-package.yml"
+permissions:
+  contents: read
+jobs:
+  skill:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - name: Verify Agensi skill contract and negative cases
+        run: python -m unittest discover -s tests/distribution -v
+      - name: Create deterministic review-only ZIP
+        run: python scripts/package-agensi-skill.py --source distribution/agensi/tetherplane --output dist/agensi/skill.zip
+      - name: Inspect archive contents and SHA-256
+        run: |
+          unzip -l dist/agensi/skill.zip
+          sha256sum dist/agensi/skill.zip
+      - uses: actions/upload-artifact@v4
+        with:
+          name: tetherplane-agensi-skill-review-${{ github.sha }}
+          path: dist/agensi/skill.zip
+          if-no-files-found: error
+          retention-days: 14
+      # No Agensi account, marketplace submission, network publishing, or credential writes.
