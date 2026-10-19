@@ -1,5 +1,7 @@
 # Release and Installation
 
+> **Release status (2026-10-19):** The GitHub release and tag `v0.1.0` already exist (published 2026-09-26). Do not recreate, retag, or overwrite that release. The operator-observed acceptance steps below are a historical v0.1.0 contract and must be repeated against a **new candidate revision** before any future public release. Store signing, modern Windows onboarding, and a Store-certified app remain separate gates.
+
 ## Windows package
 
 scripts/package-windows.ps1 builds release tetherd, builds TypeScript packages, deploys production Compact MCP and relay dependencies, preserves the canonical adapter/protocol schema layout, and writes a source-commit manifest.
