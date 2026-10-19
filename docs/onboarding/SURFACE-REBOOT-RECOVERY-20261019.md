@@ -46,3 +46,28 @@
 4. Only after the applicable technical and physical gates and explicit authorization, consider the separately reviewed relay/presence deployment. Do not conflate CI simulations or this existing-install recovery with distribution readiness.
 
 **Release decision:** **NO-GO unchanged.** This record adds one real-device reboot/reconnect observation to the evidence ledger; it is not approval for merge, publication, signing-service procurement, or production changes.
+
+## Controlled transport interruption — failure and restoration (2026-10-19)
+
+**Authorization and scope:** The Surface operator explicitly authorized one brief interruption of Surface networking for a recovery test. This does not extend permission to Vaulter/Leno, OAuth configuration, device credentials or production releases.
+
+**Method and limitation:** The local operator ran an elevated PowerShell test which disabled the Tailscale virtual adapter for approximately twenty seconds and attempted to re-enable it in a `finally` block. Windows temporarily stopped enumerating the adapter under its ordinary name; `Enable-NetAdapter` and subsequent adapter enumeration returned `No MSFT_NetAdapter objects found`. The scripted test therefore terminated without its intended structured recovery result. The exact interruption and restoration times were **not recorded**, and the adapter disable/re-enumeration behavior makes this a more disruptive test than an ordinary transport packet-loss episode. **Do not repeat this procedure** as the standard transport-loss test.
+
+**Observed recovery boundary:**
+
+- Subsequent local inspection showed the Tailscale virtual adapter `Up`, its plug-and-play device `OK` / `CM_PROB_NONE`, and the Tailscale service `Running` with `Automatic` startup.
+- An independent MCP `device(op="status", device="Surface")` returned `timeout: relay route timed out waiting for the device` while Windows already reported the adapter back online.
+- The operator's read-only inspection then found the existing `Tetherplane Surface Agent` task in `Ready` state, **zero** `tetherd.exe` processes, zero established agent relay sockets, but successful TCP reachability to the relay on port 10000.
+- Before manual intervention, `Get-ScheduledTaskInfo` reported the previously running task had exited with **`0x00000001`**. The scheduled-task settings showed **`RestartCount=0`** and no `RestartInterval`. No agent error log or fatal call stack was collected, so the cause of the process exit is **unknown**. The absent task restart policy explains why Task Scheduler did not automatically re-run that exited action; it does not prove the internal agent's reconnect logic is defective.
+- The operator made one controlled `Start-ScheduledTask` request to the **same verified existing launcher**, without replacing credentials or changing task settings. Fifteen seconds later, the task was `Running` with one `tetherd.exe` process and **one established relay TCP socket**.
+- Independently, the existing authenticated Tetherplane MCP connection successfully returned `device.status` for Surface: Windows x86_64, agent `0.1.0`, `background_only`, reported uptime `68930` ms. A read-only out-of-scope `files.list` request for `C:\Windows\System32` returned `permission_denied`.
+
+**Gate decision: FAIL — automatic recovery after this Tailscale adapter interruption.** Explicit manual task start restored the authenticated connection, but cannot be counted as automatic recovery. The agent's actual exit cause is not yet explained. Keep the reboot/sign-in pass from the preceding section separate and intact. Do not ship this as tested self-healing connectivity.
+
+**Follow-up before another fault injection:**
+
+1. Inspect existing agent error output / exit behavior and scheduled-task restart settings, without exposing credentials, tokens, full launch arguments or changing the live task.
+2. In an isolated Windows acceptance environment, reproduce the smallest verified failure mode and compare agent-internal retry handling against Task Scheduler supervisor restart behavior; test under bounded disconnection and restoration.
+3. Implement the smallest authorized source-controlled fix with regression tests, then separately verify on a named operator-approved device without disabling its Tailscale virtual adapter. Keep transport-upgrade/clean-install/rollback gates open.
+
+**Overall release decision: NO-GO unchanged.** The failure evidence is additive to the verified Surface reboot-reconnect result; this existing-installation recovery is not an endorsement of release readiness.
