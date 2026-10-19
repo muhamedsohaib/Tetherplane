@@ -1,6 +1,8 @@
 # Tetherplane v0.1.0 Live Acceptance
 
-This is the final operator-observed gate before creating the public `v0.1.0` release tag.
+> **Historical contract, not an instruction to create a new tag.** GitHub already published `v0.1.0` on 2026-09-26. This document preserves its original acceptance contract. For later release candidates, substitute the new candidate revision, gather fresh local and remote evidence, and only then authorize a **new version**. Never force-update the existing tag.
+
+This was the operator-observed gate for the original `v0.1.0` release process.
 
 The gate is intentionally split so preparation can finish without a person sitting at Leno, while the coexistence-sensitive steps only run when the operator is physically present.
 
