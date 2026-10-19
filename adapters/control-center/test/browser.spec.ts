@@ -283,7 +283,7 @@ test("device-side pairing, revocation and fresh re-pairing use the real authenti
   await dialog.getByLabel("Type device ID to confirm").fill("new-device");
   await dialog.getByRole("button", { name: "Revoke access", exact: true }).click();
   await expect(page.locator("#view-access .badge")).toHaveText("Revoked");
-  await expect(page.getByText("Fresh authorized pairing required", { exact: true })).toBeVisible();
+  await expect(page.locator("#view-access").getByText("Fresh authorized pairing required", { exact: true })).toBeVisible();
   expect(await relay.registry.authenticateDevice("new-device", "browser-first-synthetic-device-secret")).toBeNull();
   await pair("browser-fresh-synthetic-device-secret");
   await expect(page.locator("#view-devices .badge")).toHaveText("Paired");
