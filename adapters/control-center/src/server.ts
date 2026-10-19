@@ -321,7 +321,10 @@ const staticFiles: Record<string, [string, string]> = {
   "/": ["index.html", "text/html; charset=utf-8"],
   "/app.js": ["app.js", "text/javascript; charset=utf-8"],
   "/style.css": ["style.css", "text/css; charset=utf-8"],
+  "/ascii-cycle.js": ["ascii-cycle.js", "text/javascript; charset=utf-8"],
   "/assets/logo.jpg": ["assets/logo.jpg", "image/jpeg"],
+  "/assets/wordmark-field.webp": ["assets/wordmark-field.webp", "image/webp"],
+  "/assets/ascii/outer-field.webp": ["assets/ascii/outer-field.webp", "image/webp"],
   ...Object.fromEntries(
     [1, 2, 3, 4].map((n) => [
       `/assets/ascii/${n}.png`,
