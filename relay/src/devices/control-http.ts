@@ -14,6 +14,7 @@ export class RelayControlHttpGateway {
   readonly #registry: DeviceRegistry;
   readonly #authenticator: ClientAuthenticator;
   readonly #disconnectDevice: (deviceId: string) => void;
+  readonly #isDeviceConnected: ((deviceId: string) => boolean) | null;
   #attachedServer: Server | null = null;
   #requestHandler:
     | ((request: IncomingMessage, response: ServerResponse) => void)
@@ -23,10 +24,12 @@ export class RelayControlHttpGateway {
     registry: DeviceRegistry;
     authenticator: ClientAuthenticator;
     disconnectDevice(deviceId: string): void;
+    isDeviceConnected?: (deviceId: string) => boolean;
   }) {
     this.#registry = options.registry;
     this.#authenticator = options.authenticator;
     this.#disconnectDevice = options.disconnectDevice;
+    this.#isDeviceConnected = options.isDeviceConnected ?? null;
   }
 
   attach(server: Server): void {
@@ -88,9 +91,21 @@ export class RelayControlHttpGateway {
           response,
         );
         if (!identity) return;
-        writeJson(response, 200, {
-          devices: this.#registry.listDevices(identity.accountId),
-        });
+        // Only inspect connections for records in the authenticated account.
+        // This reports a routed transport, not agent liveness or policy health.
+        const devices = this.#registry.listDevices(identity.accountId).map(
+          (device) => ({
+            ...device,
+            ...(this.#isDeviceConnected
+              ? {
+                  relayConnected:
+                    device.revokedAt === null &&
+                    this.#isDeviceConnected(device.deviceId),
+                }
+              : {}),
+          }),
+        );
+        writeJson(response, 200, { devices });
         return;
       }
 

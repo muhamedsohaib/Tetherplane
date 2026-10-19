@@ -117,6 +117,7 @@ export class RelayServer {
       authenticator: options.authenticator,
       disconnectDevice: (deviceId) =>
         deviceGateway.disconnectDevice(deviceId),
+      isDeviceConnected: (deviceId) => router.isOnline(deviceId),
     });
     const authLoginGateway =
       options.authLoginBridgeToken === undefined

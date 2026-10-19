@@ -140,6 +140,13 @@ function element(tag, className, text) {
   if (text !== undefined) node.textContent = text;
   return node;
 }
+function describeRelayTransport(state) {
+  if (state === "relay_connected")
+    return "Authenticated relay transport connected (device health not verified)";
+  if (state === "relay_disconnected")
+    return "No active relay transport at refresh";
+  return "Connectivity not reported";
+}
 function deviceCard(device) {
   const card = element("article", "device-card panel");
   const heading = element("div", "device-heading");
@@ -153,7 +160,7 @@ function deviceCard(device) {
   );
   const details = element("dl");
   for (const [label, value] of [
-    ["Connectivity", "Connectivity not reported"],
+    ["Relay connection", describeRelayTransport(device.connectivity)],
     ["Agent version", "Not reported"],
     ["Paired", formattedDate(device.pairedAt)],
     ...(device.revokedAt ? [["Revoked", formattedDate(device.revokedAt)]] : []),

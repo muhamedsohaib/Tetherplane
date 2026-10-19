@@ -45,6 +45,9 @@ test("relay errors, redirects, oversized and malformed data are bounded and sani
               revokedAt: null,
               credentialHash: "never-expose-this",
               online: true,
+              ...(mode === "transport-active" ? { relayConnected: true } :
+                mode === "transport-inactive" ? { relayConnected: false } :
+                mode === "transport-malformed" ? { relayConnected: "yes" } : {}),
             },
           ],
         }),
@@ -65,6 +68,19 @@ test("relay errors, redirects, oversized and malformed data are bounded and sani
       version: null,
     },
   ]);
+  for (const [modeValue, expected] of [
+    ["transport-active", "relay_connected"],
+    ["transport-inactive", "relay_disconnected"],
+  ] as const) {
+    mode = modeValue;
+    const [device] = await client.directory("synthetic-credential");
+    assert.equal(device?.connectivity, expected);
+    assert.equal(device?.version, null);
+  }
+  mode = "transport-malformed";
+  await assert.rejects(client.directory("synthetic-credential"), {
+    code: "invalid_relay_response",
+  });
   for (mode of ["redirect", "denied", "large", "malformed", "invalid-json"]) {
     await assert.rejects(
       client.directory("synthetic-credential"),

@@ -55,7 +55,7 @@ test("authorized directory, exact revoke confirmation and sign-out work through 
   ).toBeVisible();
   await expect(page.getByText("fixture-device", { exact: true })).toBeVisible();
   await expect(
-    page.getByText("Connectivity not reported", { exact: true }),
+    page.getByText("No active relay transport at refresh", { exact: true }),
   ).toBeVisible();
   await expect(page.getByLabel("Relay access credential")).toHaveValue("");
   expect(
@@ -295,7 +295,7 @@ test("device-side pairing, revocation and fresh re-pairing use the real authenti
   await expect(page.locator(".badge")).toHaveText("Paired");
   expect(await relay.registry.authenticateDevice("new-device", "browser-fresh-synthetic-device-secret")).toBe("empty");
   expect(await relay.registry.authenticateDevice("new-device", "browser-first-synthetic-device-secret")).toBeNull();
-  await expect(page.getByText("Connectivity not reported", { exact: true })).toBeVisible();
+  await expect(page.getByText("No active relay transport at refresh", { exact: true })).toBeVisible();
 });
 
 test("uncertain approval clears its code, never replays and requires a fresh directory before another action", async ({ page }) => {

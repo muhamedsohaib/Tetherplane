@@ -51,17 +51,35 @@ test("portal pairing permits authenticated WebSocket reconnect, revocation close
     sockets.push(socket);
     return socket;
   }
+  async function expectRelayPresence(expected: "relay_connected" | "relay_disconnected") {
+    let last: string | undefined;
+    for (let attempt = 0; attempt < 30; attempt++) {
+      const response = await fetch(base + "/api/devices", { headers: { cookie } });
+      assert.equal(response.status, 200);
+      const view = await response.json() as { devices: Array<{ connectivity: string }> };
+      last = view.devices[0]?.connectivity;
+      if (last === expected) return;
+      await new Promise(resolve => setTimeout(resolve, 10));
+    }
+    assert.equal(last, expected, "relay transport state must come from the authenticated socket");
+  }
+
   const firstSecret = "synthetic-first-lifecycle-device-secret";
   await pair(firstSecret);
+  await expectRelayPresence("relay_disconnected");
   const first = connect(firstSecret);
   await once(first, "open");
+  await expectRelayPresence("relay_connected");
   const firstClosed = once(first, "close");
   first.close(); await firstClosed;
+  await expectRelayPresence("relay_disconnected");
   const reconnected = connect(firstSecret);
   await once(reconnected, "open");
+  await expectRelayPresence("relay_connected");
   const revokedClosed = once(reconnected, "close");
   assert.equal((await mutate("/api/devices/lifecycle-device/revoke", { confirmDeviceId: "lifecycle-device" })).status, 200);
   await revokedClosed;
+  await expectRelayPresence("relay_disconnected");
   async function rejectOldCredential() {
     const old = connect(firstSecret);
     const status = await new Promise<number>((resolve, reject) => {
@@ -80,7 +98,8 @@ test("portal pairing permits authenticated WebSocket reconnect, revocation close
   await rejectOldCredential();
   const fresh = connect(freshSecret);
   await once(fresh, "open");
+  await expectRelayPresence("relay_connected");
   const directory = await fetch(base + "/api/devices", { headers: { cookie } });
   const view = await directory.json() as { devices: Array<{deviceId: string; revokedAt: string | null; connectivity: string; version: null}> };
-  assert.deepEqual(view.devices.map(d => [d.deviceId, d.revokedAt, d.connectivity, d.version]), [["lifecycle-device", null, "not_reported", null]]);
+  assert.deepEqual(view.devices.map(d => [d.deviceId, d.revokedAt, d.connectivity, d.version]), [["lifecycle-device", null, "relay_connected", null]]);
 });
