@@ -1,2 +1,6 @@
 protocol/generated/types.ts text eol=lf
 protocol/generated/types.d.ts text eol=lf
+
+# Preserve user-approved ASCII source and its glyph-faithful SVG byte-for-byte on Windows.
+adapters/control-center/public/assets/ascii/approved-background.txt -text
+adapters/control-center/public/assets/ascii/approved-background.svg -text
