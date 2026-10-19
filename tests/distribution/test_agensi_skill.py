@@ -11,7 +11,7 @@ import zipfile
 ROOT = pathlib.Path(__file__).resolve().parents[2]
 SKILL = ROOT / 'distribution' / 'agensi' / 'tetherplane'
 PACKAGER = ROOT / 'scripts' / 'package-agensi-skill.py'
-EXPECTED_FILES = {'tetherplane/SKILL.md', 'tetherplane/agents/openai.yaml', 'tetherplane/references/mcp-contract.md'}
+EXPECTED_FILES = {'SKILL.md', 'agents/openai.yaml', 'references/mcp-contract.md'}
 SIX_TOOLS = ('device', 'files', 'process', 'browser', 'desktop', 'batch')
 
 
@@ -43,7 +43,8 @@ class AgensiSkillContractTests(unittest.TestCase):
             self.assertEqual(hashlib.sha256(first.read_bytes()).hexdigest(), hashlib.sha256(second.read_bytes()).hexdigest())
             with zipfile.ZipFile(first) as archive:
                 self.assertEqual(set(archive.namelist()), EXPECTED_FILES)
-                self.assertTrue(all(name.startswith('tetherplane/') and '..' not in name for name in archive.namelist()))
+                self.assertTrue(all(not name.startswith('/') and '..' not in name.split('/') for name in archive.namelist()))
+                self.assertEqual(archive.namelist().count('SKILL.md'), 1, 'Joeri requires SKILL.md directly at the ZIP root')
                 self.assertTrue(all(i.date_time == (1980, 1, 1, 0, 0, 0) for i in archive.infolist()))
 
     def test_fails_closed_on_credential_like_file(self):
