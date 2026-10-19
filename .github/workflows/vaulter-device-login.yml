@@ -1,0 +1,29 @@
+name: Vaulter device-login approval
+
+on:
+  push:
+    branches:
+      - fix/vaulter-device-login-approval-20261020
+  pull_request:
+    paths:
+      - scripts/approve-vaulter-signin.mjs
+      - scripts/test/approve-vaulter-signin.test.mjs
+      - .github/workflows/vaulter-device-login.yml
+  workflow_dispatch:
+
+jobs:
+  one-shot-approval-safety:
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, windows-latest]
+    runs-on: ${{ matrix.os }}
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+      - name: Test explicit, fail-closed local approval without real credentials
+        run: node --test scripts/test/approve-vaulter-signin.test.mjs

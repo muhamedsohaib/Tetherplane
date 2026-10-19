@@ -33,6 +33,9 @@ jobs:
         with:
           node-version: 22
 
+      - name: Device login approval regression
+        run: node --test scripts/test/approve-vaulter-signin.test.mjs
+
       - name: Enable Corepack
         run: corepack enable
 
