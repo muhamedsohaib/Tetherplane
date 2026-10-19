@@ -48,7 +48,7 @@ def package(source: pathlib.Path, output: pathlib.Path) -> str:
     try:
         with zipfile.ZipFile(output, 'w', zipfile.ZIP_DEFLATED, compresslevel=9) as archive:
             for name in sorted(found):
-                info = zipfile.ZipInfo('tetherplane/' + name, date_time=ZIP_EPOCH)
+                info = zipfile.ZipInfo(name, date_time=ZIP_EPOCH)
                 info.compress_type = zipfile.ZIP_DEFLATED
                 info.external_attr = 0o100644 << 16
                 archive.writestr(info, found[name], compress_type=zipfile.ZIP_DEFLATED, compresslevel=9)
