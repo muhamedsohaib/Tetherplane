@@ -175,6 +175,43 @@ test("approval and device management endpoints reject missing bearer identity", 
   }
 });
 
+test("competing pairing codes cannot replace an active account binding or revive after revocation", async (t) => {
+  const registry = await DeviceRegistry.open();
+  const gateway = new RelayControlHttpGateway({
+    registry, authenticator: auth(), disconnectDevice: () => undefined,
+  });
+  const server = createServer();
+  gateway.attach(server);
+  await listen(server);
+  t.after(async () => { gateway.close(); await closeServer(server); });
+  const base = baseUrl(server);
+  const start = (secret: string) => registry.startPairing({
+    deviceId: "fixture-race", credentialHash: hashDeviceCredential(secret),
+  });
+  const first = await start("first-synthetic-device-secret");
+  const second = await start("second-synthetic-device-secret");
+  const third = await start("third-synthetic-device-secret");
+  assert.equal((await jsonRequest(base, "/pair/approve", {
+    method: "POST", token: "token-a", body: { userCode: first.userCode },
+  })).status, 200);
+  assert.equal((await jsonRequest(base, "/pair/approve", {
+    method: "POST", token: "token-b", body: { userCode: second.userCode },
+  })).status, 400);
+  assert.equal(registry.getDevice("fixture-race")!.accountId, "account-a");
+  assert.equal(await registry.authenticateDevice("fixture-race", "first-synthetic-device-secret"), "account-a");
+  await registry.revokeDevice({ accountId: "account-a", deviceId: "fixture-race" });
+  assert.equal((await jsonRequest(base, "/pair/approve", {
+    method: "POST", token: "token-b", body: { userCode: third.userCode },
+  })).status, 400);
+  assert.equal(await registry.authenticateDevice("fixture-race", "third-synthetic-device-secret"), null);
+  const fresh = await start("fresh-synthetic-device-secret");
+  assert.equal((await jsonRequest(base, "/pair/approve", {
+    method: "POST", token: "token-a", body: { userCode: fresh.userCode },
+  })).status, 200);
+  assert.equal(await registry.authenticateDevice("fixture-race", "fresh-synthetic-device-secret"), "account-a");
+  assert.equal(await registry.authenticateDevice("fixture-race", "first-synthetic-device-secret"), null);
+});
+
 function auth(): StaticClientAuthenticator {
   return new StaticClientAuthenticator([
     {

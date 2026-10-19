@@ -100,6 +100,16 @@ export class DeviceRegistry {
     }
     this.#pendingByCode.delete(input.userCode);
 
+    const current = this.#devices.get(pending.deviceId);
+    if (current && current.revokedAt === null) {
+      throw new Error("device is already paired and must be revoked before re-pairing");
+    }
+    // A successful ceremony consumes every older pending credential for this ID.
+    // Otherwise a competing code could replace ownership, even after revocation.
+    for (const [code, sibling] of this.#pendingByCode) {
+      if (sibling.deviceId === pending.deviceId) this.#pendingByCode.delete(code);
+    }
+
     const record: DeviceRecord = {
       deviceId: pending.deviceId,
       accountId: input.accountId,
