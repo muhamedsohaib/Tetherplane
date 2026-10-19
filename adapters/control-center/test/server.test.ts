@@ -301,8 +301,11 @@ test("local static portal is served with restrictive security headers and no arb
   for (const path of [
     "/",
     "/app.js",
+    "/ascii-cycle.js",
     "/style.css",
     "/assets/logo.jpg",
+    "/assets/wordmark-field.webp",
+    "/assets/ascii/outer-field.webp",
     "/assets/ascii/1.png",
   ]) {
     const response = await fetch(f.base + path);
@@ -315,6 +318,13 @@ test("local static portal is served with restrictive security headers and no arb
     assert.equal(response.headers.get("cache-control"), "no-store");
     assert.ok((await response.arrayBuffer()).byteLength > 0);
   }
+  for (const path of ["/assets/wordmark-field.webp", "/assets/ascii/outer-field.webp"]) {
+    const response = await fetch(f.base + path);
+    assert.equal(response.status, 200);
+    assert.equal(response.headers.get("content-type"), "image/webp");
+  }
+  assert.equal((await fetch(f.base + "/assets/wordmark-field.webp?target=evil")).status, 404);
+  assert.equal((await fetch(f.base + "/ascii-cycle.js?redirect=evil")).status, 404);
   assert.equal((await fetch(f.base + "/package.json")).status, 404);
   assert.equal((await fetch(f.base + "/%2e%2e/package.json")).status, 404);
   assert.equal((await fetch(f.base + "/constructor")).status, 404);
