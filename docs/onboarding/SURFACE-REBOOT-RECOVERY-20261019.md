@@ -18,7 +18,7 @@
 - The operator restarted Surface normally, signed in, and **did not manually launch the agent** afterward.
 - Windows last boot: **2026-10-19 17:06:31 UTC+04:00**. Existing scheduled task last run: **2026-10-19 17:08:08 UTC+04:00**, approximately 97 seconds after boot. The task state was `Running`, with exactly one agent process and a new PID (not retained in this report).
 - A fresh authenticated `device(op="status", device="Surface")` call succeeded after reboot: `os=windows`, `arch=x86_64`, `agent_version=0.1.0`, `policy_mode=background_only`. The live response supplied an agent uptime; it did not report a filesystem modification or an expanded principal.
-- The post-reboot read-only negative test `files(op="list", device="Surface", args={path:"C:\\Windows\\System32", max_entries:1})` returned `permission_denied`: `path resolves outside configured allowed directories`. No restricted files were accessed or changed.
+- The post-reboot read-only negative test `files(op="list", device="Surface", args={path:"C:\Windows\System32", max_entries:1})` returned `permission_denied`: `path resolves outside configured allowed directories`. No restricted files were accessed or changed.
 - Another authenticated `device.status` call during this continuation returned `agent_version=0.1.0`, `policy_mode=background_only`, `uptime_ms=557562`, showing the agent still responded later in the same post-reboot session.
 
 **Observed acceptance:** Existing scheduled-task auto-start following a genuine reboot/sign-in; account-authenticated device status; and tested denial of an outside-root filesystem listing. Device identity was not rotated, and no additional privileges were granted. The live tests do not measure other policy capabilities.
