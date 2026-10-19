@@ -1,298 +1,118 @@
 <!doctype html>
 <html lang="en">
-  <head>
-    <meta charset="utf-8" />
-    <meta name="viewport" content="width=device-width, initial-scale=1" />
-    <meta name="color-scheme" content="light" />
-    <title>Tetherplane · Control Center</title>
-    <link rel="icon" href="/assets/logo.jpg" />
-    <link rel="stylesheet" href="/style.css" />
-    <script type="module" src="/app.js"></script>
-  </head>
-  <body>
-    <div class="shell">
-      <aside class="sidebar" aria-label="Workspace">
-        <a class="brand" href="/" aria-label="Tetherplane home"
-          ><img
-            src="/assets/logo.jpg"
-            alt="Tetherplane logo"
-            width="48"
-            height="48"
-          /><span
-            >tetherplane<span class="brand-sub">CONTROL CENTER</span></span
-          ></a
-        >
-        <div class="workspace">
-          <span class="small-label">WORKSPACE</span
-          ><strong>Local control</strong
-          ><span class="subtle">Your machine. Your authority.</span>
-        </div>
-        <nav aria-label="Main navigation">
-          <a class="nav-active" href="#overview" aria-current="page"
-            ><span aria-hidden="true">▦</span> Overview</a
-          ><a href="#connection-guide"
-            ><span aria-hidden="true">↗</span> Connection guide</a
-          >
-        </nav>
-        <div class="sidebar-bottom">
-          <span class="local-tag"
-            ><span aria-hidden="true">⌂</span> RUNNING LOCALLY</span
-          >
-          <p>No domain. No hosting.<br />Built to stay in your hands.</p>
-          <span class="small-label">MILESTONE 02</span>
-        </div>
-      </aside>
-      <main id="overview">
-        <header class="topbar">
-          <span
-            >Workspace <span aria-hidden="true">/</span>
-            <strong>Overview</strong></span
-          ><span class="outline-tag">LOCAL PORTAL</span>
-        </header>
-        <div class="content">
-          <div id="notice" class="notice" role="alert" hidden></div>
-          <div id="loading" class="loading" role="status" hidden>
-            <div class="ascii-loop" aria-hidden="true">
-              <img src="/assets/ascii/1.png" alt="" /><img
-                src="/assets/ascii/2.png"
-                alt=""
-              /><img src="/assets/ascii/3.png" alt="" /><img
-                src="/assets/ascii/4.png"
-                alt=""
-              />
-              <img src="/assets/ascii/3.png" alt="" />
-              <img src="/assets/ascii/2.png" alt="" />
-            </div>
-            <span id="loading-text">Checking your session…</span
-            ><button
-              id="pause-motion"
-              class="text-button"
-              type="button"
-              aria-pressed="false"
-            >
-              Pause animation
-            </button>
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width,initial-scale=1" />
+  <meta name="color-scheme" content="light" />
+  <meta name="theme-color" content="#F4F1E8" />
+  <title>Tetherplane — Control Center</title>
+  <link rel="icon" href="/assets/logo.jpg" />
+  <link rel="stylesheet" href="/style.css" />
+  <script type="module" src="/app.js"></script>
+</head>
+<body>
+  <div id="brand-field" class="brand-field" aria-hidden="true">
+    <div class="brand-pattern"></div>
+    <img class="brand-master" src="/assets/wordmark-field.webp" alt="" width="2639" height="2640" />
+  </div>
+  <div class="app-shell">
+    <header class="site-header">
+      <a class="brand-name" href="/" aria-label="Tetherplane home">
+        <span class="brand-icon" aria-hidden="true"><svg width="25" height="25" viewBox="0 0 40 40" fill="none"><path d="M20 3V17M20 17L6 25V32M20 17L34 25V32M6 25L20 33L34 25M20 33V38" stroke="currentColor" stroke-width="3" stroke-linejoin="round"/></svg></span>
+        tetherplane<span class="wordmark-dot">.</span>
+      </a>
+      <nav id="main-nav" class="main-nav" aria-label="Main navigation" hidden>
+        <button type="button" data-view="home" aria-current="page">Home</button>
+        <button type="button" data-view="devices">Devices</button>
+        <button type="button" data-view="access">Access</button>
+        <button type="button" data-view="pairing">Pairing</button>
+        <button type="button" data-view="settings">Settings</button>
+      </nav>
+      <span class="header-right" id="header-status">LOCAL CONTROL CENTER</span>
+      <button class="mobile-nav-toggle" id="mobile-nav-toggle" type="button" aria-controls="main-nav" aria-expanded="false" hidden>Menu</button>
+    </header>
+
+    <div class="site-main">
+      <div id="notice" role="alert" class="notice" hidden></div>
+
+      <main id="welcome" class="screen welcome" aria-labelledby="welcome-title">
+        <div class="eyebrow"><span class="status-dot" aria-hidden="true"></span> LOCAL CONTROL · SECURE BY DEFAULT</div>
+        <div class="welcome-grid">
+          <div class="welcome-copy">
+            <h1 id="welcome-title">Your devices.<br /><em>One quiet place.</em></h1>
+            <p>Keep the machines you trust within reach, without compromising their boundaries.</p>
+            <span class="short-line" aria-hidden="true"></span>
+            <p class="muted-small">Paired devices remain under their own local authority.</p>
           </div>
-          <section id="welcome" class="welcome">
-            <div class="intro">
-              <p class="eyebrow">A CLEAR VIEW. A LOCAL START.</p>
-              <h1>Your devices.<br />Within reach.</h1>
-              <p class="lede">
-                One place to see your paired devices and manage their relay
-                access, with authorization kept in place.
-              </p>
-              <div class="intro-art">
-                <img
-                  src="/assets/ascii/1.png"
-                  alt=""
-                  width="256"
-                  height="256"
-                />
-                <div>
-                  <span class="small-label">TETHERPLANE</span>
-                  <p>Secure, repeatable<br />connectivity.</p>
-                </div>
-              </div>
-            </div>
-            <section class="signin panel" aria-labelledby="signin-title">
-              <span class="step">01 / CONNECT</span>
-              <h2 id="signin-title">Open your workspace</h2>
-              <p>
-                Use an existing authorized relay access credential. Your relay
-                decides which devices you can see.
-              </p>
-              <form id="signin-form">
-                <label for="credential">Relay access credential</label
-                ><input
-                  id="credential"
-                  name="credential"
-                  type="password"
-                  autocomplete="off"
-                  spellcheck="false"
-                  autocapitalize="none"
-                  maxlength="8192"
-                  required
-                  aria-describedby="credential-help"
-                />
-                <p id="credential-help" class="field-help">
-                  Kept in this local service's memory for up to 15 minutes.
-                  Cleared when you sign out or stop the service.
-                </p>
-                <button id="signin-button" class="primary" type="submit">
-                  Sign in <span aria-hidden="true">↗</span>
-                </button>
-              </form>
-              <div class="signin-foot">
-                <span aria-hidden="true">◇</span>
-                <p>
-                  Uses your existing relay authorization.<br />No new account or
-                  paid service required.
-                </p>
-              </div>
-            </section>
+          <section class="signin-box" aria-labelledby="signin-title">
+            <div class="tiny-label">AUTHENTICATION / 01</div>
+            <h2 id="signin-title">Open your workspace.</h2>
+            <p>Use an existing authorized relay client credential. Access stays scoped to your account.</p>
+            <form id="signin-form">
+              <label for="credential">Relay access credential</label>
+              <input id="credential" type="password" name="credential" autocomplete="off" spellcheck="false" autocapitalize="none" maxlength="8192" required aria-describedby="credential-help" placeholder="Enter authorized access" />
+              <p id="credential-help" class="input-note">Used only for this local, short-lived session. Never saved in browser storage.</p>
+              <button class="button-primary" id="signin-button" type="submit">Sign in <span aria-hidden="true">↗</span></button>
+            </form>
+            <p class="under-note">OAuth browser sign-in is a separate pending integration. Do not use device credentials.</p>
           </section>
-          <section id="dashboard" hidden aria-labelledby="devices-title">
-            <div class="section-heading">
-              <div>
-                <p class="eyebrow">YOUR AUTHORIZED WORKSPACE</p>
-                <h1 id="devices-title">Your devices</h1>
-                <p class="subtle">
-                  Pairing records from your relay, scoped to your account.
-                </p>
-              </div>
-              <div class="actions">
-                <button id="refresh" class="secondary" type="button">
-                  Refresh</button
-                ><button id="signout" class="text-button" type="button">
-                  Sign out
-                </button>
-              </div>
-            </div>
-            <div class="summary">
-              <div>
-                <span class="small-label">DEVICE RECORDS</span
-                ><strong id="device-count">—</strong>
-              </div>
-              <div>
-                <span class="small-label">DIRECTORY REFRESHED</span
-                ><strong class="summary-time" id="observed-at"
-                  >Not yet refreshed</strong
-                >
-              </div>
-              <div>
-                <span class="small-label">LOCAL SESSION ENDS</span
-                ><strong class="summary-time" id="expires-at">—</strong>
-              </div>
-            </div>
-            <div class="data-note">
-              <span aria-hidden="true">ⓘ</span>
-              <p>
-                The directory reports pairing and revocation. Live connectivity
-                and agent versions are not reported by this API.
-              </p>
-            </div>
-            <section class="pairing panel" aria-labelledby="pair-title">
-              <h2 id="pair-title">Add a device</h2>
-              <p id="pair-help" class="subtle">
-                Begin pairing on the device using your established setup workflow.
-                Check that its relay address matches this workspace, then enter
-                the short code it displays. Only approve codes you requested yourself.
-                Approval grants this account relay access; it does not change device-local policy.
-              </p>
-              <form id="pair-form">
-                <label for="pair-code">Device pairing code</label>
-                <input id="pair-code" type="text" autocomplete="off" spellcheck="false"
-                  autocapitalize="characters" maxlength="9" required
-                  pattern="[A-Fa-f0-9]{4}-[A-Fa-f0-9]{4}" placeholder="ABCD-1234"
-                  aria-describedby="pair-help" />
-                <label class="ownership-check" for="pair-owned">
-                  <input id="pair-owned" type="checkbox" required />
-                  <span>I requested this code on a device I am authorized to manage.</span>
-                </label>
-                <button id="approve-pair" class="primary" type="submit" disabled>Approve pairing</button>
-              </form>
-            </section>
-            <div id="devices" class="device-grid"></div>
-            <div id="empty" class="empty panel" hidden>
-              <span aria-hidden="true">◇</span>
-              <h2>No devices are paired to this account.</h2>
-              <p>
-                Check that your credential belongs to the expected account. Use
-                the device-side pairing workflow, then approve its code above.
-              </p>
-            </div>
-          </section>
-          <section
-            id="connection-guide"
-            class="guide"
-            aria-labelledby="guide-title"
-          >
-            <div>
-              <span class="small-label">GETTING CONNECTED</span>
-              <h2 id="guide-title">Start with what you already have.</h2>
-            </div>
-            <ol>
-              <li>
-                <span>01</span>
-                <div>
-                  <strong>Run locally</strong>
-                  <p>
-                    Start Control Center with your existing relay address. Open
-                    the local URL printed by the service.
-                  </p>
-                </div>
-              </li>
-              <li>
-                <span>02</span>
-                <div>
-                  <strong>Use existing access</strong>
-                  <p>
-                    Enter a relay client access credential with the account
-                    binding and scopes your relay already requires.
-                  </p>
-                </div>
-              </li>
-              <li>
-                <span>03</span>
-                <div>
-                  <strong>Manage deliberately</strong>
-                  <p>
-                    Approve a code from your device, refresh pairing records, or
-                    revoke relay access after confirming the device ID.
-                  </p>
-                </div>
-              </li>
-            </ol>
-            <p class="subtle">
-              After a connection interruption, the running device agent retries its
-              existing outbound connection. Refresh here to check pairing records;
-              this does not restart the agent or prove connectivity. After revocation,
-              generate a fresh credential and pairing code on the authorized device
-              through your established setup workflow, then approve the new code here.
-              Keep its existing background-only policy in place.
-            </p>
-          </section>
-          <footer>
-            <span
-              >tetherplane <span aria-hidden="true">/</span> Secure, repeatable
-              connectivity</span
-            ><span>Local agent remains the final authority.</span>
-          </footer>
         </div>
+        <div class="welcome-bottom"><span>AN OPEN CONTROL PLANE FOR REAL DEVICES.</span><span>v0.1.0 · LOCAL PREVIEW</span></div>
+      </main>
+
+      <main id="dashboard" class="screen dashboard" hidden>
+        <section id="view-home" class="view" data-screen="home" aria-labelledby="home-title">
+          <p class="eyebrow">WORKSPACE / OVERVIEW</p>
+          <h1 id="home-title">In control.<br /><em>Without the noise.</em></h1>
+          <p class="view-intro">A clear, deliberate place to manage relay access to your authorized devices.</p>
+          <div class="big-links" aria-label="Quick actions">
+            <button type="button" data-view="devices"><span><strong>Devices</strong><small>View your paired machines.</small></span><span aria-hidden="true">↗</span></button>
+            <button type="button" data-view="pairing"><span><strong>Add a device</strong><small>Approve an authorized pairing code.</small></span><span aria-hidden="true">↗</span></button>
+            <button type="button" data-view="access"><span><strong>Review access</strong><small>Manage active relay access.</small></span><span aria-hidden="true">↗</span></button>
+          </div>
+          <div class="home-trust"><span class="overline">DIRECTORY RECORDS</span><strong id="home-count">—</strong><span class="overline">LAST VERIFIED REFRESH</span><strong id="home-refreshed">Not yet refreshed</strong></div>
+          <p class="ground-truth">Pairing is not evidence of current connectivity. Connectivity not reported unless verified by a supported endpoint.</p>
+        </section>
+
+        <section id="view-devices" class="view" data-screen="devices" aria-labelledby="devices-title" hidden>
+          <div class="view-heading"><div><p class="eyebrow">01 / DEVICES</p><h1 id="devices-title">Your devices.</h1><p class="view-intro">Only devices associated with your authenticated account.</p></div><button class="button-outline" id="refresh" type="button">Refresh ↻</button></div>
+          <div class="summary"><div><span class="overline">DEVICE RECORDS</span><strong id="device-count">—</strong></div><div><span class="overline">LAST DIRECTORY REFRESH</span><strong id="observed-at">Not yet refreshed</strong></div></div>
+          <p class="ground-truth">The relay directory reports pairing and revocation. Agent version and live health are not reported by this endpoint.</p>
+          <div id="devices" class="device-list" aria-live="polite"></div>
+          <div id="empty" class="empty-state" hidden><h2>No devices are paired to this account.</h2><p>Start pairing on an authorized device and approve its code under Pairing.</p><button type="button" class="button-outline" data-view="pairing">Go to pairing ↗</button></div>
+        </section>
+
+        <section id="view-access" class="view" data-screen="access" aria-labelledby="access-title" hidden>
+          <p class="eyebrow">02 / RELAY ACCESS</p><h1 id="access-title">Access, on your terms.</h1>
+          <p class="view-intro">Review the device records owned by this account and explicitly revoke relay access when needed.</p>
+          <div class="access-guide"><strong>Device-local authority stays final.</strong><p>Revoking relay access disconnects that device. Re-pairing is required to restore it. This portal cannot change local capability policies.</p></div>
+          <div id="access-records" class="device-list" aria-live="polite"></div>
+        </section>
+
+        <section id="view-pairing" class="view" data-screen="pairing" aria-labelledby="pair-title" hidden>
+          <p class="eyebrow">03 / PAIRING & RECOVERY</p><h1 id="pair-title">A new device.<br /><em>Safely connected.</em></h1>
+          <div class="pair-layout"><div class="steps"><div><span>01</span><p><strong>Start on your device.</strong><br />Use its existing authorized pairing workflow and the same relay.</p></div><div><span>02</span><p><strong>Copy its one-time code.</strong><br />The code expires. Never share device credentials.</p></div><div><span>03</span><p><strong>Approve deliberately.</strong><br />Confirm you requested the pairing, then refresh the directory.</p></div></div>
+          <form class="pair-form" id="pair-form"><label for="pair-code">Device pairing code</label><input id="pair-code" autocomplete="off" spellcheck="false" autocapitalize="characters" maxlength="9" pattern="[A-Fa-f0-9]{4}-[A-Fa-f0-9]{4}" placeholder="ABCD-1234" aria-describedby="pair-help" required /><p id="pair-help" class="input-note">Shown on the device you are authorized to manage.</p><label class="ownership"><input id="pair-owned" type="checkbox" required /><span>I requested this code on a device I am authorized to manage.</span></label><button class="button-primary" id="approve-pair" type="submit" disabled>Approve pairing ↗</button></form></div>
+          <div class="recovery-note"><strong>Connection interrupted?</strong><p>Running agents retry their outbound relay connection. If an agent stopped, its local supervisor must recover it. After revocation, begin a fresh authorized device-side pairing flow. Refreshing this page cannot restart a device or prove agent health.</p></div>
+        </section>
+
+        <section id="view-settings" class="view" data-screen="settings" aria-labelledby="settings-title" hidden>
+          <p class="eyebrow">04 / SETTINGS</p><h1 id="settings-title">Only what matters.</h1><p class="view-intro">This is a local interface. Your device and relay retain their existing policies.</p>
+          <div class="settings-rows"><div><span>LOCAL INTERFACE</span><strong>127.0.0.1 · This device only</strong></div><div><span>FRONTEND</span><strong>Control Center M2 · 0.1.0 visual preview</strong></div><div><span>RELAY</span><strong>Configured when local service starts</strong></div><div><span>SESSION EXPIRES</span><strong id="expires-at">—</strong></div></div>
+          <button id="signout" type="button" class="button-outline">Sign out ↗</button>
+        </section>
       </main>
     </div>
-    <dialog
-      id="revoke-dialog"
-      aria-labelledby="revoke-title"
-      aria-describedby="revoke-description"
-    >
-      <form id="revoke-form">
-        <span class="eyebrow">MANAGE RELAY ACCESS</span>
-        <h2 id="revoke-title">Revoke device access?</h2>
-        <p id="revoke-description">
-          This disconnects the device from the relay and invalidates its device
-          credential. Re-pairing will be needed to reconnect.
-        </p>
-        <p class="confirm-device" id="revoke-device"></p>
-        <label for="confirmation">Type device ID to confirm</label
-        ><input
-          id="confirmation"
-          autocomplete="off"
-          spellcheck="false"
-          required
-        />
-        <div class="dialog-actions">
-          <button id="cancel-revoke" class="secondary" type="button">
-            Cancel</button
-          ><button id="confirm-revoke" class="danger" type="submit" disabled>
-            Revoke access
-          </button>
-        </div>
-      </form>
-    </dialog>
-    <noscript
-      >This local portal requires JavaScript. Enable it for this local address
-      to sign in.</noscript
-    >
-  </body>
+    <footer class="site-footer"><span>tetherplane / YOUR DEVICES. YOUR AUTHORITY.</span><span>LOCAL AGENT REMAINS FINAL AUTHORITY.</span></footer>
+  </div>
+
+  <div id="loading" class="loading-cover" role="status" aria-live="polite" hidden>
+    <div class="loading-field" aria-hidden="true"></div>
+    <div class="loading-image" aria-hidden="true"><img id="loading-base" src="/assets/ascii/1.png" alt="" /><img id="loading-overlay" src="/assets/ascii/2.png" alt="" /></div>
+    <div class="loading-info"><span class="loading-label">TETHERPLANE / INITIALIZING</span><span data-loading-message id="loading-text">Checking your session…</span><button id="pause-motion" class="button-quiet" type="button" aria-pressed="false">Pause animation</button></div>
+  </div>
+
+  <dialog id="revoke-dialog" aria-labelledby="revoke-title" aria-describedby="revoke-description"><form id="revoke-form"><p class="eyebrow">CONFIRM AUTHORIZATION CHANGE</p><h2 id="revoke-title">Revoke device access?</h2><p id="revoke-description">This disconnects the device from relay access and invalidates its credential. A new authorized pairing is required to reconnect.</p><p class="selected-device" id="revoke-device"></p><label for="confirmation">Type device ID to confirm</label><input id="confirmation" autocomplete="off" spellcheck="false" required /><div class="dialog-actions"><button id="cancel-revoke" class="button-outline" type="button">Cancel</button><button id="confirm-revoke" class="button-primary" type="submit" disabled>Revoke access</button></div></form></dialog>
+  <noscript>This local Control Center requires JavaScript.</noscript>
+</body>
 </html>
