@@ -146,5 +146,5 @@ dialog .selected-device{font-family:monospace;border-top:1px solid var(--ink);pa
 input:not([type="checkbox"]){background:rgba(255,255,255,.38);-webkit-backdrop-filter:blur(12px);backdrop-filter:blur(12px);border-radius:6px}
 .loading-info{width:min(420px,calc(100% - 36px));left:50%;transform:translateX(-50%);bottom:clamp(26px,6vh,80px);padding:21px 26px;border-radius:12px;background:rgba(248,246,240,.43)}
 .mobile-nav-toggle:not([hidden]){min-height:44px}
-@media(max-width:790px){.main-nav:not([hidden]){background:rgba(248,246,240,.64);-webkit-backdrop-filter:blur(22px);backdrop-filter:blur(22px)}.site-header{position:relative}.welcome-copy h1,.view h1{padding:13px 15px}.big-links button{min-height:110px}}
+@media(max-width:790px){.main-nav:not([hidden]){background:rgba(248,246,240,.64);-webkit-backdrop-filter:blur(22px);backdrop-filter:blur(22px)}.site-header{position:relative;z-index:20}.welcome-copy h1,.view h1{padding:13px 15px}.big-links button{min-height:110px}}
 @media(max-width:420px){.screen{padding-left:18px;padding-right:18px}.view h1,.welcome-copy h1{font-size:clamp(40px,12vw,51px);letter-spacing:-.065em}.signin-box,.pair-form{padding:20px}.view-intro{font-size:14px}}
