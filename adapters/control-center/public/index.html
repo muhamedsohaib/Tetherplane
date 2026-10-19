@@ -1,0 +1,267 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <meta name="color-scheme" content="light" />
+    <title>Tetherplane · Control Center</title>
+    <link rel="icon" href="/assets/logo.jpg" />
+    <link rel="stylesheet" href="/style.css" />
+    <script type="module" src="/app.js"></script>
+  </head>
+  <body>
+    <div class="shell">
+      <aside class="sidebar" aria-label="Workspace">
+        <a class="brand" href="/" aria-label="Tetherplane home"
+          ><img
+            src="/assets/logo.jpg"
+            alt="Tetherplane logo"
+            width="48"
+            height="48"
+          /><span
+            >tetherplane<span class="brand-sub">CONTROL CENTER</span></span
+          ></a
+        >
+        <div class="workspace">
+          <span class="small-label">WORKSPACE</span
+          ><strong>Local control</strong
+          ><span class="subtle">Your machine. Your authority.</span>
+        </div>
+        <nav aria-label="Main navigation">
+          <a class="nav-active" href="#overview" aria-current="page"
+            ><span aria-hidden="true">▦</span> Overview</a
+          ><a href="#connection-guide"
+            ><span aria-hidden="true">↗</span> Connection guide</a
+          >
+        </nav>
+        <div class="sidebar-bottom">
+          <span class="local-tag"
+            ><span aria-hidden="true">⌂</span> RUNNING LOCALLY</span
+          >
+          <p>No domain. No hosting.<br />Built to stay in your hands.</p>
+          <span class="small-label">MILESTONE 01</span>
+        </div>
+      </aside>
+      <main id="overview">
+        <header class="topbar">
+          <span
+            >Workspace <span aria-hidden="true">/</span>
+            <strong>Overview</strong></span
+          ><span class="outline-tag">LOCAL PORTAL</span>
+        </header>
+        <div class="content">
+          <div id="notice" class="notice" role="alert" hidden></div>
+          <div id="loading" class="loading" role="status" hidden>
+            <div class="ascii-loop" aria-hidden="true">
+              <img src="/assets/ascii/1.png" alt="" /><img
+                src="/assets/ascii/2.png"
+                alt=""
+              /><img src="/assets/ascii/3.png" alt="" /><img
+                src="/assets/ascii/4.png"
+                alt=""
+              />
+            </div>
+            <span id="loading-text">Checking your session…</span
+            ><button
+              id="pause-motion"
+              class="text-button"
+              type="button"
+              aria-pressed="false"
+            >
+              Pause animation
+            </button>
+          </div>
+          <section id="welcome" class="welcome">
+            <div class="intro">
+              <p class="eyebrow">A CLEAR VIEW. A LOCAL START.</p>
+              <h1>Your devices.<br />Within reach.</h1>
+              <p class="lede">
+                One place to see your paired devices and manage their relay
+                access, with authorization kept in place.
+              </p>
+              <div class="intro-art">
+                <img
+                  src="/assets/ascii/1.png"
+                  alt=""
+                  width="256"
+                  height="256"
+                />
+                <div>
+                  <span class="small-label">TETHERPLANE</span>
+                  <p>Secure, repeatable<br />connectivity.</p>
+                </div>
+              </div>
+            </div>
+            <section class="signin panel" aria-labelledby="signin-title">
+              <span class="step">01 / CONNECT</span>
+              <h2 id="signin-title">Open your workspace</h2>
+              <p>
+                Use an existing authorized relay access credential. Your relay
+                decides which devices you can see.
+              </p>
+              <form id="signin-form">
+                <label for="credential">Relay access credential</label
+                ><input
+                  id="credential"
+                  name="credential"
+                  type="password"
+                  autocomplete="off"
+                  spellcheck="false"
+                  autocapitalize="none"
+                  maxlength="8192"
+                  required
+                  aria-describedby="credential-help"
+                />
+                <p id="credential-help" class="field-help">
+                  Kept in this local service's memory for up to 15 minutes.
+                  Cleared when you sign out or stop the service.
+                </p>
+                <button id="signin-button" class="primary" type="submit">
+                  Sign in <span aria-hidden="true">↗</span>
+                </button>
+              </form>
+              <div class="signin-foot">
+                <span aria-hidden="true">◇</span>
+                <p>
+                  Uses your existing relay authorization.<br />No new account or
+                  paid service required.
+                </p>
+              </div>
+            </section>
+          </section>
+          <section id="dashboard" hidden aria-labelledby="devices-title">
+            <div class="section-heading">
+              <div>
+                <p class="eyebrow">YOUR AUTHORIZED WORKSPACE</p>
+                <h1 id="devices-title">Your devices</h1>
+                <p class="subtle">
+                  Pairing records from your relay, scoped to your account.
+                </p>
+              </div>
+              <div class="actions">
+                <button id="refresh" class="secondary" type="button">
+                  Refresh</button
+                ><button id="signout" class="text-button" type="button">
+                  Sign out
+                </button>
+              </div>
+            </div>
+            <div class="summary">
+              <div>
+                <span class="small-label">DEVICE RECORDS</span
+                ><strong id="device-count">—</strong>
+              </div>
+              <div>
+                <span class="small-label">DIRECTORY REFRESHED</span
+                ><strong class="summary-time" id="observed-at"
+                  >Not yet refreshed</strong
+                >
+              </div>
+              <div>
+                <span class="small-label">LOCAL SESSION ENDS</span
+                ><strong class="summary-time" id="expires-at">—</strong>
+              </div>
+            </div>
+            <div class="data-note">
+              <span aria-hidden="true">ⓘ</span>
+              <p>
+                The directory reports pairing and revocation. Live connectivity
+                and agent versions are not reported by this API.
+              </p>
+            </div>
+            <div id="devices" class="device-grid"></div>
+            <div id="empty" class="empty panel" hidden>
+              <span aria-hidden="true">◇</span>
+              <h2>No devices are paired to this account.</h2>
+              <p>
+                Check that your credential belongs to the expected account. Use
+                your existing pairing workflow to add a device.
+              </p>
+            </div>
+          </section>
+          <section
+            id="connection-guide"
+            class="guide"
+            aria-labelledby="guide-title"
+          >
+            <div>
+              <span class="small-label">GETTING CONNECTED</span>
+              <h2 id="guide-title">Start with what you already have.</h2>
+            </div>
+            <ol>
+              <li>
+                <span>01</span>
+                <div>
+                  <strong>Run locally</strong>
+                  <p>
+                    Start Control Center with your existing relay address. Open
+                    the local URL printed by the service.
+                  </p>
+                </div>
+              </li>
+              <li>
+                <span>02</span>
+                <div>
+                  <strong>Use existing access</strong>
+                  <p>
+                    Enter a relay client access credential with the account
+                    binding and scopes your relay already requires.
+                  </p>
+                </div>
+              </li>
+              <li>
+                <span>03</span>
+                <div>
+                  <strong>Manage deliberately</strong>
+                  <p>
+                    Refresh pairing records, or revoke a device's relay access
+                    after confirming its ID.
+                  </p>
+                </div>
+              </li>
+            </ol>
+          </section>
+          <footer>
+            <span
+              >tetherplane <span aria-hidden="true">/</span> Secure, repeatable
+              connectivity</span
+            ><span>Local agent remains the final authority.</span>
+          </footer>
+        </div>
+      </main>
+    </div>
+    <dialog
+      id="revoke-dialog"
+      aria-labelledby="revoke-title"
+      aria-describedby="revoke-description"
+    >
+      <form id="revoke-form">
+        <span class="eyebrow">MANAGE RELAY ACCESS</span>
+        <h2 id="revoke-title">Revoke device access?</h2>
+        <p id="revoke-description">
+          This disconnects the device from the relay and invalidates its device
+          credential. Re-pairing will be needed to reconnect.
+        </p>
+        <p class="confirm-device" id="revoke-device"></p>
+        <label for="confirmation">Type device ID to confirm</label
+        ><input
+          id="confirmation"
+          autocomplete="off"
+          spellcheck="false"
+          required
+        />
+        <div class="dialog-actions">
+          <button id="cancel-revoke" class="secondary" type="button">
+            Cancel</button
+          ><button id="confirm-revoke" class="danger" type="submit" disabled>
+            Revoke access
+          </button>
+        </div>
+      </form>
+    </dialog>
+    <noscript
+      >This local portal requires JavaScript. Enable it for this local address
+      to sign in.</noscript
+    >
+  </body>
+</html>

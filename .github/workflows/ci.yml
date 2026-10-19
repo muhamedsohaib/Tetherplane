@@ -5,6 +5,36 @@ on:
   pull_request:
 
 jobs:
+  control-center:
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, windows-latest]
+    runs-on: ${{ matrix.os }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+      - name: Enable Corepack and pnpm
+        run: corepack enable
+      - name: Install pnpm 10
+        run: corepack prepare pnpm@10 --activate
+      - name: Install workspace
+        run: pnpm install --frozen-lockfile
+      - name: Portal typecheck
+        run: pnpm --filter @tetherplane/control-center typecheck
+      - name: Portal HTTP and security tests
+        run: pnpm --filter @tetherplane/control-center test
+      - name: Portal build
+        run: pnpm --filter @tetherplane/control-center build
+      - name: Install isolated test browser
+        env:
+          PLAYWRIGHT_SKIP_BROWSER_GC: '1'
+        run: pnpm --filter @tetherplane/control-center exec playwright install --with-deps chromium --only-shell
+      - name: Portal browser acceptance
+        run: pnpm --filter @tetherplane/control-center test:browser
+
   quality:
     strategy:
       fail-fast: false

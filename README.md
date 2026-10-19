@@ -4,6 +4,27 @@ Tetherplane is an open-source control plane for AI-operated computers. It gives 
 
 The local agent is the final authority. Remote relays and AI clients can route requests, but they cannot override stricter local policy.
 
+## Local Control Center
+
+[Tetherplane Control Center](adapters/control-center/README.md) is a local web
+portal for your existing authenticated relay device directory. It needs no
+purchased domain or hosted frontend. It supports account-bound pairing records,
+explicit refresh, sign-out and confirmed device revocation. Connectivity and
+agent versions are labeled as not reported when the relay API does not provide
+them. This first milestone does not change your installed device topology or
+OAuth/relay configuration.
+
+```sh
+pnpm install --frozen-lockfile
+pnpm --filter @tetherplane/control-center build
+pnpm --filter @tetherplane/control-center start --relay-url http://127.0.0.1:8788
+```
+
+The example expects an existing local development relay. For a remote relay use
+its HTTPS origin. Open `http://127.0.0.1:8790` and supply an existing authorized
+relay client credential. See the portal README for authentication boundaries,
+Windows instructions, tests and remaining release gates.
+
 ## Default AI-facing surface
 
 Compact MCP exposes exactly six tools:
