@@ -4,7 +4,7 @@ import { readFileSync } from 'node:fs';
 import { createHash } from 'node:crypto';
 
 const pub = new URL('../public/', import.meta.url);
-const contents = path => readFileSync(new URL(path, pub), 'utf8');
+const contents = (path: string) => readFileSync(new URL(path, pub), 'utf8');
 const artwork = () => contents('assets/ascii/approved-background.txt');
 
 test('approved source is byte-identical, 400 by 460', () => {
