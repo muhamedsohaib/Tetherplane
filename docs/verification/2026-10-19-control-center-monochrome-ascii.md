@@ -36,3 +36,27 @@ Protected changes are limited to `adapters/control-center/src/server.ts`'s **thr
 - A **fresh-context independent code reviewer is not available in this session**. Author self-review and CI checks are not equivalent. Record independent review as a remaining gate, not a pass.
 - User artwork has no established third-party/public redistribution permission; public release blocked independently.
 - Overall Tetherplane release verdict remains **NO-GO**. PR #22 must remain **DRAFT**, with no merge or deployment absent explicit approval.
+
+## Checkpoint reconciliation — 2026-10-19, verified through connected GitHub API
+
+**Code HEAD reviewed:** `0de64a9539ed0f48b89e2e644f73cb3bacdc2492`, unchanged from the prior accepted code checkpoint at the time of reconciliation. This evidence-document update creates a later documentation-only branch commit; CI for that later commit must be assessed separately and is **not** implied by the code-head checks below.
+
+- [PR #22](https://github.com/muhamedsohaib/Tetherplane/pull/22): open, **DRAFT**, base `feature/control-center-m2-20261019`, 14 changed files, 21 commits at the verified code checkpoint; no merge, deployment or release.
+- Exact-code-head pull-request workflow [39306858772](https://github.com/muhamedsohaib/Tetherplane/actions/runs/39306858772): **completed / success**; all four jobs successful: Control Center Ubuntu and Windows, repository quality Ubuntu and Windows. The PR records **19/19 HTTP/security and 11/11 Playwright** on Ubuntu.
+- Duplicate push workflow [39306852420](https://github.com/muhamedsohaib/Tetherplane/actions/runs/39306852420): **in progress** when rechecked; Control Center Ubuntu and Windows and quality Windows successful; quality Ubuntu still running. Do not treat the push workflow as completed.
+- GitHub workflow artifact lists for both exact-code-head runs: no retained artifacts returned. Consequently CI job success does not independently establish image screenshot quality or public redistribution rights.
+- GitHub review submissions: **0**; inline review threads: **0**; top-level PR comments: **0**; requested reviewers (GitHub REST readback): **0** after submitting a Copilot bot review request using the connected API. **Independent whole-branch review is unverified and remains a hard PR approval gate.** An API request returning successfully is not a submitted review.
+- Connected live-device probe for Leno returned `disconnected` / `requested device is offline`; no local working-tree or four-device acceptance was performed. Surface's older preview remains historical, not a verified new deployment.
+- Execution environment lacked a local checkout, pnpm/cargo binaries and network access to GitHub from its shell. The repository source/diff and review metadata were inspected through the authenticated GitHub connector. **No fresh local test run, image-byte SHA-256 recomputation or screenshot visual acceptance** was performed during this reconciliation. CI outcomes are remote GitHub evidence, not independently rerun tests.
+
+### Read-only source / scope inspection
+
+Compared PR #22 changed-file inventory against its base: only Control Center source/frontend/test/docs and two binary derivatives were changed. `adapters/control-center/src/server.ts` has exactly the three approved static allowlist additions; no existing session handler, relay or agent changes in the PR diff. The delivered `ascii-cycle.js` samples `[0,1,2,3,2,1]` with 700ms hold, 1300ms cosine fade and 12000ms wrap, confirmed by source inspection and supported by the recorded Playwright test. The persistent central background has `object-fit:contain`; fidelity to the supplied original and edge tiling is documented but **not newly visually independently reverified**.
+
+**Self-inspection only (not independent review):** No confirmed Critical or Important defect was established in the examined changes; this does **not** assert the full twelve-category security/UX independent-review gate passed. One **Minor** styling observation is deferred: `public/style.css` has `margin:0 0:52px` in `.view-intro`, an invalid CSS declaration; there is no verified functional failure or red-green reproduction, so no untested production change was applied. Any additional findings from an actual independent reviewer must be triaged Critical/Important/Minor and fixed with RED→GREEN regression evidence before authorization.
+
+### Decisions and remaining gates
+
+**No implementation/runtime changes during reconciliation.** The previously resolved pairing/logout afterEach timeout was not reopened. No production OAuth configuration, scopes, client identity or device policy was touched. The branch stays DRAFT with independent review outstanding, and no merge/deploy/release authorization. A browser authorization-code + PKCE flow using the existing issuer/resource/scope is the smallest separate next architectural task; first confirm an already-approved registered client's redirect URI and browser-flow eligibility **read-only**, then propose the bounded integration without creating a client or changing production identity settings.
+
+**Frontend PR verdict:** source implementation and exact-code-head PR CI are in place; **not ready for final human approval** until independently submitted whole-branch review, any resulting Important/Critical fixes with passing exact-HEAD CI, and visual/artwork evidence checks are completed. Overall Tetherplane release stays **NO-GO**.
