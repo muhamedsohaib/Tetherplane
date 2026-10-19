@@ -88,7 +88,10 @@ If transport drops, the already running agent retries its existing outbound
 connection. There is no remote restart/reconnect endpoint in this contract.
 Directory refresh reports pairing state only. After confirmed revocation, use
 a **fresh credential and new code** through the device-side workflow, then approve
-that code here. The revoked credential stays invalid. Preserve the existing
+that code here. When you pair with a fresh credential, the revoked credential
+remains invalid. The existing relay does not track credential-reuse history;
+explicitly approving a reused credential hash can authorize that credential again.
+Always generate a fresh device secret when recovering access. Preserve the existing
 device-local principal, allowed paths and `background_only` policy.
 
 Never approve a code supplied by someone else. A pairing code authorizes account

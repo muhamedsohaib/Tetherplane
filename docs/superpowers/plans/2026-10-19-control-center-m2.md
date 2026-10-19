@@ -30,14 +30,14 @@ external messages or human-owned browser/desktop interaction.
 
 ## Tasks
 
-- [ ] 1. RED/GREEN: registry rejects competing pending approvals and consumes sibling codes.
+- [x] 1. RED/GREEN: registry rejects competing pending approvals and consumes sibling codes.
   Files: `relay/src/devices/registry.ts`, `relay/test/control-http.test.ts`.
   Verify real HTTP ownership and device-credential authentication before/after revocation.
-- [ ] 2. RED/GREEN: protected `POST /api/pair/approve {userCode, confirmOwnership:true}`.
+- [x] 2. RED/GREEN: protected `POST /api/pair/approve {userCode, confirmOwnership:true}`.
   Files: portal `src/{server,relay-client}.ts`, `test/{server,relay-client}.test.ts`.
   Verify auth/CSRF/Origin, possession confirmation, invalid/expired/consumed codes,
   sanitized projection, rate limit and logout/expiry races using the real RelayServer.
-- [ ] 3. RED/GREEN: accessible pairing form and reconnect guidance.
+- [x] 3. RED/GREEN: accessible pairing form and reconnect guidance.
   Files: portal `public/{index.html,app.js,style.css}`, `test/browser.spec.ts`, README.
   Verify real approval/revocation/re-pair, no replay, field clearing and sign-out races.
 - [ ] 4. Verify recursive types/builds, focused suites, independent review, all four
@@ -58,3 +58,8 @@ external messages or human-owned browser/desktop interaction.
 - Ruling: include the minimal registry guard because existing multiple-pending approval
   can replace an active binding, contradicting canonical remote-plane security.
   Public HTTP contracts and production configuration remain unchanged.
+- Implemented and verified in `47bac46` and `ce58afa`; independent reviewer reran
+  portal 19/19, browser 10/10 and HTTP/WebSocket lifecycle/control 5/5, plus build
+  and typechecks. No new blocking finding. Clarified the inherited credential-reuse
+  limitation without expanding the backend contract. Final hosted gates are reported
+  in the task completion response at the actual final branch SHA.
