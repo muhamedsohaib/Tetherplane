@@ -24,8 +24,10 @@ test('one SVG background preserves every ASCII character', () => {
   assert.equal(runs.length, 455);
   for (const [, row, col, value] of runs) {
     const rowIndex = Number(row), start = Number(col);
-    renderRows[rowIndex] = renderRows[rowIndex].slice(0, start) + value +
-      renderRows[rowIndex].slice(start + value.length);
+    const current = renderRows[rowIndex]!;
+    const replacement = value!;
+    renderRows[rowIndex] = current.slice(0, start) + replacement +
+      current.slice(start + replacement.length);
   }
   assert.deepEqual(renderRows, rows);
   assert.ok(svg.includes('viewBox="0 0 240 460"'));
