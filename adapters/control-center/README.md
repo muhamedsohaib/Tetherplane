@@ -71,7 +71,40 @@ shows no devices. No device is represented as online/offline based on pairing.
 After failed refreshes, stale cards are cleared. If a mutation times out, its
 outcome is uncertain: refresh before taking another action.
 
-Remote commands, reboot, service control, pairing/re-pairing, policy editing,
+## Pair a device and recover access (Milestone 2)
+
+On a device you are authorized to manage, use the established
+[device-side pairing workflow](../../docs/remote/self-host.md#pair-a-device)
+for the same relay configured when you started Control Center. The raw device
+credential stays on that device. Sign into Control Center with your existing
+relay client credential, enter the short code under **Add a device**, and confirm
+that you requested it on your authorized device. Approval uses the existing
+authenticated `POST /pair/approve`; the refreshed account directory shows the
+actual pairing record. Codes are single-use and expire at the relay (normally
+ten minutes). The portal permits ten well-formed approval attempts per minute
+across its local sessions. It does not generate credentials or begin pairing.
+
+If transport drops, the already running agent retries its existing outbound
+connection. There is no remote restart/reconnect endpoint in this contract.
+Directory refresh reports pairing state only. After confirmed revocation, use
+a **fresh credential and new code** through the device-side workflow, then approve
+that code here. The revoked credential stays invalid. Preserve the existing
+device-local principal, allowed paths and `background_only` policy.
+
+Never approve a code supplied by someone else. A pairing code authorizes account
+access to the device associated with that code; the current backend has no
+pre-approval device preview. Verify it directly on your authorized device.
+Competing pending codes for an approved device are invalidated, so they cannot
+replace an active account binding or restore an old credential after revocation.
+
+Approval inputs clear immediately. Failed or uncertain approvals are never
+automatically retried; the directory clears and another approval is disabled
+until a successful refresh. Sign-out/expiry prevents a later local submission,
+but cannot cancel a mutation already delivered to the relay. Refresh after an
+uncertain result and revoke an unwanted returned binding through the normal
+confirmed workflow. Pairing changes relay access, never device-local policy.
+
+Remote commands, reboot, service control, policy editing,
 organization administration and device installation are outside this increment.
 Exactly six AI-facing MCP tools remain unchanged; the device-local Policy Broker
 remains final authority.
@@ -105,6 +138,9 @@ Tests use ephemeral local relays, in-memory registries and synthetic credentials
 They never target Leno or the existing four-device deployment. Browser tests run
 headlessly in new isolated contexts, covering real sign-in/directory/revoke/logout,
 errors, empty state, reduced motion, mobile layout and sign-out/refresh races.
+Milestone 2 additionally covers real HTTP pairing, authenticated credential
+acceptance, confirmed revocation and fresh re-pairing, competing-code rejection,
+pairing confirmation/CSRF/rate limits, uncertain outcomes and sign-out races.
 Server tests cover account isolation, authentication expiry/denial, CSRF and
 Host/Origin checks, method/body limits, redirects, safe response projection and
 static security headers. Hosted Windows and Ubuntu jobs run these in addition to

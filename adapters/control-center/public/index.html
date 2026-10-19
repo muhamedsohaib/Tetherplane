@@ -39,7 +39,7 @@
             ><span aria-hidden="true">⌂</span> RUNNING LOCALLY</span
           >
           <p>No domain. No hosting.<br />Built to stay in your hands.</p>
-          <span class="small-label">MILESTONE 01</span>
+          <span class="small-label">MILESTONE 02</span>
         </div>
       </aside>
       <main id="overview">
@@ -171,13 +171,34 @@
                 and agent versions are not reported by this API.
               </p>
             </div>
+            <section class="pairing panel" aria-labelledby="pair-title">
+              <h2 id="pair-title">Add a device</h2>
+              <p id="pair-help" class="subtle">
+                Begin pairing on the device using your established setup workflow.
+                Check that its relay address matches this workspace, then enter
+                the short code it displays. Only approve codes you requested yourself.
+                Approval grants this account relay access; it does not change device-local policy.
+              </p>
+              <form id="pair-form">
+                <label for="pair-code">Device pairing code</label>
+                <input id="pair-code" type="text" autocomplete="off" spellcheck="false"
+                  autocapitalize="characters" maxlength="9" required
+                  pattern="[A-Fa-f0-9]{4}-[A-Fa-f0-9]{4}" placeholder="ABCD-1234"
+                  aria-describedby="pair-help" />
+                <label class="ownership-check" for="pair-owned">
+                  <input id="pair-owned" type="checkbox" required />
+                  <span>I requested this code on a device I am authorized to manage.</span>
+                </label>
+                <button id="approve-pair" class="primary" type="submit" disabled>Approve pairing</button>
+              </form>
+            </section>
             <div id="devices" class="device-grid"></div>
             <div id="empty" class="empty panel" hidden>
               <span aria-hidden="true">◇</span>
               <h2>No devices are paired to this account.</h2>
               <p>
                 Check that your credential belongs to the expected account. Use
-                your existing pairing workflow to add a device.
+                the device-side pairing workflow, then approve its code above.
               </p>
             </div>
           </section>
@@ -216,12 +237,20 @@
                 <div>
                   <strong>Manage deliberately</strong>
                   <p>
-                    Refresh pairing records, or revoke a device's relay access
-                    after confirming its ID.
+                    Approve a code from your device, refresh pairing records, or
+                    revoke relay access after confirming the device ID.
                   </p>
                 </div>
               </li>
             </ol>
+            <p class="subtle">
+              After a connection interruption, the running device agent retries its
+              existing outbound connection. Refresh here to check pairing records;
+              this does not restart the agent or prove connectivity. After revocation,
+              generate a fresh credential and pairing code on the authorized device
+              through your established setup workflow, then approve the new code here.
+              Keep its existing background-only policy in place.
+            </p>
           </section>
           <footer>
             <span

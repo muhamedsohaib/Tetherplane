@@ -5,12 +5,15 @@ let pending = null;
 let expiryTimer = null;
 let selectedDevice = null;
 let busy = false;
+let directoryFresh = false;
 
 function message(text) {
   $("notice").textContent = text;
   $("notice").hidden = !text;
 }
 function clearDirectory() {
+  directoryFresh = false;
+  updatePairButton();
   $("devices").replaceChildren();
   $("empty").hidden = true;
   $("device-count").textContent = "—";
@@ -21,6 +24,7 @@ function signedOut() {
   csrf = null;
   selectedDevice = null;
   $("credential").value = "";
+  clearPairing();
   $("revoke-dialog").close();
   clearDirectory();
   $("dashboard").hidden = true;
@@ -32,10 +36,23 @@ function setBusy(value, text = "Loading…") {
   $("loading-text").textContent = text;
   $("signin-button").disabled = value;
   $("refresh").disabled = value;
+  $("pair-code").disabled = value;
+  $("pair-owned").disabled = value;
+  updatePairButton();
   $("cancel-revoke").disabled = value;
   $("confirm-revoke").disabled =
     value || !selectedDevice || $("confirmation").value !== selectedDevice;
   $("dashboard").setAttribute("aria-busy", String(value));
+}
+function clearPairing() {
+  $("pair-code").value = "";
+  $("pair-owned").checked = false;
+  updatePairButton();
+}
+function updatePairButton() {
+  $("approve-pair").disabled = busy || !csrf || !directoryFresh ||
+    !/^[A-F0-9]{4}-[A-F0-9]{4}$/.test($("pair-code").value.trim().toUpperCase()) ||
+    !$("pair-owned").checked;
 }
 async function api(path, signal, options = {}) {
   let response;
@@ -93,6 +110,7 @@ async function run(task, text, success, quiet401 = false) {
     if (current === generation) success(data);
   } catch (error) {
     if (current !== generation) return;
+    clearPairing();
     $("revoke-dialog").close();
     selectedDevice = null;
     clearDirectory();
@@ -142,6 +160,8 @@ function deviceCard(device) {
   ])
     details.append(element("dt", "", label), element("dd", "", value));
   card.append(heading, details);
+  if (device.revokedAt)
+    card.append(element("p", "subtle", "Use a fresh device-side pairing code to restore relay access."));
   if (!device.revokedAt) {
     const button = element("button", "text-button", "Revoke access");
     button.type = "button";
@@ -160,6 +180,8 @@ function deviceCard(device) {
 }
 function showDirectory(data) {
   csrf = data.csrfToken;
+  directoryFresh = true;
+  updatePairButton();
   $("credential").value = "";
   $("welcome").hidden = true;
   $("dashboard").hidden = false;
@@ -208,6 +230,22 @@ $("signin-form").addEventListener("submit", (event) => {
 });
 $("refresh").addEventListener("click", () => {
   void refresh();
+});
+$("pair-code").addEventListener("input", updatePairButton);
+$("pair-owned").addEventListener("change", updatePairButton);
+$("pair-form").addEventListener("submit", (event) => {
+  event.preventDefault();
+  updatePairButton();
+  if ($("approve-pair").disabled) return;
+  const userCode = $("pair-code").value.trim().toUpperCase();
+  clearPairing();
+  void run(
+    (signal) => api("/api/pair/approve", signal, {
+      method: "POST", body: { userCode, confirmOwnership: true },
+    }),
+    "Approving your device's pairing code…",
+    () => queueMicrotask(() => { void refresh(); }),
+  );
 });
 $("signout").addEventListener("click", () => {
   // Start the protected request before dropping the CSRF token locally.

@@ -87,10 +87,21 @@ export class RelayClient {
       throw invalidResponse();
   }
 
+  async approvePairing(token: string, userCode: string): Promise<string> {
+    const result = await this.#request("/pair/approve", token, "POST", { userCode });
+    if (
+      !isObject(result) || typeof result.deviceId !== "string" ||
+      !validDeviceId(result.deviceId) || !timestamp(result.pairedAt) ||
+      result.revokedAt !== null
+    ) throw invalidResponse();
+    return result.deviceId;
+  }
+
   async #request(
     path: string,
     token: string,
     method = "GET",
+    body: Record<string, unknown> = {},
   ): Promise<unknown> {
     try {
       const response = await fetch(this.origin + path, {
@@ -102,10 +113,13 @@ export class RelayClient {
           accept: "application/json",
           ...(method === "POST" ? { "content-type": "application/json" } : {}),
         },
-        ...(method === "POST" ? { body: "{}" } : {}),
+        ...(method === "POST" ? { body: JSON.stringify(body) } : {}),
       });
       if (!response.ok) {
         await response.body?.cancel();
+        if (path === "/pair/approve" && response.status === 400)
+          throw new PortalError(400, "pairing_rejected",
+            "The relay could not approve this code. Refresh the directory, then check the code on your device before trying again.");
         if (response.status === 401)
           throw new PortalError(
             401,

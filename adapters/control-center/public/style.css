@@ -256,6 +256,20 @@ input {
   line-height: 1.7;
   margin: 10px 0 22px;
 }
+.pairing {
+  padding: 24px;
+  margin-bottom: 24px;
+}
+.pairing h2 { margin-top: 0; }
+.pairing form { max-width: 520px; }
+.ownership-check {
+  display: flex;
+  align-items: flex-start;
+  gap: 10px;
+  margin: 18px 0;
+  line-height: 1.6;
+}
+.ownership-check input { width: auto; margin-top: 4px; }
 .primary,
 .secondary,
 .danger {

@@ -269,3 +269,77 @@ test("loading artwork follows the supplied ping-pong order without a blank inter
     "2.png",
   ]);
 });
+
+test("device-side pairing, revocation and fresh re-pairing use the real authenticated directory", async ({ page }) => {
+  await page.goto(base);
+  await page.getByLabel("Relay access credential").fill("browser-fixture-empty");
+  await page.getByRole("button", { name: "Sign in", exact: true }).click();
+  const pair = async (secret: string) => {
+    const pending = await relay.registry.startPairing({ deviceId: "new-device", credentialHash: hashDeviceCredential(secret) });
+    await page.getByLabel("Device pairing code", { exact: true }).fill(pending.userCode.toLowerCase());
+    await page.getByLabel("I requested this code on a device I am authorized to manage.").check();
+    await page.getByRole("button", { name: "Approve pairing", exact: true }).click();
+    await expect(page.getByLabel("Device pairing code", { exact: true })).toHaveValue("");
+    await expect(page.getByRole("heading", { name: "new-device", exact: true })).toBeVisible();
+  };
+  await pair("browser-first-synthetic-device-secret");
+  expect(await relay.registry.authenticateDevice("new-device", "browser-first-synthetic-device-secret")).toBe("empty");
+  await page.getByRole("button", { name: "Revoke access", exact: true }).click();
+  const dialog = page.getByRole("dialog");
+  await dialog.getByLabel("Type device ID to confirm").fill("new-device");
+  await dialog.getByRole("button", { name: "Revoke access", exact: true }).click();
+  await expect(page.locator(".badge.revoked")).toHaveText("Revoked");
+  await expect(page.getByText("Use a fresh device-side pairing code to restore relay access.", { exact: true })).toBeVisible();
+  expect(await relay.registry.authenticateDevice("new-device", "browser-first-synthetic-device-secret")).toBeNull();
+  await pair("browser-fresh-synthetic-device-secret");
+  await expect(page.locator(".badge")).toHaveText("Paired");
+  expect(await relay.registry.authenticateDevice("new-device", "browser-fresh-synthetic-device-secret")).toBe("empty");
+  expect(await relay.registry.authenticateDevice("new-device", "browser-first-synthetic-device-secret")).toBeNull();
+  await expect(page.getByText("Connectivity not reported", { exact: true })).toBeVisible();
+});
+
+test("uncertain approval clears its code, never replays and requires a fresh directory before another action", async ({ page }) => {
+  await page.goto(base);
+  await page.getByLabel("Relay access credential").fill("browser-fixture-a");
+  await page.getByRole("button", { name: "Sign in", exact: true }).click();
+  await page.getByLabel("Device pairing code", { exact: true }).fill("ABCD-1234");
+  const approve = page.getByRole("button", { name: "Approve pairing", exact: true });
+  await expect(approve).toBeDisabled();
+  await page.getByLabel("I requested this code on a device I am authorized to manage.").check();
+  let attempts = 0;
+  await page.route("**/api/pair/approve", route => {
+    attempts++;
+    return route.fulfill({ status: 502, contentType: "application/json", body: JSON.stringify({ error: { message: "Result uncertain. Refresh before retrying." } }) });
+  });
+  await approve.click();
+  await expect(page.getByRole("alert")).toContainText("Result uncertain");
+  await expect(page.getByLabel("Device pairing code", { exact: true })).toHaveValue("");
+  await page.getByLabel("Device pairing code", { exact: true }).fill("ABCD-1234");
+  await page.getByLabel("I requested this code on a device I am authorized to manage.").check();
+  await expect(approve).toBeDisabled();
+  expect(attempts).toBe(1);
+  await page.getByRole("button", { name: "Refresh", exact: true }).click();
+  await expect(approve).toBeEnabled();
+});
+
+test("sign-out while approval is pending does not restore account records", async ({ page }) => {
+  await page.goto(base);
+  await page.getByLabel("Relay access credential").fill("browser-fixture-a");
+  await page.getByRole("button", { name: "Sign in", exact: true }).click();
+  let release!: () => void;
+  let entered!: () => void;
+  const gate = new Promise<void>(resolve => { release = resolve; });
+  const started = new Promise<void>(resolve => { entered = resolve; });
+  await page.route("**/api/pair/approve", async route => {
+    entered(); await gate; await route.continue().catch(() => {});
+  });
+  await page.getByLabel("Device pairing code", { exact: true }).fill("ABCD-1234");
+  await page.getByLabel("I requested this code on a device I am authorized to manage.").check();
+  await page.getByRole("button", { name: "Approve pairing", exact: true }).click();
+  await started;
+  await page.getByRole("button", { name: "Sign out", exact: true }).click();
+  release();
+  await expect(page.getByRole("button", { name: "Sign in", exact: true })).toBeVisible();
+  await expect(page.getByRole("heading", { name: "fixture-device", exact: true })).not.toBeVisible();
+  await expect(page.getByLabel("Device pairing code", { exact: true })).toHaveValue("");
+});

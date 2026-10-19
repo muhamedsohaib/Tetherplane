@@ -20,6 +20,8 @@ export class ControlCenterServer {
   #cookieName = "";
   #loginWindow = 0;
   #loginAttempts = 0;
+  #pairWindow = 0;
+  #pairAttempts = 0;
 
   constructor(options: {
     relayUrl: string;
@@ -115,7 +117,7 @@ export class ControlCenterServer {
           ? ["GET", "POST"]
           : pathname === "/api/devices"
             ? ["GET"]
-            : pathname === "/api/logout" || revoke
+            : pathname === "/api/logout" || pathname === "/api/pair/approve" || revoke
               ? ["POST"]
               : [];
       if (!methods.length)
@@ -201,6 +203,26 @@ export class ControlCenterServer {
       if (pathname === "/api/logout") {
         this.#forget(sessionId!);
         writeJson(response, 200, { signedOut: true });
+        return;
+      }
+      if (pathname === "/api/pair/approve") {
+        const body = await readJson(request);
+        if (body.confirmOwnership !== true || typeof body.userCode !== "string" ||
+            !/^[A-F0-9]{4}-[A-F0-9]{4}$/.test(body.userCode))
+          throw new PortalError(400, "confirmation_required",
+            "Enter the code displayed on your authorized device and confirm you requested pairing.");
+        const now = this.#now();
+        if (now - this.#pairWindow >= 60_000) {
+          this.#pairWindow = now;
+          this.#pairAttempts = 0;
+        }
+        if (++this.#pairAttempts > 10)
+          throw new PortalError(429, "rate_limited", "Too many pairing attempts. Wait one minute, then refresh.");
+        await this.#relay.directory(session.token);
+        if (!this.#sessions.has(sessionId!) || session.expiresAt <= this.#now())
+          throw new PortalError(401, "authentication_required", "Session expired. Sign in again.");
+        const deviceId = await this.#relay.approvePairing(session.token, body.userCode);
+        writeJson(response, 200, { paired: true, deviceId });
         return;
       }
       if (revoke) {

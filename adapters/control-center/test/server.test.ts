@@ -387,3 +387,81 @@ test("a late invalidated-session response cannot erase a replacement login cooki
   assert.equal(lateResponse.response.headers.get("set-cookie"), null);
   assert.equal((await f.call("/api/devices", b)).response.status, 200);
 });
+
+test("portal approves a device-generated code for its authenticated account and re-pairs after revocation", async (t) => {
+  const f = await fixture(t);
+  const a = await f.login();
+  const start = (secret: string) => f.relay.registry.startPairing({
+    deviceId: "fixture-new", credentialHash: hashDeviceCredential(secret),
+  });
+  const pending = await start("new-synthetic-device-credential");
+  const approve = (userCode: string) => f.call("/api/pair/approve", {
+    ...a, method: "POST", body: { userCode, confirmOwnership: true },
+  });
+  const approved = await approve(pending.userCode);
+  assert.equal(approved.response.status, 200);
+  assert.deepEqual(approved.body, { paired: true, deviceId: "fixture-new" });
+  assert.equal(approved.raw.includes(pending.userCode), false);
+  assert.equal(approved.raw.includes("accountId"), false);
+  assert.equal(approved.raw.includes("credentialHash"), false);
+  assert.equal(await f.relay.registry.authenticateDevice("fixture-new", "new-synthetic-device-credential"), "account-a");
+  const b = await f.login("fixture-account-b");
+  assert.deepEqual((await f.call("/api/devices", b)).body.devices.map((d: {deviceId: string}) => d.deviceId), ["fixture-b"]);
+  const directory = await f.call("/api/devices", a);
+  assert.equal(directory.body.devices.length, 2);
+  assert.equal(directory.body.devices[1].connectivity, "not_reported");
+  assert.equal((await approve(pending.userCode)).response.status, 400);
+  assert.equal((await f.call("/api/devices/fixture-new/revoke", {
+    ...a, method: "POST", body: { confirmDeviceId: "fixture-new" },
+  })).response.status, 200);
+  assert.equal(await f.relay.registry.authenticateDevice("fixture-new", "new-synthetic-device-credential"), null);
+  const fresh = await start("fresh-synthetic-device-credential");
+  assert.equal((await approve(fresh.userCode)).response.status, 200);
+  assert.equal(await f.relay.registry.authenticateDevice("fixture-new", "fresh-synthetic-device-credential"), "account-a");
+  assert.equal(await f.relay.registry.authenticateDevice("fixture-new", "new-synthetic-device-credential"), null);
+});
+
+test("pair approval requires a session, same origin, CSRF and explicit possession confirmation", async (t) => {
+  const f = await fixture(t);
+  const pending = await f.relay.registry.startPairing({ deviceId: "fixture-new", credentialHash: hashDeviceCredential("synthetic-pairing-secret") });
+  const body = { userCode: pending.userCode, confirmOwnership: true };
+  assert.equal((await f.call("/api/pair/approve", { method: "POST", body })).response.status, 401);
+  const a = await f.login();
+  assert.equal((await f.call("/api/pair/approve", { cookie: a.cookie, method: "POST", body })).response.status, 403);
+  assert.equal((await f.call("/api/pair/approve", { ...a, origin: "https://hostile.invalid", method: "POST", body })).response.status, 403);
+  for (const invalid of [
+    { userCode: pending.userCode }, { ...body, confirmOwnership: "true" },
+    { ...body, userCode: "malformed" }, { ...body, userCode: "A".repeat(1000) },
+  ]) assert.equal((await f.call("/api/pair/approve", { ...a, method: "POST", body: invalid })).response.status, 400);
+  assert.equal(f.relay.registry.getDevice("fixture-new"), null);
+  assert.equal((await f.call("/api/pair/approve", { ...a, method: "POST", body })).response.status, 200);
+});
+
+test("logout or expiry during pre-approval authorization prevents the pairing mutation", async (t) => {
+  for (const expire of [false, true]) {
+    const f = await fixture(t, 1000);
+    const a = await f.login();
+    const pending = await f.relay.registry.startPairing({ deviceId: "fixture-new", credentialHash: hashDeviceCredential("synthetic-pairing-secret") });
+    const gate = f.holdNext();
+    const approval = f.call("/api/pair/approve", { ...a, method: "POST", body: { userCode: pending.userCode, confirmOwnership: true } });
+    await gate.started;
+    if (expire) f.advance(1001);
+    else await f.call("/api/logout", { ...a, method: "POST" });
+    gate.release();
+    assert.equal((await approval).response.status, 401);
+    assert.equal(f.relay.registry.getDevice("fixture-new"), null);
+  }
+});
+
+test("pairing denies expired upstream authority and bounds code guesses across sessions", async (t) => {
+  const f = await fixture(t);
+  const a = await f.login();
+  for (let attempt = 0; attempt < 10; attempt++)
+    assert.equal((await f.call("/api/pair/approve", { ...a, method: "POST", body: { userCode: "0000-0000", confirmOwnership: true } })).response.status, 400);
+  const b = await f.login();
+  assert.equal((await f.call("/api/pair/approve", { ...b, method: "POST", body: { userCode: "0000-0000", confirmOwnership: true } })).response.status, 429);
+  f.advance(60_001);
+  f.deny();
+  assert.equal((await f.call("/api/pair/approve", { ...b, method: "POST", body: { userCode: "0000-0000", confirmOwnership: true } })).response.status, 401);
+  assert.equal((await f.call("/api/devices", b)).response.status, 401);
+});
