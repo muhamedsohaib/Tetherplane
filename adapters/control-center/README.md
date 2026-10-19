@@ -4,6 +4,25 @@ A local web portal for the existing authenticated relay device directory. No
 purchased domain, hosted frontend, subscription or new OAuth client is needed.
 The portal runs separately from the relay and never starts or reconfigures agents.
 
+## Monochrome ASCII interface (redesign preview)
+
+The interface presents **Home, Devices, Access, Pairing and Settings** using
+ivory (#F4F1E8) and ink (#111111). The full-page background is one uninterrupted
+rendering of the user's **approved** `ascii-art (16).txt`: 400 columns by
+460 lines, SHA-256 `62a3ea8172093100422ea4543694441caf93e4368794d9f4104851c07b601e6f`.
+The verbatim text lives in `public/assets/ascii/approved-background.txt`;
+the SVG is only a glyph-faithful visualization of every source line. No tiled
+secondary field, independent wordmark layer, animation or loading showcase remains.
+Translucent blurred glass surfaces preserve readability instead of opaque blocks.
+Long-running requests reuse the same static background; brief requests suppress
+the full-screen loader entirely. The previous four-frame animation assets remain
+in Git history but are not used in the current interface.
+
+**The preview is not a new authentication service.** A user without an
+existing authorized relay client token cannot currently sign in. Browser
+OAuth/PKCE login requires a separate reviewed design and client authorization.
+Neither the frontend nor its visual status proves device connectivity.
+
 ## Start on Windows or Ubuntu
 
 Prerequisites: Node.js 22.18+ (or Node.js 24), pnpm 10, and access to an existing
@@ -77,7 +96,7 @@ On a device you are authorized to manage, use the established
 [device-side pairing workflow](../../docs/remote/self-host.md#pair-a-device)
 for the same relay configured when you started Control Center. The raw device
 credential stays on that device. Sign into Control Center with your existing
-relay client credential, enter the short code under **Add a device**, and confirm
+relay client credential, enter the short code under **Pairing**, and confirm
 that you requested it on your authorized device. Approval uses the existing
 authenticated `POST /pair/approve`; the refreshed account directory shows the
 actual pairing record. Codes are single-use and expire at the relay (normally
@@ -153,10 +172,16 @@ records commits, independent review, test evidence and release gates.
 
 ## Artwork
 
-The supplied logo and loading-loop frames are served locally and unchanged.
-See [asset provenance](public/assets/PROVENANCE.md). Loading media never implies
-device connectivity. Reduced-motion users see a static frame, animation runs
-only during loading, and a pause control is available.
+The original four loading-loop PNG frames are served locally and unchanged.
+The persistent character-field wordmark and its seamless outer-field extension
+are separately optimized WebP derivatives of the supplied
+`Logo with word mark.jpg` (the complete dotted emblem and wordmark within the
+dense characters, **not** the icon-only file). Their originals, hashes and
+conversion methods are recorded in
+[asset provenance](public/assets/PROVENANCE.md). Loading art never implies
+connectivity or authorization. Reduced-motion users see a static frame; normal
+screens keep their branded background static. **Artwork redistribution rights
+must be resolved before public release.**
 
 Remaining release gates include independently witnessed authorized-device use,
 clean-install/onboarding acceptance, an approved interactive sign-in contract,
