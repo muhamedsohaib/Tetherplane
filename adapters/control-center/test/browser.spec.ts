@@ -341,3 +341,33 @@ test("sign-out while approval is pending does not restore account records", asyn
   await expect(page.getByRole("heading", { name: "fixture-device", exact: true })).not.toBeVisible();
   await expect(page.getByLabel("Device pairing code", { exact: true })).toHaveValue("");
 });
+
+test("complete user ASCII wordmark persists across routes and responsive viewports", async ({ page }) => {
+  await page.goto(base);
+  const brand = page.locator("#brand-field .brand-master");
+  await expect(brand).toHaveAttribute("src", "/assets/wordmark-field.webp");
+  await expect.poll(async () => brand.evaluate((img: HTMLImageElement) => img.naturalWidth)).toBeGreaterThan(0);
+  await page.getByLabel("Relay access credential").fill("browser-fixture-a");
+  await page.getByRole("button", { name: "Sign in", exact: true }).click();
+  for (const [width, height] of [[1440, 900], [1024, 768], [390, 844], [320, 640]]) {
+    await page.setViewportSize({ width: width!, height: height! });
+    for (const view of ["home", "devices", "access", "pairing", "settings"] as const) {
+      if (width! <= 790) {
+        await page.locator("#mobile-nav-toggle").click();
+        await expect(page.locator("#mobile-nav-toggle")).toHaveAttribute("aria-expanded", "true");
+      }
+      await navigate(page, view);
+      await expect(page.locator("#view-" + view)).toBeVisible();
+      await expect(brand).toBeVisible();
+      await expect(page.locator("#loading")).toBeHidden();
+      expect(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth)).toBe(true);
+    }
+    await page.locator("#view-home").count();
+  }
+  const rendering = await brand.evaluate((img: HTMLImageElement) => ({
+    fit: getComputedStyle(img).objectFit,
+    source: img.currentSrc,
+  }));
+  expect(rendering.fit).toBe("contain");
+  expect(rendering.source).toContain("/assets/wordmark-field.webp");
+});
