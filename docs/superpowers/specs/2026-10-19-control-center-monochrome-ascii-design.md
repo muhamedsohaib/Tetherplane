@@ -132,3 +132,15 @@ Functional proof:
 Release state remains **NO-GO** for clean signed install, upgrade/rollback, four-device authenticated acceptance, genuine unattended recovery and approved production identity/relay deployment. Source or test success does not satisfy those gates.
 
 The next stage **after user review of this written spec** is an implementation plan, then an authorized isolated feature branch with test-driven frontend work. Do not present this spec commit as a UI implementation or release.
+
+## User-superseding visual design approval — 2026-10-20
+
+**This later user instruction supersedes the earlier image layering, animation, no-glass and no-static-loader requirements above.** Authorization, account isolation, device safety and NO-GO release boundaries remain binding.
+
+- Use only the user-uploaded `ascii-art (16).txt`, exactly 400 columns by 460 lines, canonical SHA-256 `62a3ea8172093100422ea4543694441caf93e4368794d9f4104851c07b601e6f`, as the single page-wide backdrop. No separately tiled or centered second image.
+- The ASCII text is preserved in `public/assets/ascii/approved-background.txt`; the background URL resolves to a deterministic glyph-faithful SVG. Use that same SVG as the backdrop for a brief delayed static loading state, without a museum loop, separate showcase, or animation controls.
+- Text over the ASCII image must use translucent, background-blurred glass surfaces with readable ink rather than solid ivory/black slabs. Apply across headings, panels, buttons, dialogs, navigation and status.
+- Preserve existing five screens, account-bound relay operations, sign-out, CSRF/Origin/Host and device-local boundaries. Verify mobile menu stays above content and remains clickable at 390 and 320px.
+- The isolated Vercel visual-QA frontend uses synthetic data and disabled relay mutations and is protected by Vercel SSO; it is not the production portal or authorization to publicly redistribute artwork.
+
+Original ZIP animation and earlier JPG/WebP composition remain historical-only. Updated acceptance requires source-glyph fidelity, desktop/mobile view checks, all exact-head CI and independent whole-branch review.
