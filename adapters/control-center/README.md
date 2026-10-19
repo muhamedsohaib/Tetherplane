@@ -4,6 +4,22 @@ A local web portal for the existing authenticated relay device directory. No
 purchased domain, hosted frontend, subscription or new OAuth client is needed.
 The portal runs separately from the relay and never starts or reconfigures agents.
 
+## Monochrome ASCII interface (redesign preview)
+
+The preview presents **Home, Devices, Access, Pairing and Settings** using
+ivory (#F4F1E8) and ink (#111111). Every screen retains a static full-canvas
+ASCII character-field rendering of the complete Tetherplane emblem and
+wordmark, derived from the user's supplied artwork. Only genuine startup,
+authorization, pairing and refresh waits activate the full-screen four-frame
+museum crossfade: `1 → 2 → 3 → 4 → 3 → 2`, 700 ms hold plus 1300 ms
+half-cosine fade per step. Idle navigation does not animate the background.
+The loader pauses for hidden tabs and supports reduced motion.
+
+**The preview is not a new authentication service.** A user without an
+existing authorized relay client token cannot currently sign in. Browser
+OAuth/PKCE login requires a separate reviewed design and client authorization.
+Neither the frontend nor its visual status proves device connectivity.
+
 ## Start on Windows or Ubuntu
 
 Prerequisites: Node.js 22.18+ (or Node.js 24), pnpm 10, and access to an existing
@@ -77,7 +93,7 @@ On a device you are authorized to manage, use the established
 [device-side pairing workflow](../../docs/remote/self-host.md#pair-a-device)
 for the same relay configured when you started Control Center. The raw device
 credential stays on that device. Sign into Control Center with your existing
-relay client credential, enter the short code under **Add a device**, and confirm
+relay client credential, enter the short code under **Pairing**, and confirm
 that you requested it on your authorized device. Approval uses the existing
 authenticated `POST /pair/approve`; the refreshed account directory shows the
 actual pairing record. Codes are single-use and expire at the relay (normally
@@ -153,10 +169,16 @@ records commits, independent review, test evidence and release gates.
 
 ## Artwork
 
-The supplied logo and loading-loop frames are served locally and unchanged.
-See [asset provenance](public/assets/PROVENANCE.md). Loading media never implies
-device connectivity. Reduced-motion users see a static frame, animation runs
-only during loading, and a pause control is available.
+The original four loading-loop PNG frames are served locally and unchanged.
+The persistent character-field wordmark and its seamless outer-field extension
+are separately optimized WebP derivatives of the supplied
+`Logo with word mark.jpg` (the complete dotted emblem and wordmark within the
+dense characters, **not** the icon-only file). Their originals, hashes and
+conversion methods are recorded in
+[asset provenance](public/assets/PROVENANCE.md). Loading art never implies
+connectivity or authorization. Reduced-motion users see a static frame; normal
+screens keep their branded background static. **Artwork redistribution rights
+must be resolved before public release.**
 
 Remaining release gates include independently witnessed authorized-device use,
 clean-install/onboarding acceptance, an approved interactive sign-in contract,
