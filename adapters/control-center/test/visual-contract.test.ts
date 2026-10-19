@@ -19,8 +19,14 @@ test('approved source is byte-identical, 400 by 460', () => {
 test('one SVG background preserves every ASCII character', () => {
   const rows = artwork().trimEnd().split('\n');
   const svg = contents('assets/ascii/approved-background.svg');
-  const renderRows = [...svg.matchAll(/<tspan x="0" dy="1">([+#*]+)<\/tspan>/g)]
-    .map(m => m[1]);
+  const renderRows = Array.from({ length: 460 }, () => '+'.repeat(400));
+  const runs = [...svg.matchAll(/<g data-row="(\d+)" data-col="(\d+)"><rect[^>]*\/><text[^>]*>([+#*]+)<\/text><\/g>/g)];
+  assert.equal(runs.length, 455);
+  for (const [, row, col, value] of runs) {
+    const rowIndex = Number(row), start = Number(col);
+    renderRows[rowIndex] = renderRows[rowIndex].slice(0, start) + value +
+      renderRows[rowIndex].slice(start + value.length);
+  }
   assert.deepEqual(renderRows, rows);
   assert.ok(svg.includes('viewBox="0 0 240 460"'));
   const html = contents('index.html');
