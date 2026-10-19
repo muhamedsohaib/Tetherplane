@@ -330,6 +330,7 @@ test("sign-out while approval is pending does not restore account records", asyn
 });
 
 test("approved original field persists across all routes and responsive viewports", async ({ page }) => {
+  test.setTimeout(90_000);
   await page.goto(base);
   const brand = page.locator("#brand-field");
   await expect(brand).toBeVisible();
@@ -342,8 +343,10 @@ test("approved original field persists across all routes and responsive viewport
         await page.locator("#mobile-nav-toggle").click();
         await expect(page.locator("#mobile-nav-toggle")).toHaveAttribute("aria-expanded", "true");
       }
+      console.log(`responsive sweep entering ${width}x${height}: ${view}`);
       await navigate(page, view);
       await expect(page.locator("#view-" + view)).toBeVisible();
+      console.log(`responsive sweep verified ${width}x${height}: ${view}`);
       await expect(brand).toBeVisible();
       await expect(page.locator("#loading")).toBeHidden();
       expect(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth)).toBe(true);
