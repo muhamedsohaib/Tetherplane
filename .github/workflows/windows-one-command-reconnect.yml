@@ -1,0 +1,26 @@
+name: Windows one-command reconnect
+on:
+  push:
+    branches:
+      - "feature/one-command-reconnect-*"
+  pull_request:
+    paths:
+      - "scripts/connect-windows-device.ps1"
+      - "tests/onboarding/windows-one-command-connect.Tests.ps1"
+      - ".github/workflows/windows-one-command-reconnect.yml"
+permissions:
+  contents: read
+jobs:
+  reconnect:
+    runs-on: windows-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+      - name: Run focused Pester tests for existing-task reconnection
+        shell: powershell
+        run: |
+          Import-Module Pester -RequiredVersion 3.4.0 -ErrorAction Stop
+          $result = Invoke-Pester -Path tests/onboarding/windows-one-command-connect.Tests.ps1 -PassThru
+          if ($result.TotalCount -lt 6 -or $result.FailedCount -ne 0) {
+            throw "Reconnect tests failed or did not run all required cases"
+          }
