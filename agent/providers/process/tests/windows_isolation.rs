@@ -109,8 +109,8 @@ mod windows_impl {
 param([string]$Readable, [string]$WindowMatch)
 [Console]::WriteLine('sandbox_probe op=ps-live outcome=ok')
 try {
-  $item = Get-Item -LiteralPath $Readable -ErrorAction Stop
-  [Console]::WriteLine('sandbox_probe op=ps-workspace-read outcome=ok len=' + $item.Length)
+  $bytes = [System.IO.File]::ReadAllBytes($Readable)
+  [Console]::WriteLine('sandbox_probe op=ps-workspace-read outcome=ok len=' + $bytes.Length + ' hex=' + [BitConverter]::ToString($bytes).Replace('-', '').ToLowerInvariant())
 } catch {
   [Console]::WriteLine('sandbox_probe op=ps-workspace-read outcome=error type=' + $_.Exception.GetType().Name)
 }
@@ -860,6 +860,18 @@ while ($true) {
                 &readable,
                 &window_title,
             );
+            let host_workspace =
+                expect_host_probe_line(&host_probe, "ps-workspace-read", "host workspace control");
+            assert_eq!(
+                probe_value(&host_workspace, "outcome"),
+                Some("ok"),
+                "host must read the workspace fixture, observed {host_workspace:?}"
+            );
+            assert_eq!(
+                probe_value(&host_workspace, "hex"),
+                Some(hex_prefix(WORKSPACE_FIXTURE_BYTES, HEX_CAP).as_str()),
+                "host must read the exact fixture bytes, observed {host_workspace:?}"
+            );
             let host_fields = expect_host_probe_line(&host_probe, "ps-window-enum", "host window control");
             let host_found = probe_value(&host_fields, "found")
                 .and_then(|value| value.parse::<i64>().ok())
@@ -928,6 +940,11 @@ while ($true) {
                 probe_value(&workspace_read, "outcome"),
                 Some("ok"),
                 "sandboxed PowerShell must read the workspace fixture, observed {workspace_read:?}"
+            );
+            assert_eq!(
+                probe_value(&workspace_read, "hex"),
+                Some(hex_prefix(WORKSPACE_FIXTURE_BYTES, HEX_CAP).as_str()),
+                "sandboxed PowerShell must read the expected fixture bytes, observed {workspace_read:?}"
             );
 
             // Clipboard: reading the marker content inside the sandbox is a
