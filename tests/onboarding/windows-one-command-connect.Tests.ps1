@@ -13,6 +13,7 @@ function New-ConnectFixtureTask {
 }
 
 Describe "one-command existing Windows device recovery" {
+    # Pester 3 defaults to Describe-wide mock call history; isolate each assertion to its It.
     It "uses the legacy Leno task without guessing a new identity" {
         (Resolve-TetherplaneTaskName -DeviceId "Leno") | Should Be "Tetherplane Leno Agent"
         (Resolve-TetherplaneTaskName -DeviceId "Surface") | Should Be "Tetherplane Agent"
@@ -37,7 +38,7 @@ Describe "one-command existing Windows device recovery" {
         $result = Invoke-TetherplaneConnect -DeviceId "Leno" -AllowedOwners @("TESTER") -NoWait
         $result.status | Should Be "already_running"
         $result.account_verified | Should Be $false
-        Assert-MockCalled Start-ScheduledTask -Times 0 -Exactly
+        Assert-MockCalled Start-ScheduledTask -Times 0 -Exactly -Scope It
     }
 
     It "starts only a verified stopped task and returns unverified account status" {
@@ -46,13 +47,13 @@ Describe "one-command existing Windows device recovery" {
         $result = Invoke-TetherplaneConnect -DeviceId "Leno" -AllowedOwners @("TESTER") -NoWait
         $result.status | Should Be "start_requested"
         $result.account_verified | Should Be $false
-        Assert-MockCalled Start-ScheduledTask -Times 1 -Exactly
+        Assert-MockCalled Start-ScheduledTask -Times 1 -Exactly -Scope It
     }
 
     It "never starts a foreign task" {
         Mock Get-ScheduledTask { New-ConnectFixtureTask -Owner "OTHER" }
         Mock Start-ScheduledTask { throw "must not start" }
         { Invoke-TetherplaneConnect -DeviceId "Leno" -AllowedOwners @("TESTER") -NoWait } | Should Throw
-        Assert-MockCalled Start-ScheduledTask -Times 0 -Exactly
+        Assert-MockCalled Start-ScheduledTask -Times 0 -Exactly -Scope It
     }
 }
