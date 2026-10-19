@@ -11,10 +11,7 @@
   <script type="module" src="/app.js"></script>
 </head>
 <body>
-  <div id="brand-field" class="brand-field" aria-hidden="true">
-    <div class="brand-pattern"></div>
-    <img class="brand-master" src="/assets/wordmark-field.webp" alt="" width="2639" height="2640" />
-  </div>
+  <div id="brand-field" class="brand-field" aria-hidden="true"></div>
   <div class="app-shell">
     <header class="site-header">
       <a class="brand-name" href="/" aria-label="Tetherplane home">
@@ -107,9 +104,7 @@
   </div>
 
   <div id="loading" class="loading-cover" role="status" aria-live="polite" hidden>
-    <div class="loading-field" aria-hidden="true"></div>
-    <div class="loading-image" aria-hidden="true"><img id="loading-base" src="/assets/ascii/1.png" alt="" /><img id="loading-overlay" src="/assets/ascii/2.png" alt="" /></div>
-    <div class="loading-info"><span class="loading-label">TETHERPLANE / INITIALIZING</span><span data-loading-message id="loading-text">Checking your session…</span><button id="pause-motion" class="button-quiet" type="button" aria-pressed="false">Pause animation</button></div>
+    <div class="loading-info glass-surface"><span class="loading-label">TETHERPLANE / WORKING</span><span data-loading-message id="loading-text">Checking your session…</span></div>
   </div>
 
   <dialog id="revoke-dialog" aria-labelledby="revoke-title" aria-describedby="revoke-description"><form id="revoke-form"><p class="eyebrow">CONFIRM AUTHORIZATION CHANGE</p><h2 id="revoke-title">Revoke device access?</h2><p id="revoke-description">This disconnects the device from relay access and invalidates its credential. A new authorized pairing is required to reconnect.</p><p class="selected-device" id="revoke-device"></p><label for="confirmation">Type device ID to confirm</label><input id="confirmation" autocomplete="off" spellcheck="false" required /><div class="dialog-actions"><button id="cancel-revoke" class="button-outline" type="button">Cancel</button><button id="confirm-revoke" class="button-primary" type="submit" disabled>Revoke access</button></div></form></dialog>

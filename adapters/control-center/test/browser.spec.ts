@@ -134,26 +134,18 @@ test("failed refresh clears stale records and a later refresh can recover", asyn
   await expect(page.locator("#view-devices").getByRole("heading", { name: "fixture-device" })).toBeVisible();
 });
 
-test("supplied branding loads, reduced motion is static, and mobile layout fits", async ({
-  page,
-}) => {
+test("approved static ASCII branding loads without mobile overflow", async ({ page }) => {
   await page.emulateMedia({ reducedMotion: "reduce" });
   await page.setViewportSize({ width: 390, height: 844 });
   await page.goto(base);
-  const master = page.locator("#brand-field .brand-master");
-  await expect(master).toBeVisible();
-  expect(await master.evaluate((img: HTMLImageElement) => img.naturalWidth)).toBeGreaterThan(0);
-  expect(await page.locator("#loading-base").getAttribute("src")).toBe("/assets/ascii/1.png");
+  await expect(page.locator("#brand-field")).toBeVisible();
+  const image = await page.locator("#brand-field").evaluate(el => getComputedStyle(el).backgroundImage);
+  expect(image).toContain("/assets/ascii/approved-background.svg");
+  const asset = await page.request.get(base + "/assets/ascii/approved-background.svg");
+  expect(asset.ok()).toBe(true);
   await expect(page.locator("#loading")).toBeHidden();
-  expect(
-    await page.evaluate(
-      () => document.documentElement.scrollWidth <= innerWidth,
-    ),
-  ).toBe(true);
-  await page.screenshot({
-    path: "test-results/control-center-mobile.png",
-    fullPage: true,
-  });
+  expect(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth)).toBe(true);
+  await page.screenshot({ path: "test-results/control-center-mobile.png", fullPage: true });
 });
 
 test("failed revoke leaves its error visible and does not replay the operation", async ({
@@ -228,38 +220,23 @@ test("sign-out during an in-flight refresh cannot restore the cleared directory"
   ).toBeVisible();
 });
 
-test("loading artwork follows the supplied ping-pong order without a blank interval", async ({
-  page,
-}) => {
-  await page.emulateMedia({ reducedMotion: "no-preference" });
+test("brief operations use no splash and delayed loading uses the same static art", async ({ page }) => {
   await page.goto(base);
-  await expect(
-    page.getByRole("button", { name: "Sign in", exact: true }),
-  ).toBeEnabled();
+  await expect(page.locator("#loading")).toBeHidden();
   let release!: () => void;
-  const gate = new Promise<void>((resolve) => {
-    release = resolve;
-  });
-  await page.route("**/api/session", async (route) => {
-    if (route.request().method() === "POST") await gate;
+  const gate = new Promise<void>(resolve => { release=resolve; });
+  await page.route("**/api/session", async route => {
+    if(route.request().method()==="POST") await gate;
     await route.continue().catch(() => {});
   });
   await page.getByLabel("Relay access credential").fill("browser-fixture-a");
   await page.getByRole("button", { name: "Sign in", exact: true }).click();
-  await expect(page.getByRole("status")).toBeVisible();
-  const samples = await page.evaluate(async () => {
-    const moduleUrl = new URL("/ascii-cycle.js", location.href);
-    const { sampleAsciiCycle } = await import(moduleUrl.href);
-    return [0, 699, 700, 1350, 1999, 2000, 4000, 6000, 8000, 10000, 12000].map((ms) => sampleAsciiCycle(ms));
-  });
-  expect(samples.map((sample) => sample.baseIndex)).toEqual([0,0,0,0,0,1,2,3,2,1,0]);
-  expect(samples[0].overlayOpacity).toBe(0);
-  expect(samples[2].overlayOpacity).toBe(0);
-  expect(samples[3].overlayOpacity).toBeCloseTo(0.5, 8);
-  expect(samples[4].overlayOpacity).toBeGreaterThan(0.99);
-  await expect(page.locator("#loading-base")).toBeVisible();
+  await expect(page.locator("#loading")).toBeVisible();
+  const image = await page.locator("#loading").evaluate(el => getComputedStyle(el).backgroundImage);
+  expect(image).toContain("/assets/ascii/approved-background.svg");
+  await expect(page.locator("#pause-motion, #loading-base, #loading-overlay")).toHaveCount(0);
   release();
-
+  await expect(page.locator("#loading")).toBeHidden();
 });
 
 test("device-side pairing, revocation and fresh re-pairing use the real authenticated directory", async ({ page }) => {
@@ -352,11 +329,10 @@ test("sign-out while approval is pending does not restore account records", asyn
   await expect(page.getByLabel("Device pairing code", { exact: true })).toHaveValue("");
 });
 
-test("complete user ASCII wordmark persists across routes and responsive viewports", async ({ page }) => {
+test("approved original field persists across all routes and responsive viewports", async ({ page }) => {
   await page.goto(base);
-  const brand = page.locator("#brand-field .brand-master");
-  await expect(brand).toHaveAttribute("src", "/assets/wordmark-field.webp");
-  await expect.poll(async () => brand.evaluate((img: HTMLImageElement) => img.naturalWidth)).toBeGreaterThan(0);
+  const brand = page.locator("#brand-field");
+  await expect(brand).toBeVisible();
   await page.getByLabel("Relay access credential").fill("browser-fixture-a");
   await page.getByRole("button", { name: "Sign in", exact: true }).click();
   for (const [width, height] of [[1440, 900], [1024, 768], [390, 844], [320, 640]]) {
@@ -372,12 +348,11 @@ test("complete user ASCII wordmark persists across routes and responsive viewpor
       await expect(page.locator("#loading")).toBeHidden();
       expect(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth)).toBe(true);
     }
-    await page.locator("#view-home").count();
   }
-  const rendering = await brand.evaluate((img: HTMLImageElement) => ({
-    fit: getComputedStyle(img).objectFit,
-    source: img.currentSrc,
+  const rendering = await brand.evaluate(el => ({
+    source: getComputedStyle(el).backgroundImage,
+    size: getComputedStyle(el).backgroundSize,
   }));
-  expect(rendering.fit).toBe("contain");
-  expect(rendering.source).toContain("/assets/wordmark-field.webp");
+  expect(rendering.size).toBe("cover");
+  expect(rendering.source).toContain("/assets/ascii/approved-background.svg");
 });

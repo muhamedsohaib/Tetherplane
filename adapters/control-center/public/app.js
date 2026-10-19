@@ -1,8 +1,8 @@
-import {mountAsciiLoader} from './ascii-cycle.js';
+import {mountStaticLoader} from './ascii-cycle.js';
 
 const $ = id=>document.getElementById(id);
 const VIEWS=['home','devices','access','pairing','settings'];
-const loader=mountAsciiLoader({root:$('loading'),base:$('loading-base'),overlay:$('loading-overlay'),pauseButton:$('pause-motion')});
+const loader=mountStaticLoader({root:$('loading')});
 let csrf=null, generation=0, pending=null, expiryTimer=null, selectedDevice=null;
 let authenticated=false, busy=false, directoryFresh=false, currentView='home', directory=[];
 

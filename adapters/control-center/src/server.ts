@@ -325,6 +325,7 @@ const staticFiles: Record<string, [string, string]> = {
   "/assets/logo.jpg": ["assets/logo.jpg", "image/jpeg"],
   "/assets/wordmark-field.webp": ["assets/wordmark-field.webp", "image/webp"],
   "/assets/ascii/outer-field.webp": ["assets/ascii/outer-field.webp", "image/webp"],
+  "/assets/ascii/approved-background.svg": ["assets/ascii/approved-background.svg", "image/svg+xml; charset=utf-8"],
   ...Object.fromEntries(
     [1, 2, 3, 4].map((n) => [
       `/assets/ascii/${n}.png`,
