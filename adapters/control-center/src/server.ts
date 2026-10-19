@@ -12,6 +12,7 @@ type Session = { token: string; csrf: string; expiresAt: number };
 export class ControlCenterServer {
   readonly #relay: RelayClient;
   readonly #sessions = new Map<string, Session>();
+  readonly #expiryTimers = new Map<string, ReturnType<typeof setTimeout>>();
   readonly #now: () => number;
   readonly #ttl: number;
   readonly #server;
@@ -62,7 +63,7 @@ export class ControlCenterServer {
   }
 
   async close(): Promise<void> {
-    this.#sessions.clear();
+    for (const id of this.#sessions.keys()) this.#forget(id);
     await new Promise<void>((resolve, reject) =>
       this.#server.close((error) => (error ? reject(error) : resolve())),
     );
@@ -163,7 +164,7 @@ export class ControlCenterServer {
             "session_limit",
             "Too many local sessions. Sign out or wait for expiry.",
           );
-        if (sessionId) this.#sessions.delete(sessionId);
+        if (sessionId) this.#forget(sessionId);
         const id = randomBytes(32).toString("base64url");
         const session = {
           token: body.token,
@@ -171,6 +172,9 @@ export class ControlCenterServer {
           expiresAt: this.#now() + this.#ttl,
         };
         this.#sessions.set(id, session);
+        const expiry = setTimeout(() => this.#forget(id), this.#ttl);
+        expiry.unref();
+        this.#expiryTimers.set(id, expiry);
         response.setHeader(
           "set-cookie",
           `${this.#cookieName}=${id}; HttpOnly; SameSite=Strict; Path=/; Max-Age=${Math.ceil(this.#ttl / 1000)}`,
@@ -195,8 +199,7 @@ export class ControlCenterServer {
           "Refresh this page before trying again.",
         );
       if (pathname === "/api/logout") {
-        this.#sessions.delete(sessionId!);
-        this.#clearCookie(response);
+        this.#forget(sessionId!);
         writeJson(response, 200, { signedOut: true });
         return;
       }
@@ -247,8 +250,7 @@ export class ControlCenterServer {
               "The local portal could not complete this request.",
             );
       if (failure.status === 401) {
-        if (sessionId) this.#sessions.delete(sessionId);
-        this.#clearCookie(response);
+        if (sessionId) this.#forget(sessionId);
       }
       writeJson(response, failure.status, {
         error: { code: failure.code, message: failure.message },
@@ -267,15 +269,16 @@ export class ControlCenterServer {
       observedAt: new Date(this.#now()).toISOString(),
     };
   }
-  #clearCookie(response: ServerResponse) {
-    response.setHeader(
-      "set-cookie",
-      `${this.#cookieName}=; HttpOnly; SameSite=Strict; Path=/; Max-Age=0`,
-    );
+  #forget(id: string) {
+    clearTimeout(this.#expiryTimers.get(id));
+    this.#expiryTimers.delete(id);
+    this.#sessions.delete(id);
+    // Do not clear browser cookies from an old request: its response may arrive
+    // after a replacement login. An expired opaque ID carries no authority.
   }
   #prune() {
     for (const [id, session] of this.#sessions)
-      if (session.expiresAt <= this.#now()) this.#sessions.delete(id);
+      if (session.expiresAt <= this.#now()) this.#forget(id);
   }
   #limitLogin() {
     const now = this.#now();

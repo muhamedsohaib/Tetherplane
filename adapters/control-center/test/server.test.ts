@@ -12,6 +12,7 @@ import { ControlCenterServer } from "../src/server.ts";
 async function fixture(t: test.TestContext, ttl = 900_000) {
   let now = Date.now();
   let denied = false;
+  let hold: (() => Promise<void>) | undefined;
   const authenticator = new StaticClientAuthenticator([
     {
       token: "fixture-account-a",
@@ -28,8 +29,12 @@ async function fixture(t: test.TestContext, ttl = 900_000) {
   ]);
   const relay = await RelayServer.create({
     authenticator: {
-      authenticate: async (token) =>
-        denied ? null : authenticator.authenticate(token),
+      authenticate: async (token) => {
+        const wait = hold;
+        hold = undefined;
+        await wait?.();
+        return denied ? null : authenticator.authenticate(token);
+      },
     },
     allowInsecureLocalhost: true,
   });
@@ -86,9 +91,10 @@ async function fixture(t: test.TestContext, ttl = 900_000) {
     const raw = await response.text();
     return { response, body: raw ? JSON.parse(raw) : null, raw };
   }
-  async function login(token = "fixture-account-a") {
+  async function login(token = "fixture-account-a", previousCookie?: string) {
     const result = await call("/api/session", {
       method: "POST",
+      ...(previousCookie ? { cookie: previousCookie } : {}),
       body: { token },
     });
     assert.equal(result.response.status, 200);
@@ -103,6 +109,22 @@ async function fixture(t: test.TestContext, ttl = 900_000) {
     login,
     deny: () => {
       denied = true;
+    },
+    holdNext: () => {
+      let entered!: () => void;
+      let release!: () => void;
+      const started = new Promise<void>((resolve) => {
+        entered = resolve;
+      });
+      const gate = new Promise<void>((resolve) => {
+        release = resolve;
+      });
+      hold = async () => {
+        entered();
+        await gate;
+      };
+      t.after(() => release());
+      return { started, release };
     },
     advance: (ms: number) => {
       now += ms;
@@ -304,7 +326,7 @@ test("upstream credential denial invalidates the local session instead of using 
   f.deny();
   const denied = await f.call("/api/devices", a);
   assert.equal(denied.response.status, 401);
-  assert.match(denied.response.headers.get("set-cookie")!, /Max-Age=0/);
+  assert.equal(denied.response.headers.get("set-cookie"), null);
   assert.equal(
     (
       await f.call("/api/devices/fixture-a/revoke", {
@@ -340,4 +362,28 @@ test("malformed login bodies and excessive login attempts fail closed", async (t
   );
   f.advance(60_001);
   assert.equal((await f.login()).body.devices.length, 1);
+});
+
+test("idle session cleanup removes authority without another request or clock-prune trigger", async (t) => {
+  const f = await fixture(t, 1000);
+  t.mock.timers.enable({ apis: ["setTimeout"] });
+  const a = await f.login();
+  // The injected authorization clock stays frozen: only scheduled cleanup can remove this session.
+  t.mock.timers.tick(1001);
+  t.mock.timers.reset();
+  assert.equal((await f.call("/api/devices", a)).response.status, 401);
+});
+
+test("a late invalidated-session response cannot erase a replacement login cookie", async (t) => {
+  const f = await fixture(t);
+  const a = await f.login();
+  const gate = f.holdNext();
+  const oldRequest = f.call("/api/devices", a);
+  await gate.started;
+  const b = await f.login("fixture-account-b", a.cookie);
+  gate.release();
+  const lateResponse = await oldRequest;
+  assert.equal(lateResponse.response.status, 401);
+  assert.equal(lateResponse.response.headers.get("set-cookie"), null);
+  assert.equal((await f.call("/api/devices", b)).response.status, 200);
 });
