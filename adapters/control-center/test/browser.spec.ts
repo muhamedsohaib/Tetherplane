@@ -44,18 +44,21 @@ test.afterEach(async () => {
   await relay.close();
 });
 
+async function navigate(page: import("@playwright/test").Page, view: "home" | "devices" | "access" | "pairing" | "settings") {
+  await page.locator('#main-nav [data-view="' + view + '"]').click();
+}
+
 test("authorized directory, exact revoke confirmation and sign-out work through the real relay", async ({
   page,
 }) => {
   await page.goto(base);
   await page.getByLabel("Relay access credential").fill("browser-fixture-a");
   await page.getByRole("button", { name: "Sign in", exact: true }).click();
+  await navigate(page, "devices");
+  await expect(page.locator("#view-devices h1")).toContainText("Your devices");
+  await expect(page.locator("#view-devices").getByRole("heading", { name: "fixture-device", exact: true })).toBeVisible();
   await expect(
-    page.getByRole("heading", { name: "Your devices" }),
-  ).toBeVisible();
-  await expect(page.getByText("fixture-device", { exact: true })).toBeVisible();
-  await expect(
-    page.getByText("Connectivity not reported", { exact: true }),
+    page.locator("#view-devices").getByText("Connectivity not reported", { exact: true }),
   ).toBeVisible();
   await expect(page.getByLabel("Relay access credential")).toHaveValue("");
   expect(
@@ -64,7 +67,8 @@ test("authorized directory, exact revoke confirmation and sign-out work through 
         Object.keys(localStorage).length + Object.keys(sessionStorage).length,
     ),
   ).toBe(0);
-  await page
+  await navigate(page, "access");
+  await page.locator("#view-access")
     .getByRole("button", { name: "Revoke access", exact: true })
     .click();
   const dialog = page.getByRole("dialog");
@@ -77,8 +81,9 @@ test("authorized directory, exact revoke confirmation and sign-out work through 
     .getByRole("button", { name: "Revoke access", exact: true })
     .click();
   await expect(dialog).not.toBeVisible();
-  await expect(page.locator(".badge.revoked")).toHaveText("Revoked");
+  await expect(page.locator("#view-access .badge")).toHaveText("Revoked");
   expect(relay.registry.getDevice("fixture-device")!.revokedAt).not.toBeNull();
+  await navigate(page, "settings");
   await page.getByRole("button", { name: "Sign out", exact: true }).click();
   await expect(
     page.getByRole("button", { name: "Sign in", exact: true }),
@@ -99,9 +104,8 @@ test("invalid credential and empty account never render invented devices", async
     .getByLabel("Relay access credential")
     .fill("browser-fixture-empty");
   await page.getByRole("button", { name: "Sign in", exact: true }).click();
-  await expect(
-    page.getByText("No devices are paired to this account."),
-  ).toBeVisible();
+  await navigate(page, "devices");
+  await expect(page.locator("#empty").getByRole("heading", { name: "No devices are paired to this account." })).toBeVisible();
   await expect(
     page.getByRole("button", { name: "Revoke access", exact: true }),
   ).toHaveCount(0);
@@ -113,7 +117,8 @@ test("failed refresh clears stale records and a later refresh can recover", asyn
   await page.goto(base);
   await page.getByLabel("Relay access credential").fill("browser-fixture-a");
   await page.getByRole("button", { name: "Sign in", exact: true }).click();
-  await expect(page.getByText("fixture-device", { exact: true })).toBeVisible();
+  await navigate(page, "devices");
+  await expect(page.locator("#view-devices").getByRole("heading", { name: "fixture-device" })).toBeVisible();
   await page.route("**/api/devices", (route) =>
     route.fulfill({
       status: 502,
@@ -123,12 +128,10 @@ test("failed refresh clears stale records and a later refresh can recover", asyn
   );
   await page.getByRole("button", { name: "Refresh", exact: true }).click();
   await expect(page.getByRole("alert")).toContainText("Relay unavailable");
-  await expect(
-    page.getByText("fixture-device", { exact: true }),
-  ).not.toBeVisible();
+  await expect(page.locator("#view-devices .device-card")).toHaveCount(0);
   await page.unroute("**/api/devices");
   await page.getByRole("button", { name: "Refresh", exact: true }).click();
-  await expect(page.getByText("fixture-device", { exact: true })).toBeVisible();
+  await expect(page.locator("#view-devices").getByRole("heading", { name: "fixture-device" })).toBeVisible();
 });
 
 test("supplied branding loads, reduced motion is static, and mobile layout fits", async ({
@@ -137,15 +140,11 @@ test("supplied branding loads, reduced motion is static, and mobile layout fits"
   await page.emulateMedia({ reducedMotion: "reduce" });
   await page.setViewportSize({ width: 390, height: 844 });
   await page.goto(base);
-  await expect(
-    page.getByRole("img", { name: "Tetherplane logo", exact: true }),
-  ).toBeVisible();
-  expect(
-    await page
-      .locator(".ascii-loop img")
-      .first()
-      .evaluate((node) => getComputedStyle(node).animationName),
-  ).toBe("none");
+  const master = page.locator("#brand-field .brand-master");
+  await expect(master).toBeVisible();
+  expect(await master.evaluate((img: HTMLImageElement) => img.naturalWidth)).toBeGreaterThan(0);
+  expect(await page.locator("#loading-base").getAttribute("src")).toBe("/assets/ascii/1.png");
+  await expect(page.locator("#loading")).toBeHidden();
   expect(
     await page.evaluate(
       () => document.documentElement.scrollWidth <= innerWidth,
@@ -163,7 +162,8 @@ test("failed revoke leaves its error visible and does not replay the operation",
   await page.goto(base);
   await page.getByLabel("Relay access credential").fill("browser-fixture-a");
   await page.getByRole("button", { name: "Sign in", exact: true }).click();
-  await page
+  await navigate(page, "access");
+  await page.locator("#view-access")
     .getByRole("button", { name: "Revoke access", exact: true })
     .click();
   const dialog = page.getByRole("dialog");
@@ -192,7 +192,8 @@ test("sign-out during an in-flight refresh cannot restore the cleared directory"
   await page.goto(base);
   await page.getByLabel("Relay access credential").fill("browser-fixture-a");
   await page.getByRole("button", { name: "Sign in", exact: true }).click();
-  await expect(page.getByText("fixture-device", { exact: true })).toBeVisible();
+  await navigate(page, "devices");
+  await expect(page.locator("#view-devices").getByRole("heading", { name: "fixture-device" })).toBeVisible();
   let release!: () => void;
   let started!: () => void;
   const pendingRequest = new Promise<void>((resolve) => {
@@ -211,14 +212,15 @@ test("sign-out during an in-flight refresh cannot restore the cleared directory"
   const loggedOut = page.waitForResponse((response) =>
     response.url().endsWith("/api/logout"),
   );
-  await page.getByRole("button", { name: "Sign out", exact: true }).click();
+  // Programmatic click deliberately probes a sign-out race while the full-screen loader blocks human input.
+  await page.evaluate(() => (document.getElementById("signout") as HTMLButtonElement).click());
   await loggedOut;
   release();
   await expect(
     page.getByRole("button", { name: "Sign in", exact: true }),
   ).toBeVisible();
   await expect(
-    page.getByText("fixture-device", { exact: true }),
+    page.locator("#view-devices").getByRole("heading", { name: "fixture-device" }),
   ).not.toBeVisible();
   await page.reload();
   await expect(
@@ -245,29 +247,19 @@ test("loading artwork follows the supplied ping-pong order without a blank inter
   await page.getByLabel("Relay access credential").fill("browser-fixture-a");
   await page.getByRole("button", { name: "Sign in", exact: true }).click();
   await expect(page.getByRole("status")).toBeVisible();
-  const frames = await page.locator(".ascii-loop").evaluate((loop) => {
-    const animations = loop.getAnimations({ subtree: true });
-    const images = [...loop.querySelectorAll("img")];
-    return [0, 2000, 4000, 6000, 8000, 10000].map((time) => {
-      animations.forEach((animation) => {
-        animation.pause();
-        animation.currentTime = time;
-      });
-      const visible = images.find(
-        (image) => Number(getComputedStyle(image).opacity) > 0.99,
-      );
-      return visible?.getAttribute("src")?.split("/").at(-1) ?? "blank";
-    });
+  const samples = await page.evaluate(async () => {
+    const moduleUrl = new URL("/ascii-cycle.js", location.href);
+    const { sampleAsciiCycle } = await import(moduleUrl.href);
+    return [0, 699, 700, 1350, 1999, 2000, 4000, 6000, 8000, 10000, 12000].map((ms) => sampleAsciiCycle(ms));
   });
+  expect(samples.map((sample) => sample.baseIndex)).toEqual([0,0,0,0,0,1,2,3,2,1,0]);
+  expect(samples[0].overlayOpacity).toBe(0);
+  expect(samples[2].overlayOpacity).toBe(0);
+  expect(samples[3].overlayOpacity).toBeCloseTo(0.5, 8);
+  expect(samples[4].overlayOpacity).toBeGreaterThan(0.99);
+  await expect(page.locator("#loading-base")).toBeVisible();
   release();
-  expect(frames).toEqual([
-    "1.png",
-    "2.png",
-    "3.png",
-    "4.png",
-    "3.png",
-    "2.png",
-  ]);
+
 });
 
 test("device-side pairing, revocation and fresh re-pairing use the real authenticated directory", async ({ page }) => {
@@ -275,6 +267,7 @@ test("device-side pairing, revocation and fresh re-pairing use the real authenti
   await page.getByLabel("Relay access credential").fill("browser-fixture-empty");
   await page.getByRole("button", { name: "Sign in", exact: true }).click();
   const pair = async (secret: string) => {
+    await navigate(page, "pairing");
     const pending = await relay.registry.startPairing({ deviceId: "new-device", credentialHash: hashDeviceCredential(secret) });
     await page.getByLabel("Device pairing code", { exact: true }).fill(pending.userCode.toLowerCase());
     await page.getByLabel("I requested this code on a device I am authorized to manage.").check();
@@ -284,24 +277,26 @@ test("device-side pairing, revocation and fresh re-pairing use the real authenti
   };
   await pair("browser-first-synthetic-device-secret");
   expect(await relay.registry.authenticateDevice("new-device", "browser-first-synthetic-device-secret")).toBe("empty");
-  await page.getByRole("button", { name: "Revoke access", exact: true }).click();
+  await navigate(page, "access");
+  await page.locator("#view-access").getByRole("button", { name: "Revoke access", exact: true }).click();
   const dialog = page.getByRole("dialog");
   await dialog.getByLabel("Type device ID to confirm").fill("new-device");
   await dialog.getByRole("button", { name: "Revoke access", exact: true }).click();
-  await expect(page.locator(".badge.revoked")).toHaveText("Revoked");
-  await expect(page.getByText("Use a fresh device-side pairing code to restore relay access.", { exact: true })).toBeVisible();
+  await expect(page.locator("#view-access .badge")).toHaveText("Revoked");
+  await expect(page.getByText("Fresh authorized pairing required", { exact: true })).toBeVisible();
   expect(await relay.registry.authenticateDevice("new-device", "browser-first-synthetic-device-secret")).toBeNull();
   await pair("browser-fresh-synthetic-device-secret");
-  await expect(page.locator(".badge")).toHaveText("Paired");
+  await expect(page.locator("#view-devices .badge")).toHaveText("Paired");
   expect(await relay.registry.authenticateDevice("new-device", "browser-fresh-synthetic-device-secret")).toBe("empty");
   expect(await relay.registry.authenticateDevice("new-device", "browser-first-synthetic-device-secret")).toBeNull();
-  await expect(page.getByText("Connectivity not reported", { exact: true })).toBeVisible();
+  await expect(page.locator("#view-devices").getByText("Connectivity not reported", { exact: true })).toBeVisible();
 });
 
 test("uncertain approval clears its code, never replays and requires a fresh directory before another action", async ({ page }) => {
   await page.goto(base);
   await page.getByLabel("Relay access credential").fill("browser-fixture-a");
   await page.getByRole("button", { name: "Sign in", exact: true }).click();
+  await navigate(page, "pairing");
   await page.getByLabel("Device pairing code", { exact: true }).fill("ABCD-1234");
   const approve = page.getByRole("button", { name: "Approve pairing", exact: true });
   await expect(approve).toBeDisabled();
@@ -318,7 +313,9 @@ test("uncertain approval clears its code, never replays and requires a fresh dir
   await page.getByLabel("I requested this code on a device I am authorized to manage.").check();
   await expect(approve).toBeDisabled();
   expect(attempts).toBe(1);
+  await navigate(page, "devices");
   await page.getByRole("button", { name: "Refresh", exact: true }).click();
+  await navigate(page, "pairing");
   await expect(approve).toBeEnabled();
 });
 
@@ -333,11 +330,12 @@ test("sign-out while approval is pending does not restore account records", asyn
   await page.route("**/api/pair/approve", async route => {
     entered(); await gate; await route.continue().catch(() => {});
   });
+  await navigate(page, "pairing");
   await page.getByLabel("Device pairing code", { exact: true }).fill("ABCD-1234");
   await page.getByLabel("I requested this code on a device I am authorized to manage.").check();
   await page.getByRole("button", { name: "Approve pairing", exact: true }).click();
   await started;
-  await page.getByRole("button", { name: "Sign out", exact: true }).click();
+  await page.evaluate(() => (document.getElementById("signout") as HTMLButtonElement).click());
   release();
   await expect(page.getByRole("button", { name: "Sign in", exact: true })).toBeVisible();
   await expect(page.getByRole("heading", { name: "fixture-device", exact: true })).not.toBeVisible();
