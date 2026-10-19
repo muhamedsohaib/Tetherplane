@@ -741,8 +741,8 @@ while ($true) {
         });
     }
 
-    /// Loopback TCP connect and credential-adjacent reads/writes are denied.
-    /// Parent controls prove the listener accepts connections and the same
+    /// Loopback TCP connect is blocked, and credential-adjacent reads/writes are denied.
+    /// Parent controls prove the listener accepts connections both before and after, and the same
     /// credential-adjacent operations succeed outside the sandbox.
     #[allow(clippy::too_many_lines)]
     fn test_loopback_network_and_host_credentials_denied(runtime: &Runtime) {
@@ -783,7 +783,36 @@ while ($true) {
             )
             .await;
             let fields = expect_probe_line(&outcome, "connect-tcp", "loopback TCP connect");
-            assert_probe_denied(&fields, &[5, 10013], "loopback TCP connect");
+            // AppContainer policy may drop SYN packets rather than returning
+            // WSAEACCES. Treat a bounded connect timeout as evidence of no
+            // connection only with an independently live host listener and
+            // no sandbox-origin connection queued for that listener.
+            match probe_value(&fields, "outcome") {
+                Some("denied") => assert_probe_denied(&fields, &[5, 10013], "loopback TCP connect"),
+                Some("timeout") => assert_eq!(
+                    probe_value(&fields, "os_error"),
+                    Some("none"),
+                    "expected a bounded connect timeout with no OS error, observed {fields:?}"
+                ),
+                _ => panic!("sandbox may have established a loopback connection: {fields:?}"),
+            }
+            listener
+                .set_nonblocking(true)
+                .expect("check listener for a pending sandbox connection");
+            match listener.accept() {
+                Err(error) if error.kind() == std::io::ErrorKind::WouldBlock => {}
+                Ok(_) => panic!("sandbox established a loopback connection despite policy"),
+                Err(error) => panic!("could not inspect listener backlog: {error}"),
+            }
+            listener
+                .set_nonblocking(false)
+                .expect("restore listener before positive control");
+            let post_connection = TcpStream::connect_timeout(&address, Duration::from_secs(2))
+                .expect("parent loopback control must still connect after sandbox attempt");
+            let (_accepted, _) = listener
+                .accept()
+                .expect("parent loopback listener must accept the post-sandbox control");
+            drop(post_connection);
 
             let outcome = run_exec_ok(
                 &router,
