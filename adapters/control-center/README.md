@@ -6,14 +6,17 @@ The portal runs separately from the relay and never starts or reconfigures agent
 
 ## Monochrome ASCII interface (redesign preview)
 
-The preview presents **Home, Devices, Access, Pairing and Settings** using
-ivory (#F4F1E8) and ink (#111111). Every screen retains a static full-canvas
-ASCII character-field rendering of the complete Tetherplane emblem and
-wordmark, derived from the user's supplied artwork. Only genuine startup,
-authorization, pairing and refresh waits activate the full-screen four-frame
-museum crossfade: `1 → 2 → 3 → 4 → 3 → 2`, 700 ms hold plus 1300 ms
-half-cosine fade per step. Idle navigation does not animate the background.
-The loader pauses for hidden tabs and supports reduced motion.
+The interface presents **Home, Devices, Access, Pairing and Settings** using
+ivory (#F4F1E8) and ink (#111111). The full-page background is one uninterrupted
+rendering of the user's **approved** `ascii-art (16).txt`: 400 columns by
+460 lines, SHA-256 `62a3ea8172093100422ea4543694441caf93e4368794d9f4104851c07b601e6f`.
+The verbatim text lives in `public/assets/ascii/approved-background.txt`;
+the SVG is only a glyph-faithful visualization of every source line. No tiled
+secondary field, independent wordmark layer, animation or loading showcase remains.
+Translucent blurred glass surfaces preserve readability instead of opaque blocks.
+Long-running requests reuse the same static background; brief requests suppress
+the full-screen loader entirely. The previous four-frame animation assets remain
+in Git history but are not used in the current interface.
 
 **The preview is not a new authentication service.** A user without an
 existing authorized relay client token cannot currently sign in. Browser
