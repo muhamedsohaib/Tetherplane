@@ -75,7 +75,7 @@
         </section>
 
         <section id="view-devices" class="view" data-screen="devices" aria-labelledby="devices-title" hidden>
-          <div class="view-heading"><div><p class="eyebrow">01 / DEVICES</p><h1 id="devices-title">Your devices.</h1><p class="view-intro">Only devices associated with your authenticated account.</p></div><button class="button-outline" id="refresh" type="button">Refresh ↻</button></div>
+          <div class="view-heading"><div><p class="eyebrow">01 / DEVICES</p><h1 id="devices-title">Your devices.</h1><p class="view-intro">Only devices associated with your authenticated account.</p></div><button class="button-outline" id="refresh" type="button" aria-label="Refresh">Refresh ↻</button></div>
           <div class="summary"><div><span class="overline">DEVICE RECORDS</span><strong id="device-count">—</strong></div><div><span class="overline">LAST DIRECTORY REFRESH</span><strong id="observed-at">Not yet refreshed</strong></div></div>
           <p class="ground-truth">The relay directory reports pairing and revocation. Agent version and live health are not reported by this endpoint.</p>
           <div id="devices" class="device-list" aria-live="polite"></div>
@@ -92,14 +92,14 @@
         <section id="view-pairing" class="view" data-screen="pairing" aria-labelledby="pair-title" hidden>
           <p class="eyebrow">03 / PAIRING & RECOVERY</p><h1 id="pair-title">A new device.<br /><em>Safely connected.</em></h1>
           <div class="pair-layout"><div class="steps"><div><span>01</span><p><strong>Start on your device.</strong><br />Use its existing authorized pairing workflow and the same relay.</p></div><div><span>02</span><p><strong>Copy its one-time code.</strong><br />The code expires. Never share device credentials.</p></div><div><span>03</span><p><strong>Approve deliberately.</strong><br />Confirm you requested the pairing, then refresh the directory.</p></div></div>
-          <form class="pair-form" id="pair-form"><label for="pair-code">Device pairing code</label><input id="pair-code" autocomplete="off" spellcheck="false" autocapitalize="characters" maxlength="9" pattern="[A-Fa-f0-9]{4}-[A-Fa-f0-9]{4}" placeholder="ABCD-1234" aria-describedby="pair-help" required /><p id="pair-help" class="input-note">Shown on the device you are authorized to manage.</p><label class="ownership"><input id="pair-owned" type="checkbox" required /><span>I requested this code on a device I am authorized to manage.</span></label><button class="button-primary" id="approve-pair" type="submit" disabled>Approve pairing ↗</button></form></div>
+          <form class="pair-form" id="pair-form"><label for="pair-code">Device pairing code</label><input id="pair-code" autocomplete="off" spellcheck="false" autocapitalize="characters" maxlength="9" pattern="[A-Fa-f0-9]{4}-[A-Fa-f0-9]{4}" placeholder="ABCD-1234" aria-describedby="pair-help" required /><p id="pair-help" class="input-note">Shown on the device you are authorized to manage.</p><label class="ownership"><input id="pair-owned" type="checkbox" required /><span>I requested this code on a device I am authorized to manage.</span></label><button class="button-primary" id="approve-pair" type="submit" aria-label="Approve pairing" disabled>Approve pairing ↗</button></form></div>
           <div class="recovery-note"><strong>Connection interrupted?</strong><p>Running agents retry their outbound relay connection. If an agent stopped, its local supervisor must recover it. After revocation, begin a fresh authorized device-side pairing flow. Refreshing this page cannot restart a device or prove agent health.</p></div>
         </section>
 
         <section id="view-settings" class="view" data-screen="settings" aria-labelledby="settings-title" hidden>
           <p class="eyebrow">04 / SETTINGS</p><h1 id="settings-title">Only what matters.</h1><p class="view-intro">This is a local interface. Your device and relay retain their existing policies.</p>
           <div class="settings-rows"><div><span>LOCAL INTERFACE</span><strong>127.0.0.1 · This device only</strong></div><div><span>FRONTEND</span><strong>Control Center M2 · 0.1.0 visual preview</strong></div><div><span>RELAY</span><strong>Configured when local service starts</strong></div><div><span>SESSION EXPIRES</span><strong id="expires-at">—</strong></div></div>
-          <button id="signout" type="button" class="button-outline">Sign out ↗</button>
+          <button id="signout" type="button" class="button-outline" aria-label="Sign out">Sign out ↗</button>
         </section>
       </main>
     </div>
