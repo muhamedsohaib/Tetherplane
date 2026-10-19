@@ -335,8 +335,18 @@ test("sign-out while approval is pending does not restore account records", asyn
   await page.getByLabel("I requested this code on a device I am authorized to manage.").check();
   await page.getByRole("button", { name: "Approve pairing", exact: true }).click();
   await started;
-  await page.evaluate(() => (document.getElementById("signout") as HTMLButtonElement).click());
-  release();
+  // Finish logout before HTTP-server teardown; the held pairing route is
+  // always released, including if the assertion or logout wait fails.
+  const loggedOut = page.waitForResponse(
+    response => response.url().endsWith("/api/logout") &&
+      response.request().method() === "POST",
+  );
+  try {
+    await page.evaluate(() => (document.getElementById("signout") as HTMLButtonElement).click());
+    await loggedOut;
+  } finally {
+    release();
+  }
   await expect(page.getByRole("button", { name: "Sign in", exact: true })).toBeVisible();
   await expect(page.getByRole("heading", { name: "fixture-device", exact: true })).not.toBeVisible();
   await expect(page.getByLabel("Device pairing code", { exact: true })).toHaveValue("");
