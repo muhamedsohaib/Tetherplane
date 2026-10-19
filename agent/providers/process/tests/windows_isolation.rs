@@ -107,20 +107,20 @@ mod windows_impl {
     /// are replaced with fixture paths before the script is written.
     const HUMAN_INTERFACE_PROBE_SCRIPT: &str = r"
 param([string]$Readable, [string]$WindowMatch)
-Write-Output 'sandbox_probe op=ps-live outcome=ok'
+[Console]::WriteLine('sandbox_probe op=ps-live outcome=ok')
 try {
   $item = Get-Item -LiteralPath $Readable -ErrorAction Stop
-  Write-Output ('sandbox_probe op=ps-workspace-read outcome=ok len=' + $item.Length)
+  [Console]::WriteLine('sandbox_probe op=ps-workspace-read outcome=ok len=' + $item.Length)
 } catch {
-  Write-Output ('sandbox_probe op=ps-workspace-read outcome=error type=' + $_.Exception.GetType().Name)
+  [Console]::WriteLine('sandbox_probe op=ps-workspace-read outcome=error type=' + $_.Exception.GetType().Name)
 }
 try {
   $content = Get-Clipboard -Raw -ErrorAction Stop
   $length = -1
   if ($null -ne $content) { $length = $content.Length }
-  Write-Output ('sandbox_probe op=ps-clipboard-read outcome=ok len=' + $length)
+  [Console]::WriteLine('sandbox_probe op=ps-clipboard-read outcome=ok len=' + $length)
 } catch {
-  Write-Output ('sandbox_probe op=ps-clipboard-read outcome=denied hresult=' + ('{0:X8}' -f $_.Exception.HResult) + ' type=' + $_.Exception.GetType().Name)
+  [Console]::WriteLine('sandbox_probe op=ps-clipboard-read outcome=denied hresult=' + ('{0:X8}' -f $_.Exception.HResult) + ' type=' + $_.Exception.GetType().Name)
 }
 try {
   $found = 0
@@ -130,9 +130,9 @@ try {
       if ($p.MainWindowTitle -like ('*' + $WindowMatch + '*')) { $found = $found + 1 }
     } catch { }
   }
-  Write-Output ('sandbox_probe op=ps-window-enum outcome=ok found=' + $found)
+  [Console]::WriteLine('sandbox_probe op=ps-window-enum outcome=ok found=' + $found)
 } catch {
-  Write-Output ('sandbox_probe op=ps-window-enum outcome=denied hresult=' + ('{0:X8}' -f $_.Exception.HResult) + ' type=' + $_.Exception.GetType().Name)
+  [Console]::WriteLine('sandbox_probe op=ps-window-enum outcome=denied hresult=' + ('{0:X8}' -f $_.Exception.HResult) + ' type=' + $_.Exception.GetType().Name)
 }
 ";
 
