@@ -1,6 +1,10 @@
-# tetherplane — Microsoft Store listing preparation (not submitted)
+# Tetherplane — Microsoft Store listing preparation (not submitted)
 
-**Public product name:** tetherplane
+**Public product name:** Tetherplane
+
+**Desired public publisher label:** Tetherplane. **Not approved or guaranteed.** The Store's publisher line comes from the verified Partner Center account, not from the MSIX `DisplayName`, `PublisherDisplayName` prototype value, email alias, or a fictional company identity. Obtain Microsoft confirmation for any Individual-account project-brand display name before final submission.
+
+**Enrollment policy:** Use real legal identity, a legitimate account classification and the free enrollment path only. Do not purchase certificates, paid developer services, or subscriptions; never misrepresent Tetherplane as a registered company.
 
 **Tagline:** A policy-first connection between AI assistants and your computers.
 
@@ -12,7 +16,7 @@
 
 **Current status:** Development packaging is proven, but this is NOT a Store-ready executable, publicly signed package, or certified application. The existing native agent requires command-line parameters and lacks a Store-approved first-run and persisted pairing UI/launcher.
 
-**Required Partner Center inputs:** Reserve exact display name `tetherplane`; obtain case-sensitive package identity/publisher details; complete developer account registration; confirm market availability and age rating; choose free/paid later. Never insert a dummy production publisher to appease certification.
+**Required Partner Center inputs:** Reserve the product display name `Tetherplane`; obtain case-sensitive package identity/publisher details; complete developer account registration; confirm market availability and age rating; choose free/paid later. Never insert a dummy production publisher to appease certification.
 
 **Application requirements:** Actual user-consented install and onboarding; background agent lifecycle; ownership-safe migration from per-user tasks; uninstall preserving or deleting user state per explicit choice; app versioning; privacy-policy URL; support URL; documented restricted `runFullTrust` rationale; truthful Store category and screenshots.
 
