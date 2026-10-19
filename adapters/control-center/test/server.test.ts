@@ -151,7 +151,7 @@ test("directory requires a validated session and exposes only account-bound non-
     a.body.devices.map((d: { deviceId: string }) => d.deviceId),
     ["fixture-a"],
   );
-  assert.equal(a.body.devices[0].connectivity, "not_reported");
+  assert.equal(a.body.devices[0].connectivity, "relay_disconnected");
   assert.equal(a.body.devices[0].version, null);
   const b = await f.login("fixture-account-b");
   const devices = await f.call("/api/devices", b);
@@ -409,7 +409,7 @@ test("portal approves a device-generated code for its authenticated account and 
   assert.deepEqual((await f.call("/api/devices", b)).body.devices.map((d: {deviceId: string}) => d.deviceId), ["fixture-b"]);
   const directory = await f.call("/api/devices", a);
   assert.equal(directory.body.devices.length, 2);
-  assert.equal(directory.body.devices[1].connectivity, "not_reported");
+  assert.equal(directory.body.devices[1].connectivity, "relay_disconnected");
   assert.equal((await approve(pending.userCode)).response.status, 400);
   assert.equal((await f.call("/api/devices/fixture-new/revoke", {
     ...a, method: "POST", body: { confirmDeviceId: "fixture-new" },

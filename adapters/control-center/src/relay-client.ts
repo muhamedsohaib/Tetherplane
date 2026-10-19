@@ -2,7 +2,7 @@ export type Device = {
   deviceId: string;
   pairedAt: string;
   revokedAt: string | null;
-  connectivity: "not_reported";
+  connectivity: "relay_connected" | "relay_disconnected" | "not_reported";
   version: null;
 };
 
@@ -60,12 +60,24 @@ export class RelayClient {
       ) {
         throw invalidResponse();
       }
+      // Older relays do not report transport presence. Never infer it from
+      // pairing records or unrelated "online" fields.
+      if (
+        (raw.relayConnected !== undefined &&
+          typeof raw.relayConnected !== "boolean") ||
+        (raw.revokedAt !== null && raw.relayConnected === true)
+      ) throw invalidResponse();
       seen.add(raw.deviceId);
       return {
         deviceId: raw.deviceId,
         pairedAt: raw.pairedAt as string,
         revokedAt: raw.revokedAt as string | null,
-        connectivity: "not_reported",
+        connectivity:
+          raw.relayConnected === true
+            ? "relay_connected"
+            : raw.relayConnected === false
+              ? "relay_disconnected"
+              : "not_reported",
         version: null,
       };
     });

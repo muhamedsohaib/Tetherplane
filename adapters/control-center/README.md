@@ -57,9 +57,14 @@ production relay or change an installed device's pairing as part of portal setup
 ## What the portal reports and permits
 
 - Only device records returned by the authenticated account's `GET /devices`.
+  The presence signal is attached to those scoped records; it does not enable
+  enumeration or probing of devices belonging to another account.
 - Exact paired/revoked timestamps plus the last successful directory refresh.
-- Connectivity **not reported** and version **not reported**: this API does not
-  expose agent presence, heartbeat, policy mode, version or device execution proof.
+- Authenticated **relay transport** state is reported at each directory refresh
+  when the relay supports `relayConnected`. A connected route does **not**
+  establish device responsiveness, agent health, policy mode or successful tool
+  execution. An absent route is only a transport observation. Older relays
+  continue to show **not reported**; agent version remains **not reported**.
 - Explicit refresh and local sign-out.
 - Revocation through existing `POST /devices/:id/revoke`, after typing the device
   ID. Ownership is freshly checked and the relay enforces it again. Revocation
