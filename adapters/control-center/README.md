@@ -109,6 +109,8 @@ Server tests cover account isolation, authentication expiry/denial, CSRF and
 Host/Origin checks, method/body limits, redirects, safe response projection and
 static security headers. Hosted Windows and Ubuntu jobs run these in addition to
 the existing repository gates. No live real-device acceptance is implied.
+The [milestone verification report](../../docs/verification/2026-10-19-control-center-milestone.md)
+records commits, independent review, test evidence and release gates.
 
 ## Artwork
 

@@ -76,3 +76,28 @@ test("relay errors, redirects, oversized and malformed data are bounded and sani
   }
   assert.equal(redirected, false);
 });
+
+test(
+  "a relay that stalls after response headers is interrupted by the upstream deadline",
+  { timeout: 10_000 },
+  async (t) => {
+    const server = createServer((_req, res) => {
+      res.writeHead(200, { "content-type": "application/json" });
+      res.write('{"devices":[');
+    });
+    await new Promise<void>((resolve) =>
+      server.listen(0, "127.0.0.1", resolve),
+    );
+    t.after(() => {
+      server.closeAllConnections();
+      return new Promise<void>((resolve) => server.close(() => resolve()));
+    });
+    const address = server.address();
+    assert.ok(address && typeof address === "object");
+    const client = new RelayClient(`http://127.0.0.1:${address.port}`);
+    await assert.rejects(client.directory("synthetic-credential"), {
+      code: "relay_unavailable",
+      status: 502,
+    });
+  },
+);
