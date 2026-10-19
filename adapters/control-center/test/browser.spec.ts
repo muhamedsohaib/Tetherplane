@@ -225,3 +225,47 @@ test("sign-out during an in-flight refresh cannot restore the cleared directory"
     page.getByRole("button", { name: "Sign in", exact: true }),
   ).toBeVisible();
 });
+
+test("loading artwork follows the supplied ping-pong order without a blank interval", async ({
+  page,
+}) => {
+  await page.emulateMedia({ reducedMotion: "no-preference" });
+  await page.goto(base);
+  await expect(
+    page.getByRole("button", { name: "Sign in", exact: true }),
+  ).toBeEnabled();
+  let release!: () => void;
+  const gate = new Promise<void>((resolve) => {
+    release = resolve;
+  });
+  await page.route("**/api/session", async (route) => {
+    if (route.request().method() === "POST") await gate;
+    await route.continue().catch(() => {});
+  });
+  await page.getByLabel("Relay access credential").fill("browser-fixture-a");
+  await page.getByRole("button", { name: "Sign in", exact: true }).click();
+  await expect(page.getByRole("status")).toBeVisible();
+  const frames = await page.locator(".ascii-loop").evaluate((loop) => {
+    const animations = loop.getAnimations({ subtree: true });
+    const images = [...loop.querySelectorAll("img")];
+    return [0, 2000, 4000, 6000, 8000, 10000].map((time) => {
+      animations.forEach((animation) => {
+        animation.pause();
+        animation.currentTime = time;
+      });
+      const visible = images.find(
+        (image) => Number(getComputedStyle(image).opacity) > 0.99,
+      );
+      return visible?.getAttribute("src")?.split("/").at(-1) ?? "blank";
+    });
+  });
+  release();
+  expect(frames).toEqual([
+    "1.png",
+    "2.png",
+    "3.png",
+    "4.png",
+    "3.png",
+    "2.png",
+  ]);
+});

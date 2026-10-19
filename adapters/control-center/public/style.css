@@ -391,29 +391,37 @@ footer span span {
   opacity: 1;
 }
 .loading:not(.motion-paused) .ascii-loop img {
-  animation: ascii-cycle 12s infinite;
+  animation: ascii-cycle 12s ease-in-out infinite;
+}
+.loading:not(.motion-paused) .ascii-loop img:nth-child(1) {
+  animation-delay: -1.3s;
 }
 .loading:not(.motion-paused) .ascii-loop img:nth-child(2) {
-  animation-delay: 2s;
+  animation-delay: 0.7s;
 }
 .loading:not(.motion-paused) .ascii-loop img:nth-child(3) {
-  animation-delay: 4s;
+  animation-delay: 2.7s;
 }
 .loading:not(.motion-paused) .ascii-loop img:nth-child(4) {
-  animation-delay: 6s;
+  animation-delay: 4.7s;
+}
+.loading:not(.motion-paused) .ascii-loop img:nth-child(5) {
+  animation-delay: 6.7s;
+}
+.loading:not(.motion-paused) .ascii-loop img:nth-child(6) {
+  animation-delay: 8.7s;
 }
 @keyframes ascii-cycle {
-  0%,
-  6% {
-    opacity: 1;
-  }
-  16%,
-  83% {
+  0% {
     opacity: 0;
   }
-  94%,
-  100% {
+  10.833333%,
+  16.666667% {
     opacity: 1;
+  }
+  27.5%,
+  100% {
+    opacity: 0;
   }
 }
 .section-heading {
