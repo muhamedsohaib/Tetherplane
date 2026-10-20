@@ -124,3 +124,7 @@ finally {
         Remove-Item -LiteralPath $testRoot -Recurse -Force
     }
 }
+
+# Windows CI tracks the last native command's exit status. The final fixture
+# deliberately returned a nonzero code; successful assertions must reset it.
+exit 0
