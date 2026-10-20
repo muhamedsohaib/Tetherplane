@@ -292,7 +292,8 @@ impl DeviceProvider {
                 if capability == "filesystem.copy" {
                     // Unlike legacy unbound operations, this new mutating
                     // capability requires a launch-bound explicit grant.
-                    return self.allowed_capabilities
+                    return self
+                        .allowed_capabilities
                         .as_ref()
                         .is_some_and(|allowed| allowed.contains(&capability));
                 }
