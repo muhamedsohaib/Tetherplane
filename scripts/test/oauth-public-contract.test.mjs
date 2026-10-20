@@ -110,6 +110,40 @@ test("detects the original duplicate scope regression before another ChatGPT rec
   );
 });
 
+test("rejects any general OIDC scope expansion or removal", async () => {
+  for (const generalScopes of [
+    ["openid", "offline_access", "admin"],
+    ["openid"],
+    ["offline_access"],
+    ["openid", "offline_access", "profile"],
+  ]) {
+    const data = validFixture();
+    data[routes.discovery].scopes_supported = generalScopes;
+    await assert.rejects(
+      validatePublicOAuthContract({ fetchImpl: fixtureFetch(data).fetchImpl }),
+      /OIDC|scope/i,
+      "Unexpected generic scope set: " + generalScopes.join(","),
+    );
+  }
+});
+
+test("requires asymmetric RS256 signing keys, never unsigned or symmetric key algorithms", async () => {
+  for (const mutation of [
+    { kty: "oct" },
+    { alg: "none" },
+    { use: "enc" },
+    { n: "" },
+    { e: "" },
+  ]) {
+    const data = validFixture();
+    Object.assign(data[routes.jwks].keys[0], mutation);
+    await assert.rejects(
+      validatePublicOAuthContract({ fetchImpl: fixtureFetch(data).fetchImpl }),
+      /JWKS|key|signature|algorithm/i,
+    );
+  }
+});
+
 test("rejects resource permission loss or expansion", async () => {
   for (const scopes of [[], ["openid"], ["tetherplane:access", "admin"]]) {
     const data = validFixture();
