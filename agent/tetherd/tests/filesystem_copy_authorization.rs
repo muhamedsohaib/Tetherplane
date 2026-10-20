@@ -157,48 +157,51 @@ fn filesystem_copy_requires_grant_and_enforces_both_paths_in_real_agent() {
     let principal = root.join("principal.json");
     profile(&principal, &workspace, true);
 
-    let requests = [
-        invoke(CAPS_ID, "device.capabilities", json!({})),
-        invoke(
-            COPY_ID,
-            "filesystem.copy",
-            json!({"source": source, "destination": destination}),
-        ),
-        invoke(
-            REPLACE_ID,
-            "filesystem.copy",
-            json!({"source": source, "destination": destination}),
-        ),
-        invoke(
-            OUTSIDE_SOURCE_ID,
-            "filesystem.copy",
-            json!({"source": outside_source, "destination": workspace.join("leak.bin")}),
-        ),
-        invoke(
-            OUTSIDE_DEST_ID,
-            "filesystem.copy",
-            json!({"source": source, "destination": outside_destination}),
-        ),
-    ];
-
-    let results = run_agent(&workspace, Some(&principal), &requests);
-    assert!(advertises_copy(&results[CAPS_ID]));
-    assert_eq!(results[COPY_ID]["status"], "success");
-    assert_eq!(results[COPY_ID]["data"]["bytes"], 5);
+    let initial = run_agent(
+        &workspace,
+        Some(&principal),
+        &[
+            invoke(CAPS_ID, "device.capabilities", json!({})),
+            invoke(
+                COPY_ID,
+                "filesystem.copy",
+                json!({"source": source, "destination": destination}),
+            ),
+        ],
+    );
+    assert!(advertises_copy(&initial[CAPS_ID]));
+    assert_eq!(initial[COPY_ID]["status"], "success");
+    assert_eq!(initial[COPY_ID]["data"]["bytes"], 5);
     assert_eq!(fs::read(&source).unwrap(), bytes);
     assert_eq!(fs::read(&destination).unwrap(), bytes);
 
-    // The response ordering is correlated, but requests execute in parallel.
-    // Either duplicate copy may win. Exactly one can ever succeed and the
-    // destination must retain the original source bytes.
-    let second = &results[REPLACE_ID];
-    assert!(
-        (second["status"] == "error" && second["error"]["code"] == "precondition_failed")
-            || second["status"] == "success",
-        "unexpected second copy response: {second}"
+    // The following checks execute only after the initial copy completed.
+    // This avoids nondeterministic races between independent RPC requests.
+    let denied = run_agent(
+        &workspace,
+        Some(&principal),
+        &[
+            invoke(
+                REPLACE_ID,
+                "filesystem.copy",
+                json!({"source": source, "destination": destination}),
+            ),
+            invoke(
+                OUTSIDE_SOURCE_ID,
+                "filesystem.copy",
+                json!({"source": outside_source, "destination": workspace.join("leak.bin")}),
+            ),
+            invoke(
+                OUTSIDE_DEST_ID,
+                "filesystem.copy",
+                json!({"source": source, "destination": outside_destination}),
+            ),
+        ],
     );
-    assert!(results[OUTSIDE_SOURCE_ID]["error"]["code"] == "permission_denied");
-    assert!(results[OUTSIDE_DEST_ID]["error"]["code"] == "permission_denied");
+    assert_eq!(denied[REPLACE_ID]["status"], "error");
+    assert_eq!(denied[REPLACE_ID]["error"]["code"], "precondition_failed");
+    assert_eq!(denied[OUTSIDE_SOURCE_ID]["error"]["code"], "permission_denied");
+    assert_eq!(denied[OUTSIDE_DEST_ID]["error"]["code"], "permission_denied");
     assert!(!workspace.join("leak.bin").exists());
     assert!(!outside_destination.exists());
 
