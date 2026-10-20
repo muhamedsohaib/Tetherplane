@@ -175,7 +175,7 @@ async fn caller_supplied_origin_cannot_authorize_unknown_or_human_target() {
         .unwrap_err();
 
     assert_eq!(error.code, ErrorCode::PermissionDenied);
-    assert!(backend.performed().is_empty());
+    assert_eq!(backend.performed().len(), 0);
 }
 
 #[tokio::test]
