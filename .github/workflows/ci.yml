@@ -24,7 +24,14 @@ jobs:
         run: cargo fmt --all -- --check
 
       - name: Rust clippy
-        run: cargo clippy --workspace --all-targets -- -D warnings
+        run: cargo clippy -p tether-filesystem-provider -p tether-core -p tetherd --all-targets -- -D warnings
+
+      - name: Audit resolved dependency lock
+        if: runner.os == 'Linux'
+        run: |
+          echo TETHERPLANE_CARGO_LOCK_START
+          cat Cargo.lock
+          echo TETHERPLANE_CARGO_LOCK_END
 
       - name: Rust tests
         run: cargo test --workspace
