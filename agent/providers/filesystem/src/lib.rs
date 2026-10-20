@@ -33,6 +33,9 @@ impl FilesystemProvider {
     }
 
     /// Construct copy authority from the intersection of launch and principal roots.
+    ///
+    /// # Errors
+    /// Returns an error when a configured root cannot be securely opened.
     pub fn with_copy_roots(
         agent_roots: &[PathBuf],
         principal_roots: Option<&[PathBuf]>,
