@@ -10,6 +10,8 @@ on:
       - "adapters/compact-mcp/**"
       - "protocol/**"
       - "scripts/release-smoke.mjs"
+      - "scripts/package-linux.sh"
+      - "scripts/verify-linux-package.mjs"
       - ".github/workflows/linux-headless-preview.yml"
       - "docs/release/linux-developer-preview.md"
       - "pnpm-lock.yaml"
@@ -51,20 +53,42 @@ jobs:
         run: |
           cargo build --release -p tetherd
           pnpm --filter '@tetherplane/compact-mcp...' build
-      - name: Headless six-tool MCP smoke (isolated local state)
+      - name: Build unapproved Linux candidate and verify SHA-256 manifest
         shell: bash
         run: |
           set -euo pipefail
-          test -x target/release/tetherd
-          test -f adapters/compact-mcp/dist/stdio-server.js
           scratch="$(mktemp -d)"
           trap 'rm -rf -- "$scratch"' EXIT
+          package="$scratch/Tetherplane-Linux-x64"
+          bash scripts/package-linux.sh --output "$package" --skip-build
+          node scripts/verify-linux-package.mjs "$package"
           mkdir -m 700 "$scratch/allowed" "$scratch/state"
-          cp scripts/release-smoke.mjs adapters/compact-mcp/smoke-six-tools.mjs
-          node adapters/compact-mcp/smoke-six-tools.mjs \
-            --tetherd "$GITHUB_WORKSPACE/target/release/tetherd" \
+          node "$package/adapters/compact-mcp/smoke-six-tools.mjs" \
+            --tetherd "$package/bin/tetherd" \
             --allow "$scratch/allowed" \
             --state-dir "$scratch/state"
+          cp "$package/bin/tetherd" "$scratch/original-agent"
+          printf x >> "$package/bin/tetherd"
+          if node scripts/verify-linux-package.mjs "$package" >/dev/null 2>&1; then
+            echo "Integrity verifier unexpectedly accepted tampered agent" >&2
+            exit 1
+          fi
+          mv -f -- "$scratch/original-agent" "$package/bin/tetherd"
+          node scripts/verify-linux-package.mjs "$package"
+          tar --sort=name --mtime='@0' --owner=0 --group=0 --numeric-owner \
+            -czf Tetherplane-Linux-x64-candidate.tar.gz \
+            -C "$scratch" Tetherplane-Linux-x64
+          sha256sum Tetherplane-Linux-x64-candidate.tar.gz > Linux-SHA256SUMS.txt
+          sha256sum -c Linux-SHA256SUMS.txt
+      - name: Authored unsafe-code scan
+        run: python scripts/check-no-unsafe.py
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        with:
+          name: Linux-unapproved-candidate-${{ matrix.os }}
+          retention-days: 3
+          path: |
+            Tetherplane-Linux-x64-candidate.tar.gz
+            Linux-SHA256SUMS.txt
       - name: Review boundary notice
         run: |
           echo "CI verifies a clean hosted Ubuntu build and local headless MCP surface only."
