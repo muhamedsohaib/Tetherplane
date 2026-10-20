@@ -7,6 +7,7 @@
  *
  * Does not prove that ChatGPT's privately stored expected issuer matches.
  */
+import { createPublicKey } from "node:crypto";
 import { pathToFileURL } from "node:url";
 
 const ISSUER = "https://vaulter.tailf65eba.ts.net/";
@@ -107,6 +108,22 @@ function verifyJwks(data) {
     if (key.kty !== "RSA" || key.alg !== "RS256" || key.use !== "sig" ||
         typeof key.n !== "string" || !key.n || typeof key.e !== "string" || !key.e) {
       fail("JWKS", "expected a public RS256 signing key");
+    }
+    // Reject syntactically shaped but unusable signing keys. Validate only
+    // public RSA material; neither load nor publish an auth signing secret.
+    let parsedPublicKey;
+    try {
+      parsedPublicKey = createPublicKey({
+        format: "jwk",
+        key: { kty: "RSA", n: key.n, e: key.e },
+      });
+    } catch {
+      fail("JWKS", "invalid RSA public JWK");
+    }
+    if (parsedPublicKey.asymmetricKeyType !== "rsa" ||
+        (parsedPublicKey.asymmetricKeyDetails?.modulusLength ?? 0) < 2048 ||
+        key.e !== "AQAB") {
+      fail("JWKS", "unsafe RSA signing key modulus or public exponent");
     }
     if (keyIds.has(key.kid)) {
       fail("JWKS", "duplicate signing key identifier");
