@@ -56,37 +56,20 @@ function harness(details: TetherAuthConsentDetails) {
   };
 }
 
-test("resource-bound duplicate access scope is displayed and granted ONLY for canonical MCP resource", async () => {
+test("duplicate generic OIDC access is denied even alongside canonical resource scope", async () => {
   const state = harness({
     missingOIDCScope: ["openid", "tetherplane:access"],
     missingResourceScopes: { [RESOURCE]: ["tetherplane:access"] },
   });
-  assert.deepEqual(
-    await state.controller.describeConsent(state.request, state.response, UID),
-    {
-      clientId: "known-client",
-      oidcScopes: ["openid"],
-      resourceScopes: [{ resource: RESOURCE, scopes: ["tetherplane:access"] }],
-    },
+  await assert.rejects(
+    state.controller.describeConsent(state.request, state.response, UID),
+    /unsupported scope/i,
   );
-  // Previewing consent must not mutate a grant or finish authorization.
-  assert.deepEqual(state.changes, []);
-  assert.equal(
-    await state.controller.completeConsent(state.request, state.response, UID),
-    "completed",
+  await assert.rejects(
+    state.controller.completeConsent(state.request, state.response, UID),
+    /unsupported scope/i,
   );
-  assert.deepEqual(state.changes, [
-    { action: "create", input: { accountId: "paired-account", clientId: "known-client" } },
-    { action: "oidc", scope: "openid" },
-    { action: "resource", resource: RESOURCE, scope: "tetherplane:access" },
-    { action: "save" },
-    { action: "finished", result: { consent: { grantId: "grant_fixture123" } } },
-  ]);
-  assert.equal(
-    state.changes.some(item => item.action === "oidc" && String(item.scope).includes("tetherplane:access")),
-    false,
-    "Never grant tetherplane:access as an unscoped OIDC permission",
-  );
+  assert.deepEqual(state.changes, [], "a generic access scope must never create a grant");
 });
 
 test("standalone access scope without matching canonical resource fails closed before grant mutation", async () => {
