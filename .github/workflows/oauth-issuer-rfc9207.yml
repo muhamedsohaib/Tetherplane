@@ -1,0 +1,37 @@
+name: TetherAuth RFC9207 issuer characterization
+
+on:
+  push:
+    branches:
+      - test/oauth-issuer-rfc9207-20261020
+  pull_request:
+    paths:
+      - auth/test/oauth-issuer-rfc9207.test.ts
+      - .github/workflows/oauth-issuer-rfc9207.yml
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  callback-issuer:
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, windows-latest]
+    runs-on: ${{ matrix.os }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+      - name: Enable Corepack
+        run: corepack enable
+      - name: Activate pinned pnpm
+        run: corepack prepare pnpm@10.34.5 --activate
+      - name: Install locked workspace dependencies
+        run: pnpm install --frozen-lockfile
+      - name: Test real oidc-provider issuer response using synthetic local client
+        run: pnpm --dir auth exec node --test test/oauth-issuer-rfc9207.test.ts
+      - name: Auth TypeScript typecheck
+        run: pnpm --dir auth exec tsc --noEmit -p tsconfig.test.json
