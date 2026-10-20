@@ -432,7 +432,10 @@ async fn copy_rejects_windows_junction_escape() {
         .arg(&outside)
         .status()
         .unwrap();
-    assert!(status.success(), "Windows junction test must create its fixture");
+    assert!(
+        status.success(),
+        "Windows junction test must create its fixture"
+    );
 
     assert!(
         provider
