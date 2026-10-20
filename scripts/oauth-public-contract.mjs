@@ -72,11 +72,11 @@ function verifyDiscovery(data) {
   }
 
   const scopes = requireStringList(data.scopes_supported, "OIDC scopes");
-  if (scopes.length !== 2 || !scopes.includes("openid") || !scopes.includes("offline_access")) {
-    fail("OIDC scopes", "general OIDC permissions are missing or expanded");
-  }
   if (scopes.includes("tetherplane:access")) {
     fail("OIDC scopes", "MCP permission incorrectly advertised as general OIDC scope");
+  }
+  if (scopes.length !== 2 || !scopes.includes("openid") || !scopes.includes("offline_access")) {
+    fail("OIDC scopes", "general OIDC permissions are missing or expanded");
   }
 }
 
