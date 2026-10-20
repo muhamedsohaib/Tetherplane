@@ -40,6 +40,25 @@ rules, and perform a manual unapproved-tag exercise demonstrating that the
 `publish` job remains blocked. The workflow's own environment check is an
 additional guard, not a substitute for configured platform protections.
 
+## Safe read-only environment check
+
+On a machine already authenticated to GitHub CLI with **read-only access**
+to the repository's deployment environments (for example Leno), run:
+
+    powershell -NoProfile -File scripts/verify-release-environment.ps1
+
+The script calls only a GitHub REST **GET** endpoint. It prints a sanitized
+JSON receipt. \`PASS_ENVIRONMENT_REVIEWER_PREFLIGHT_ONLY\` verifies that
+a required-reviewer rule exists and prevents self-review; it **never** means
+a release is approved, a tag is protected, or a binary has been validated.
+
+\`NO_GO\` indicates an absent or unprotected environment, inaccessible API,
+missing \`gh\` login, or another prerequisite. Inspect the environment in
+the GitHub repository Settings page and correct the configuration through
+the repository administrator. Do not post GitHub access tokens or keys in
+logs or chat. Separately verify protected release-tag rules and human
+review approval.
+
 ## Required acceptance evidence
 
 - Independent security review of the pinned action SHAs and Rust/Node/pnpm
