@@ -145,7 +145,8 @@ test("RFC 9207: actual authorization code callback iss equals discovery issuer b
         }
         assert.fail("Unexpected interaction status: " + String(status.status));
       }
-      assert.fail("OAuth flow stopped at " + new URL(current, ISSUER).pathname + " (HTTP " + response.status + ")");
+      const diagnostic = (await response.text()).slice(0,400);
+      assert.fail("OAuth flow stopped at " + new URL(current, ISSUER).pathname + " (HTTP " + response.status + "); response=" + diagnostic + "; cookie names=" + [...cookies.keys()].join(","));
     }
     assert.fail("Too many authorization redirects; no callback issued");
   } finally {
