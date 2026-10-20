@@ -14,16 +14,16 @@ Target: Ubuntu 22.04/24.04 x86_64, headless-capable. Other distributions and mac
 
 ## What Linux CI can actually establish
 
-The `Linux headless developer-preview gate` runs on Ubuntu 22.04 and 24.04 hosted runners. It performs Rust fmt, Clippy, complete Rust tests, builds a Linux release `tetherd`, builds the Compact MCP adapter, and starts a local stdio MCP session against the built binary in a disposable directory. Exactly six tools must be listed.
+The `Linux headless developer-preview gate` runs on Ubuntu 22.04 and 24.04 hosted runners. It performs Rust fmt, Clippy, complete Rust tests, builds a Linux release `tetherd` and Compact MCP adapter, stages a **non-release** `0.1.0-dev` candidate package, verifies its SHA-256 manifest, rejects a deliberately corrupted agent test copy, and starts a local stdio MCP session from the staged candidate in a disposable directory. Exactly six tools must be listed. The full archive also receives a SHA-256 checksum and is retained briefly as a CI artifact.
 
-**This is not** a remotely paired device, clean physical-machine test, unattended startup test, or authorized publishable installation package. CI status alone is insufficient.
+**This is not** a remotely paired device, clean physical-machine test, unattended startup test, independently audited installer, or authorized publishable release. The candidate has no installer or rollback integration; CI status alone is insufficient.
 
 ## Preview release gates (must all pass)
 
 | Gate | Evidence | Result |
 | --- | --- | --- |
-| 1. Source and checks | Pinned clean commit, Linux matrix checks green; six-tool MCP smoke; secret scan | Pending fresh CI |
-| 2. Artifact and install | Versioned immutable Linux package with SHA-256 manifest, verifiable provenance, no embedded secrets, per-user install from clean Ubuntu | Not implemented |
+| 1. Source and checks | Pinned clean commit, Linux matrix checks green; six-tool MCP smoke; authored unsafe-code scan | Pending fresh CI |
+| 2. Artifact and install | SHA-256-checked candidate archive from pinned source; per-user install from clean Ubuntu and secret/provenance audit | Candidate packaging implemented, CI pending; clean install not done |
 | 3. Authorized onboarding | New device identity, explicit pairing approval, account-scoped OAuth client (no scope widening or registration substitution) | Not tested on Linux |
 | 4. Least privilege | Local policy denies unauthorized capability, disallowed roots, foreground actions, and cross-account routing | Not independently verified on Linux |
 | 5. Recovery | Agent reconnects after reboot/network interruption; in-flight mutation is **not automatically replayed** | Not tested on Linux |
@@ -46,9 +46,13 @@ The current `v0.1.0` Windows procedure in `docs/live-acceptance.md` remains auth
 
 Record only: source commit SHA; artifact digest; OS/kernel/architecture; package version; elapsed setup time; operator approval timestamp (not OAuth code); MCP device status; denial error code; reboot duration; offline/reconnect behavior; rollback receipt; result and reviewer. Never retain secrets, bearer tokens, cookies, code verifiers, device-credential contents, private keys or raw `/oauth/callback` URLs.
 
+## How to produce an unapproved candidate
+
+On a clean development checkout with Rust, Node 22+ and pnpm 10 installed, run `pnpm install --frozen-lockfile`, then `bash scripts/package-linux.sh --output /absolute/new/path/Tetherplane-Linux-x64`. The packager refuses existing output directories, builds the Linux agent and Compact MCP adapter, stages production runtime dependencies, writes a three-entry SHA-256 manifest, and verifies those required files. `node scripts/verify-linux-package.mjs PATH` rechecks the staged candidate. **This does not install, enable startup, pair a device, deploy to a live machine, or publish a release.** The hosted Ubuntu candidate artifact includes a separate SHA-256 checksum for the complete tarball; validate the archive checksum before extraction. Neither archive nor manifest is a substitute for authenticated source provenance and independent installer review.
+
 ## Next engineering slices
 
-- Create a reproducible Linux per-user package/installer and a safe uninstall that preserves state, then add CI smoke for install/upgrade/rollback.
+- Add a safe per-user Linux installer, a state-preserving uninstall and rollback, with CI smoke for each.
 - Exercise live Linux device pairing to the **existing** relay with least-privilege local principal; do not modify protected TetherAuth infrastructure.
 - Run an operator-observed clean Ubuntu installation, reboot/reconnect, denial and rollback acceptance.
 - Review a Linux-specific publication workflow that does not accidentally invoke the existing `v*` Windows workflow.
