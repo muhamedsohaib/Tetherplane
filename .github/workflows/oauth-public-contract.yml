@@ -1,0 +1,29 @@
+name: OAuth public contract preflight
+
+on:
+  push:
+    branches: [feature/oauth-issuer-public-preflight-20261020]
+  pull_request:
+    paths:
+      - scripts/oauth-public-contract.mjs
+      - scripts/test/oauth-public-contract.test.mjs
+      - .github/workflows/oauth-public-contract.yml
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  issuer-contract:
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, windows-latest]
+    runs-on: ${{ matrix.os }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+      - name: Local synthetic issuer and resource contract regression (no production calls)
+        run: node --test scripts/test/oauth-public-contract.test.mjs
