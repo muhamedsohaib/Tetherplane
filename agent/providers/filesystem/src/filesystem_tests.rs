@@ -338,8 +338,7 @@ async fn copy_rejects_rebound_directory_symlink_escape() {
     // The handles are opened before an attacker installs a directory link.
     // An older ambient-path copy could use this post-policy link as a route
     // outside the approved directory.
-    let provider =
-        FilesystemProvider::with_copy_roots(&[allowed.clone()], None).unwrap();
+    let provider = FilesystemProvider::with_copy_roots(&[allowed.clone()], None).unwrap();
     symlink(&outside, allowed.join("swapped")).unwrap();
 
     assert!(
@@ -367,8 +366,7 @@ async fn copy_rejects_symlink_source_which_escapes_root() {
     let link = allowed.join("link.bin");
     symlink(&private, &link).unwrap();
     let destination = allowed.join("copied.bin");
-    let provider =
-        FilesystemProvider::with_copy_roots(&[allowed], None).unwrap();
+    let provider = FilesystemProvider::with_copy_roots(&[allowed], None).unwrap();
 
     assert!(
         provider
@@ -395,11 +393,7 @@ async fn copy_requires_configured_roots_and_principal_intersection() {
     let destination = permitted.join("copy.bin");
     fs::write(&source, [123_u8]).unwrap();
 
-    let provider = FilesystemProvider::with_copy_roots(
-        &[global],
-        Some(&[permitted]),
-    )
-    .unwrap();
+    let provider = FilesystemProvider::with_copy_roots(&[global], Some(&[permitted])).unwrap();
     assert!(
         provider
             .execute(&invocation(
