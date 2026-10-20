@@ -9,6 +9,7 @@ import {
 import os from "node:os";
 import path from "node:path";
 import test from "node:test";
+import { DatabaseSync } from "node:sqlite";
 
 import {
   startTetherAuthProductionService,
@@ -355,8 +356,18 @@ test("legacy generic access scopes never become a new unbound MCP grant after up
     assert.ok(await second.provider.Grant.find(bound.grantId), "Do not silently delete valid grants");
     assert.ok(await second.provider.RefreshToken.find(bound.refreshId), "Do not silently delete valid refresh state");
     assert.ok(await second.provider.Grant.find(unbound.grantId), "Inspection of legacy state must not mutate it");
-    const persistedOldGrant = await second.provider.Grant.find(unbound.grantId);
-    assert.match(String(persistedOldGrant?.oidcScope ?? ""), /tetherplane:access/, "Fixture must retain the actual pre-upgrade generic OIDC access scope");
+    // A model accessor is not guaranteed to expose persisted scope fields.
+    // Inspect only the synthetic stored grant to prove that this test
+    // actually carries the old generic OIDC scope across the restart.
+    const db = new DatabaseSync(databasePath, { readOnly: true });
+    try {
+      const row = db.prepare("SELECT payload FROM oidc_objects WHERE model = 'Grant' AND id = ?").get(unbound.grantId) as {payload?: string} | undefined;
+      assert.equal(typeof row?.payload, "string");
+      assert.equal(row!.payload!.includes("tetherplane:access"), true,
+        "Legacy test fixture must retain the old generic OIDC access scope");
+    } finally {
+      db.close();
+    }
     assert.ok(await second.provider.RefreshToken.find(unbound.refreshId));
 
     const redeem = async (token: string) =>
