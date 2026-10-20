@@ -46,6 +46,21 @@ test("RFC 9207: actual authorization code callback iss equals discovery issuer b
       },
     }, { host: "127.0.0.1", port: 0 });
 
+    const originalProviderDetails = service.provider.interactionDetails.bind(service.provider);
+    service.provider.interactionDetails = async (...args) => {
+      const details = await originalProviderDetails(...args);
+      if (details.prompt?.name === "consent") {
+        const prompt = details.prompt.details;
+        // Fixture-only diagnostic: scope labels and canonical resource keys,
+        // never cookies, codes, state, raw requests, or signing material.
+        console.error("Synthetic consent mapping:", JSON.stringify({
+          oidc: prompt["missingOIDCScope"],
+          resources: prompt["missingResourceScopes"],
+        }));
+      }
+      return details;
+    };
+
     const originalBegin = service.interactions.beginInteraction.bind(service.interactions);
     service.interactions.beginInteraction = async (...args) => {
       try { return await originalBegin(...args); }
