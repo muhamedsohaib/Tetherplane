@@ -326,7 +326,8 @@ test("legacy generic access scopes never become a new unbound MCP grant after up
     assert.ok(client);
 
     const legacyGrants: Record<string, {grantId: string; refreshId: string}> = {};
-    for (const boundToResource of [true, false]) {
+    for (const variant of ["bound", "unbound", "unboundNoResource"] as const) {
+      const boundToResource = variant === "bound";
       // Both cases simulate pre-upgrade persisted generic OIDC grants.
       // Only the first had the canonical RFC8707 resource authorization.
       const grant = new first.provider.Grant({accountId: "account-1", clientId});
@@ -344,7 +345,7 @@ test("legacy generic access scopes never become a new unbound MCP grant after up
         gty: "authorization_code",
       });
       const refreshId = await refresh.save();
-      legacyGrants[boundToResource ? "bound" : "unbound"] = {grantId, refreshId};
+      legacyGrants[variant] = {grantId, refreshId};
     }
 
     await first.close();
@@ -395,6 +396,35 @@ test("legacy generic access scopes never become a new unbound MCP grant after up
     const denied = await redeem(unbound.refreshId);
     assert.notEqual(denied.status, 200, "Generic OIDC-only legacy grants cannot mint MCP resource tokens");
     assert.ok(denied.status >= 400 && denied.status < 500);
+    const noResource = legacyGrants["unboundNoResource"]!;
+    assert.ok(await second.provider.Grant.find(noResource.grantId));
+    assert.ok(await second.provider.RefreshToken.find(noResource.refreshId));
+    // An independent legacy refresh token without a resource parameter must
+    // also never mint a JWT usable by the canonical MCP relay. Do not reuse
+    // the above denied token: OAuth servers may consume rejected attempts.
+    const noResourceResponse = await fetch(second.address.url + "/token", {
+      method: "POST",
+      headers: {"content-type":"application/x-www-form-urlencoded"},
+      body: new URLSearchParams({
+        grant_type:"refresh_token",
+        refresh_token:noResource.refreshId,
+        client_id:clientId,
+      }),
+      redirect:"manual",
+      signal:AbortSignal.timeout(5000),
+    });
+    assert.ok(noResourceResponse.status === 200 ||
+      (noResourceResponse.status >= 400 && noResourceResponse.status < 500));
+    if (noResourceResponse.status === 200) {
+      const body = await noResourceResponse.json() as { access_token?: string };
+      assert.equal(typeof body.access_token, "string");
+      const jwt = body.access_token!.split(".");
+      if (jwt.length === 3) {
+        const claims = JSON.parse(Buffer.from(jwt[1]!, "base64url").toString("utf8")) as Record<string, unknown>;
+        assert.notDeepEqual(claims.aud, RESOURCE,
+          "Old generic-only grant must not mint canonical MCP JWT when no resource is requested");
+      }
+    }
   } finally {
     await first?.close();
     await second?.close();
