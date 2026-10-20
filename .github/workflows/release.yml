@@ -93,6 +93,7 @@ jobs:
       name: tetherplane-release-approval
     permissions:
       contents: write
+      actions: read
 
     steps:
       - name: Require configured approval protections
