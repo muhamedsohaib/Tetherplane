@@ -77,6 +77,11 @@ test("RFC 9207: actual authorization code callback iss equals discovery issuer b
     const metadata = await discovery.json() as Record<string, unknown>;
     assert.equal(metadata.issuer, ISSUER);
     assert.equal(metadata.authorization_response_iss_parameter_supported, true);
+    assert.equal(
+      (metadata.scopes_supported as string[]).includes("tetherplane:access"),
+      false,
+      "MCP resource permissions must not be advertised as generic OIDC scopes",
+    );
 
     const registration = await fetch(base + "/reg", {
       method: "POST",
