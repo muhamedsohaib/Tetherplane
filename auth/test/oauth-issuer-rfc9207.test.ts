@@ -13,6 +13,35 @@ const RESOURCE = "https://relay.example.test/mcp";
 const CALLBACK = "https://client.example.test/oauth/callback";
 const USER_CODE = "ABCD-1234";
 
+test("provider normalizes an HTTPS issuer origin exactly once before discovery", async () => {
+  const tmp = await mkdtemp(path.join(os.tmpdir(), "tether-issuer-no-slash-"));
+  const storage = createSqliteAdapter({ databasePath: path.join(tmp, "issuer.sqlite") });
+  const {privateKey} = generateKeyPairSync("rsa", {modulusLength: 2048});
+  let service: Awaited<ReturnType<typeof startTetherAuthService>> | undefined;
+  try {
+    service = await startTetherAuthService({
+      issuer: ISSUER.slice(0, -1),
+      resource: RESOURCE,
+      interactionBasePath: "/interaction",
+      adapter: storage.Adapter,
+      jwks: {keys: [{...privateKey.export({format: "jwk"}), kid:"no-slash-fixture", alg:"RS256", use:"sig"}]},
+      allowInsecureLocalhost: true,
+      logins: {
+        async start() { return {userCode: USER_CODE, expiresAt: new Date(Date.now()+300000).toISOString()}; },
+        async consume() { return {accountId: "fixture"}; },
+      },
+    }, {host:"127.0.0.1", port:0});
+    const response = await fetch(service.address.url+"/.well-known/openid-configuration");
+    assert.equal(response.status, 200);
+    const metadata = await response.json() as {issuer:string};
+    assert.equal(metadata.issuer, ISSUER, "Provider must not publish an unnormalized no-slash issuer");
+  } finally {
+    await service?.close();
+    storage.close();
+    await rm(tmp, {recursive:true, force:true});
+  }
+});
+
 for (const requestedScope of ["openid tetherplane:access", "tetherplane:access"]) {
   test("RFC 9207 callback and resource-scoped JWT for: " + requestedScope, async () => {
   const temporary = await mkdtemp(path.join(os.tmpdir(), "tether-issuer-"));
@@ -73,6 +102,38 @@ for (const requestedScope of ["openid tetherplane:access", "tetherplane:access"]
     assert.equal(registration.status, 201);
     const client = await registration.json() as Record<string, unknown>;
     assert.equal(typeof client.client_id, "string");
+
+    // The authorization server must fail closed before any interaction for
+    // missing/weak PKCE or an unregistered resource. No external redirects
+    // are followed and no real client or credential is involved.
+    const deniedRequests = [
+      { label: "missing PKCE", challenge: null, method: null, resource: RESOURCE },
+      { label: "plain PKCE", challenge: "x".repeat(43), method: "plain", resource: RESOURCE },
+      { label: "foreign resource", challenge: createHash("sha256").update("x".repeat(43)).digest("base64url"), method: "S256", resource: "https://foreign.example.test/mcp" },
+    ];
+    for (const attempt of deniedRequests) {
+      const invalid = new URL("/auth", ISSUER);
+      invalid.searchParams.set("client_id", client.client_id as string);
+      invalid.searchParams.set("redirect_uri", CALLBACK);
+      invalid.searchParams.set("response_type", "code");
+      invalid.searchParams.set("scope", "openid tetherplane:access");
+      invalid.searchParams.set("resource", attempt.resource);
+      invalid.searchParams.set("state", "synthetic-denial-" + attempt.label.replaceAll(" ", "-"));
+      if (attempt.challenge) invalid.searchParams.set("code_challenge", attempt.challenge);
+      if (attempt.method) invalid.searchParams.set("code_challenge_method", attempt.method);
+      const rejected = await fetch(base + invalid.pathname + invalid.search, {redirect:"manual"});
+      if (rejected.status >= 300 && rejected.status < 400) {
+        const next = new URL(rejected.headers.get("location")!, ISSUER);
+        assert.equal(next.origin + next.pathname, CALLBACK,
+          attempt.label + " must not redirect to authorization interaction");
+        assert.ok(next.searchParams.get("error"), attempt.label + " should return an OAuth error");
+        assert.equal(next.searchParams.get("code"), null,
+          attempt.label + " must never issue a code");
+      } else {
+        assert.ok(rejected.status >= 400 && rejected.status < 500,
+          attempt.label + " must fail without user login");
+      }
+    }
 
     // RFC 9207 also requires iss on error responses. A prompt=none request
     // cannot log in the synthetic account and must fail through the normal

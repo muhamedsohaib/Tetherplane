@@ -1,9 +1,11 @@
 import assert from "node:assert/strict";
+import { generateKeyPairSync } from "node:crypto";
 import test from "node:test";
 import { validatePublicOAuthContract } from "../oauth-public-contract.mjs";
 
 const ISSUER = "https://vaulter.tailf65eba.ts.net/";
 const RESOURCE = "https://vaulter.tailf65eba.ts.net/mcp";
+const GOOD_PUBLIC_KEY = generateKeyPairSync("rsa", { modulusLength: 2048 }).publicKey.export({format: "jwk"});
 const routes = {
   discovery: ISSUER + ".well-known/openid-configuration",
   resource: ISSUER + ".well-known/oauth-protected-resource/mcp",
@@ -28,7 +30,7 @@ function validFixture() {
       scopes_supported: ["tetherplane:access"],
     },
     [routes.jwks]: {
-      keys: [{ kty: "RSA", use: "sig", alg: "RS256", kid: "fixture-only-public", n: "abc", e: "AQAB" }],
+      keys: [{ kty: "RSA", use: "sig", alg: "RS256", kid: "fixture-only-public", ...GOOD_PUBLIC_KEY }],
     },
   };
 }
@@ -41,7 +43,7 @@ function fixtureFetch(metadata, options = {}) {
     const body = metadata[url];
     return {
       status: options.status?.[url] ?? (body ? 200 : 404),
-      json: async () => body,
+      json: async () => { if (options.malformedJson === url) throw new SyntaxError("Synthetic invalid JSON"); return body; },
     };
   };
   return { fetchImpl, calls };
@@ -185,6 +187,34 @@ test("detects missing public signing keys, leaked private key material and dupli
   const duplicate = validFixture();
   duplicate[routes.jwks].keys.push({ ...duplicate[routes.jwks].keys[0] });
   await assert.rejects(validatePublicOAuthContract({ fetchImpl: fixtureFetch(duplicate).fetchImpl }), /JWKS|duplicate|key/i);
+});
+
+test("rejects cryptographically invalid or undersized RSA public keys", async () => {
+  for (const override of [
+    { n: "abc" },
+    { n: "@@@" },
+    { e: "AA" },
+    { n: Buffer.alloc(128, 255).toString("base64url") },
+  ]) {
+    const metadata = validFixture();
+    Object.assign(metadata[routes.jwks].keys[0], override);
+    await assert.rejects(
+      validatePublicOAuthContract({ fetchImpl: fixtureFetch(metadata).fetchImpl }),
+      /JWKS|RSA|public|key|modulus|exponent/i,
+      "Reject a malformed RSA public JWK before reconnecting",
+    );
+  }
+});
+
+test("rejects HTTP 200 with malformed JSON at each public endpoint", async () => {
+  for (const url of Object.values(routes)) {
+    await assert.rejects(
+      validatePublicOAuthContract({
+        fetchImpl: fixtureFetch(validFixture(), { malformedJson: url }).fetchImpl,
+      }),
+      /invalid JSON metadata|JWKS|OIDC discovery|protected resource/i,
+    );
+  }
 });
 
 test("rejects redirects, non-200 responses and missing JSON rather than silently falling back", async () => {

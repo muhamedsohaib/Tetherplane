@@ -46,7 +46,10 @@ export function createTetherAuthProvider(
     invalidTarget: () => new errors.InvalidTarget(),
   });
 
-  return new Provider(input.issuer, {
+  // Use the same canonical spelling as metadata validation, including the
+  // trailing slash for a bare HTTPS origin. RFC 9207 compares issuers exactly.
+  const issuer = new URL(input.issuer).toString();
+  return new Provider(issuer, {
     ...policy,
     adapter: input.adapter,
     jwks: input.jwks,
