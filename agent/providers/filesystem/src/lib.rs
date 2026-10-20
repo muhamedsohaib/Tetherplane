@@ -51,6 +51,7 @@ impl CapabilityProvider for FilesystemProvider {
             "write" => write::write(&invocation.arguments)?,
             "append" => write::append(&invocation.arguments)?,
             "mkdir" => write::mkdir(&invocation.arguments)?,
+            "copy" => write::copy(&invocation.arguments)?,
             "move" => write::move_path(&invocation.arguments)?,
             "patch" => patch::patch(&invocation.arguments)?,
             _ => {
