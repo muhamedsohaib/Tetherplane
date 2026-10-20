@@ -13,7 +13,9 @@ production-release authorization. It is intentionally isolated on a draft PR.
    GitHub Environment `tetherplane-release-approval`.
 3. Before publishing, the job reads the environment via GitHub API and **fails
    closed** unless at least one `required_reviewers` protection rule exists
-   with a nonempty reviewer list. An unavailable API, absent environment,
+   with a nonempty reviewer list and **prevent_self_review: true**.
+   The publish job explicitly requests `actions: read` solely to inspect
+   these GitHub environment rules. An unavailable API, absent environment,
    missing protection, or missing permission must block publication.
 4. The tagged commit must be an ancestor of `origin/main`; unmerged test
    branches cannot publish by tag alone.
@@ -26,8 +28,9 @@ production-release authorization. It is intentionally isolated on a draft PR.
 
 In repository **Settings -> Environments**, create the environment named
 `tetherplane-release-approval`. Configure its **required reviewers** to
-include an authorized human independent of the release author; enforce
-prevention of self-review where supported. Restrict deployment branches and
+include an authorized human independent of the release author; **enable
+Prevent self-review** (mandatory for this workflow), and select
+**Save protection rules**. Restrict deployment branches and
 tags to the approved release process. Configure repository rulesets to
 protect release tags against unauthorized creation or changes. Review the
 permissions of the GitHub Actions token.
