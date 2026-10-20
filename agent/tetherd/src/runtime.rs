@@ -113,14 +113,11 @@ impl AgentRuntime {
         )))?;
         // Filesystem copy needs both principal and agent root restrictions,
         // pinned as directory handles before accepting copy operations.
-        let filesystem = if copy_allowed {
-            FilesystemProvider::with_copy_roots(
-                &policy_copy_roots,
-                policy_copy_principal_roots.as_deref(),
-            )?
-        } else {
-            FilesystemProvider::new()
-        };
+        let filesystem = configured_filesystem(
+            &policy_copy_roots,
+            policy_copy_principal_roots.as_deref(),
+            copy_allowed,
+        )?;
         router.register(Arc::new(filesystem))?;
         router.register(Arc::new(SearchProvider::new()))?;
         router.register(Arc::new(ProcessProvider::with_ownership(Arc::clone(
@@ -200,6 +197,18 @@ impl AgentRuntime {
             }
             Err(error) => store_failure_result(&invocation, error),
         }
+    }
+}
+
+fn configured_filesystem(
+    agent_roots: &[PathBuf],
+    principal_roots: Option<&[PathBuf]>,
+    copy_allowed: bool,
+) -> Result<FilesystemProvider, CapabilityError> {
+    if copy_allowed {
+        FilesystemProvider::with_copy_roots(agent_roots, principal_roots)
+    } else {
+        Ok(FilesystemProvider::new())
     }
 }
 
