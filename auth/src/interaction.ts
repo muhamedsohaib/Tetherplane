@@ -458,9 +458,34 @@ export class TetherAuthInteractionController {
 
     const promptDetails =
       details.prompt.details ?? {};
-    const oidcScopes = parseStringArray(
+    const requestedOIDCScopes = parseStringArray(
       promptDetails.missingOIDCScope,
       "OIDC consent scope",
+    );
+    const resourceScopes = parseResourceScopes(
+      promptDetails.missingResourceScopes,
+      resource,
+    );
+
+    // oidc-provider may also expose a resource-scoped permission in the
+    // generic OIDC scope prompt. Never grant it as an unbound OIDC scope:
+    // acknowledge the duplicate ONLY if that exact permission is present
+    // for the previously validated canonical MCP resource.
+    if (
+      requestedOIDCScopes.includes(ALLOWED_RESOURCE_SCOPE) &&
+      !resourceScopes.some(
+        ({ resource: indicator, scopes }) =>
+          indicator === resource &&
+          scopes.includes(ALLOWED_RESOURCE_SCOPE),
+      )
+    ) {
+      throw new Error(
+        "OIDC consent access scope requires the canonical MCP resource",
+      );
+    }
+
+    const oidcScopes = requestedOIDCScopes.filter(
+      (scope) => scope !== ALLOWED_RESOURCE_SCOPE,
     );
     if (
       oidcScopes.some(
@@ -499,11 +524,7 @@ export class TetherAuthInteractionController {
       }
     }
 
-    const resourceScopes =
-      parseResourceScopes(
-        promptDetails.missingResourceScopes,
-        resource,
-      );
+
 
     let grantId: string | undefined;
     if (details.grantId !== undefined) {
