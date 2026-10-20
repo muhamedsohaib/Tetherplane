@@ -172,6 +172,50 @@ fn principal_filesystem_roots_narrow_global_allowed_directories() {
     ));
 }
 
+#[test]
+fn copy_checks_source_and_destination_against_principal_roots() {
+    let temp = tempfile::TempDir::new().unwrap();
+    let allowed = temp.path().join("allowed");
+    let outside = temp.path().join("outside");
+    std::fs::create_dir_all(&allowed).unwrap();
+    std::fs::create_dir_all(&outside).unwrap();
+    let inside_file = allowed.join("source.txt");
+    let inside_copy = allowed.join("copy.txt");
+    let outside_file = outside.join("secret.txt");
+    let outside_copy = outside.join("copy.txt");
+    std::fs::write(&inside_file, "allowed").unwrap();
+    std::fs::write(&outside_file, "secret").unwrap();
+
+    let broker = LocalPolicyBroker::new(
+        LocalPolicyConfig::new(vec![temp.path().to_path_buf()]).with_principal(profile(
+            "operator:scoped",
+            &["filesystem.copy"],
+            vec![allowed],
+        )),
+    );
+    let invoke = |source: &std::path::Path, destination: &std::path::Path| {
+        invocation(
+            Some("operator:scoped"),
+            "client",
+            Some("Vaulter"),
+            "filesystem.copy",
+            json!({ "source": source, "destination": destination }),
+        )
+    };
+    assert_eq!(
+        broker.evaluate(&invoke(&inside_file, &inside_copy)),
+        PolicyDecision::Allow
+    );
+    assert!(matches!(
+        broker.evaluate(&invoke(&outside_file, &inside_copy)),
+        PolicyDecision::Deny { .. }
+    ));
+    assert!(matches!(
+        broker.evaluate(&invoke(&inside_file, &outside_copy)),
+        PolicyDecision::Deny { .. }
+    ));
+}
+
 struct CountingProcessProvider {
     calls: Arc<AtomicUsize>,
 }
