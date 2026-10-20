@@ -271,13 +271,15 @@ async fn copy_refuses_to_replace_existing_file() {
 #[tokio::test]
 async fn copy_rejects_directory_sources_and_replace_flags() {
     let temp = TempDir::new().unwrap();
+    let directory = temp.path().join("source-dir");
+    fs::create_dir(&directory).unwrap();
     let destination = temp.path().join("copy.txt");
     let provider = FilesystemProvider::with_copy_roots(&[temp.path().to_path_buf()], None).unwrap();
 
     let directory_error = provider
         .execute(&invocation(
             "filesystem.copy",
-            json!({ "source": temp.path(), "destination": destination }),
+            json!({ "source": directory, "destination": destination }),
         ))
         .await
         .unwrap_err();
