@@ -1,5 +1,5 @@
 import assert from "node:assert/strict";
-import { createHash, generateKeyPairSync } from "node:crypto";
+import { createHash, createPublicKey, generateKeyPairSync, verify } from "node:crypto";
 import { mkdtemp, rm } from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
@@ -150,6 +150,43 @@ test("RFC 9207: actual authorization code callback iss equals discovery issuer b
             next.searchParams.get("iss"),
             metadata.issuer,
             "RFC9207 issuer must match discovery exactly, including trailing slash",
+          );
+
+          // Redeem only the synthetic PKCE authorization code against the
+          // local fixture. A valid code must not produce an access token for
+          // any other audience, and the access permission remains resource-bound.
+          const tokenResponse = await fetch(base + "/token", {
+            method: "POST",
+            headers: { "content-type": "application/x-www-form-urlencoded" },
+            body: new URLSearchParams({
+              grant_type: "authorization_code",
+              code: next.searchParams.get("code")!,
+              client_id: client.client_id as string,
+              redirect_uri: CALLBACK,
+              code_verifier: verifier,
+              resource: RESOURCE,
+            }),
+            redirect: "manual",
+            signal: AbortSignal.timeout(5000),
+          });
+          assert.equal(tokenResponse.status, 200, "Canonical resource token exchange must succeed");
+          const tokens = await tokenResponse.json() as Record<string, unknown>;
+          assert.equal(typeof tokens.access_token, "string");
+          const jwt = (tokens.access_token as string).split(".");
+          assert.equal(jwt.length, 3, "Resource access token must be a signed JWT");
+          const claims = JSON.parse(Buffer.from(jwt[1]!, "base64url").toString("utf8")) as Record<string, unknown>;
+          assert.equal(claims.iss, ISSUER);
+          assert.deepEqual(claims.aud, RESOURCE);
+          assert.equal(claims.scope, "tetherplane:access", "No standalone or additional resource permissions");
+          assert.equal(
+            verify(
+              "RSA-SHA256",
+              Buffer.from(jwt[0] + "." + jwt[1]),
+              createPublicKey(privateKey),
+              Buffer.from(jwt[2]!, "base64url"),
+            ),
+            true,
+            "Synthetic JWT signature must verify against the configured key",
           );
           return;
         }
