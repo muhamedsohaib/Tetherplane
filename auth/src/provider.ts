@@ -53,7 +53,6 @@ export function createTetherAuthProvider(
     scopes: [
       "openid",
       "offline_access",
-      "tetherplane:access",
     ],
     responseTypes: ["code"],
     issueRefreshToken() {
