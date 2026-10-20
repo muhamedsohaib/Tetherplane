@@ -1,0 +1,24 @@
+name: Combined OAuth public contract regression
+
+on:
+  push:
+    branches: [test/oauth-ci-recovery-integrated-20261020]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  public-contract:
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, windows-latest]
+    runs-on: ${{ matrix.os }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+      - name: Synthetic read-only issuer resource and JWKS contract (no live requests)
+        run: node --test scripts/test/oauth-public-contract.test.mjs
