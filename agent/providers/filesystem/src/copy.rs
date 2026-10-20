@@ -1,6 +1,5 @@
-use std::collections::BTreeSet;
+use std::collections::BTreeMap;
 use std::fs;
-use std::io::Write;
 use std::path::{Component, Path, PathBuf};
 
 use cap_std::ambient_authority;
@@ -21,27 +20,41 @@ pub(crate) fn open_copy_roots(
     agent_roots: &[PathBuf],
     principal_roots: Option<&[PathBuf]>,
 ) -> Result<Vec<CopyRoot>, CapabilityError> {
-    let mut effective = BTreeSet::new();
-    let canonical = |path: &Path| fs::canonicalize(path).map_err(|error| io_error(path, &error));
+    // Match policy scopes by canonical identity while retaining their launch
+    // spelling for matching incoming paths. Windows canonicalize normally
+    // returns extended-length paths (\\?\C:\\...), unlike RPC paths.
+    let mut effective = BTreeMap::<PathBuf, PathBuf>::new();
+    let resolved = |root: &PathBuf| {
+        let absolute = std::path::absolute(root).map_err(|error| io_error(root, &error))?;
+        let canonical = fs::canonicalize(root).map_err(|error| io_error(root, &error))?;
+        Ok::<(PathBuf, PathBuf), CapabilityError>((absolute, canonical))
+    };
     let agent = agent_roots
         .iter()
-        .map(|root| canonical(root))
+        .map(resolved)
         .collect::<Result<Vec<_>, _>>()?;
 
     match principal_roots {
-        None => effective.extend(agent),
+        None => {
+            for (absolute, canonical) in agent {
+                effective.insert(canonical, absolute);
+            }
+        }
         Some(allowed) => {
             let principal = allowed
                 .iter()
-                .map(|root| canonical(root))
+                .map(resolved)
                 .collect::<Result<Vec<_>, _>>()?;
             // An empty principal root list grants no copy authority.
-            for agent_root in &agent {
-                for principal_root in &principal {
-                    if principal_root.starts_with(agent_root) {
-                        effective.insert(principal_root.clone());
-                    } else if agent_root.starts_with(principal_root) {
-                        effective.insert(agent_root.clone());
+            for (agent_absolute, agent_canonical) in &agent {
+                for (principal_absolute, principal_canonical) in &principal {
+                    if principal_canonical.starts_with(agent_canonical) {
+                        effective.insert(
+                            principal_canonical.clone(),
+                            principal_absolute.clone(),
+                        );
+                    } else if agent_canonical.starts_with(principal_canonical) {
+                        effective.insert(agent_canonical.clone(), agent_absolute.clone());
                     }
                 }
             }
@@ -49,9 +62,9 @@ pub(crate) fn open_copy_roots(
     }
 
     let mut result = Vec::with_capacity(effective.len());
-    for absolute in effective {
-        let handle = Dir::open_ambient_dir(&absolute, ambient_authority())
-            .map_err(|error| io_error(&absolute, &error))?;
+    for (canonical, absolute) in effective {
+        let handle = Dir::open_ambient_dir(&canonical, ambient_authority())
+            .map_err(|error| io_error(&canonical, &error))?;
         result.push(CopyRoot { absolute, handle });
     }
     Ok(result)
@@ -68,10 +81,10 @@ fn located<'a>(roots: &'a [CopyRoot], path: &Path) -> Result<(&'a Dir, PathBuf),
         return Err(copy_denied());
     }
     for root in roots {
-        if let Ok(relative) = path.strip_prefix(&root.absolute) {
-            if relative.file_name().is_some() {
-                return Ok((&root.handle, relative.to_path_buf()));
-            }
+        if let Ok(relative) = path.strip_prefix(&root.absolute)
+            && relative.file_name().is_some()
+        {
+            return Ok((&root.handle, relative.to_path_buf()));
         }
     }
     Err(copy_denied())
