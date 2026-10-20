@@ -57,6 +57,15 @@ impl AgentRuntime {
                 details: serde_json::json!({}),
             })?);
         }
+        // Bind copy handles before principal and agent root values move into
+        // the existing Policy Broker.
+        let filesystem = configured_filesystem(
+            &allowed_roots,
+            principal.as_ref().map(|p| p.allowed_directories.as_slice()),
+            principal
+                .as_ref()
+                .is_none_or(|p| p.allowed_capabilities.contains("filesystem.copy")),
+        )?;
         let bound_principal_id = principal
             .as_ref()
             .map(|profile| profile.principal_id.clone());
@@ -76,10 +85,6 @@ impl AgentRuntime {
             None
         };
         // Preserve root definitions before they move into the local policy.
-        let policy_copy_roots = allowed_roots.clone();
-        let policy_copy_principal_roots = principal
-            .as_ref()
-            .map(|profile| profile.allowed_directories.clone());
         let mut policy_config = LocalPolicyConfig::new(allowed_roots);
         if let Some(profile) = principal {
             policy_config = policy_config.with_principal(profile);
@@ -101,9 +106,6 @@ impl AgentRuntime {
         let browser_operations = browser_provider
             .as_ref()
             .map(|provider| provider.operations().to_vec());
-        let copy_allowed = principal_capabilities
-            .as_ref()
-            .is_none_or(|caps| caps.contains("filesystem.copy"));
         router.register(Arc::new(DeviceProvider::new(
             principal_capabilities,
             job_available,
@@ -113,11 +115,6 @@ impl AgentRuntime {
         )))?;
         // Filesystem copy needs both principal and agent root restrictions,
         // pinned as directory handles before accepting copy operations.
-        let filesystem = configured_filesystem(
-            &policy_copy_roots,
-            policy_copy_principal_roots.as_deref(),
-            copy_allowed,
-        )?;
         router.register(Arc::new(filesystem))?;
         router.register(Arc::new(SearchProvider::new()))?;
         router.register(Arc::new(ProcessProvider::with_ownership(Arc::clone(
