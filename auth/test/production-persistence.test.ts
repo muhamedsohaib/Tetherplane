@@ -355,6 +355,8 @@ test("legacy generic access scopes never become a new unbound MCP grant after up
     assert.ok(await second.provider.Grant.find(bound.grantId), "Do not silently delete valid grants");
     assert.ok(await second.provider.RefreshToken.find(bound.refreshId), "Do not silently delete valid refresh state");
     assert.ok(await second.provider.Grant.find(unbound.grantId), "Inspection of legacy state must not mutate it");
+    const persistedOldGrant = await second.provider.Grant.find(unbound.grantId);
+    assert.match(String(persistedOldGrant?.oidcScope ?? ""), /tetherplane:access/, "Fixture must retain the actual pre-upgrade generic OIDC access scope");
     assert.ok(await second.provider.RefreshToken.find(unbound.refreshId));
 
     const redeem = async (token: string) =>
