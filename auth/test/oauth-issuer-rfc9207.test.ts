@@ -74,6 +74,32 @@ for (const requestedScope of ["openid tetherplane:access", "tetherplane:access"]
     const client = await registration.json() as Record<string, unknown>;
     assert.equal(typeof client.client_id, "string");
 
+    // RFC 9207 also requires iss on error responses. A prompt=none request
+    // cannot log in the synthetic account and must fail through the normal
+    // client callback, never with a missing or altered issuer.
+    const silent = new URL("/auth", ISSUER);
+    silent.searchParams.set("client_id", client.client_id as string);
+    silent.searchParams.set("redirect_uri", CALLBACK);
+    silent.searchParams.set("response_type", "code");
+    silent.searchParams.set("scope", "openid");
+    silent.searchParams.set("prompt", "none");
+    silent.searchParams.set("state", "issuer-fixture-error-state");
+    silent.searchParams.set("code_challenge", createHash("sha256").update("x".repeat(43)).digest("base64url"));
+    silent.searchParams.set("code_challenge_method", "S256");
+    const silentResponse = await fetch(base + silent.pathname + silent.search, { redirect: "manual" });
+    assert.ok(silentResponse.status >= 300 && silentResponse.status < 400);
+    const silentLocation = silentResponse.headers.get("location");
+    assert.ok(silentLocation, "Silent authorization errors must redirect to the registered client");
+    const silentCallback = new URL(silentLocation, ISSUER);
+    assert.equal(silentCallback.origin + silentCallback.pathname, CALLBACK);
+    assert.match(String(silentCallback.searchParams.get("error")), /required|denied/);
+    assert.equal(silentCallback.searchParams.get("state"), "issuer-fixture-error-state");
+    assert.equal(
+      silentCallback.searchParams.get("iss"),
+      metadata.issuer,
+      "RFC 9207 requires byte-identical iss in error responses too",
+    );
+
     // The entire flow stays on a loopback ephemeral service, except the final
     // Location value. Never follow the callback to the synthetic external host.
     const cookies = new Map<string, string>();
