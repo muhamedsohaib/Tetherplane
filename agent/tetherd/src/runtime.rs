@@ -64,7 +64,7 @@ impl AgentRuntime {
             principal.as_ref().map(|p| p.allowed_directories.as_slice()),
             principal
                 .as_ref()
-                .is_none_or(|p| p.allowed_capabilities.contains("filesystem.copy")),
+                .is_some_and(|p| p.allowed_capabilities.contains("filesystem.copy")),
         )?;
         let bound_principal_id = principal
             .as_ref()
@@ -288,9 +288,17 @@ impl DeviceProvider {
         operations
             .iter()
             .filter(|operation| {
+                let capability = format!("{namespace}.{operation}");
+                if capability == "filesystem.copy" {
+                    // Unlike legacy unbound operations, this new mutating
+                    // capability requires a launch-bound explicit grant.
+                    return self.allowed_capabilities
+                        .as_ref()
+                        .is_some_and(|allowed| allowed.contains(&capability));
+                }
                 self.allowed_capabilities
                     .as_ref()
-                    .is_none_or(|allowed| allowed.contains(&format!("{namespace}.{operation}")))
+                    .is_none_or(|allowed| allowed.contains(&capability))
             })
             .map(|operation| (*operation).to_owned())
             .collect()
