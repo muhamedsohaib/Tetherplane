@@ -62,6 +62,11 @@ jobs:
       - name: Authored unsafe scan
         run: python scripts/check-no-unsafe.py
 
+      - name: Release environment fail-closed preflight tests
+        if: runner.os == 'Windows'
+        shell: pwsh
+        run: ./tests/release/windows-release-environment-preflight.test.ps1
+
       - name: Windows release binary
         if: runner.os == 'Windows'
         run: cargo build --release -p tetherd
