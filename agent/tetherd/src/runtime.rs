@@ -75,6 +75,11 @@ impl AgentRuntime {
         } else {
             None
         };
+        // Preserve root definitions before they move into the local policy.
+        let policy_copy_roots = allowed_roots.clone();
+        let policy_copy_principal_roots = principal
+            .as_ref()
+            .map(|profile| profile.allowed_directories.clone());
         let mut policy_config = LocalPolicyConfig::new(allowed_roots);
         if let Some(profile) = principal {
             policy_config = policy_config.with_principal(profile);
@@ -103,7 +108,20 @@ impl AgentRuntime {
             browser_operations,
             desktop_operations,
         )))?;
-        router.register(Arc::new(FilesystemProvider::new()))?;
+        // Filesystem copy needs both principal and agent root restrictions,
+        // pinned as directory handles before accepting copy operations.
+        let copy_allowed = principal_capabilities
+            .as_ref()
+            .is_none_or(|caps| caps.contains("filesystem.copy"));
+        let filesystem = if copy_allowed {
+            FilesystemProvider::with_copy_roots(
+                &policy_copy_roots,
+                policy_copy_principal_roots.as_deref(),
+            )?
+        } else {
+            FilesystemProvider::new()
+        };
+        router.register(Arc::new(filesystem))?;
         router.register(Arc::new(SearchProvider::new()))?;
         router.register(Arc::new(ProcessProvider::with_ownership(Arc::clone(
             &ownership,
