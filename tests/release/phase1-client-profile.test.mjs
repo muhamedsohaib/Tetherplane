@@ -85,7 +85,7 @@ test('requires explicitly approved principal and isolated state directory', () =
   assert.throws(() => buildProfile([...short, '--state-dir', state]), /--principal-profile is required/);
   assert.throws(() => buildProfile(['--client', 'codex', ...flags.slice(0, -2)]), /--principal-profile is required/);
   assert.throws(() => buildProfile(['--client', 'codex', ...flags.slice(0, 4), '--allow', allow,
-    '--state-dir', allow, '--principal-profile', principal]), /state directory must not equal/);
+    '--state-dir', allow, '--principal-profile', principal]), /state directory must not overlap/);
 });
 
 test('rejects overly broad filesystem or home roots', () => {
@@ -93,6 +93,27 @@ test('rejects overly broad filesystem or home roots', () => {
     '--state-dir', state, '--principal-profile', principal];
   assert.throws(() => buildProfile([...broad, '--allow', path.parse(root).root]), /allowed root must be narrower/);
   assert.throws(() => buildProfile([...broad, '--allow', os.homedir()]), /allowed root must be narrower/);
+});
+
+test('rejects state directories inside or containing the allowed root', () => {
+  const nestedState = path.join(allow, 'nested-state');
+  const nestedAllowed = path.join(state, 'nested-allowed');
+  mkdirSync(nestedState);
+  mkdirSync(nestedAllowed);
+  assert.throws(() => buildProfile(['--client', 'codex', '--server', server,
+    '--tetherd', tetherd, '--allow', allow, '--state-dir', nestedState,
+    '--principal-profile', principal]), /state directory must not overlap/);
+  assert.throws(() => buildProfile(['--client', 'codex', '--server', server,
+    '--tetherd', tetherd, '--allow', nestedAllowed, '--state-dir', state,
+    '--principal-profile', principal]), /state directory must not overlap/);
+});
+
+test('rejects principal profile located in the allowed files root', () => {
+  const untrustedPrincipal = path.join(allow, 'principal.json');
+  writeFileSync(untrustedPrincipal, '{}');
+  assert.throws(() => buildProfile(['--client', 'codex', '--server', server,
+    '--tetherd', tetherd, '--allow', allow, '--state-dir', state,
+    '--principal-profile', untrustedPrincipal]), /principal profile must be outside/);
 });
 
 test('rejects symlinked ancestors as well as final symlink', { skip: process.platform === 'win32' }, () => {

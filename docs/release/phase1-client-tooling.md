@@ -26,7 +26,7 @@ Run the same command with `--opencode-schema v2` **only when the installed OpenC
 
 For Claude Code change `--client` to `claude-code` and omit `--opencode-schema`. For Codex use `--client codex` and omit `--opencode-schema`. On Windows use the actual fully qualified `tetherd.exe` and normal Windows absolute paths; do not copy Unix paths verbatim.
 
-**Review, don't overwrite:** the result is a standalone JSON/TOML fragment. Before inserting it in an existing client configuration, verify the installed client version and all existing MCP entries. Do not replace that configuration; do not silently widen the principal, allowed root or device permissions. The tool rejects missing paths, symlink paths, filesystem/home roots, and missing explicit principal or isolated state directory.
+**Review, don't overwrite:** the result is a standalone JSON/TOML fragment. Before inserting it in an existing client configuration, verify the installed client version and all existing MCP entries. Do not replace that configuration; do not silently widen the principal, allowed root or device permissions. The tool rejects missing paths, symlink paths, filesystem/home roots, missing explicit principal/state directory, state directories overlapping the allowed files root, and principal profiles within that root. These checks prevent accidental exposure of local authorization inputs through permitted file operations; local `tetherd` policy remains authoritative.
 
 ## Verify the real acceptance evidence
 
