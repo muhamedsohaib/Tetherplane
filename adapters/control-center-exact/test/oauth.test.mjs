@@ -138,6 +138,22 @@ test('invalid token type, expiry or expanded scope cannot establish a local sess
     const p=await setup(t,{token});const tx=await p.start();assert.equal((await p.callback(tx)).status,400);assert.equal(p.portal.sessions.size,0);
   }
 });
+test('cross-site navigation to the public portal is allowed without relaxing API boundaries', async t => {
+  const p=await setup(t);
+  const page=await fetch(p.origin+'/',{headers:{'sec-fetch-site':'cross-site'}});
+  assert.equal(page.status,200);
+  assert.equal((await fetch(p.origin+'/api/session',{headers:{'sec-fetch-site':'cross-site'}})).status,403);
+  assert.equal((await fetch(p.origin+'/tp-integration.js',{headers:{'sec-fetch-site':'cross-site'}})).status,403);
+  // Undici's fetch normalizes forbidden Host overrides; use raw Node HTTP for this check.
+  const {request} = await import('node:http');
+  const foreignHostStatus = await new Promise((resolve,reject) => {
+    const req=request(p.origin+'/',{headers:{host:'localhost:'+new URL(p.origin).port}},res=>{res.resume();resolve(res.statusCode);});
+    req.on('error',reject);req.end();
+  });
+  assert.equal(foreignHostStatus,403);
+  assert.equal((await fetch(p.origin+'/',{headers:{origin:'https://attacker.example'}})).status,403);
+});
+
 test('OAuth mode serves the original document and extends behavior without changing visual source', async t => {
   const p=await setup(t);const raw=await readFile(new URL('./fixture.html',import.meta.url),'utf8');
   const served=await (await fetch(p.origin)).text();assert.equal(served.replace('<script src="/tp-integration.js" defer></script>\n',''),raw);
