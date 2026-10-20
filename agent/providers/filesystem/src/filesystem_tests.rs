@@ -223,6 +223,104 @@ async fn mkdir_creates_the_requested_directory() {
 }
 
 #[tokio::test]
+async fn copy_preserves_original_and_binary_bytes() {
+    let temp = TempDir::new().unwrap();
+    let source = temp.path().join("source.bin");
+    let destination = temp.path().join("copy.bin");
+    let bytes = [0_u8, 1, 127, 128, 255];
+    fs::write(&source, bytes).unwrap();
+    let provider = FilesystemProvider::new();
+
+    let result = provider
+        .execute(&invocation(
+            "filesystem.copy",
+            json!({ "source": source, "destination": destination }),
+        ))
+        .await
+        .unwrap();
+
+    assert_eq!(result.data["bytes"].as_u64(), Some(5));
+    assert_eq!(result.data["replaced"], false);
+    assert_eq!(fs::read(&source).unwrap(), bytes);
+    assert_eq!(fs::read(&destination).unwrap(), bytes);
+}
+
+#[tokio::test]
+async fn copy_refuses_to_replace_existing_file() {
+    let temp = TempDir::new().unwrap();
+    let source = temp.path().join("source.txt");
+    let destination = temp.path().join("existing.txt");
+    fs::write(&source, "original").unwrap();
+    fs::write(&destination, "keep").unwrap();
+    let provider = FilesystemProvider::new();
+
+    let error = provider
+        .execute(&invocation(
+            "filesystem.copy",
+            json!({ "source": source, "destination": destination }),
+        ))
+        .await
+        .unwrap_err();
+
+    assert_eq!(error.code, ErrorCode::PreconditionFailed);
+    assert_eq!(error.details["reason"], "destination_exists");
+    assert_eq!(fs::read_to_string(&destination).unwrap(), "keep");
+    assert_eq!(fs::read_to_string(&source).unwrap(), "original");
+}
+
+#[tokio::test]
+async fn copy_rejects_directory_sources_and_replace_flags() {
+    let temp = TempDir::new().unwrap();
+    let destination = temp.path().join("copy.txt");
+    let provider = FilesystemProvider::new();
+
+    let directory_error = provider
+        .execute(&invocation(
+            "filesystem.copy",
+            json!({ "source": temp.path(), "destination": destination }),
+        ))
+        .await
+        .unwrap_err();
+    assert_eq!(directory_error.code, ErrorCode::InvalidArguments);
+
+    let source = temp.path().join("file.txt");
+    fs::write(&source, "safe").unwrap();
+    let replace_error = provider
+        .execute(&invocation(
+            "filesystem.copy",
+            json!({ "source": source, "destination": destination, "replace": true }),
+        ))
+        .await
+        .unwrap_err();
+    assert_eq!(replace_error.code, ErrorCode::InvalidArguments);
+    assert!(!destination.exists());
+}
+
+#[cfg(unix)]
+#[tokio::test]
+async fn copy_rejects_symlink_source() {
+    use std::os::unix::fs::symlink;
+
+    let temp = TempDir::new().unwrap();
+    let source = temp.path().join("source.txt");
+    let link = temp.path().join("link.txt");
+    let destination = temp.path().join("copy.txt");
+    fs::write(&source, "safe").unwrap();
+    symlink(&source, &link).unwrap();
+    let provider = FilesystemProvider::new();
+
+    let error = provider
+        .execute(&invocation(
+            "filesystem.copy",
+            json!({ "source": link, "destination": destination }),
+        ))
+        .await
+        .unwrap_err();
+    assert_eq!(error.code, ErrorCode::InvalidArguments);
+    assert!(!destination.exists());
+}
+
+#[tokio::test]
 async fn move_rejects_existing_destination_unless_replace_is_explicit() {
     let temp = TempDir::new().unwrap();
     let source = temp.path().join("source.txt");
