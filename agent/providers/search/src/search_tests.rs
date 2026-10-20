@@ -211,7 +211,7 @@ async fn hidden_files_and_hidden_directories_are_opt_in() {
     )
     .await;
     let visible = collect_relative_paths(&provider, &visible_handle).await;
-    assert!(visible.is_empty());
+    assert_eq!(visible, Vec::<String>::new());
 
     let hidden_handle = start_filename(
         &provider,
