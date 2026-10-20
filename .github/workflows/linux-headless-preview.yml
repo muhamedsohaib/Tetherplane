@@ -1,0 +1,95 @@
+name: Linux headless developer-preview gate
+
+on:
+  push:
+    branches:
+      - feature/linux-preview-readiness-20261020
+  pull_request:
+    paths:
+      - "agent/**"
+      - "adapters/compact-mcp/**"
+      - "protocol/**"
+      - "scripts/release-smoke.mjs"
+      - "scripts/package-linux.sh"
+      - "scripts/verify-linux-package.mjs"
+      - ".github/workflows/linux-headless-preview.yml"
+      - "docs/release/linux-developer-preview.md"
+      - "pnpm-lock.yaml"
+      - "Cargo.lock"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  linux-headless:
+    name: Ubuntu headless (${{ matrix.os }})
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 45
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-22.04, ubuntu-24.04]
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          components: rustfmt, clippy
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+      - name: Prepare pinned pnpm
+        run: |
+          corepack enable
+          corepack prepare pnpm@10.34.5 --activate
+      - name: Install workspace dependencies
+        run: pnpm install --frozen-lockfile
+      - name: Format, lint and Rust policy tests
+        run: |
+          cargo fmt --all -- --check
+          cargo clippy --workspace --all-targets -- -D warnings
+          cargo test --workspace
+      - name: Build Linux agent and Compact MCP adapter
+        run: |
+          cargo build --release -p tetherd
+          pnpm --filter '@tetherplane/compact-mcp...' build
+      - name: Build unapproved Linux candidate and verify SHA-256 manifest
+        shell: bash
+        run: |
+          set -euo pipefail
+          scratch="$(mktemp -d)"
+          trap 'rm -rf -- "$scratch"' EXIT
+          package="$scratch/Tetherplane-Linux-x64"
+          bash scripts/package-linux.sh --output "$package" --skip-build
+          node scripts/verify-linux-package.mjs "$package"
+          mkdir -m 700 "$scratch/allowed" "$scratch/state"
+          node "$package/adapters/compact-mcp/smoke-six-tools.mjs" \
+            --tetherd "$package/bin/tetherd" \
+            --allow "$scratch/allowed" \
+            --state-dir "$scratch/state"
+          cp "$package/bin/tetherd" "$scratch/original-agent"
+          printf x >> "$package/bin/tetherd"
+          if node scripts/verify-linux-package.mjs "$package" >/dev/null 2>&1; then
+            echo "Integrity verifier unexpectedly accepted tampered agent" >&2
+            exit 1
+          fi
+          mv -f -- "$scratch/original-agent" "$package/bin/tetherd"
+          node scripts/verify-linux-package.mjs "$package"
+          tar --sort=name --mtime='@0' --owner=0 --group=0 --numeric-owner \
+            -czf Tetherplane-Linux-x64-candidate.tar.gz \
+            -C "$scratch" Tetherplane-Linux-x64
+          sha256sum Tetherplane-Linux-x64-candidate.tar.gz > Linux-SHA256SUMS.txt
+          sha256sum -c Linux-SHA256SUMS.txt
+      - name: Authored unsafe-code scan
+        run: python scripts/check-no-unsafe.py
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        with:
+          name: Linux-unapproved-candidate-${{ matrix.os }}
+          retention-days: 3
+          path: |
+            Tetherplane-Linux-x64-candidate.tar.gz
+            Linux-SHA256SUMS.txt
+      - name: Review boundary notice
+        run: |
+          echo "CI verifies a clean hosted Ubuntu build and local headless MCP surface only."
+          echo "Live pairing, OAuth, reboot reconnect, distribution and rollback remain operator gates."
