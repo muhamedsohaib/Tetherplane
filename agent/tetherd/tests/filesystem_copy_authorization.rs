@@ -21,7 +21,7 @@ fn unique_root() -> PathBuf {
     ))
 }
 
-fn invoke(id: &str, capability: &str, arguments: Value) -> Value {
+fn invoke(id: &str, capability: &str, arguments: &Value) -> Value {
     json!({
         "protocol_version": "1.0",
         "request_id": id,
@@ -116,11 +116,11 @@ fn filesystem_copy_is_denied_without_launch_bound_principal_or_grant() {
     fs::write(&source, [0_u8, 255_u8]).unwrap();
 
     let requests = [
-        invoke(CAPS_ID, "device.capabilities", json!({})),
+        invoke(CAPS_ID, "device.capabilities", &json!({})),
         invoke(
             COPY_ID,
             "filesystem.copy",
-            json!({"source": source, "destination": destination}),
+            &json!({"source": source, "destination": destination}),
         ),
     ];
 
@@ -164,11 +164,11 @@ fn filesystem_copy_requires_grant_and_enforces_both_paths_in_real_agent() {
         &workspace,
         Some(&principal),
         &[
-            invoke(CAPS_ID, "device.capabilities", json!({})),
+            invoke(CAPS_ID, "device.capabilities", &json!({})),
             invoke(
                 COPY_ID,
                 "filesystem.copy",
-                json!({"source": source, "destination": destination}),
+                &json!({"source": source, "destination": destination}),
             ),
         ],
     );
@@ -187,17 +187,17 @@ fn filesystem_copy_requires_grant_and_enforces_both_paths_in_real_agent() {
             invoke(
                 REPLACE_ID,
                 "filesystem.copy",
-                json!({"source": source, "destination": destination}),
+                &json!({"source": source, "destination": destination}),
             ),
             invoke(
                 OUTSIDE_SOURCE_ID,
                 "filesystem.copy",
-                json!({"source": outside_source, "destination": workspace.join("leak.bin")}),
+                &json!({"source": outside_source, "destination": workspace.join("leak.bin")}),
             ),
             invoke(
                 OUTSIDE_DEST_ID,
                 "filesystem.copy",
-                json!({"source": source, "destination": outside_destination}),
+                &json!({"source": source, "destination": outside_destination}),
             ),
         ],
     );
