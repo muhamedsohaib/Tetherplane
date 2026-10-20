@@ -209,7 +209,7 @@ async fn physical_move_requires_live_matching_lease_and_human_idle() {
         .await
         .unwrap_err();
     assert_eq!(missing.code, ErrorCode::ForegroundLeaseRequired);
-    assert!(physical.moves.lock().unwrap().is_empty());
+    assert_eq!(physical.moves.lock().unwrap().len(), 0);
 
     let lease = provider
         .execute(&invocation(
@@ -244,7 +244,7 @@ async fn physical_move_requires_live_matching_lease_and_human_idle() {
         .await
         .unwrap_err();
     assert_eq!(conflict.code, ErrorCode::HumanActivityConflict);
-    assert!(physical.moves.lock().unwrap().is_empty());
+    assert_eq!(physical.moves.lock().unwrap().len(), 0);
 
     activity.set_idle(5_000);
     let moved = provider
