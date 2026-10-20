@@ -57,6 +57,15 @@ impl AgentRuntime {
                 details: serde_json::json!({}),
             })?);
         }
+        // Bind copy handles before principal and agent root values move into
+        // the existing Policy Broker.
+        let filesystem = configured_filesystem(
+            &allowed_roots,
+            principal.as_ref().map(|p| p.allowed_directories.as_slice()),
+            principal
+                .as_ref()
+                .is_some_and(|p| p.allowed_capabilities.contains("filesystem.copy")),
+        )?;
         let bound_principal_id = principal
             .as_ref()
             .map(|profile| profile.principal_id.clone());
@@ -75,6 +84,7 @@ impl AgentRuntime {
         } else {
             None
         };
+        // Preserve root definitions before they move into the local policy.
         let mut policy_config = LocalPolicyConfig::new(allowed_roots);
         if let Some(profile) = principal {
             policy_config = policy_config.with_principal(profile);
@@ -103,7 +113,9 @@ impl AgentRuntime {
             browser_operations,
             desktop_operations,
         )))?;
-        router.register(Arc::new(FilesystemProvider::new()))?;
+        // Filesystem copy needs both principal and agent root restrictions,
+        // pinned as directory handles before accepting copy operations.
+        router.register(Arc::new(filesystem))?;
         router.register(Arc::new(SearchProvider::new()))?;
         router.register(Arc::new(ProcessProvider::with_ownership(Arc::clone(
             &ownership,
@@ -185,6 +197,18 @@ impl AgentRuntime {
     }
 }
 
+fn configured_filesystem(
+    agent_roots: &[PathBuf],
+    principal_roots: Option<&[PathBuf]>,
+    copy_allowed: bool,
+) -> Result<FilesystemProvider, CapabilityError> {
+    if copy_allowed {
+        FilesystemProvider::with_copy_roots(agent_roots, principal_roots)
+    } else {
+        Ok(FilesystemProvider::new())
+    }
+}
+
 #[cfg(windows)]
 fn create_desktop_provider(
     ownership: Arc<TrustedOwnershipRegistry>,
@@ -248,7 +272,7 @@ impl DeviceProvider {
         json!({
             "providers": [
                 { "namespace": "device", "available": true, "operations": self.operations("device", &["status", "capabilities"]) },
-                { "namespace": "filesystem", "available": true, "operations": self.operations("filesystem", &["read", "read_many", "list", "info", "write", "append", "mkdir", "move", "patch"]) },
+                { "namespace": "filesystem", "available": true, "operations": self.operations("filesystem", &["read", "read_many", "list", "info", "write", "append", "mkdir", "copy", "move", "patch"]) },
                 { "namespace": "search", "available": true, "operations": self.operations("search", &["start", "read", "stop", "list"]) },
                 { "namespace": "process", "available": true, "operations": self.operations("process", &["run", "read", "input", "list_sessions", "list_system", "terminate"]) },
                 { "namespace": "batch", "available": true, "operations": self.operations("batch", &["execute"]) },
@@ -264,9 +288,18 @@ impl DeviceProvider {
         operations
             .iter()
             .filter(|operation| {
+                let capability = format!("{namespace}.{operation}");
+                if capability == "filesystem.copy" {
+                    // Unlike legacy unbound operations, this new mutating
+                    // capability requires a launch-bound explicit grant.
+                    return self
+                        .allowed_capabilities
+                        .as_ref()
+                        .is_some_and(|allowed| allowed.contains(&capability));
+                }
                 self.allowed_capabilities
                     .as_ref()
-                    .is_none_or(|allowed| allowed.contains(&format!("{namespace}.{operation}")))
+                    .is_none_or(|allowed| allowed.contains(&capability))
             })
             .map(|operation| (*operation).to_owned())
             .collect()

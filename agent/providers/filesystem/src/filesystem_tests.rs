@@ -223,6 +223,233 @@ async fn mkdir_creates_the_requested_directory() {
 }
 
 #[tokio::test]
+async fn copy_preserves_original_and_binary_bytes() {
+    let temp = TempDir::new().unwrap();
+    let source = temp.path().join("source.bin");
+    let destination = temp.path().join("copy.bin");
+    let bytes = [0_u8, 1, 127, 128, 255];
+    fs::write(&source, bytes).unwrap();
+    let provider = FilesystemProvider::with_copy_roots(&[temp.path().to_path_buf()], None).unwrap();
+
+    let result = provider
+        .execute(&invocation(
+            "filesystem.copy",
+            json!({ "source": source, "destination": destination }),
+        ))
+        .await
+        .unwrap();
+
+    assert_eq!(result.data["bytes"].as_u64(), Some(5));
+    assert_eq!(result.data["replaced"], false);
+    assert_eq!(fs::read(&source).unwrap(), bytes);
+    assert_eq!(fs::read(&destination).unwrap(), bytes);
+}
+
+#[tokio::test]
+async fn copy_refuses_to_replace_existing_file() {
+    let temp = TempDir::new().unwrap();
+    let source = temp.path().join("source.txt");
+    let destination = temp.path().join("existing.txt");
+    fs::write(&source, "original").unwrap();
+    fs::write(&destination, "keep").unwrap();
+    let provider = FilesystemProvider::with_copy_roots(&[temp.path().to_path_buf()], None).unwrap();
+
+    let error = provider
+        .execute(&invocation(
+            "filesystem.copy",
+            json!({ "source": source, "destination": destination }),
+        ))
+        .await
+        .unwrap_err();
+
+    assert_eq!(error.code, ErrorCode::PreconditionFailed);
+    assert_eq!(error.details["reason"], "destination_exists");
+    assert_eq!(fs::read_to_string(&destination).unwrap(), "keep");
+    assert_eq!(fs::read_to_string(&source).unwrap(), "original");
+}
+
+#[tokio::test]
+async fn copy_rejects_directory_sources_and_replace_flags() {
+    let temp = TempDir::new().unwrap();
+    let directory = temp.path().join("source-dir");
+    fs::create_dir(&directory).unwrap();
+    let destination = temp.path().join("copy.txt");
+    let provider = FilesystemProvider::with_copy_roots(&[temp.path().to_path_buf()], None).unwrap();
+
+    let directory_error = provider
+        .execute(&invocation(
+            "filesystem.copy",
+            json!({ "source": directory, "destination": destination }),
+        ))
+        .await
+        .unwrap_err();
+    assert_eq!(directory_error.code, ErrorCode::InvalidArguments);
+
+    let source = temp.path().join("file.txt");
+    fs::write(&source, "safe").unwrap();
+    let replace_error = provider
+        .execute(&invocation(
+            "filesystem.copy",
+            json!({ "source": source, "destination": destination, "replace": true }),
+        ))
+        .await
+        .unwrap_err();
+    assert_eq!(replace_error.code, ErrorCode::InvalidArguments);
+    assert!(!destination.exists());
+}
+
+#[cfg(unix)]
+#[tokio::test]
+async fn copy_rejects_symlink_source() {
+    use std::os::unix::fs::symlink;
+
+    let temp = TempDir::new().unwrap();
+    let source = temp.path().join("source.txt");
+    let link = temp.path().join("link.txt");
+    let destination = temp.path().join("copy.txt");
+    fs::write(&source, "safe").unwrap();
+    symlink(&source, &link).unwrap();
+    let provider = FilesystemProvider::with_copy_roots(&[temp.path().to_path_buf()], None).unwrap();
+
+    let error = provider
+        .execute(&invocation(
+            "filesystem.copy",
+            json!({ "source": link, "destination": destination }),
+        ))
+        .await
+        .unwrap_err();
+    assert_eq!(error.code, ErrorCode::InvalidArguments);
+    assert!(!destination.exists());
+}
+
+#[cfg(unix)]
+#[tokio::test]
+async fn copy_rejects_rebound_directory_symlink_escape() {
+    use std::os::unix::fs::symlink;
+
+    let temp = TempDir::new().unwrap();
+    let allowed = temp.path().join("allowed");
+    let outside = temp.path().join("outside");
+    fs::create_dir_all(&allowed).unwrap();
+    fs::create_dir_all(&outside).unwrap();
+    let source = allowed.join("source.bin");
+    let destination = allowed.join("swapped").join("unauthorized.bin");
+    let outside_target = outside.join("unauthorized.bin");
+    fs::write(&source, [0_u8, 255_u8]).unwrap();
+
+    // The handles are opened before an attacker installs a directory link.
+    // An older ambient-path copy could use this post-policy link as a route
+    // outside the approved directory.
+    let provider =
+        FilesystemProvider::with_copy_roots(std::slice::from_ref(&allowed), None).unwrap();
+    symlink(&outside, allowed.join("swapped")).unwrap();
+
+    assert!(
+        provider
+            .execute(&invocation(
+                "filesystem.copy",
+                json!({ "source": source, "destination": destination }),
+            ))
+            .await
+            .is_err()
+    );
+    assert!(!outside_target.exists());
+}
+
+#[cfg(unix)]
+#[tokio::test]
+async fn copy_rejects_symlink_source_which_escapes_root() {
+    use std::os::unix::fs::symlink;
+
+    let temp = TempDir::new().unwrap();
+    let allowed = temp.path().join("allowed");
+    fs::create_dir_all(&allowed).unwrap();
+    let private = temp.path().join("private.bin");
+    fs::write(&private, [1_u8, 2_u8, 3_u8]).unwrap();
+    let link = allowed.join("link.bin");
+    symlink(&private, &link).unwrap();
+    let destination = allowed.join("copied.bin");
+    let provider = FilesystemProvider::with_copy_roots(&[allowed], None).unwrap();
+
+    assert!(
+        provider
+            .execute(&invocation(
+                "filesystem.copy",
+                json!({ "source": link, "destination": destination }),
+            ))
+            .await
+            .is_err()
+    );
+    assert!(!destination.exists());
+}
+
+#[tokio::test]
+async fn copy_requires_configured_roots_and_principal_intersection() {
+    let temp = TempDir::new().unwrap();
+    let global = temp.path().join("global");
+    let permitted = global.join("permitted");
+    let sibling = global.join("sibling");
+    fs::create_dir_all(&permitted).unwrap();
+    fs::create_dir_all(&sibling).unwrap();
+
+    let source = sibling.join("source.bin");
+    let destination = permitted.join("copy.bin");
+    fs::write(&source, [123_u8]).unwrap();
+
+    let provider = FilesystemProvider::with_copy_roots(&[global], Some(&[permitted])).unwrap();
+    assert!(
+        provider
+            .execute(&invocation(
+                "filesystem.copy",
+                json!({ "source": source, "destination": destination }),
+            ))
+            .await
+            .is_err()
+    );
+    assert!(!destination.exists());
+}
+
+#[cfg(windows)]
+#[tokio::test]
+async fn copy_rejects_windows_junction_escape() {
+    let temp = TempDir::new().unwrap();
+    let allowed = temp.path().join("allowed");
+    let outside = temp.path().join("outside");
+    fs::create_dir_all(&allowed).unwrap();
+    fs::create_dir_all(&outside).unwrap();
+    let source = allowed.join("source.bin");
+    let link = allowed.join("redirect");
+    let destination = link.join("forbidden.bin");
+    let outside_target = outside.join("forbidden.bin");
+    fs::write(&source, [0_u8, 255_u8]).unwrap();
+
+    let provider = FilesystemProvider::with_copy_roots(&[allowed], None).unwrap();
+    // Windows directory junctions are reparse points and can be created
+    // without requiring the symbolic-link privilege.
+    let status = std::process::Command::new("cmd.exe")
+        .args(["/C", "mklink", "/J"])
+        .arg(&link)
+        .arg(&outside)
+        .status()
+        .unwrap();
+    assert!(
+        status.success(),
+        "Windows junction test must create its fixture"
+    );
+
+    assert!(
+        provider
+            .execute(&invocation(
+                "filesystem.copy",
+                json!({ "source": source, "destination": destination }),
+            ))
+            .await
+            .is_err()
+    );
+    assert!(!outside_target.exists());
+}
+
+#[tokio::test]
 async fn move_rejects_existing_destination_unless_replace_is_explicit() {
     let temp = TempDir::new().unwrap();
     let source = temp.path().join("source.txt");

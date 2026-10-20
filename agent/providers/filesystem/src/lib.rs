@@ -3,13 +3,14 @@
 #[cfg(test)]
 mod filesystem_tests;
 
+mod copy;
 mod list;
 mod patch;
 mod read;
 mod write;
 
 use std::io;
-use std::path::Path;
+use std::path::{Path, PathBuf};
 
 use async_trait::async_trait;
 use serde_json::json;
@@ -18,13 +19,30 @@ use tether_core::{
     VerificationStatus,
 };
 
-#[derive(Debug, Default)]
-pub struct FilesystemProvider;
+#[derive(Default)]
+pub struct FilesystemProvider {
+    copy_roots: Vec<copy::CopyRoot>,
+}
 
 impl FilesystemProvider {
     #[must_use]
     pub const fn new() -> Self {
-        Self
+        Self {
+            copy_roots: Vec::new(),
+        }
+    }
+
+    /// Construct copy authority from the intersection of launch and principal roots.
+    ///
+    /// # Errors
+    /// Returns an error when a configured root cannot be securely opened.
+    pub fn with_copy_roots(
+        agent_roots: &[PathBuf],
+        principal_roots: Option<&[PathBuf]>,
+    ) -> Result<Self, CapabilityError> {
+        Ok(Self {
+            copy_roots: copy::open_copy_roots(agent_roots, principal_roots)?,
+        })
     }
 }
 
@@ -51,6 +69,7 @@ impl CapabilityProvider for FilesystemProvider {
             "write" => write::write(&invocation.arguments)?,
             "append" => write::append(&invocation.arguments)?,
             "mkdir" => write::mkdir(&invocation.arguments)?,
+            "copy" => copy::copy(&self.copy_roots, &invocation.arguments)?,
             "move" => write::move_path(&invocation.arguments)?,
             "patch" => patch::patch(&invocation.arguments)?,
             _ => {

@@ -133,6 +133,17 @@ try {
         throw "installed six-tool smoke failed with exit code $LASTEXITCODE"
     }
 
+    # Exercise the installed binary in a separate ephemeral stdio process;
+    # never modify live tasks, credentials, signing keys or device profiles.
+    $copyCanaryScript = Join-Path $repo "tests\release\windows-agent-copy-canary.mjs"
+    if (-not (Test-Path -LiteralPath $copyCanaryScript -PathType Leaf)) {
+        throw "Windows agent copy canary script is missing"
+    }
+    & node $copyCanaryScript --tetherd $installedTetherd --scratch-parent (Join-Path $root "copy-canary")
+    if ($LASTEXITCODE -ne 0) {
+        throw "installed binary scoped-copy canary failed with exit code $LASTEXITCODE"
+    }
+
     $sentinel = Join-Path $state "preserve-me.txt"
     Set-Content -LiteralPath $sentinel -Value "preserve" -NoNewline
 

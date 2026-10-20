@@ -192,6 +192,7 @@ pub fn is_mutation_capability(capability: &str) -> bool {
     matches!(
         capability,
         "filesystem.write"
+            | "filesystem.copy"
             | "filesystem.append"
             | "filesystem.mkdir"
             | "filesystem.move"

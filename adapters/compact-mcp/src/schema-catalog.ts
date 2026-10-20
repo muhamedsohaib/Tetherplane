@@ -44,6 +44,10 @@ const CATALOG: Record<string, JsonSchema> = {
     content: string,
   }),
   "filesystem.mkdir": objectSchema(["path"], { path: string }),
+  "filesystem.copy": objectSchema(["source", "destination"], {
+    source: string,
+    destination: string,
+  }),
   "filesystem.move": objectSchema(["source", "destination"], {
     source: string,
     destination: string,
