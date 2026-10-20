@@ -13,6 +13,35 @@ const RESOURCE = "https://relay.example.test/mcp";
 const CALLBACK = "https://client.example.test/oauth/callback";
 const USER_CODE = "ABCD-1234";
 
+test("provider normalizes an HTTPS issuer origin exactly once before discovery", async () => {
+  const tmp = await mkdtemp(path.join(os.tmpdir(), "tether-issuer-no-slash-"));
+  const storage = createSqliteAdapter({ databasePath: path.join(tmp, "issuer.sqlite") });
+  const {privateKey} = generateKeyPairSync("rsa", {modulusLength: 2048});
+  let service: Awaited<ReturnType<typeof startTetherAuthService>> | undefined;
+  try {
+    service = await startTetherAuthService({
+      issuer: ISSUER.slice(0, -1),
+      resource: RESOURCE,
+      interactionBasePath: "/interaction",
+      adapter: storage.Adapter,
+      jwks: {keys: [{...privateKey.export({format: "jwk"}), kid:"no-slash-fixture", alg:"RS256", use:"sig"}]},
+      allowInsecureLocalhost: true,
+      logins: {
+        async start() { return {userCode: USER_CODE, expiresAt: new Date(Date.now()+300000).toISOString()}; },
+        async consume() { return {accountId: "fixture"}; },
+      },
+    }, {host:"127.0.0.1", port:0});
+    const response = await fetch(service.address.url+"/.well-known/openid-configuration");
+    assert.equal(response.status, 200);
+    const metadata = await response.json() as {issuer:string};
+    assert.equal(metadata.issuer, ISSUER, "Provider must not publish an unnormalized no-slash issuer");
+  } finally {
+    await service?.close();
+    storage.close();
+    await rm(tmp, {recursive:true, force:true});
+  }
+});
+
 for (const requestedScope of ["openid tetherplane:access", "tetherplane:access"]) {
   test("RFC 9207 callback and resource-scoped JWT for: " + requestedScope, async () => {
   const temporary = await mkdtemp(path.join(os.tmpdir(), "tether-issuer-"));
