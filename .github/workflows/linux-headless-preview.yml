@@ -1,0 +1,71 @@
+name: Linux headless developer-preview gate
+
+on:
+  push:
+    branches:
+      - feature/linux-preview-readiness-20261020
+  pull_request:
+    paths:
+      - "agent/**"
+      - "adapters/compact-mcp/**"
+      - "protocol/**"
+      - "scripts/release-smoke.mjs"
+      - ".github/workflows/linux-headless-preview.yml"
+      - "docs/release/linux-developer-preview.md"
+      - "pnpm-lock.yaml"
+      - "Cargo.lock"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  linux-headless:
+    name: Ubuntu headless (${{ matrix.os }})
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 45
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-22.04, ubuntu-24.04]
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          components: rustfmt, clippy
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+      - name: Prepare pinned pnpm
+        run: |
+          corepack enable
+          corepack prepare pnpm@10.34.5 --activate
+      - name: Install workspace dependencies
+        run: pnpm install --frozen-lockfile
+      - name: Format, lint and Rust policy tests
+        run: |
+          cargo fmt --all -- --check
+          cargo clippy --workspace --all-targets -- -D warnings
+          cargo test --workspace
+      - name: Build Linux agent and Compact MCP adapter
+        run: |
+          cargo build --release -p tetherd
+          pnpm --filter '@tetherplane/compact-mcp...' build
+      - name: Headless six-tool MCP smoke (isolated local state)
+        shell: bash
+        run: |
+          set -euo pipefail
+          test -x target/release/tetherd
+          test -f adapters/compact-mcp/dist/stdio-server.js
+          scratch="$(mktemp -d)"
+          trap 'rm -rf -- "$scratch"' EXIT
+          mkdir -m 700 "$scratch/allowed" "$scratch/state"
+          cp scripts/release-smoke.mjs adapters/compact-mcp/smoke-six-tools.mjs
+          node adapters/compact-mcp/smoke-six-tools.mjs \
+            --tetherd "$GITHUB_WORKSPACE/target/release/tetherd" \
+            --allow "$scratch/allowed" \
+            --state-dir "$scratch/state"
+      - name: Review boundary notice
+        run: |
+          echo "CI verifies a clean hosted Ubuntu build and local headless MCP surface only."
+          echo "Live pairing, OAuth, reboot reconnect, distribution and rollback remain operator gates."
