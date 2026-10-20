@@ -72,8 +72,8 @@ function verifyDiscovery(data) {
   }
 
   const scopes = requireStringList(data.scopes_supported, "OIDC scopes");
-  if (!scopes.includes("openid")) {
-    fail("OIDC scopes", "openid is missing");
+  if (scopes.length !== 2 || !scopes.includes("openid") || !scopes.includes("offline_access")) {
+    fail("OIDC scopes", "general OIDC permissions are missing or expanded");
   }
   if (scopes.includes("tetherplane:access")) {
     fail("OIDC scopes", "MCP permission incorrectly advertised as general OIDC scope");
@@ -103,6 +103,10 @@ function verifyJwks(data) {
         typeof key.kid !== "string" || key.kid.length < 1 ||
         typeof key.kty !== "string") {
       fail("JWKS", "invalid public key metadata");
+    }
+    if (key.kty !== "RSA" || key.alg !== "RS256" || key.use !== "sig" ||
+        typeof key.n !== "string" || !key.n || typeof key.e !== "string" || !key.e) {
+      fail("JWKS", "expected a public RS256 signing key");
     }
     if (keyIds.has(key.kid)) {
       fail("JWKS", "duplicate signing key identifier");
