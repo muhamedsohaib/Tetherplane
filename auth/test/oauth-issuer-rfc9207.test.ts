@@ -13,7 +13,8 @@ const RESOURCE = "https://relay.example.test/mcp";
 const CALLBACK = "https://client.example.test/oauth/callback";
 const USER_CODE = "ABCD-1234";
 
-test("RFC 9207: actual authorization code callback iss equals discovery issuer byte-for-byte", async () => {
+for (const requestedScope of ["openid tetherplane:access", "tetherplane:access"]) {
+  test("RFC 9207 callback and resource-scoped JWT for: " + requestedScope, async () => {
   const temporary = await mkdtemp(path.join(os.tmpdir(), "tether-issuer-"));
   const storage = createSqliteAdapter({
     databasePath: path.join(temporary, "issuer.sqlite"),
@@ -102,7 +103,7 @@ test("RFC 9207: actual authorization code callback iss equals discovery issuer b
     auth.searchParams.set("client_id", client.client_id as string);
     auth.searchParams.set("redirect_uri", CALLBACK);
     auth.searchParams.set("response_type", "code");
-    auth.searchParams.set("scope", "openid tetherplane:access");
+    auth.searchParams.set("scope", requestedScope);
     auth.searchParams.set("resource", RESOURCE);
     auth.searchParams.set("state", "issuer-fixture-state");
     auth.searchParams.set("code_challenge", createHash("sha256").update(verifier).digest("base64url"));
@@ -196,3 +197,4 @@ test("RFC 9207: actual authorization code callback iss equals discovery issuer b
     await rm(temporary, { recursive: true, force: true });
   }
 });
+}
