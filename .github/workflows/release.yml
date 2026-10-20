@@ -5,29 +5,39 @@ on:
     tags:
       - "v*"
 
+# A tag build must not acquire permission to publish releases.
 permissions:
-  contents: write
+  contents: read
+
+concurrency:
+  group: release-${{ github.ref }}
+  cancel-in-progress: false
 
 jobs:
   windows-x64:
     runs-on: windows-latest
+    permissions:
+      contents: read
 
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        with:
+          persist-credentials: false
 
       - name: Install Rust toolchain
-        uses: dtolnay/rust-toolchain@stable
+        uses: dtolnay/rust-toolchain@b725eda525362e7cf34af9a7243cac1e3f01a7ec # stable commit reviewed 2026-10-20
         with:
+          toolchain: 1.99.1
           components: rustfmt, clippy
 
-      - uses: actions/setup-node@v4
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4
         with:
-          node-version: 22
+          node-version: 22.23.3
 
-      - name: Enable pnpm
+      - name: Enable pinned pnpm
         run: |
           corepack enable
-          corepack prepare pnpm@10 --activate
+          corepack prepare pnpm@10.34.5 --activate
 
       - name: Install workspace
         run: pnpm install --frozen-lockfile
@@ -36,18 +46,27 @@ jobs:
         shell: pwsh
         run: |
           cargo fmt --all -- --check
+          if ($LASTEXITCODE -ne 0) { throw "Rust formatting failed" }
           cargo clippy --workspace --all-targets -- -D warnings
+          if ($LASTEXITCODE -ne 0) { throw "Rust Clippy failed" }
           cargo test --workspace
+          if ($LASTEXITCODE -ne 0) { throw "Rust tests failed" }
           pnpm -r typecheck
+          if ($LASTEXITCODE -ne 0) { throw "TypeScript typecheck failed" }
           pnpm -r test
+          if ($LASTEXITCODE -ne 0) { throw "TypeScript tests failed" }
           pnpm -r build
+          if ($LASTEXITCODE -ne 0) { throw "TypeScript build failed" }
           python scripts/check-no-unsafe.py
+          if ($LASTEXITCODE -ne 0) { throw "Unsafe-code scan failed" }
 
       - name: Build Windows package
         shell: pwsh
         run: |
           ./scripts/package-windows.ps1 -OutputPath dist/Tetherplane-Windows-x64
+          if ($LASTEXITCODE -ne 0) { throw "Windows packaging failed" }
           ./tests/release/windows-package-smoke.ps1
+          if ($LASTEXITCODE -ne 0) { throw "Windows package smoke failed" }
 
       - name: Create archive and checksum
         shell: pwsh
@@ -56,15 +75,81 @@ jobs:
           $hash = (Get-FileHash Tetherplane-Windows-x64.zip -Algorithm SHA256).Hash.ToLowerInvariant()
           "$hash  Tetherplane-Windows-x64.zip" | Set-Content SHA256SUMS.txt -Encoding ascii
 
-      - uses: actions/upload-artifact@v4
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
         with:
           name: Tetherplane-Windows-x64
           path: |
             Tetherplane-Windows-x64.zip
             SHA256SUMS.txt
+          if-no-files-found: error
+          retention-days: 7
 
-      - name: Publish GitHub Release
-        shell: pwsh
+  # Deliberately separate write access from untrusted build and test steps.
+  # An existing GitHub Environment with required reviewers is mandatory.
+  publish:
+    needs: windows-x64
+    runs-on: ubuntu-latest
+    environment:
+      name: tetherplane-release-approval
+    permissions:
+      contents: write
+      actions: read
+
+    steps:
+      - name: Require configured approval protections
         env:
           GH_TOKEN: ${{ github.token }}
-        run: gh release create "${{ github.ref_name }}" Tetherplane-Windows-x64.zip SHA256SUMS.txt --generate-notes
+        run: |
+          set -euo pipefail
+          # If this environment is missing, unprotected, or inaccessible,
+          # release publication fails closed.
+          required_review_rules="$(gh api \
+            "repos/${GITHUB_REPOSITORY}/environments/tetherplane-release-approval" \
+            --jq '[.protection_rules[]? | select(.type == "required_reviewers" and .prevent_self_review == true and ((.reviewers // []) | length > 0))] | length')"
+          if [ "$required_review_rules" != "1" ]; then
+            echo "::error::Required reviewer protection is missing from tetherplane-release-approval."
+            exit 1
+          fi
+
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        with:
+          persist-credentials: false
+          fetch-depth: 0
+
+      - name: Verify tag belongs to reviewed main history
+        run: |
+          set -euo pipefail
+          case "$GITHUB_REF" in
+            refs/tags/v*) ;;
+            *) echo "::error::Only v* tags may release"; exit 1 ;;
+          esac
+          git fetch --no-tags origin +refs/heads/main:refs/remotes/origin/main
+          if ! git merge-base --is-ancestor "$GITHUB_SHA" refs/remotes/origin/main; then
+            echo "::error::Release tag is not on the reviewed main branch history."
+            exit 1
+          fi
+
+      - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4
+        with:
+          name: Tetherplane-Windows-x64
+          path: dist/release
+
+      - name: Verify artifact checksum and source commit
+        run: |
+          set -euo pipefail
+          cd dist/release
+          sha256sum --check SHA256SUMS.txt
+          source_commit="$(unzip -p Tetherplane-Windows-x64.zip manifest.json | jq -er '.source_commit')"
+          if [ "$source_commit" != "$GITHUB_SHA" ]; then
+            echo "::error::Package source commit does not match approved tag."
+            exit 1
+          fi
+
+      - name: Publish GitHub Release
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          gh release create "$GITHUB_REF_NAME" \
+            dist/release/Tetherplane-Windows-x64.zip \
+            dist/release/SHA256SUMS.txt \
+            --verify-tag --generate-notes
