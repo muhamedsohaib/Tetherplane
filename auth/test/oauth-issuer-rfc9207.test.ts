@@ -46,6 +46,16 @@ test("RFC 9207: actual authorization code callback iss equals discovery issuer b
       },
     }, { host: "127.0.0.1", port: 0 });
 
+    const originalBegin = service.interactions.beginInteraction.bind(service.interactions);
+    service.interactions.beginInteraction = async (...args) => {
+      try { return await originalBegin(...args); }
+      catch (error) {
+        // Synthetic client only: report class/message without request, cookies or tokens.
+        console.error("Fixture interaction rejection:", error instanceof Error ? error.name + ": " + error.message : "unknown error");
+        throw error;
+      }
+    };
+
     const base = service.address.url;
     const discovery = await fetch(base + "/.well-known/openid-configuration");
     assert.equal(discovery.status, 200);
