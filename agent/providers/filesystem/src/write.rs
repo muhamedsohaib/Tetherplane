@@ -62,6 +62,62 @@ pub(crate) fn mkdir(arguments: &Value) -> Result<Value, CapabilityError> {
     }))
 }
 
+/// Copies bytes without removing the source or replacing an existing destination.
+/// Both paths must first pass the agent's principal and allowed-root policy.
+pub(crate) fn copy(arguments: &Value) -> Result<Value, CapabilityError> {
+    let source = path_argument(arguments, "source")?;
+    let destination = path_argument(arguments, "destination")?;
+    let parent = existing_parent(&destination)?;
+
+    if arguments.get("replace").is_some() {
+        return Err(invalid_arguments("filesystem.copy never replaces an existing path"));
+    }
+
+    // Do not silently follow symbolic links, junctions or copy directories.
+    let source_type = fs::symlink_metadata(&source)
+        .map_err(|error| io_error(&source, &error))?
+        .file_type();
+    if !source_type.is_file() {
+        return Err(invalid_arguments("source must be a regular file"));
+    }
+
+    let mut input = fs::File::open(&source).map_err(|error| io_error(&source, &error))?;
+    let mut temp = NamedTempFile::new_in(parent)
+        .map_err(|error| io_error(&destination, &error))?;
+    let bytes = std::io::copy(&mut input, &mut temp)
+        .map_err(|error| io_error(&destination, &error))?;
+    temp.flush().map_err(|error| io_error(&destination, &error))?;
+    temp.as_file()
+        .sync_all()
+        .map_err(|error| io_error(&destination, &error))?;
+
+    // Atomic no-clobber publication avoids partial files and overwrite races.
+    temp.persist_noclobber(&destination).map_err(|error| {
+        if error.error.kind() == std::io::ErrorKind::AlreadyExists {
+            CapabilityError {
+                code: ErrorCode::PreconditionFailed,
+                message: "destination already exists".into(),
+                recovery_hint: Some(
+                    "choose a new destination; filesystem.copy never replaces files".into(),
+                ),
+                details: json!({
+                    "destination": destination.to_string_lossy(),
+                    "reason": "destination_exists",
+                }),
+            }
+        } else {
+            io_error(&destination, &error.error)
+        }
+    })?;
+
+    Ok(json!({
+        "source": source.to_string_lossy(),
+        "destination": destination.to_string_lossy(),
+        "bytes": bytes,
+        "replaced": false,
+    }))
+}
+
 pub(crate) fn move_path(arguments: &Value) -> Result<Value, CapabilityError> {
     let source = path_argument(arguments, "source")?;
     let destination = path_argument(arguments, "destination")?;
