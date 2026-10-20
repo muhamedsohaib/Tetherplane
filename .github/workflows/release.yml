@@ -105,7 +105,7 @@ jobs:
           # release publication fails closed.
           required_review_rules="$(gh api \
             "repos/${GITHUB_REPOSITORY}/environments/tetherplane-release-approval" \
-            --jq '[.protection_rules[]? | select(.type == "required_reviewers" and ((.reviewers // []) | length > 0))] | length')"
+            --jq '[.protection_rules[]? | select(.type == "required_reviewers" and .prevent_self_review == true and ((.reviewers // []) | length > 0))] | length')"
           if [ "$required_review_rules" != "1" ]; then
             echo "::error::Required reviewer protection is missing from tetherplane-release-approval."
             exit 1
