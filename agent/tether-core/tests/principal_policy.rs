@@ -197,7 +197,7 @@ fn copy_checks_source_and_destination_against_principal_roots() {
         invocation(
             Some("operator:scoped"),
             "client",
-            Some("Vaulter"),
+            Some("Leno"),
             "filesystem.copy",
             json!({ "source": source, "destination": destination }),
         )
