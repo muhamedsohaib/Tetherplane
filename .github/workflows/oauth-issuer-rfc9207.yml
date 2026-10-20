@@ -32,6 +32,6 @@ jobs:
       - name: Install locked workspace dependencies
         run: pnpm install --frozen-lockfile
       - name: Test real oidc-provider issuer response using synthetic local client
-        run: pnpm --dir auth exec node --test test/oauth-issuer-rfc9207.test.ts
+        run: pnpm --dir auth exec node --test test/consent-resource-bound.test.ts test/oauth-issuer-rfc9207.test.ts
       - name: Auth TypeScript typecheck
         run: pnpm --dir auth exec tsc --noEmit -p tsconfig.test.json
