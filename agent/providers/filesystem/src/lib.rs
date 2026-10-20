@@ -27,7 +27,9 @@ pub struct FilesystemProvider {
 impl FilesystemProvider {
     #[must_use]
     pub const fn new() -> Self {
-        Self { copy_roots: Vec::new() }
+        Self {
+            copy_roots: Vec::new(),
+        }
     }
 
     /// Construct copy authority from the intersection of launch and principal roots.
