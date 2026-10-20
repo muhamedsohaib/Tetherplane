@@ -49,11 +49,11 @@ that known defect is expected; it does not justify weakening the check.
 
 \`node --test scripts/test/oauth-public-contract.test.mjs\`
 
-Nine synthetic tests verify exact-origin and trailing-slash mismatch,
+Eleven synthetic tests verify exact-origin and trailing-slash mismatch,
 canonical resource authorization-server binding, unknown permissions,
 general-versus-resource scope duplication, PKCE and advertised endpoints,
-no private JWKS publication, redirect rejection, network failures, and
-GET-only behavior without credentials or callbacks. Tests run on Windows
+no private JWKS publication, redirect rejection, network failures, GET-only behavior without credentials or callbacks, explicit general
+scope allowlisting, and RS256 signing-key constraints. Tests run on Windows
 and Ubuntu. No production calls are made in CI's synthetic tests.
 
 TetherAuth provider integration tests in the separate
