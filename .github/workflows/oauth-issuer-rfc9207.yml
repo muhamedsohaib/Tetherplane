@@ -1,4 +1,4 @@
-name: TetherAuth RFC9207 issuer characterization
+name: TetherAuth scoped OAuth regression
 
 on:
   push:
@@ -6,7 +6,11 @@ on:
       - test/oauth-issuer-rfc9207-20261020
   pull_request:
     paths:
+      - auth/src/provider.ts
+      - auth/src/config.ts
+      - auth/src/interaction.ts
       - auth/test/oauth-issuer-rfc9207.test.ts
+      - auth/test/consent-resource-bound.test.ts
       - .github/workflows/oauth-issuer-rfc9207.yml
   workflow_dispatch:
 
@@ -33,5 +37,9 @@ jobs:
         run: pnpm install --frozen-lockfile
       - name: Test real oidc-provider issuer response using synthetic local client
         run: pnpm --dir auth exec node --test test/consent-resource-bound.test.ts test/oauth-issuer-rfc9207.test.ts
-      - name: Auth TypeScript typecheck
-        run: pnpm --dir auth exec tsc --noEmit -p tsconfig.test.json
+      - name: Full authentication test suite
+        run: pnpm --dir auth test
+      - name: Relay tests including unauthorized-operation denials
+        run: pnpm --dir relay test
+      - name: Workspace TypeScript typecheck
+        run: pnpm -r typecheck
