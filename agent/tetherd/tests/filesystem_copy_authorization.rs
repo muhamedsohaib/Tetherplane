@@ -84,7 +84,10 @@ fn run_agent(
     for line in BufReader::new(stdout).lines().take(requests.len()) {
         let response: Value = serde_json::from_str(&line.unwrap()).unwrap();
         let id = response["request_id"].as_str().unwrap().to_owned();
-        assert!(responses.insert(id, response).is_none(), "duplicate response ID");
+        assert!(
+            responses.insert(id, response).is_none(),
+            "duplicate response ID"
+        );
     }
     assert_eq!(responses.len(), requests.len());
     assert!(child.wait().unwrap().success());
@@ -200,8 +203,14 @@ fn filesystem_copy_requires_grant_and_enforces_both_paths_in_real_agent() {
     );
     assert_eq!(denied[REPLACE_ID]["status"], "error");
     assert_eq!(denied[REPLACE_ID]["error"]["code"], "precondition_failed");
-    assert_eq!(denied[OUTSIDE_SOURCE_ID]["error"]["code"], "permission_denied");
-    assert_eq!(denied[OUTSIDE_DEST_ID]["error"]["code"], "permission_denied");
+    assert_eq!(
+        denied[OUTSIDE_SOURCE_ID]["error"]["code"],
+        "permission_denied"
+    );
+    assert_eq!(
+        denied[OUTSIDE_DEST_ID]["error"]["code"],
+        "permission_denied"
+    );
     assert!(!workspace.join("leak.bin").exists());
     assert!(!outside_destination.exists());
 
