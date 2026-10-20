@@ -409,6 +409,43 @@ async fn copy_requires_configured_roots_and_principal_intersection() {
     assert!(!destination.exists());
 }
 
+#[cfg(windows)]
+#[tokio::test]
+async fn copy_rejects_windows_junction_escape() {
+    let temp = TempDir::new().unwrap();
+    let allowed = temp.path().join("allowed");
+    let outside = temp.path().join("outside");
+    fs::create_dir_all(&allowed).unwrap();
+    fs::create_dir_all(&outside).unwrap();
+    let source = allowed.join("source.bin");
+    let link = allowed.join("redirect");
+    let destination = link.join("forbidden.bin");
+    let outside_target = outside.join("forbidden.bin");
+    fs::write(&source, [0_u8, 255_u8]).unwrap();
+
+    let provider = FilesystemProvider::with_copy_roots(&[allowed], None).unwrap();
+    // Windows directory junctions are reparse points and can be created
+    // without requiring the symbolic-link privilege.
+    let status = std::process::Command::new("cmd.exe")
+        .args(["/C", "mklink", "/J"])
+        .arg(&link)
+        .arg(&outside)
+        .status()
+        .unwrap();
+    assert!(status.success(), "Windows junction test must create its fixture");
+
+    assert!(
+        provider
+            .execute(&invocation(
+                "filesystem.copy",
+                json!({ "source": source, "destination": destination }),
+            ))
+            .await
+            .is_err()
+    );
+    assert!(!outside_target.exists());
+}
+
 #[tokio::test]
 async fn move_rejects_existing_destination_unless_replace_is_explicit() {
     let temp = TempDir::new().unwrap();
