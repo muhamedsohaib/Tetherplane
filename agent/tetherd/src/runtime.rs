@@ -248,7 +248,7 @@ impl DeviceProvider {
         json!({
             "providers": [
                 { "namespace": "device", "available": true, "operations": self.operations("device", &["status", "capabilities"]) },
-                { "namespace": "filesystem", "available": true, "operations": self.operations("filesystem", &["read", "read_many", "list", "info", "write", "append", "mkdir", "move", "patch"]) },
+                { "namespace": "filesystem", "available": true, "operations": self.operations("filesystem", &["read", "read_many", "list", "info", "write", "append", "mkdir", "copy", "move", "patch"]) },
                 { "namespace": "search", "available": true, "operations": self.operations("search", &["start", "read", "stop", "list"]) },
                 { "namespace": "process", "available": true, "operations": self.operations("process", &["run", "read", "input", "list_sessions", "list_system", "terminate"]) },
                 { "namespace": "batch", "available": true, "operations": self.operations("batch", &["execute"]) },
