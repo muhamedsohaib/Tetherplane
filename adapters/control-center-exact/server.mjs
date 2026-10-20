@@ -156,7 +156,10 @@ export class ExactPortal {
     safeHeaders(res);let sessionId=null;
     try{
       if(!this.origin)throw err(503,'starting','Portal is not listening.');
-      if(req.headers.host!==new URL(this.origin).host||req.headers['sec-fetch-site']==='cross-site'||(req.headers.origin&&req.headers.origin!==this.origin))throw err(403,'origin_denied','Open this portal using its numeric loopback address.');
+      const publicNavigation=(req.method==='GET'||req.method==='HEAD')&&req.url==='/';
+      // A cross-site top-level navigation to the public HTML is harmless. Do not
+      // extend this exception to authenticated APIs, scripts, or OAuth actions.
+      if(req.headers.host!==new URL(this.origin).host||(req.headers['sec-fetch-site']==='cross-site'&&!publicNavigation)||(req.headers.origin&&req.headers.origin!==this.origin))throw err(403,'origin_denied','Open this portal using its numeric loopback address.');
       if(!req.url?.startsWith('/')||req.url.includes('?'))throw err(404,'not_found','Not found.');
       const path=req.url;
       if(path==='/'||path==='/tp-integration.js'){
