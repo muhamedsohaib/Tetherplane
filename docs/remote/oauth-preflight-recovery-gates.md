@@ -114,7 +114,14 @@ state. No test suite can guarantee a service will never fail again. A
 fresh real-client acceptance is mandatory before calling the production
 issuer mismatch resolved.
 
-After a separately authorized production release and acceptance, this
-same preflight may be scheduled as a read-only metadata check to detect
-future routing/configuration drift. Do not turn on recurring monitoring
-against a known failing baseline and interpret it as new incident activity.
+The dedicated workflow contains a read-only public metadata check on
+manual dispatch and a daily schedule (03:17 UTC). GitHub scheduled workflows
+only execute from the default branch, so this schedule cannot begin until a
+separately approved merge. **Do not merge/enable that schedule before the
+auth correction is deployed and live preflight is PASS.** GitHub Actions
+notifications must be enabled and monitored by a designated operator;
+GitHub scheduled tasks can be delayed or disabled and are not an SLA.
+
+Do not turn on recurring monitoring against a known failing baseline and
+interpret it as new incident activity. A failed scheduled check should
+block new reconnect attempts, not rotate or reset the issuer automatically.
