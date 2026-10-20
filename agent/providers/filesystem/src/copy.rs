@@ -3,8 +3,8 @@ use std::fs;
 use std::io::Write;
 use std::path::{Component, Path, PathBuf};
 
-use cap_std::fs::{Dir, OpenOptions};
 use cap_std::ambient_authority;
+use cap_std::fs::{Dir, OpenOptions};
 use serde_json::{Value, json};
 use tether_core::{CapabilityError, ErrorCode};
 use uuid::Uuid;
@@ -22,9 +22,7 @@ pub(crate) fn open_copy_roots(
     principal_roots: Option<&[PathBuf]>,
 ) -> Result<Vec<CopyRoot>, CapabilityError> {
     let mut effective = BTreeSet::new();
-    let canonical = |path: &Path| {
-        fs::canonicalize(path).map_err(|error| io_error(path, &error))
-    };
+    let canonical = |path: &Path| fs::canonicalize(path).map_err(|error| io_error(path, &error));
     let agent = agent_roots
         .iter()
         .map(|root| canonical(root))
@@ -59,10 +57,7 @@ pub(crate) fn open_copy_roots(
     Ok(result)
 }
 
-fn located<'a>(
-    roots: &'a [CopyRoot],
-    path: &Path,
-) -> Result<(&'a Dir, PathBuf), CapabilityError> {
+fn located<'a>(roots: &'a [CopyRoot], path: &Path) -> Result<(&'a Dir, PathBuf), CapabilityError> {
     // The policy has already authorized the caller's paths. Absolute,
     // traversal-free paths also prevent ambiguity in the handle-relative layer.
     if !path.is_absolute()
@@ -91,10 +86,7 @@ fn copy_denied() -> CapabilityError {
     }
 }
 
-pub(crate) fn copy(
-    roots: &[CopyRoot],
-    arguments: &Value,
-) -> Result<Value, CapabilityError> {
+pub(crate) fn copy(roots: &[CopyRoot], arguments: &Value) -> Result<Value, CapabilityError> {
     let source = path_argument(arguments, "source")?;
     let destination = path_argument(arguments, "destination")?;
 
@@ -162,28 +154,26 @@ pub(crate) fn copy(
     drop(staged);
 
     let result = match prepare_result {
-        Ok(bytes) => {
-            destination_dir
-                .hard_link(&staging_name, &destination_dir, filename)
-                .map_err(|error| {
-                    if error.kind() == std::io::ErrorKind::AlreadyExists {
-                        CapabilityError {
-                            code: ErrorCode::PreconditionFailed,
-                            message: "destination already exists".into(),
-                            recovery_hint: Some(
-                                "choose a new destination; copy does not replace files".into(),
-                            ),
-                            details: json!({
-                                "destination": destination.to_string_lossy(),
-                                "reason": "destination_exists",
-                            }),
-                        }
-                    } else {
-                        io_error(&destination, &error)
+        Ok(bytes) => destination_dir
+            .hard_link(&staging_name, &destination_dir, filename)
+            .map_err(|error| {
+                if error.kind() == std::io::ErrorKind::AlreadyExists {
+                    CapabilityError {
+                        code: ErrorCode::PreconditionFailed,
+                        message: "destination already exists".into(),
+                        recovery_hint: Some(
+                            "choose a new destination; copy does not replace files".into(),
+                        ),
+                        details: json!({
+                            "destination": destination.to_string_lossy(),
+                            "reason": "destination_exists",
+                        }),
                     }
-                })
-                .map(|()| bytes)
-        }
+                } else {
+                    io_error(&destination, &error)
+                }
+            })
+            .map(|()| bytes),
         Err(error) => Err(error),
     };
 
