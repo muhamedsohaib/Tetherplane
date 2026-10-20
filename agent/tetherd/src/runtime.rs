@@ -101,6 +101,9 @@ impl AgentRuntime {
         let browser_operations = browser_provider
             .as_ref()
             .map(|provider| provider.operations().to_vec());
+        let copy_allowed = principal_capabilities
+            .as_ref()
+            .is_none_or(|caps| caps.contains("filesystem.copy"));
         router.register(Arc::new(DeviceProvider::new(
             principal_capabilities,
             job_available,
@@ -110,9 +113,6 @@ impl AgentRuntime {
         )))?;
         // Filesystem copy needs both principal and agent root restrictions,
         // pinned as directory handles before accepting copy operations.
-        let copy_allowed = principal_capabilities
-            .as_ref()
-            .is_none_or(|caps| caps.contains("filesystem.copy"));
         let filesystem = if copy_allowed {
             FilesystemProvider::with_copy_roots(
                 &policy_copy_roots,
