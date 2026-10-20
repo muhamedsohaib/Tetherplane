@@ -70,7 +70,9 @@ pub(crate) fn copy(arguments: &Value) -> Result<Value, CapabilityError> {
     let parent = existing_parent(&destination)?;
 
     if arguments.get("replace").is_some() {
-        return Err(invalid_arguments("filesystem.copy never replaces an existing path"));
+        return Err(invalid_arguments(
+            "filesystem.copy never replaces an existing path",
+        ));
     }
 
     // Do not silently follow symbolic links, junctions or copy directories.
@@ -82,11 +84,11 @@ pub(crate) fn copy(arguments: &Value) -> Result<Value, CapabilityError> {
     }
 
     let mut input = fs::File::open(&source).map_err(|error| io_error(&source, &error))?;
-    let mut temp = NamedTempFile::new_in(parent)
+    let mut temp = NamedTempFile::new_in(parent).map_err(|error| io_error(&destination, &error))?;
+    let bytes =
+        std::io::copy(&mut input, &mut temp).map_err(|error| io_error(&destination, &error))?;
+    temp.flush()
         .map_err(|error| io_error(&destination, &error))?;
-    let bytes = std::io::copy(&mut input, &mut temp)
-        .map_err(|error| io_error(&destination, &error))?;
-    temp.flush().map_err(|error| io_error(&destination, &error))?;
     temp.as_file()
         .sync_all()
         .map_err(|error| io_error(&destination, &error))?;
