@@ -338,7 +338,7 @@ async fn copy_rejects_rebound_directory_symlink_escape() {
     // The handles are opened before an attacker installs a directory link.
     // An older ambient-path copy could use this post-policy link as a route
     // outside the approved directory.
-    let provider = FilesystemProvider::with_copy_roots(&[allowed.clone()], None).unwrap();
+    let provider = FilesystemProvider::with_copy_roots(std::slice::from_ref(&allowed), None).unwrap();
     symlink(&outside, allowed.join("swapped")).unwrap();
 
     assert!(
