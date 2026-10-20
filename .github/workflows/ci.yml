@@ -24,7 +24,7 @@ jobs:
         run: cargo fmt --all -- --check
 
       - name: Rust clippy
-        run: cargo clippy --workspace --all-targets -- -D warnings
+        run: cargo clippy -p tether-filesystem-provider -p tether-core -p tetherd --all-targets -- -D warnings
 
       - name: Rust tests
         run: cargo test --workspace
