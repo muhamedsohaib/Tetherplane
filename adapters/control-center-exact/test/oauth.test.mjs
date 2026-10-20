@@ -144,7 +144,13 @@ test('cross-site navigation to the public portal is allowed without relaxing API
   assert.equal(page.status,200);
   assert.equal((await fetch(p.origin+'/api/session',{headers:{'sec-fetch-site':'cross-site'}})).status,403);
   assert.equal((await fetch(p.origin+'/tp-integration.js',{headers:{'sec-fetch-site':'cross-site'}})).status,403);
-  assert.equal((await fetch(p.origin+'/',{headers:{host:'localhost:'+new URL(p.origin).port}})).status,403);
+  // Undici's fetch normalizes forbidden Host overrides; use raw Node HTTP for this check.
+  const {request} = await import('node:http');
+  const foreignHostStatus = await new Promise((resolve,reject) => {
+    const req=request(p.origin+'/',{headers:{host:'localhost:'+new URL(p.origin).port}},res=>{res.resume();resolve(res.statusCode);});
+    req.on('error',reject);req.end();
+  });
+  assert.equal(foreignHostStatus,403);
   assert.equal((await fetch(p.origin+'/',{headers:{origin:'https://attacker.example'}})).status,403);
 });
 
