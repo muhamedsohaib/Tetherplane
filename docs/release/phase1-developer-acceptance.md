@@ -18,11 +18,11 @@ node /absolute/path/adapters/compact-mcp/dist/stdio-server.js --tetherd /absolut
 
 Substitute the actual `tetherd.exe` path on Windows. Node, server, binary, root, state and principal files/paths must be resolved and verified; no token or device credential belongs in the client config. For **OpenCode V1**, use `mcp.tetherplane` with `enabled: true`; for **OpenCode V2**, use `mcp.servers.tetherplane` with `disabled: false` and `codemode: false` to expose the direct six-tool surface (the V2 default enables Code Mode). Select the observed client generation explicitly; do not assume V1 and V2 share a schema. For **Claude Code**, use its stdio `mcpServers.tetherplane` entry; for **Codex**, use `[mcp_servers.tetherplane]` TOML with `command` and `args`. The read-only preview generator in `scripts/release/phase1-client-profile.mjs` requires `--state-dir` and `--principal-profile` for every client, and `--opencode-schema v1|v2` for OpenCode. Verify the exact installed client version before adoption.
 
-Preserve all existing user MCP entries. Do not blindly replace an existing config, modify clients in bulk or add a broad `--allow` root. Client registration/status commands are **not** real tool-call acceptance.
+Keep agent state and the principal profile outside the allowed files root; they are security inputs, not agent-writable workspace artifacts. Preserve all existing user MCP entries. Do not blindly replace an existing config, modify clients in bulk or add a broad `--allow` root. Client registration/status commands are **not** real tool-call acceptance.
 
 ## 3. Actual-client verification (repeat per client)
 
-1. In the **actual named client**, list tools and confirm exactly: `device`, `files`, `process`, `browser`, `desktop`, `batch`.
+1. Confirm the installed MCP server's `tools/list` advertises the six canonical tools: `device`, `files`, `process`, `browser`, `desktop`, `batch`. In each **actual named client**, verify the six tools remain visible under its own namespace convention; OpenCode V2 direct tools use prefixes such as `tetherplane_device`, not bare `device`. Do not mistake a client-side naming prefix for a missing MCP tool.
 2. Call `device` with `op=status`. Verify returned real device ID, OS/arch, agent version and `background_only` policy mode.
 3. Read an operator-created harmless fixture inside the temporary allowed root with `files` / `op=read`. Compare exact expected content.
 4. Request read of a **nonexistent** path outside allowed root. Require `permission_denied`, not a fabricated success or content disclosure.

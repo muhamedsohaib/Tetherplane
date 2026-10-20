@@ -2,7 +2,7 @@
 // A preview only: emit a bounded stdio MCP client configuration; never write client settings.
 import { lstatSync } from 'node:fs';
 import os from 'node:os';
-import { dirname, isAbsolute, parse, resolve } from 'node:path';
+import { dirname, isAbsolute, parse, resolve, sep } from 'node:path';
 import { pathToFileURL } from 'node:url';
 
 const supported = new Set(['opencode', 'claude-code', 'codex']);
@@ -65,6 +65,12 @@ function tomlString(value) {
   return JSON.stringify(value);
 }
 
+function isWithin(candidate, base) {
+  const target = process.platform === 'win32' ? candidate.toLowerCase() : candidate;
+  const parent = process.platform === 'win32' ? base.toLowerCase() : base;
+  return target === parent || target.startsWith(parent.endsWith(sep) ? parent : parent + sep);
+}
+
 export function buildProfile(argv) {
   const flags = parseArgs(argv);
   const node = checkedPath(flags['--node'] ?? process.execPath, 'file', 'node executable');
@@ -78,7 +84,12 @@ export function buildProfile(argv) {
   if (allowedRoot === systemRoot || allowedRoot.toLowerCase() === home.toLowerCase()) {
     fail('allowed root must be narrower than a filesystem or user-home root');
   }
-  if (stateDir === allowedRoot) fail('state directory must not equal the allowed root');
+  if (isWithin(stateDir, allowedRoot) || isWithin(allowedRoot, stateDir)) {
+    fail('state directory must not overlap the allowed root');
+  }
+  if (isWithin(principal, allowedRoot)) {
+    fail('principal profile must be outside the allowed root');
+  }
   const args = [server, '--tetherd', tetherd, '--allow', allowedRoot,
     '--state-dir', stateDir, '--principal-profile', principal];
 
