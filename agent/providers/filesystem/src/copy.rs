@@ -49,10 +49,7 @@ pub(crate) fn open_copy_roots(
             for (agent_absolute, agent_canonical) in &agent {
                 for (principal_absolute, principal_canonical) in &principal {
                     if principal_canonical.starts_with(agent_canonical) {
-                        effective.insert(
-                            principal_canonical.clone(),
-                            principal_absolute.clone(),
-                        );
+                        effective.insert(principal_canonical.clone(), principal_absolute.clone());
                     } else if agent_canonical.starts_with(principal_canonical) {
                         effective.insert(agent_canonical.clone(), agent_absolute.clone());
                     }
