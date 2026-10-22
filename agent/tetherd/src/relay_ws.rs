@@ -215,6 +215,17 @@ fn wrong_device_result(invocation: &InvocationEnvelope, local_device_id: &str) -
 mod tests {
     use super::validate_relay_url;
 
+    // Regression gate: a stalled operation must not block the socket reader,
+    // which also handles independent device.status requests and WebSocket Ping.
+    #[test]
+    fn relay_reader_does_not_await_invocation_execution_inline() {
+        let source = include_str!("relay_ws.rs");
+        assert!(
+            !source.contains("while let Some(next) = socket.next().await"),
+            "a single socket-read loop must not await individual operations"
+        );
+    }
+
     #[test]
     fn relay_url_requires_wss_except_explicit_loopback_test_mode() {
         assert!(validate_relay_url("wss://relay.example.test/device", false).is_ok());
