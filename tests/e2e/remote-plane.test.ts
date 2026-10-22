@@ -311,6 +311,16 @@ for (const authMode of ["static", "oidc"] as const) test(`${authMode} black-box 
             });
             const elapsedMs = performance.now() - startedAt;
             assert.equal(result.isError, undefined, `control ${op} failed in saturation`);
+            if (op === "status") {
+              const liveness = structured(result).agent_liveness as Record<string, unknown>;
+              assert.equal(liveness?.process, "alive");
+              assert.equal(liveness?.transport, "authenticated");
+              assert.equal(liveness?.responsiveness, "responsive");
+              assert.equal(liveness?.state, "saturated");
+              assert.equal(liveness?.work_in_flight, 16);
+              assert.equal(liveness?.work_capacity, 16);
+              assert.equal(liveness?.control_capacity, 4);
+            }
             assert.ok(elapsedMs < 2_000, `control ${op} exceeded 2s: ${elapsedMs}`);
             saturationLatenciesMs.push(elapsedMs);
           });
