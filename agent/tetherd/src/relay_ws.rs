@@ -205,14 +205,12 @@ async fn connect_and_run(
                 }));
             }
             Message::Ping(payload) => {
-                writer
-                    .lock()
-                    .await
-                    .send(Message::Pong(payload))
-                    .await
-                    .map_err(|error| {
-                        RelayFailure::Retryable(format!("websocket pong failed: {error}"))
-                    })?;
+                pong_with_deadline(
+                    &writer,
+                    Message::Pong(payload),
+                    WEBSOCKET_WRITE_DEADLINE,
+                )
+                .await?;
             }
             Message::Close(_) => return Ok(()),
             Message::Binary(_) | Message::Pong(_) | Message::Frame(_) => {}
@@ -220,6 +218,32 @@ async fn connect_and_run(
     }
 
     Ok(())
+}
+
+// A stuck transport must not hold the sole reader or the shared writer lock
+// forever; reconnect is safe, but uncertain mutations must not be replayed.
+async fn pong_with_deadline<S>(
+    writer: &Arc<Mutex<S>>,
+    message: Message,
+    deadline: Duration,
+) -> Result<(), RelayFailure>
+where
+    S: Sink<Message> + Unpin,
+    S::Error: std::fmt::Display,
+{
+    match tokio::time::timeout(deadline, async {
+        writer.lock().await.send(message).await
+    })
+    .await
+    {
+        Ok(Ok(())) => Ok(()),
+        Ok(Err(error)) => Err(RelayFailure::Retryable(format!(
+            "websocket pong failed: {error}"
+        ))),
+        Err(_) => Err(RelayFailure::Retryable(
+            "websocket pong exceeded bounded write deadline".into(),
+        )),
+    }
 }
 
 // Only a successful authorized device.status receives live connection
