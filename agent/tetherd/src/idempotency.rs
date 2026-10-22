@@ -112,6 +112,9 @@ impl IdempotencyStore {
         fs::create_dir_all(&directory).map_err(|error| {
             provider_failure(format!("failed to create idempotency directory: {error}"))
         })?;
+        // Persist this directory name in the existing state directory on Unix.
+        // A newly created ancestor still needs separately verified provisioning.
+        sync_directory(state_dir)?;
         Ok(Self {
             directory,
             generation: Uuid::new_v4(),

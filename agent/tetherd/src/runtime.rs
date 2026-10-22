@@ -617,6 +617,64 @@ mod lifecycle_tests {
     }
 
     #[tokio::test]
+    async fn failed_completion_after_effect_is_uncertain_and_cannot_replay() {
+        let root = scratch();
+        let provider = Arc::new(HeldEffect::new());
+        let runtime = make_runtime(&root, Arc::clone(&provider));
+        let first_task = tokio::spawn({
+            let runtime = Arc::clone(&runtime);
+            async move {
+                runtime
+                    .execute(request("failed-completion", &json!({"held":true})))
+                    .await
+            }
+        });
+        tokio::time::timeout(Duration::from_secs(5), provider.entered.wait())
+            .await
+            .expect("provider reached effect before completion failure");
+        let pending = std::fs::read_dir(root.join("idempotency"))
+            .unwrap()
+            .map(|entry| entry.unwrap().path())
+            .find(|path| path.to_string_lossy().ends_with(".pending.json"))
+            .expect("running idempotency fence must be on disk");
+        let completion = pending.with_file_name(
+            pending
+                .file_name()
+                .unwrap()
+                .to_string_lossy()
+                .replace(".pending.json", ".complete.json"),
+        );
+        std::fs::create_dir(&completion).unwrap();
+        provider.release.wait().await;
+
+        let uncertain = first_task.await.unwrap();
+        assert_eq!(uncertain.status, ResultStatus::Error);
+        assert!(matches!(
+            uncertain.error.as_ref().map(|error| &error.code),
+            Some(ErrorCode::ActionUnverified)
+        ));
+        assert_eq!(
+            uncertain.error.as_ref().unwrap().details["operation_phase"],
+            "reconciliation_required"
+        );
+        assert_eq!(provider.executions.load(Ordering::SeqCst), 1);
+        std::fs::remove_dir(&completion).unwrap();
+        drop(runtime);
+        let next_provider = Arc::new(HeldEffect::new());
+        let restarted = make_runtime(&root, Arc::clone(&next_provider));
+        let retry = restarted
+            .execute(request("failed-completion", &json!({"held":true})))
+            .await;
+        assert_eq!(retry.status, ResultStatus::Error);
+        assert_eq!(
+            retry.error.as_ref().unwrap().details["operation_phase"],
+            "reconciliation_required"
+        );
+        assert_eq!(next_provider.executions.load(Ordering::SeqCst), 0);
+        std::fs::remove_dir_all(root).unwrap();
+    }
+
+    #[tokio::test]
     async fn externally_completed_but_unrecorded_effect_requires_reconciliation() {
         let root = scratch();
         let invocation = request("unrecorded-effect", &json!({"held":false}));

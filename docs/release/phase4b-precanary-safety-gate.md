@@ -36,13 +36,16 @@ reserved-before-effect, running, effect-performed-before-completion, and
 completed-before-acknowledgment. On restart the first three must be
 reconciliation_required; a completed result must replay without another
 effect. Tests also cover failed record creation/rename, malformed pending
-state, cross-generation exclusive reservation, and actual persisted phase
-transitions. These are OS-process tests, NOT physical power-cut tests.
+state, cross-generation exclusive reservation, actual persisted phase
+transitions, and a provider effect followed by deliberately failed completion
+publication. The latter must report an unverified outcome and reject replay
+after restart. These are OS-process tests, NOT physical power-cut tests.
 
 The storage design is intentionally limited:
 - Unix fsync protects file and directory publication when the filesystem
-  honors durable writes; initial parent-directory creation still needs a
-  separately controlled initialization protocol.
+  honors durable writes. Initialization also syncs the idempotency
+  directory entry through the supplied state directory. Newly created
+  ancestor directories still require a controlled initialization protocol.
 - Windows file sync is used, but Windows directory-entry power-loss
   durability has NOT been proved. An existence check is not directory fsync.
 - Network/shared-disk multi-host atomicity, lying storage controllers,
