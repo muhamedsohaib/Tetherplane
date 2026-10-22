@@ -192,35 +192,11 @@ async fn connect_and_run(
                             } else {
                                 wrong_device_result(&invocation, &local_device_id)
                             };
-                        // Only successful, authorized device.status calls expose
-                        // capacity. This is a live request sample, not a heartbeat.
-                        if status_requested
-                            && matches!(&result.status, ResultStatus::Success)
-                            && let Some(serde_json::Value::Object(data)) = result.data.as_mut()
-                        {
-                            let work_in_flight =
-                                MAX_IN_FLIGHT_WORK - work_capacity.available_permits();
-                            let control_in_flight =
-                                MAX_IN_FLIGHT_CONTROL - control_capacity.available_permits();
-                            let state = if work_in_flight == MAX_IN_FLIGHT_WORK {
-                                "saturated"
-                            } else if work_in_flight > 0 {
-                                "degraded"
-                            } else {
-                                "ready"
-                            };
-                            data.insert(
-                                "agent_liveness".into(),
-                                json!({
-                                    "process": "alive",
-                                    "transport": "authenticated",
-                                    "responsiveness": "responsive",
-                                    "state": state,
-                                    "work_in_flight": work_in_flight,
-                                    "work_capacity": MAX_IN_FLIGHT_WORK,
-                                    "control_in_flight": control_in_flight,
-                                    "control_capacity": MAX_IN_FLIGHT_CONTROL
-                                }),
+                        if status_requested {
+                            annotate_authenticated_status(
+                                &mut result,
+                                &work_capacity,
+                                &control_capacity,
                             );
                         }
                         result
@@ -244,6 +220,43 @@ async fn connect_and_run(
     }
 
     Ok(())
+}
+
+// Only a successful authorized device.status receives live connection
+// metadata. No socket registration is treated as an agent heartbeat.
+fn annotate_authenticated_status(
+    result: &mut ResultEnvelope,
+    work_capacity: &Semaphore,
+    control_capacity: &Semaphore,
+) {
+    if !matches!(&result.status, ResultStatus::Success) {
+        return;
+    }
+    let Some(serde_json::Value::Object(data)) = result.data.as_mut() else {
+        return;
+    };
+    let work_in_flight = MAX_IN_FLIGHT_WORK - work_capacity.available_permits();
+    let control_in_flight = MAX_IN_FLIGHT_CONTROL - control_capacity.available_permits();
+    let state = if work_in_flight == MAX_IN_FLIGHT_WORK {
+        "saturated"
+    } else if work_in_flight > 0 {
+        "degraded"
+    } else {
+        "ready"
+    };
+    data.insert(
+        "agent_liveness".into(),
+        json!({
+            "process": "alive",
+            "transport": "authenticated",
+            "responsiveness": "responsive",
+            "state": state,
+            "work_in_flight": work_in_flight,
+            "work_capacity": MAX_IN_FLIGHT_WORK,
+            "control_in_flight": control_in_flight,
+            "control_capacity": MAX_IN_FLIGHT_CONTROL
+        }),
+    );
 }
 
 // The lock is acquired only after the provider future is complete, so a
