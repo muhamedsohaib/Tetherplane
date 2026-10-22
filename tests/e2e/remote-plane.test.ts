@@ -316,19 +316,60 @@ for (const authMode of ["static", "oidc"] as const) test(`${authMode} black-box 
           });
           await Promise.all(calls);
         }
+
+        if (cycle === 1) {
+          // Synthetic orderly WebSocket close, not a live TLS injection:
+          // old provider tasks remain active, but their uncertain results
+          // must not transfer to the new authenticated connection generation.
+          relay.deviceGateway.disconnectDevice("Leno");
+          await until(() => !relay.router.isOnline("Leno"), 2_000);
+          await until(() => relay.router.isOnline("Leno"), 8_000,
+            () => childStateError(child, stderr));
+
+          const startedAt = performance.now();
+          const reconnectedStatus = await clientA.callTool({
+            name: "device", arguments: { op: "status", device: "Leno" },
+          });
+          const elapsedMs = performance.now() - startedAt;
+          assert.equal(reconnectedStatus.isError, undefined);
+          assert.ok(elapsedMs < 2_000, `reconnected control exceeded 2s: ${elapsedMs}`);
+          saturationLatenciesMs.push(elapsedMs);
+
+          const stillBusy = await clientA.callTool({
+            name: "files", arguments: {
+              op: "info", device: "Leno", args: { path: allowedRoot },
+            },
+          });
+          assert.equal(errorCode(stillBusy), "resource_conflict",
+            "reconnect must not reset work budget while old tasks remain active");
+
+          const denied = await clientB.callTool({
+            name: "device", arguments: { op: "status", device: "Leno" },
+          });
+          assert.equal(errorCode(denied), "permission_denied",
+            "saturation and reconnect must not broaden account authority");
+        }
       } finally {
         await writeFile(releaseFile, "release", "utf8");
       }
       const completed = await Promise.all(work);
       for (const outcome of completed) {
         assert.equal(outcome.error, null, `saturated MCP request transport: ${outcome.error}`);
-        assert.equal(outcome.result?.isError, undefined, "a released saturated operation must finish");
+        if (cycle === 1) {
+          assert.equal(errorCode(outcome.result!), "disconnected",
+            "an in-flight result lost across reconnect must remain uncertain");
+        } else {
+          assert.equal(outcome.result?.isError, undefined,
+            "a released saturated operation must finish");
+        }
       }
-      const recovered = await clientA.callTool({
-        name: "files",
-        arguments: { op: "info", device: "Leno", args: { path: allowedRoot } },
-      });
-      assert.equal(recovered.isError, undefined, "work capacity must be reclaimed");
+      await until(async () => {
+        const recovered = await clientA!.callTool({
+          name: "files",
+          arguments: { op: "info", device: "Leno", args: { path: allowedRoot } },
+        });
+        return recovered.isError === undefined;
+      }, 8_000, () => childStateError(child, stderr));
       for (const mark of markers) {
         assert.equal(await readFile(mark, "utf8"), "start\n", "no worker or mutation replay");
       }
