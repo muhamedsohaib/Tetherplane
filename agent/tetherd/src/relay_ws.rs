@@ -378,8 +378,8 @@ mod tests {
             Ok::<_, std::io::Error>(sender)
         });
         let writer = Arc::new(Mutex::new(Box::pin(sink)));
-        let fake_invocation: tether_core::InvocationEnvelope = serde_json::from_value(
-            serde_json::json!({
+        let fake_invocation: tether_core::InvocationEnvelope =
+            serde_json::from_value(serde_json::json!({
                 "protocol_version": "1.0",
                 "request_id": uuid::Uuid::new_v4(),
                 "device_id": "Leno",
@@ -393,9 +393,8 @@ mod tests {
                 "idempotency_key": null,
                 "preconditions": [],
                 "expectations": []
-            }),
-        )
-        .expect("valid synthetic invocation");
+            }))
+            .expect("valid synthetic invocation");
 
         let mut latencies = Vec::new();
         for cycle in 0..32 {
@@ -483,7 +482,10 @@ mod tests {
             std::io::ErrorKind::ConnectionReset,
         ] {
             let error = tokio_tungstenite::tungstenite::Error::Io(kind.into());
-            assert!(matches!(classify_connect_error(&error), RelayFailure::Retryable(_)));
+            assert!(matches!(
+                classify_connect_error(&error),
+                RelayFailure::Retryable(_)
+            ));
         }
     }
 
