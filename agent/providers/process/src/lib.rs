@@ -420,7 +420,7 @@ mod lifecycle_tests {
     use serde_json::{Value, json};
     use tether_core::CapabilityProvider;
 
-    fn request(capability: &str, arguments: Value) -> tether_core::InvocationEnvelope {
+    fn request(capability: &str, arguments: &Value) -> tether_core::InvocationEnvelope {
         serde_json::from_value(json!({
             "protocol_version": "1.0",
             "request_id": "00000000-0000-4000-8000-000000000009",
@@ -449,13 +449,13 @@ mod lifecycle_tests {
             #[cfg(not(windows))]
             let args = json!({ "program":"/bin/sh", "args":["-c", "echo finished"], "wait_ms":1000, "pty":false });
             let run = provider
-                .execute(&request("process.run", args))
+                .execute(&request("process.run", &args))
                 .await
                 .unwrap();
             handles.push(run.data["handle"].as_str().unwrap().to_owned());
         }
         let list = provider
-            .execute(&request("process.list_sessions", json!({})))
+            .execute(&request("process.list_sessions", &json!({})))
             .await
             .unwrap();
         let sessions = list.data["sessions"].as_array().unwrap();
@@ -466,14 +466,14 @@ mod lifecycle_tests {
         );
         assert!(sessions.iter().all(|session| session["running"] == false));
         let old = provider
-            .execute(&request("process.read", json!({"handle":handles[0]})))
+            .execute(&request("process.read", &json!({"handle":handles[0]})))
             .await;
         assert!(
             old.is_err(),
             "evicted session handle must not alias a newer process"
         );
         let latest = provider
-            .execute(&request("process.read", json!({"handle":handles[11]})))
+            .execute(&request("process.read", &json!({"handle":handles[11]})))
             .await;
         assert!(latest.is_ok(), "latest completed session remains readable");
     }
