@@ -231,7 +231,11 @@ where
         }
     };
     match tokio::time::timeout(WEBSOCKET_WRITE_DEADLINE, async {
-        writer.lock().await.send(Message::Text(payload.into())).await
+        writer
+            .lock()
+            .await
+            .send(Message::Text(payload.into()))
+            .await
     })
     .await
     {
