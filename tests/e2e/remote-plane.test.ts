@@ -283,7 +283,7 @@ for (const authMode of ["static", "oidc"] as const) test(`${authMode} black-box 
         }, 12_000, () => childStateError(child, stderr));
 
         const overloadStart = performance.now();
-        const overload = await Promise.race([
+        const overload: Awaited<ReturnType<Client["callTool"]>> = await Promise.race([
           clientA.callTool({ name: "files", arguments: {
             op: "info", device: "Leno", args: { path: allowedRoot },
           } }),
@@ -325,7 +325,7 @@ for (const authMode of ["static", "oidc"] as const) test(`${authMode} black-box 
         assert.equal(await readFile(mark, "utf8"), "start\\n", "no worker or mutation replay");
       }
     }
-    const ordered = saturationLatenciesMs.toSorted((a,b) => a-b);
+    const ordered = [...saturationLatenciesMs].sort((a: number, b: number) => a - b);
     const pct = (p: number) => Number(ordered[Math.ceil(p * ordered.length) - 1]!.toFixed(2));
     console.log(`SATURATION_E2E=${JSON.stringify({authMode, samples: ordered.length, p50_ms: pct(.50), p95_ms: pct(.95), max_ms: pct(1), cycles: 2, work_slots: 16})}`);
 
