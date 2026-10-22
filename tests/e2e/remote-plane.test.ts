@@ -114,7 +114,7 @@ for (const authMode of ["static", "oidc"] as const) test(`${authMode} black-box 
       },
     ]),
     allowInsecureLocalhost: true,
-    routeTimeoutMs: 3_000,
+    routeTimeoutMs: 25_000,
   });
   const address = await relay.listen({
     host: "127.0.0.1",
@@ -253,6 +253,81 @@ for (const authMode of ["static", "oidc"] as const) test(`${authMode} black-box 
       if (timeoutId !== undefined) clearTimeout(timeoutId);
     }
     assert.equal((await slowOperation).isError, undefined);
+
+    // Phase 2: saturate all 16 real agent work slots; require responsive
+    // control calls and a prompt typed resource_conflict for the 17th.
+    // No production device or external service is touched.
+    const saturationLatenciesMs: number[] = [];
+    for (let cycle = 0; cycle < 2; cycle++) {
+      const releaseFile = path.join(allowedRoot, `release-cycle-${cycle}`);
+      const markers = Array.from({ length: 16 }, (_, i) =>
+        path.join(allowedRoot, `work-${cycle}-${i}.marker`));
+      const work = markers.map((workMarker) => {
+        const script = `const fs=require("node:fs");fs.appendFileSync(${JSON.stringify(workMarker)},"start\\n");const t=setInterval(()=>{if(fs.existsSync(${JSON.stringify(releaseFile)})){clearInterval(t);process.exit(0)}},35);setTimeout(()=>process.exit(0),20000)`;
+        return clientA!.callTool({
+          name: "process",
+          arguments: {
+            op: "run", device: "Leno",
+            args: { program: process.execPath, args: ["-e", script], wait_ms: 21_000, pty: false },
+          },
+        });
+      });
+      try {
+        await until(async () => {
+          try {
+            const values = await Promise.all(markers.map((p) => readFile(p, "utf8")));
+            return values.every((x) => x === "start\\n");
+          } catch {
+            return false;
+          }
+        }, 12_000, () => childStateError(child, stderr));
+
+        const overloadStart = performance.now();
+        const overload = await Promise.race([
+          clientA.callTool({ name: "files", arguments: {
+            op: "info", device: "Leno", args: { path: allowedRoot },
+          } }),
+          new Promise<never>((_, reject) =>
+            setTimeout(() => reject(new Error("overload response exceeded 2s")), 1900)),
+        ]);
+        assert.equal(overload.isError, true, "the 17th work request must be rejected");
+        assert.equal(errorCode(overload), "resource_conflict");
+        assert.ok(performance.now() - overloadStart < 2_000, "work overload must fail promptly");
+
+        // Keep <=2 control calls concurrently so this measures work-lane
+        // isolation rather than intentional control-lane rejection.
+        for (let batch = 0; batch < 6; batch++) {
+          const calls = (["status", "capabilities"] as const).map(async (op) => {
+            const startedAt = performance.now();
+            const result = await clientA!.callTool({
+              name: "device", arguments: { op, device: "Leno" },
+            });
+            const elapsedMs = performance.now() - startedAt;
+            assert.equal(result.isError, undefined, `control ${op} failed in saturation`);
+            assert.ok(elapsedMs < 2_000, `control ${op} exceeded 2s: ${elapsedMs}`);
+            saturationLatenciesMs.push(elapsedMs);
+          });
+          await Promise.all(calls);
+        }
+      } finally {
+        await writeFile(releaseFile, "release", "utf8");
+      }
+      const completed = await Promise.all(work);
+      for (const value of completed) {
+        assert.equal(value.isError, undefined, "a released saturated operation must finish");
+      }
+      const recovered = await clientA.callTool({
+        name: "files",
+        arguments: { op: "info", device: "Leno", args: { path: allowedRoot } },
+      });
+      assert.equal(recovered.isError, undefined, "work capacity must be reclaimed");
+      for (const mark of markers) {
+        assert.equal(await readFile(mark, "utf8"), "start\\n", "no worker or mutation replay");
+      }
+    }
+    const ordered = saturationLatenciesMs.toSorted((a,b) => a-b);
+    const pct = (p: number) => Number(ordered[Math.ceil(p * ordered.length) - 1]!.toFixed(2));
+    console.log(`SATURATION_E2E=${JSON.stringify({authMode, samples: ordered.length, p50_ms: pct(.50), p95_ms: pct(.95), max_ms: pct(1), cycles: 2, work_slots: 16})}`);
 
     const remoteFile = path.join(allowedRoot, "remote.txt");
     const writeResult = await clientA.callTool({
