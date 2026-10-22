@@ -201,7 +201,10 @@ impl AgentRuntime {
         result
     }
 
-    #[expect(dead_code, reason = "historical negative control intentionally does not use the fixed waiter")]
+    #[expect(
+        dead_code,
+        reason = "historical negative control intentionally does not use the fixed waiter"
+    )]
     async fn await_existing_idempotent_result(
         store: &Arc<Mutex<IdempotencyStore>>,
         invocation: &InvocationEnvelope,
