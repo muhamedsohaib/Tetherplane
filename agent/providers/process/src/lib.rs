@@ -353,3 +353,53 @@ fn permission_denied(message: &str) -> CapabilityError {
 }
 
 pub const CRATE_NAME: &str = "tether-process-provider";
+
+#[cfg(test)]
+mod lifecycle_tests {
+    use super::ProcessProvider;
+    use serde_json::{Value, json};
+    use tether_core::CapabilityProvider;
+
+    fn request(capability: &str, arguments: Value) -> tether_core::InvocationEnvelope {
+        serde_json::from_value(json!({
+            "protocol_version": "1.0",
+            "request_id": uuid::Uuid::new_v4(),
+            "device_id": "Leno",
+            "principal_id": null,
+            "job_id": null,
+            "capability": capability,
+            "arguments": arguments,
+            "actor": { "id": "session-retention-test", "kind": "ai_client" },
+            "session_id": null,
+            "response_mode": "compact",
+            "idempotency_key": null,
+            "preconditions": [],
+            "expectations": []
+        }))
+        .unwrap()
+    }
+
+    #[tokio::test]
+    async fn completed_sessions_are_bounded_and_oldest_expire() {
+        let provider = ProcessProvider::with_session_limit(4);
+        let mut handles = Vec::new();
+        for _ in 0..12 {
+            #[cfg(windows)]
+            let args = json!({ "program":"cmd.exe", "args":["/C", "echo finished"], "wait_ms":1000, "pty":false });
+            #[cfg(not(windows))]
+            let args = json!({ "program":"/bin/sh", "args":["-c", "echo finished"], "wait_ms":1000, "pty":false });
+            let run = provider.execute(&request("process.run", args)).await.unwrap();
+            handles.push(run.data["handle"].as_str().unwrap().to_owned());
+        }
+        let list = provider
+            .execute(&request("process.list_sessions", json!({})))
+            .await.unwrap();
+        let sessions = list.data["sessions"].as_array().unwrap();
+        assert_eq!(sessions.len(), 4, "retained sessions must have a fixed ceiling");
+        assert!(sessions.iter().all(|session| session["running"] == false));
+        let old = provider.execute(&request("process.read", json!({"handle":handles[0]}))).await;
+        assert!(old.is_err(), "evicted session handle must not alias a newer process");
+        let latest = provider.execute(&request("process.read", json!({"handle":handles[11]}))).await;
+        assert!(latest.is_ok(), "latest completed session remains readable");
+    }
+}
