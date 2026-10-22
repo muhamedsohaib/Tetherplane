@@ -378,3 +378,65 @@ fn invalid_arguments(message: &str) -> CapabilityError {
         details: serde_json::json!({}),
     }
 }
+
+#[cfg(test)]
+mod lifecycle_tests {
+    use super::AgentRuntime;
+    use serde_json::{Value, json};
+    use std::sync::Arc;
+    use std::time::Duration;
+
+    fn request(capability: &str, key: &str, arguments: Value) -> tether_core::InvocationEnvelope {
+        serde_json::from_value(json!({
+            "protocol_version":"1.0",
+            "request_id":uuid::Uuid::new_v4(),
+            "device_id":"Leno",
+            "principal_id":null,
+            "job_id":null,
+            "capability":capability,
+            "arguments":arguments,
+            "actor":{"id":"phase4-isolated","kind":"ai_client"},
+            "session_id":null,
+            "response_mode":"compact",
+            "idempotency_key":key,
+            "preconditions":[],
+            "expectations":[]
+        }))
+        .unwrap()
+    }
+
+    #[tokio::test]
+    async fn stalled_keyed_mutation_does_not_block_unrelated_keyed_mutation() {
+        let root = std::env::temp_dir().join(format!(
+            "tetherplane-phase4-runtime-{}",
+            uuid::Uuid::new_v4().simple()
+        ));
+        let sandbox = root.join("sandbox");
+        let state = root.join("state");
+        std::fs::create_dir_all(&sandbox).unwrap();
+        let runtime = Arc::new(AgentRuntime::new(vec![sandbox.clone()], None, Some(&state), None).unwrap());
+        #[cfg(windows)]
+        let slow = json!({"program":"cmd.exe","args":["/C","ping -n 5 127.0.0.1 > NUL"],"wait_ms":3500,"pty":false});
+        #[cfg(not(windows))]
+        let slow = json!({"program":"/bin/sh","args":["-c","sleep 4"],"wait_ms":3500,"pty":false});
+        let first = request("process.run", "slow-independent", slow);
+        let task = tokio::spawn({
+            let runtime = Arc::clone(&runtime);
+            async move { runtime.execute(first).await }
+        });
+        tokio::time::sleep(Duration::from_millis(250)).await;
+        assert!(!task.is_finished(), "first mutation must remain in progress");
+
+        let target = sandbox.join("independent.txt");
+        let second = request("filesystem.append", "unrelated-append", json!({
+            "path":target, "content":"once\\n"
+        }));
+        let result = tokio::time::timeout(Duration::from_millis(800), runtime.execute(second))
+            .await
+            .expect("unrelated idempotent mutation must not wait for stalled execution");
+        assert!(matches!(result.status, tether_core::ResultStatus::Success));
+        assert_eq!(std::fs::read_to_string(&target).unwrap(), "once\\n");
+        let _ = task.await.unwrap();
+        std::fs::remove_dir_all(&root).unwrap();
+    }
+}
