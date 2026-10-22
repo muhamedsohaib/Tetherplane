@@ -19,7 +19,7 @@ pub enum IdempotencyLookup {
     Conflict,
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Deserialize, Serialize)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default, Deserialize, Serialize)]
 #[serde(rename_all = "snake_case")]
 pub enum MutationPhase {
     Accepted,
@@ -28,13 +28,8 @@ pub enum MutationPhase {
     Failed,
     TimedOut,
     OutcomeUnknown,
+    #[default]
     ReconciliationRequired,
-}
-
-impl Default for MutationPhase {
-    fn default() -> Self {
-        Self::ReconciliationRequired
-    }
 }
 
 #[derive(Debug, Deserialize, Serialize)]
