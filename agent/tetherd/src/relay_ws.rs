@@ -213,7 +213,31 @@ fn wrong_device_result(invocation: &InvocationEnvelope, local_device_id: &str) -
 }
 #[cfg(test)]
 mod tests {
-    use super::validate_relay_url;
+    use super::{classify_connect_error, validate_relay_url, RelayFailure};
+    use std::io;
+    use tokio_tungstenite::tungstenite::http::{Response, StatusCode};
+    use tokio_tungstenite::tungstenite::Error as WebSocketError;
+
+
+    #[test]
+    fn transport_eof_and_remote_reset_are_retryable_not_authentication_failures() {
+        for kind in [io::ErrorKind::UnexpectedEof, io::ErrorKind::ConnectionReset] {
+            let failure = classify_connect_error(&WebSocketError::Io(io::Error::new(
+                kind,
+                "synthetic transport failure without secrets",
+            )));
+            assert!(matches!(failure, RelayFailure::Retryable(_)));
+        }
+    }
+
+    #[test]
+    fn device_authentication_denial_is_fatal_and_never_retryable() {
+        for code in [StatusCode::UNAUTHORIZED, StatusCode::FORBIDDEN] {
+            let response = Response::builder().status(code).body(None).expect("HTTP response");
+            let failure = classify_connect_error(&WebSocketError::Http(response));
+            assert!(matches!(failure, RelayFailure::Fatal(_)));
+        }
+    }
 
     #[test]
     fn relay_url_requires_wss_except_explicit_loopback_test_mode() {
