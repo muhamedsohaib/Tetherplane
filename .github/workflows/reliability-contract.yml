@@ -1,0 +1,94 @@
+name: Agent lifecycle and device liveness
+
+on:
+  push:
+    paths:
+      - "agent/tetherd/src/main.rs"
+      - "relay/src/devices/ws-gateway.ts"
+      - "relay/test/device-heartbeat.test.ts"
+      - "scripts/install-windows.ps1"
+      - "tests/release/windows-package-smoke.ps1"
+      - "packaging/windows/**"
+      - ".github/workflows/reliability-contract.yml"
+  pull_request:
+    paths:
+      - "agent/tetherd/src/main.rs"
+      - "relay/src/devices/ws-gateway.ts"
+      - "relay/test/device-heartbeat.test.ts"
+      - "scripts/install-windows.ps1"
+      - "tests/release/windows-package-smoke.ps1"
+      - "packaging/windows/**"
+      - ".github/workflows/reliability-contract.yml"
+
+permissions:
+  contents: read
+
+jobs:
+  websocket-heartbeat:
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, windows-latest]
+    runs-on: ${{ matrix.os }}
+    steps:
+      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
+        with:
+          persist-credentials: false
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4.4.0
+        with:
+          node-version: 22
+      - run: corepack enable
+      - run: corepack prepare pnpm@10.34.5 --activate
+      - run: pnpm install --frozen-lockfile
+      - run: pnpm --filter @tetherplane/compact-mcp build
+      - name: Authenticated WebSocket heartbeat and non-replay contract
+        run: pnpm --filter @tetherplane/relay exec node --test test/device-heartbeat.test.ts
+      - name: Relay typecheck
+        run: pnpm --filter @tetherplane/relay typecheck
+
+  windows-native-task:
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
+        with:
+          persist-credentials: false
+      - uses: dtolnay/rust-toolchain@b725eda525362e7cf34af9a7243cac1e3f01a7ec # pinned
+        with:
+          toolchain: "1.99.1"
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4.4.0
+        with:
+          node-version: 22
+      - run: corepack enable
+      - run: corepack prepare pnpm@10.34.5 --activate
+      - run: pnpm install --frozen-lockfile
+      - run: cargo build --release -p tetherd
+      - run: pnpm -r build
+      - name: Windows actual task owner/stop and package smoke
+        shell: pwsh
+        run: ./tests/release/windows-package-smoke.ps1
+      - name: Fingerprint disposable unsigned test binary
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = 'Stop'
+          $exe = 'target/release/tetherd.exe'
+          if (!(Test-Path -LiteralPath $exe -PathType Leaf)) { throw 'missing test binary' }
+          $sha = (Get-FileHash -LiteralPath $exe -Algorithm SHA256).Hash
+          $source = (git rev-parse HEAD).Trim()
+          $signature = Get-AuthenticodeSignature -LiteralPath $exe
+          if ($signature.Status -eq 'Valid') { throw 'unexpectedly signed test-only binary' }
+          @(
+            'UNSIGNED_TEST_ONLY_DO_NOT_INSTALL_ON_PROTECTED_DEVICES'
+            "source_commit=$source"
+            "binary_sha256=$sha"
+            "signature_status=$($signature.Status)"
+            'production_deployment=NOT_AUTHORIZED'
+          ) | Set-Content -LiteralPath 'target/release/UNSIGNED-TEST-ONLY.txt' -Encoding utf8
+      - name: Upload short-lived unsigned CI test executable (not a release)
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        with:
+          name: tetherplane-unsigned-test-${{ github.sha }}
+          path: |
+            target/release/tetherd.exe
+            target/release/UNSIGNED-TEST-ONLY.txt
+          retention-days: 1
+          if-no-files-found: error
