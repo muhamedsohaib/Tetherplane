@@ -205,12 +205,8 @@ async fn connect_and_run(
                 }));
             }
             Message::Ping(payload) => {
-                pong_with_deadline(
-                    &writer,
-                    Message::Pong(payload),
-                    WEBSOCKET_WRITE_DEADLINE,
-                )
-                .await?;
+                pong_with_deadline(&writer, Message::Pong(payload), WEBSOCKET_WRITE_DEADLINE)
+                    .await?;
             }
             Message::Close(_) => return Ok(()),
             Message::Binary(_) | Message::Pong(_) | Message::Frame(_) => {}
@@ -231,11 +227,7 @@ where
     S: Sink<Message> + Unpin,
     S::Error: std::fmt::Display,
 {
-    match tokio::time::timeout(deadline, async {
-        writer.lock().await.send(message).await
-    })
-    .await
-    {
+    match tokio::time::timeout(deadline, async { writer.lock().await.send(message).await }).await {
         Ok(Ok(())) => Ok(()),
         Ok(Err(error)) => Err(RelayFailure::Retryable(format!(
             "websocket pong failed: {error}"
@@ -684,7 +676,10 @@ mod tests {
         )
         .await;
         assert!(matches!(failure, Err(super::RelayFailure::Retryable(_))));
-        assert!(writer.try_lock().is_ok(), "pong timeout must release sink lock");
+        assert!(
+            writer.try_lock().is_ok(),
+            "pong timeout must release sink lock"
+        );
     }
 
     #[test]
