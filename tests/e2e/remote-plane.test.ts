@@ -343,7 +343,7 @@ for (const authMode of ["static", "oidc"] as const) test(`${authMode} black-box 
           assert.equal(errorCode(stillBusy), "resource_conflict",
             "reconnect must not reset work budget while old tasks remain active");
 
-          const denied = await clientB.callTool({
+          const denied: Awaited<ReturnType<Client["callTool"]>> = await clientB.callTool({
             name: "device", arguments: { op: "status", device: "Leno" },
           });
           assert.equal(errorCode(denied), "permission_denied",
