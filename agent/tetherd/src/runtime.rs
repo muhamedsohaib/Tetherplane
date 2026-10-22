@@ -414,7 +414,8 @@ mod lifecycle_tests {
         let sandbox = root.join("sandbox");
         let state = root.join("state");
         std::fs::create_dir_all(&sandbox).unwrap();
-        let runtime = Arc::new(AgentRuntime::new(vec![sandbox.clone()], None, Some(&state), None).unwrap());
+        let runtime =
+            Arc::new(AgentRuntime::new(vec![sandbox.clone()], None, Some(&state), None).unwrap());
         #[cfg(windows)]
         let slow = json!({"program":"cmd.exe","args":["/C","ping -n 5 127.0.0.1 > NUL"],"wait_ms":3500,"pty":false});
         #[cfg(not(windows))]
@@ -425,12 +426,19 @@ mod lifecycle_tests {
             async move { runtime.execute(first).await }
         });
         tokio::time::sleep(Duration::from_millis(250)).await;
-        assert!(!task.is_finished(), "first mutation must remain in progress");
+        assert!(
+            !task.is_finished(),
+            "first mutation must remain in progress"
+        );
 
         let target = sandbox.join("independent.txt");
-        let second = request("filesystem.append", "unrelated-append", json!({
-            "path":target, "content":"once\\n"
-        }));
+        let second = request(
+            "filesystem.append",
+            "unrelated-append",
+            json!({
+                "path":target, "content":"once\\n"
+            }),
+        );
         let result = tokio::time::timeout(Duration::from_millis(800), runtime.execute(second))
             .await
             .expect("unrelated idempotent mutation must not wait for stalled execution");
