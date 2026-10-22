@@ -1,14 +1,16 @@
 use std::path::Path;
 use std::sync::Arc;
 use std::time::Duration;
+use std::future::Future;
 
-use futures_util::{SinkExt, StreamExt};
+use futures_util::{Sink, SinkExt, StreamExt};
 use serde::{Deserialize, Serialize};
 use serde_json::json;
 use tether_core::{
     CapabilityError, ErrorCode, InvocationEnvelope, ResultEnvelope, ResultStatus, Timing,
     VerificationStatus,
 };
+use tokio::sync::{Mutex, Semaphore};
 use tokio_tungstenite::connect_async;
 use tokio_tungstenite::tungstenite::client::IntoClientRequest;
 use tokio_tungstenite::tungstenite::http::header::AUTHORIZATION;
@@ -19,6 +21,8 @@ use url::Url;
 use crate::runtime::AgentRuntime;
 
 const DEVICE_ID_HEADER: HeaderName = HeaderName::from_static("x-tetherplane-device-id");
+const MAX_IN_FLIGHT_WORK: usize = 16;
+const MAX_IN_FLIGHT_CONTROL: usize = 4;
 
 pub(crate) struct RelayConfig {
     pub url: String,
@@ -80,9 +84,19 @@ pub(crate) fn load_device_credential(path: &Path) -> Result<String, String> {
 
 pub(crate) async fn serve(runtime: Arc<AgentRuntime>, config: RelayConfig) -> Result<(), String> {
     validate_relay_url(&config.url, config.allow_insecure_localhost)?;
+    // Persist budgets across reconnects so orphaned operations cannot evade limits.
+    let work_slots = Arc::new(Semaphore::new(MAX_IN_FLIGHT_WORK));
+    let control_slots = Arc::new(Semaphore::new(MAX_IN_FLIGHT_CONTROL));
 
     loop {
-        match connect_and_run(Arc::clone(&runtime), &config).await {
+        match connect_and_run(
+            Arc::clone(&runtime),
+            &config,
+            Arc::clone(&work_slots),
+            Arc::clone(&control_slots),
+        )
+        .await
+        {
             Ok(()) => {
                 tokio::time::sleep(config.reconnect_delay).await;
             }
@@ -98,6 +112,8 @@ pub(crate) async fn serve(runtime: Arc<AgentRuntime>, config: RelayConfig) -> Re
 async fn connect_and_run(
     runtime: Arc<AgentRuntime>,
     config: &RelayConfig,
+    work_slots: Arc<Semaphore>,
+    control_slots: Arc<Semaphore>,
 ) -> Result<(), RelayFailure> {
     let mut request = config
         .url
@@ -113,11 +129,15 @@ async fn connect_and_run(
     request.headers_mut().insert(AUTHORIZATION, authorization);
     request.headers_mut().insert(DEVICE_ID_HEADER, device_id);
 
-    let (mut socket, _) = connect_async(request)
+    let (socket, _) = connect_async(request)
         .await
         .map_err(|error| classify_connect_error(&error))?;
 
-    while let Some(next) = socket.next().await {
+    // Execution never owns the socket reader. A blocked provider must not
+    // prevent independent status requests or WebSocket Ping from being read.
+    let (writer, mut reader) = socket.split();
+    let writer = Arc::new(Mutex::new(writer));
+    while let Some(next) = reader.next().await {
         let message = next.map_err(|error| {
             RelayFailure::Retryable(format!("websocket receive failed: {error}"))
         })?;
@@ -129,42 +149,60 @@ async fn connect_and_run(
                             "relay sent invalid invocation message: {error}"
                         ))
                     })?;
-                match inbound {
-                    RelayInbound::Invoke {
-                        route_id,
-                        invocation,
-                    } => {
-                        let result =
-                            if invocation.device_id.as_deref() == Some(config.device_id.as_str()) {
-                                runtime.execute(invocation).await
-                            } else {
-                                wrong_device_result(&invocation, &config.device_id)
-                            };
-                        let payload = serde_json::to_string(&RelayOutbound {
-                            kind: "result",
-                            route_id: &route_id,
-                            result: &result,
-                        })
-                        .map_err(|error| {
-                            RelayFailure::Fatal(format!(
-                                "failed to serialize relay result: {error}"
-                            ))
-                        })?;
-                        socket
-                            .send(Message::Text(payload.into()))
-                            .await
-                            .map_err(|error| {
-                                RelayFailure::Retryable(format!(
-                                    "websocket result send failed: {error}"
-                                ))
-                            })?;
+                let RelayInbound::Invoke {
+                    route_id,
+                    invocation,
+                } = inbound;
+                // Reserved control capacity survives a saturated work queue.
+                let slots = if matches!(
+                    invocation.capability.as_str(),
+                    "device.status" | "device.capabilities"
+                ) {
+                    Arc::clone(&control_slots)
+                } else {
+                    Arc::clone(&work_slots)
+                };
+                let permit = match slots.try_acquire_owned() {
+                    Ok(permit) => permit,
+                    Err(_) => {
+                        let busy = overloaded_result(&invocation);
+                        write_invocation_result(
+                            Arc::clone(&writer),
+                            route_id,
+                            async move { busy },
+                        )
+                        .await;
+                        continue;
                     }
-                }
+                };
+                let local_device_id = config.device_id.clone();
+                let runtime = Arc::clone(&runtime);
+                let writer = Arc::clone(&writer);
+                // Dropping the JoinHandle detaches execution: a connection
+                // failure must not cancel a mutation after it has begun.
+                drop(tokio::spawn(async move {
+                    let _permit = permit;
+                    write_invocation_result(writer, route_id, async move {
+                        if invocation.device_id.as_deref()
+                            == Some(local_device_id.as_str())
+                        {
+                            runtime.execute(invocation).await
+                        } else {
+                            wrong_device_result(&invocation, &local_device_id)
+                        }
+                    })
+                    .await;
+                }));
             }
             Message::Ping(payload) => {
-                socket.send(Message::Pong(payload)).await.map_err(|error| {
-                    RelayFailure::Retryable(format!("websocket pong failed: {error}"))
-                })?;
+                writer
+                    .lock()
+                    .await
+                    .send(Message::Pong(payload))
+                    .await
+                    .map_err(|error| {
+                        RelayFailure::Retryable(format!("websocket pong failed: {error}"))
+                    })?;
             }
             Message::Close(_) => return Ok(()),
             Message::Binary(_) | Message::Pong(_) | Message::Frame(_) => {}
@@ -172,6 +210,54 @@ async fn connect_and_run(
     }
 
     Ok(())
+}
+
+// The lock is acquired only after the provider future is complete, so a
+// stalled operation cannot monopolize the result writer.
+async fn write_invocation_result<S, F>(
+    writer: Arc<Mutex<S>>,
+    route_id: String,
+    execution: F,
+) where
+    S: Sink<Message> + Unpin + Send + 'static,
+    S::Error: std::fmt::Display,
+    F: Future<Output = ResultEnvelope> + Send,
+{
+    let result = execution.await;
+    let payload = match serde_json::to_string(&RelayOutbound {
+        kind: "result",
+        route_id: &route_id,
+        result: &result,
+    }) {
+        Ok(payload) => payload,
+        Err(error) => {
+            eprintln!("failed to serialize relay result: {error}");
+            return;
+        }
+    };
+    if let Err(error) = writer.lock().await.send(Message::Text(payload.into())).await {
+        eprintln!("websocket result send failed: {error}");
+    }
+}
+
+fn overloaded_result(invocation: &InvocationEnvelope) -> ResultEnvelope {
+    ResultEnvelope {
+        protocol_version: "1.0".into(),
+        request_id: invocation.request_id,
+        status: ResultStatus::Error,
+        data: None,
+        delta: None,
+        error: Some(CapabilityError {
+            code: ErrorCode::ResourceConflict,
+            message: "device execution capacity is temporarily exhausted".into(),
+            recovery_hint: None,
+            details: json!({}),
+        }),
+        verification: VerificationStatus::Failed,
+        continuation: None,
+        policy: None,
+        timing: Timing { duration_ms: 0 },
+    }
 }
 
 fn classify_connect_error(error: &WebSocketError) -> RelayFailure {
@@ -224,6 +310,53 @@ mod tests {
             !source.contains(&["while let Some(next)", " = socket.next().await"].concat()),
             "a single socket-read loop must not await individual operations"
         );
+    }
+
+    #[tokio::test]
+    async fn stalled_work_does_not_block_control_result_delivery() {
+        use super::{write_invocation_result, ResultEnvelope, ResultStatus, Timing, VerificationStatus};
+        use std::sync::Arc;
+        use std::time::Duration;
+        use tokio::sync::Mutex;
+        use futures_util::{channel::mpsc, StreamExt};
+
+        let (sink, mut messages) = mpsc::channel(4);
+        let writer = Arc::new(Mutex::new(sink));
+        let stalled = tokio::spawn(write_invocation_result(
+            Arc::clone(&writer),
+            "slow-route".to_owned(),
+            std::future::pending::<ResultEnvelope>(),
+        ));
+        let status = tokio::spawn(write_invocation_result(
+            Arc::clone(&writer),
+            "status-route".to_owned(),
+            async {
+                ResultEnvelope {
+                    protocol_version: "1.0".into(),
+                    request_id: uuid::Uuid::new_v4(),
+                    status: ResultStatus::Success,
+                    data: Some(serde_json::json!({ "agent": "ready" })),
+                    delta: None,
+                    error: None,
+                    verification: VerificationStatus::NotApplicable,
+                    continuation: None,
+                    policy: None,
+                    timing: Timing { duration_ms: 0 },
+                }
+            },
+        ));
+        let received = tokio::time::timeout(Duration::from_millis(250), messages.next())
+            .await
+            .expect("control response must not wait for stalled work")
+            .expect("result writer disconnected");
+        let tokio_tungstenite::tungstenite::Message::Text(payload) = received else {
+            panic!("expected a result message");
+        };
+        let parsed: serde_json::Value = serde_json::from_str(payload.as_str()).unwrap();
+        assert_eq!(parsed["routeId"], "status-route");
+        assert_eq!(parsed["result"]["status"], "success");
+        status.await.unwrap();
+        stalled.abort();
     }
 
     #[test]
