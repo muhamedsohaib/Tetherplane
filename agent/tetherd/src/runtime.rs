@@ -24,9 +24,8 @@ use tokio::sync::Mutex;
 
 use crate::audit::{AuditProvider, AuditStore};
 use crate::idempotency::{
-    IdempotencyLookup, IdempotencyStore, MutationPhase, completion_unverified_result,
-    conflict_result, is_mutation_capability, pending_result, store_failure_result,
-    unavailable_result,
+    IdempotencyLookup, IdempotencyStore, MutationPhase, conflict_result, is_mutation_capability,
+    pending_result, store_failure_result, unavailable_result,
 };
 use crate::job::JobProvider;
 
@@ -573,7 +572,7 @@ mod lifecycle_tests {
         let duplicate = request("duplicate-key", json!({"held":true}));
         let pending = tokio::time::timeout(Duration::from_secs(4), runtime.execute(duplicate))
             .await
-        .expect("duplicate must return bounded pending state");
+            .expect("duplicate must return bounded pending state");
         assert_eq!(pending.status, ResultStatus::Error);
         assert!(matches!(
             pending.error.as_ref().map(|error| &error.code),
@@ -590,7 +589,7 @@ mod lifecycle_tests {
         let independent_result =
             tokio::time::timeout(Duration::from_secs(2), runtime.execute(independent))
                 .await
-        .expect("different key must execute while first effect is held");
+                .expect("different key must execute while first effect is held");
         assert_eq!(independent_result.status, ResultStatus::Success);
         assert_eq!(provider.executions.load(Ordering::SeqCst), 2);
 
