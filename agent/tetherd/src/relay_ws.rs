@@ -180,7 +180,7 @@ async fn connect_and_run(
                 // failure must not cancel a mutation after it has begun.
                 drop(tokio::spawn(async move {
                     let _permit = permit;
-                    write_invocation_result(writer, route_id, async move {
+                    Box::pin(write_invocation_result(writer, route_id, async move {
                         let mut result =
                             if invocation.device_id.as_deref() == Some(local_device_id.as_str()) {
                                 execute_with_read_only_deadline(
@@ -200,7 +200,7 @@ async fn connect_and_run(
                             );
                         }
                         result
-                    })
+                    }))
                     .await;
                 }));
             }
