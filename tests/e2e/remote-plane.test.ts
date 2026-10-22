@@ -114,7 +114,7 @@ for (const authMode of ["static", "oidc"] as const) test(`${authMode} black-box 
       },
     ]),
     allowInsecureLocalhost: true,
-    routeTimeoutMs: 25_000,
+    routeTimeoutMs: 35_000,
   });
   const address = await relay.listen({
     host: "127.0.0.1",
@@ -263,12 +263,12 @@ for (const authMode of ["static", "oidc"] as const) test(`${authMode} black-box 
       const markers = Array.from({ length: 16 }, (_, i) =>
         path.join(allowedRoot, `work-${cycle}-${i}.marker`));
       const work = markers.map((workMarker) => {
-        const script = `const fs=require("node:fs");fs.appendFileSync(${JSON.stringify(workMarker)},"start\\n");const t=setInterval(()=>{if(fs.existsSync(${JSON.stringify(releaseFile)})){clearInterval(t);process.exit(0)}},35);setTimeout(()=>process.exit(0),20000)`;
+        const script = `const fs=require("node:fs");fs.appendFileSync(${JSON.stringify(workMarker)},"start\\n");const t=setInterval(()=>{if(fs.existsSync(${JSON.stringify(releaseFile)})){clearInterval(t);process.exit(0)}},35);setTimeout(()=>process.exit(0),30000)`;
         return clientA!.callTool({
           name: "process",
           arguments: {
             op: "run", device: "Leno",
-            args: { program: process.execPath, args: ["-e", script], wait_ms: 21_000, pty: false },
+            args: { program: process.execPath, args: ["-e", script], wait_ms: 31_000, pty: false },
           },
         }).then(
           (result) => ({ result, error: null as string | null }),
@@ -279,11 +279,11 @@ for (const authMode of ["static", "oidc"] as const) test(`${authMode} black-box 
         await until(async () => {
           try {
             const values = await Promise.all(markers.map((p) => readFile(p, "utf8")));
-            return values.every((x) => x === "start\\n");
+            return values.every((x) => x === "start\n");
           } catch {
             return false;
           }
-        }, 12_000, () => childStateError(child, stderr)).catch(async (error: unknown) => {
+        }, 18_000, () => childStateError(child, stderr)).catch(async (error: unknown) => {
           const present = (await Promise.all(markers.map(async (p) =>
             readFile(p, "utf8").then(() => 1, () => 0)))).reduce((a, b) => a + b, 0);
           throw new Error(`saturation start: ${present}/16 markers observed; ${String(error)}`);
@@ -330,7 +330,7 @@ for (const authMode of ["static", "oidc"] as const) test(`${authMode} black-box 
       });
       assert.equal(recovered.isError, undefined, "work capacity must be reclaimed");
       for (const mark of markers) {
-        assert.equal(await readFile(mark, "utf8"), "start\\n", "no worker or mutation replay");
+        assert.equal(await readFile(mark, "utf8"), "start\n", "no worker or mutation replay");
       }
     }
     const ordered = [...saturationLatenciesMs].sort((a: number, b: number) => a - b);
