@@ -582,6 +582,13 @@ mod lifecycle_tests {
         // Real child processes; no network and no human-owned processes.
         let provider = ProcessProvider::with_session_limit(128);
         let start = std::time::Instant::now();
+        // An optional bounded soak separates bursts, allowing steady-state
+        // RSS, CPU, thread and handle trends to be observed without paid hosts.
+        let soak_seconds = std::env::var("TETHERPLANE_PHASE4_SOAK_SECONDS")
+            .ok()
+            .and_then(|value| value.parse::<u64>().ok())
+            .unwrap_or(0)
+            .min(300);
         let content = "X".repeat(1024);
         let mut snapshots = Vec::new();
         let mut first_handle = String::new();
@@ -626,6 +633,12 @@ mod lifecycle_tests {
                 });
                 println!("PROCESS_ENDURANCE_SAMPLE={sample}");
                 snapshots.push(sample);
+                if index < 287 && soak_seconds > 0 {
+                    tokio::time::sleep(std::time::Duration::from_secs(
+                        soak_seconds / 5,
+                    ))
+                    .await;
+                }
             }
         }
         assert_eq!(snapshots.len(), 6);
