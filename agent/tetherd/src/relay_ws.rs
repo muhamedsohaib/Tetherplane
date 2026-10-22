@@ -310,6 +310,21 @@ where
     }
 }
 
+// Only explicitly side-effect-free operations may be dropped on deadline.
+// In particular process.read advances an output cursor and is excluded.
+fn is_safely_cancellable_read(capability: &str) -> bool {
+    matches!(
+        capability,
+        "device.status"
+            | "device.capabilities"
+            | "filesystem.read"
+            | "filesystem.read_many"
+            | "filesystem.info"
+            | "filesystem.list"
+            | "audit.read"
+    )
+}
+
 // Cancelling read-only futures is safe; mutating futures must continue until
 // their own authoritative outcome is recorded, even after client disconnect.
 async fn execute_with_read_only_deadline<F>(
@@ -320,7 +335,7 @@ async fn execute_with_read_only_deadline<F>(
 where
     F: Future<Output = ResultEnvelope>,
 {
-    if crate::idempotency::is_mutation_capability(&invocation.capability) {
+    if !is_safely_cancellable_read(&invocation.capability) {
         return execution.await;
     }
     match tokio::time::timeout(deadline, execution).await {
@@ -622,6 +637,29 @@ mod tests {
         assert_eq!(result.error.unwrap().code, super::ErrorCode::Timeout);
         drop(permit);
         assert_eq!(capacity.available_permits(), 1);
+    }
+
+    #[tokio::test]
+    async fn cursor_advancing_read_is_not_cancelled_on_generic_deadline() {
+        use std::time::Duration;
+        let mut invocation = synthetic_saturation_invocation();
+        invocation.capability = "process.read".into();
+        let mut successful = super::overloaded_result(&invocation);
+        successful.status = super::ResultStatus::Success;
+        successful.error = None;
+        let result = super::execute_with_read_only_deadline(
+            &invocation,
+            Duration::from_millis(1),
+            async {
+                tokio::time::sleep(Duration::from_millis(15)).await;
+                successful
+            },
+        )
+        .await;
+        assert!(matches!(result.status, super::ResultStatus::Success));
+        assert_eq!(super::is_safely_cancellable_read("filesystem.info"), true);
+        assert_eq!(super::is_safely_cancellable_read("process.read"), false);
+        assert_eq!(super::is_safely_cancellable_read("process.run"), false);
     }
 
     #[tokio::test]
