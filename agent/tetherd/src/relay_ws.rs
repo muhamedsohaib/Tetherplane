@@ -221,7 +221,7 @@ mod tests {
     fn relay_reader_does_not_await_invocation_execution_inline() {
         let source = include_str!("relay_ws.rs");
         assert!(
-            !source.contains("while let Some(next) = socket.next().await"),
+            !source.contains(&["while let Some(next)", " = socket.next().await"].concat()),
             "a single socket-read loop must not await individual operations"
         );
     }
