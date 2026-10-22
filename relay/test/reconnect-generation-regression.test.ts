@@ -144,3 +144,55 @@ test("failed send returns disconnected; reconnect never retries mutation automat
   await new Promise((resolve) => setTimeout(resolve, 20));
   assert.equal(replacementSends, 0);
 });
+
+test("stalled send completion does not block independent control or accept late results", async () => {
+  const router = new DeviceRouter({ registry: await registryForTest(), timeoutMs: 120 });
+  const messages: RelayToDeviceMessage[] = [];
+  const connection = router.connectDevice({
+    accountId: identity.accountId,
+    deviceId: "Leno",
+    send: (message) => {
+      messages.push(message);
+      return message.invocation.capability === "process.run"
+        ? new Promise<void>(() => {})
+        : Promise.resolve();
+    },
+  });
+  const uncertainMutation = invocation("unconfirmed-send", "process.run");
+  uncertainMutation.idempotency_key = "never-replay-stalled-send";
+  const first = router.call(identity, uncertainMutation);
+  await until(() => messages.length === 1);
+
+  const started = performance.now();
+  const status = invocation("independent-status");
+  const control = router.call(identity, status);
+  await until(() => messages.length === 2);
+  connection.receive({
+    type: "result",
+    routeId: messages[1]!.routeId,
+    result: success(status.request_id),
+  });
+  assert.equal((await control).status, "success");
+  assert.ok(performance.now() - started < 2_000, "control must not wait for send");
+
+  const timedOut = await first;
+  assert.equal(timedOut.error?.code, "timeout", "timeout does not prove device delivery");
+  connection.receive({
+    type: "result",
+    routeId: messages[0]!.routeId,
+    result: success(uncertainMutation.request_id),
+  });
+
+  const next = invocation("post-timeout-status");
+  const followup = router.call(identity, next);
+  await until(() => messages.length === 3);
+  connection.receive({
+    type: "result",
+    routeId: messages[2]!.routeId,
+    result: success(next.request_id),
+  });
+  assert.equal((await followup).status, "success");
+  assert.equal(messages.filter((message) =>
+    message.invocation.request_id === uncertainMutation.request_id).length, 1,
+    "uncertain mutation must not be automatically resent");
+});
