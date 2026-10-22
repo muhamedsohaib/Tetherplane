@@ -66,3 +66,29 @@ jobs:
       - name: Windows actual task owner/stop and package smoke
         shell: pwsh
         run: ./tests/release/windows-package-smoke.ps1
+      - name: Fingerprint disposable unsigned test binary
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = 'Stop'
+          $exe = 'target/release/tetherd.exe'
+          if (!(Test-Path -LiteralPath $exe -PathType Leaf)) { throw 'missing test binary' }
+          $sha = (Get-FileHash -LiteralPath $exe -Algorithm SHA256).Hash
+          $source = (git rev-parse HEAD).Trim()
+          $signature = Get-AuthenticodeSignature -LiteralPath $exe
+          if ($signature.Status -eq 'Valid') { throw 'unexpectedly signed test-only binary' }
+          @(
+            'UNSIGNED_TEST_ONLY_DO_NOT_INSTALL_ON_PROTECTED_DEVICES'
+            "source_commit=$source"
+            "binary_sha256=$sha"
+            "signature_status=$($signature.Status)"
+            'production_deployment=NOT_AUTHORIZED'
+          ) | Set-Content -LiteralPath 'target/release/UNSIGNED-TEST-ONLY.txt' -Encoding utf8
+      - name: Upload short-lived unsigned CI test executable (not a release)
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        with:
+          name: tetherplane-unsigned-test-${{ github.sha }}
+          path: |
+            target/release/tetherd.exe
+            target/release/UNSIGNED-TEST-ONLY.txt
+          retention-days: 1
+          if-no-files-found: error
