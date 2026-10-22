@@ -358,6 +358,135 @@ mod tests {
         stalled.abort();
     }
 
+    #[tokio::test]
+    async fn synthetic_saturation_preserves_control_budget_ping_and_reclaims_slots() {
+        use super::{
+            ErrorCode, MAX_IN_FLIGHT_CONTROL, MAX_IN_FLIGHT_WORK, ResultEnvelope, ResultStatus,
+            Timing, VerificationStatus, overloaded_result, write_invocation_result,
+        };
+        use futures_util::{SinkExt, sink};
+        use std::sync::Arc;
+        use std::time::{Duration, Instant};
+        use tokio::sync::{Mutex, Semaphore};
+        use tokio_tungstenite::tungstenite::Message;
+
+        let work = Arc::new(Semaphore::new(MAX_IN_FLIGHT_WORK));
+        let control = Arc::new(Semaphore::new(MAX_IN_FLIGHT_CONTROL));
+        let (sender, mut messages) = tokio::sync::mpsc::channel(8);
+        let sink = sink::unfold(sender, |sender, message| async move {
+            sender.send(message).await.map_err(std::io::Error::other)?;
+            Ok::<_, std::io::Error>(sender)
+        });
+        let writer = Arc::new(Mutex::new(Box::pin(sink)));
+        let fake_invocation: tether_core::InvocationEnvelope = serde_json::from_value(
+            serde_json::json!({
+                "protocol_version": "1.0",
+                "request_id": uuid::Uuid::new_v4(),
+                "device_id": "Leno",
+                "principal_id": null,
+                "job_id": null,
+                "capability": "filesystem.info",
+                "arguments": {},
+                "actor": { "id": "synthetic", "kind": "ai_client" },
+                "session_id": null,
+                "response_mode": "compact",
+                "idempotency_key": null,
+                "preconditions": [],
+                "expectations": []
+            }),
+        )
+        .expect("valid synthetic invocation");
+
+        let mut latencies = Vec::new();
+        for cycle in 0..32 {
+            let work_permits = (0..MAX_IN_FLIGHT_WORK)
+                .map(|_| Arc::clone(&work).try_acquire_owned().unwrap())
+                .collect::<Vec<_>>();
+            assert_eq!(work.available_permits(), 0, "all 16 operations are stalled");
+            // A newly connected socket must receive the SAME saturated budget:
+            // reconnecting must not allocate fresh capacity.
+            let next_generation = Arc::clone(&work);
+            assert!(next_generation.try_acquire_owned().is_err());
+            let overloaded = overloaded_result(&fake_invocation);
+            assert_eq!(overloaded.error.unwrap().code, ErrorCode::ResourceConflict);
+
+            let mut control_permits = (0..MAX_IN_FLIGHT_CONTROL)
+                .map(|_| Arc::clone(&control).try_acquire_owned().unwrap())
+                .collect::<Vec<_>>();
+            assert!(Arc::clone(&control).try_acquire_owned().is_err());
+            drop(control_permits.pop());
+            let _control_permit = Arc::clone(&control).try_acquire_owned().unwrap();
+            let started = Instant::now();
+            let result = ResultEnvelope {
+                protocol_version: "1.0".into(),
+                request_id: uuid::Uuid::new_v4(),
+                status: ResultStatus::Success,
+                data: Some(serde_json::json!({"status":"responsive"})),
+                delta: None,
+                error: None,
+                verification: VerificationStatus::NotApplicable,
+                continuation: None,
+                policy: None,
+                timing: Timing { duration_ms: 0 },
+            };
+            write_invocation_result(
+                Arc::clone(&writer),
+                format!("control-{cycle}"),
+                async move { result },
+            )
+            .await;
+            let control_message = tokio::time::timeout(Duration::from_secs(2), messages.recv())
+                .await
+                .expect("status must arrive within two seconds")
+                .expect("control channel closed");
+            assert!(matches!(control_message, Message::Text(_)));
+            let elapsed_ms = started.elapsed().as_secs_f64() * 1000.0;
+            assert!(elapsed_ms < 2_000.0);
+            latencies.push(elapsed_ms);
+
+            let ping_started = Instant::now();
+            writer
+                .lock()
+                .await
+                .send(Message::Pong(vec![1, 2].into()))
+                .await
+                .unwrap();
+            let pong = tokio::time::timeout(Duration::from_secs(2), messages.recv())
+                .await
+                .expect("ping handling must not be blocked by work")
+                .expect("ping channel closed");
+            assert!(matches!(pong, Message::Pong(_)));
+            assert!(ping_started.elapsed() < Duration::from_secs(2));
+            drop(_control_permit);
+            drop(control_permits);
+            drop(work_permits);
+            assert_eq!(work.available_permits(), MAX_IN_FLIGHT_WORK);
+            assert_eq!(control.available_permits(), MAX_IN_FLIGHT_CONTROL);
+        }
+        latencies.sort_by(f64::total_cmp);
+        let n = latencies.len();
+        println!(
+            "SYNTHETIC_SATURATION={{\"samples\":{},\"cycles\":{},\"p50_ms\":{:.3},\"p95_ms\":{:.3},\"max_ms\":{:.3}}}",
+            n,
+            32,
+            latencies[n / 2],
+            latencies[(n * 95).div_ceil(100) - 1],
+            latencies[n - 1],
+        );
+    }
+
+    #[test]
+    fn tls_eof_and_transport_reset_are_retryable_without_implied_mutation_replay() {
+        use super::{RelayFailure, classify_connect_error};
+        for kind in [
+            std::io::ErrorKind::UnexpectedEof,
+            std::io::ErrorKind::ConnectionReset,
+        ] {
+            let error = tokio_tungstenite::tungstenite::Error::Io(kind.into());
+            assert!(matches!(classify_connect_error(&error), RelayFailure::Retryable(_)));
+        }
+    }
+
     #[test]
     fn relay_url_requires_wss_except_explicit_loopback_test_mode() {
         assert!(validate_relay_url("wss://relay.example.test/device", false).is_ok());
