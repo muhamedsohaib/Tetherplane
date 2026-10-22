@@ -190,7 +190,10 @@ impl AgentRuntime {
         let result = self.router.execute(invocation.clone()).await;
         let guard = store.lock().await;
         if let Err(error) = guard.complete(&invocation, &result) {
-            eprintln!("idempotency completion persistence failed: {}", error.message);
+            eprintln!(
+                "idempotency completion persistence failed: {}",
+                error.message
+            );
             return completion_unverified_result(&invocation);
         }
         result
@@ -580,7 +583,7 @@ mod lifecycle_tests {
         let duplicate = request("duplicate-key", json!({"held":true}));
         let pending = tokio::time::timeout(Duration::from_secs(4), runtime.execute(duplicate))
             .await
-        .expect("duplicate must return bounded pending state");
+            .expect("duplicate must return bounded pending state");
         assert_eq!(pending.status, ResultStatus::Error);
         assert!(matches!(
             pending.error.as_ref().map(|error| &error.code),
@@ -597,7 +600,7 @@ mod lifecycle_tests {
         let independent_result =
             tokio::time::timeout(Duration::from_secs(2), runtime.execute(independent))
                 .await
-        .expect("different key must execute while first effect is held");
+                .expect("different key must execute while first effect is held");
         assert_eq!(independent_result.status, ResultStatus::Success);
         assert_eq!(provider.executions.load(Ordering::SeqCst), 2);
 

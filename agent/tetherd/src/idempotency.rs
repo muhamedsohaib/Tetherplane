@@ -70,7 +70,9 @@ fn sync_directory(path: &Path) -> Result<(), CapabilityError> {
     {
         std::fs::File::open(path)
             .and_then(|directory| directory.sync_all())
-            .map_err(|error| provider_failure(format!("failed to sync idempotency directory: {error}")))
+            .map_err(|error| {
+                provider_failure(format!("failed to sync idempotency directory: {error}"))
+            })
     }
     #[cfg(not(unix))]
     {
@@ -533,9 +535,8 @@ mod lifecycle_tests {
         let Ok(scenario) = std::env::var("TETHERPLANE_PHASE4B_CRASH_CASE") else {
             return;
         };
-        let root = std::path::PathBuf::from(
-            std::env::var("TETHERPLANE_PHASE4B_CRASH_ROOT").unwrap(),
-        );
+        let root =
+            std::path::PathBuf::from(std::env::var("TETHERPLANE_PHASE4B_CRASH_ROOT").unwrap());
         let store = IdempotencyStore::new(&root).unwrap();
         let request = invocation();
         store.reserve(&request).unwrap();
@@ -550,7 +551,9 @@ mod lifecycle_tests {
             effect.sync_all().unwrap();
         }
         if scenario == "completion_unacknowledged" {
-            store.complete(&request, &completed_result(&request)).unwrap();
+            store
+                .complete(&request, &completed_result(&request))
+                .unwrap();
         }
         std::fs::write(root.join("ready-to-kill"), "ready").unwrap();
         // The parent kills this isolated process after observing the marker.
@@ -662,21 +665,30 @@ mod lifecycle_tests {
         let destination_directory = store.directory.join("rename-target");
         std::fs::create_dir_all(&destination_directory).unwrap();
         let temp = store.directory.join("test-rename.tmp");
-        assert!(publish_synced(
-            &store.directory,
-            &temp,
-            &destination_directory,
-            b"{}",
-            "test rename",
-        )
-        .is_err());
-        assert!(temp.exists(), "failed publication retains diagnostic record");
+        assert!(
+            publish_synced(
+                &store.directory,
+                &temp,
+                &destination_directory,
+                b"{}",
+                "test rename",
+            )
+            .is_err()
+        );
+        assert!(
+            temp.exists(),
+            "failed publication retains diagnostic record"
+        );
         let missing_parent = root.join("nonexistent").join("temp");
         assert!(create_synced(&missing_parent, b"{}", "test write").is_err());
 
         // A blocked completion path models an I/O failure after an effect.
         std::fs::create_dir_all(&paths.completed).unwrap();
-        assert!(store.complete(&request, &completed_result(&request)).is_err());
+        assert!(
+            store
+                .complete(&request, &completed_result(&request))
+                .is_err()
+        );
         std::fs::remove_dir_all(&paths.completed).unwrap();
         drop(store);
         let reopened = IdempotencyStore::new(&root).unwrap();
@@ -684,7 +696,10 @@ mod lifecycle_tests {
             reopened.operation_phase(&request).unwrap(),
             Some(MutationPhase::ReconciliationRequired)
         );
-        assert!(matches!(reopened.lookup(&request).unwrap(), IdempotencyLookup::Pending));
+        assert!(matches!(
+            reopened.lookup(&request).unwrap(),
+            IdempotencyLookup::Pending
+        ));
         std::fs::remove_dir_all(root).unwrap();
     }
 
@@ -729,11 +744,22 @@ mod lifecycle_tests {
         let request = invocation();
         let store = IdempotencyStore::new(&root).unwrap();
         store.reserve(&request).unwrap();
-        assert_eq!(store.operation_phase(&request).unwrap(), Some(MutationPhase::Accepted));
+        assert_eq!(
+            store.operation_phase(&request).unwrap(),
+            Some(MutationPhase::Accepted)
+        );
         store.mark_running(&request).unwrap();
-        assert_eq!(store.operation_phase(&request).unwrap(), Some(MutationPhase::Running));
-        store.complete(&request, &completed_result(&request)).unwrap();
-        assert_eq!(store.operation_phase(&request).unwrap(), Some(MutationPhase::Completed));
+        assert_eq!(
+            store.operation_phase(&request).unwrap(),
+            Some(MutationPhase::Running)
+        );
+        store
+            .complete(&request, &completed_result(&request))
+            .unwrap();
+        assert_eq!(
+            store.operation_phase(&request).unwrap(),
+            Some(MutationPhase::Completed)
+        );
         drop(store);
         let reopened = IdempotencyStore::new(&root).unwrap();
         assert_eq!(
