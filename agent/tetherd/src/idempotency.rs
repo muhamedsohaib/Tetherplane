@@ -440,21 +440,26 @@ mod lifecycle_tests {
             "idempotency_key": "phase4-key",
             "preconditions": [],
             "expectations": []
-        })).unwrap()
+        }))
+        .unwrap()
     }
 
     #[test]
     fn pending_mutation_requires_reconciliation_after_process_restart() {
-        let root = std::env::temp_dir().join(format!(
-            "tp-phase4-{}",
-            uuid::Uuid::new_v4().simple()
-        ));
+        let root =
+            std::env::temp_dir().join(format!("tp-phase4-{}", uuid::Uuid::new_v4().simple()));
         let request = invocation();
         let store = IdempotencyStore::new(&root).unwrap();
         store.reserve(&request).unwrap();
-        assert_eq!(store.operation_phase(&request).unwrap(), Some(MutationPhase::Accepted));
+        assert_eq!(
+            store.operation_phase(&request).unwrap(),
+            Some(MutationPhase::Accepted)
+        );
         store.mark_running(&request).unwrap();
-        assert_eq!(store.operation_phase(&request).unwrap(), Some(MutationPhase::Running));
+        assert_eq!(
+            store.operation_phase(&request).unwrap(),
+            Some(MutationPhase::Running)
+        );
         drop(store);
 
         let reopened = IdempotencyStore::new(&root).unwrap();
@@ -462,7 +467,10 @@ mod lifecycle_tests {
             reopened.operation_phase(&request).unwrap(),
             Some(MutationPhase::ReconciliationRequired)
         );
-        assert!(matches!(reopened.lookup(&request).unwrap(), IdempotencyLookup::Pending));
+        assert!(matches!(
+            reopened.lookup(&request).unwrap(),
+            IdempotencyLookup::Pending
+        ));
         // Never infer failure, clear a reservation, or restart execution.
         std::fs::remove_dir_all(root).unwrap();
     }
