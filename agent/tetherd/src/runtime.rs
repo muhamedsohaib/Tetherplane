@@ -25,7 +25,8 @@ use tokio::sync::Mutex;
 use crate::audit::{AuditProvider, AuditStore};
 use crate::idempotency::{
     IdempotencyLookup, IdempotencyStore, MutationPhase, completion_unverified_result,
-    conflict_result, is_mutation_capability, pending_result, store_failure_result, unavailable_result,
+    conflict_result, is_mutation_capability, pending_result, store_failure_result,
+    unavailable_result,
 };
 use crate::job::JobProvider;
 
@@ -534,7 +535,10 @@ mod lifecycle_tests {
         tokio::time::timeout(Duration::from_secs(5), provider.entered.wait())
             .await
             .expect("mutation A must enter provider execution");
-        assert!(!first_task.is_finished(), "A must be held inside the provider");
+        assert!(
+            !first_task.is_finished(),
+            "A must be held inside the provider"
+        );
 
         let b = request("independent-key", json!({"held":false}));
         let b_result = tokio::time::timeout(Duration::from_secs(2), runtime.execute(b))
@@ -542,7 +546,10 @@ mod lifecycle_tests {
             .expect("unrelated mutation B must progress despite blocked A");
         assert_eq!(b_result.status, ResultStatus::Success);
         assert_eq!(provider.executions.load(Ordering::SeqCst), 2);
-        assert!(!first_task.is_finished(), "A must remain blocked until release");
+        assert!(
+            !first_task.is_finished(),
+            "A must remain blocked until release"
+        );
 
         provider.release.wait().await;
         assert_eq!(first_task.await.unwrap().status, ResultStatus::Success);
@@ -564,11 +571,8 @@ mod lifecycle_tests {
             .await
             .expect("original must enter provider execution");
         let duplicate = request("duplicate-key", json!({"held":true}));
-        let pending = tokio::time::timeout(
-            Duration::from_secs(4),
-            runtime.execute(duplicate),
-        )
-        .await
+        let pending = tokio::time::timeout(Duration::from_secs(4), runtime.execute(duplicate))
+            .await
         .expect("duplicate must return bounded pending state");
         assert_eq!(pending.status, ResultStatus::Error);
         assert!(matches!(
@@ -583,11 +587,9 @@ mod lifecycle_tests {
         assert!(!first_task.is_finished());
 
         let independent = request("another-key", json!({"held":false}));
-        let independent_result = tokio::time::timeout(
-            Duration::from_secs(2),
-            runtime.execute(independent),
-        )
-        .await
+        let independent_result =
+            tokio::time::timeout(Duration::from_secs(2), runtime.execute(independent))
+                .await
         .expect("different key must execute while first effect is held");
         assert_eq!(independent_result.status, ResultStatus::Success);
         assert_eq!(provider.executions.load(Ordering::SeqCst), 2);
@@ -595,7 +597,9 @@ mod lifecycle_tests {
         provider.release.wait().await;
         let initial_result = first_task.await.unwrap();
         assert_eq!(initial_result.status, ResultStatus::Success);
-        let replay = runtime.execute(request("duplicate-key", json!({"held":true}))).await;
+        let replay = runtime
+            .execute(request("duplicate-key", json!({"held":true})))
+            .await;
         assert_eq!(replay.status, ResultStatus::Success);
         assert_eq!(replay.data, initial_result.data);
         assert_eq!(provider.executions.load(Ordering::SeqCst), 2);
