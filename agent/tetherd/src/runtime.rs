@@ -170,7 +170,18 @@ impl AgentRuntime {
             match guard.lookup(&invocation) {
                 Ok(IdempotencyLookup::Replay(result)) => return *result,
                 Ok(IdempotencyLookup::Conflict) => return conflict_result(&invocation),
-                Ok(IdempotencyLookup::Pending) => return pending_result(&invocation),
+                Ok(IdempotencyLookup::Pending) => {
+                    let mut result = pending_result(&invocation);
+                    // Report only the caller's own scoped reservation phase.
+                    // No mutation is replayed and no external outcome is inferred.
+                    if let (Some(error), Ok(Some(phase))) = (
+                        result.error.as_mut(),
+                        guard.operation_phase(&invocation),
+                    ) {
+                        error.details["operation_phase"] = json!(phase);
+                    }
+                    return result;
+                }
                 Ok(IdempotencyLookup::Miss) => {
                     if let Err(error) = guard.reserve(&invocation) {
                         return store_failure_result(&invocation, error);
