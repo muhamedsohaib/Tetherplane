@@ -386,7 +386,7 @@ mod lifecycle_tests {
     use std::sync::Arc;
     use std::time::Duration;
 
-    fn request(capability: &str, key: &str, arguments: Value) -> tether_core::InvocationEnvelope {
+    fn request(capability: &str, key: &str, arguments: &Value) -> tether_core::InvocationEnvelope {
         serde_json::from_value(json!({
             "protocol_version":"1.0",
             "request_id":uuid::Uuid::new_v4(),
@@ -420,7 +420,7 @@ mod lifecycle_tests {
         let slow = json!({"program":"cmd.exe","args":["/C","ping -n 5 127.0.0.1 > NUL"],"wait_ms":3500,"pty":false});
         #[cfg(not(windows))]
         let slow = json!({"program":"/bin/sh","args":["-c","sleep 4"],"wait_ms":3500,"pty":false});
-        let first = request("process.run", "slow-independent", slow);
+        let first = request("process.run", "slow-independent", &slow);
         let task = tokio::spawn({
             let runtime = Arc::clone(&runtime);
             async move { runtime.execute(first).await }
@@ -435,7 +435,7 @@ mod lifecycle_tests {
         let second = request(
             "filesystem.append",
             "unrelated-append",
-            json!({
+            &json!({
                 "path":target, "content":"once\\n"
             }),
         );
