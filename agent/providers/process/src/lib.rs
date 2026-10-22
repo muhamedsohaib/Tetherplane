@@ -562,9 +562,13 @@ mod lifecycle_tests {
         let output = std::process::Command::new("powershell.exe")
             .args(["-NoProfile", "-NonInteractive", "-Command", &query])
             .output();
-        let Ok(output) = output else { return (0, 0); };
+        let Ok(output) = output else {
+            return (0, 0);
+        };
         let text = String::from_utf8_lossy(&output.stdout);
-        let mut lines = text.lines().filter_map(|line| line.trim().parse::<usize>().ok());
+        let mut lines = text
+            .lines()
+            .filter_map(|line| line.trim().parse::<usize>().ok());
         (lines.next().unwrap_or(0), lines.next().unwrap_or(0))
     }
 
@@ -594,10 +598,15 @@ mod lifecycle_tests {
                 "program":"/bin/sh","args":["-c", format!("printf '%s\\n' '{content}'")],
                 "wait_ms":1200,"pty":false
             });
-            let run = provider.execute(&request("process.run", &args)).await.unwrap();
+            let run = provider
+                .execute(&request("process.run", &args))
+                .await
+                .unwrap();
             assert_eq!(run.data["running"], false);
             let handle = run.data["handle"].as_str().unwrap().to_owned();
-            if index == 0 { first_handle = handle.clone(); }
+            if index == 0 {
+                first_handle = handle.clone();
+            }
             last_handle = handle;
             if (index + 1) % 48 == 0 {
                 let retained = provider.handles.lock().unwrap().len();
@@ -621,14 +630,16 @@ mod lifecycle_tests {
         }
         assert_eq!(snapshots.len(), 6);
         assert_eq!(provider.handles.lock().unwrap().len(), 128);
-        let gone = provider.execute(&request(
-            "process.read", &json!({"handle":first_handle})
-        )).await;
+        let gone = provider
+            .execute(&request("process.read", &json!({"handle":first_handle})))
+            .await;
         assert!(gone.is_err(), "old completed handle must be evicted");
-        let current = provider.execute(&request(
-            "process.read", &json!({"handle":last_handle,"mode":"tail","tail_bytes":8})
-        )).await;
+        let current = provider
+            .execute(&request(
+                "process.read",
+                &json!({"handle":last_handle,"mode":"tail","tail_bytes":8}),
+            ))
+            .await;
         assert!(current.is_ok(), "newest output must remain readable");
     }
-
 }
