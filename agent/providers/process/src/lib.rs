@@ -634,10 +634,7 @@ mod lifecycle_tests {
                 println!("PROCESS_ENDURANCE_SAMPLE={sample}");
                 snapshots.push(sample);
                 if index < 287 && soak_seconds > 0 {
-                    tokio::time::sleep(std::time::Duration::from_secs(
-                        soak_seconds / 5,
-                    ))
-                    .await;
+                    tokio::time::sleep(std::time::Duration::from_secs(soak_seconds / 5)).await;
                 }
             }
         }
