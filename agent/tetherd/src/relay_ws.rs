@@ -657,9 +657,9 @@ mod tests {
         )
         .await;
         assert!(matches!(result.status, super::ResultStatus::Success));
-        assert_eq!(super::is_safely_cancellable_read("filesystem.info"), true);
-        assert_eq!(super::is_safely_cancellable_read("process.read"), false);
-        assert_eq!(super::is_safely_cancellable_read("process.run"), false);
+        assert!(super::is_safely_cancellable_read("filesystem.info"));
+        assert!(!super::is_safely_cancellable_read("process.read"));
+        assert!(!super::is_safely_cancellable_read("process.run"));
     }
 
     #[tokio::test]
