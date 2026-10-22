@@ -312,3 +312,51 @@ fn provider_failure(message: String) -> CapabilityError {
         details: serde_json::json!({}),
     }
 }
+
+#[cfg(test)]
+mod lifecycle_tests {
+    use super::{IdempotencyLookup, IdempotencyStore, MutationPhase};
+    use serde_json::json;
+
+    fn invocation() -> tether_core::InvocationEnvelope {
+        serde_json::from_value(json!({
+            "protocol_version": "1.0",
+            "request_id": uuid::Uuid::new_v4(),
+            "device_id": "Leno",
+            "principal_id": "operator:isolated-test",
+            "job_id": null,
+            "capability": "filesystem.append",
+            "arguments": { "path": "isolated", "content": "nonsecret" },
+            "actor": { "id": "test", "kind": "ai_client" },
+            "session_id": null,
+            "response_mode": "compact",
+            "idempotency_key": "phase4-key",
+            "preconditions": [],
+            "expectations": []
+        })).unwrap()
+    }
+
+    #[test]
+    fn pending_mutation_requires_reconciliation_after_process_restart() {
+        let root = std::env::temp_dir().join(format!(
+            "tp-phase4-{}",
+            uuid::Uuid::new_v4().simple()
+        ));
+        let request = invocation();
+        let store = IdempotencyStore::new(&root).unwrap();
+        store.reserve(&request).unwrap();
+        assert_eq!(store.operation_phase(&request).unwrap(), Some(MutationPhase::Accepted));
+        store.mark_running(&request).unwrap();
+        assert_eq!(store.operation_phase(&request).unwrap(), Some(MutationPhase::Running));
+        drop(store);
+
+        let reopened = IdempotencyStore::new(&root).unwrap();
+        assert_eq!(
+            reopened.operation_phase(&request).unwrap(),
+            Some(MutationPhase::ReconciliationRequired)
+        );
+        assert!(matches!(reopened.lookup(&request).unwrap(), IdempotencyLookup::Pending));
+        // Never infer failure, clear a reservation, or restart execution.
+        std::fs::remove_dir_all(root).unwrap();
+    }
+}
