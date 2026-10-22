@@ -23,6 +23,8 @@ use crate::runtime::AgentRuntime;
 const DEVICE_ID_HEADER: HeaderName = HeaderName::from_static("x-tetherplane-device-id");
 const MAX_IN_FLIGHT_WORK: usize = 16;
 const MAX_IN_FLIGHT_CONTROL: usize = 4;
+const READ_ONLY_EXECUTION_DEADLINE: Duration = Duration::from_secs(30);
+const WEBSOCKET_WRITE_DEADLINE: Duration = Duration::from_secs(2);
 
 pub(crate) struct RelayConfig {
     pub url: String,
@@ -177,7 +179,12 @@ async fn connect_and_run(
                     let _permit = permit;
                     write_invocation_result(writer, route_id, async move {
                         if invocation.device_id.as_deref() == Some(local_device_id.as_str()) {
-                            runtime.execute(invocation).await
+                            execute_with_read_only_deadline(
+                                &invocation,
+                                READ_ONLY_EXECUTION_DEADLINE,
+                                runtime.execute(invocation.clone()),
+                            )
+                            .await
                         } else {
                             wrong_device_result(&invocation, &local_device_id)
                         }
@@ -223,13 +230,49 @@ where
             return;
         }
     };
-    if let Err(error) = writer
-        .lock()
-        .await
-        .send(Message::Text(payload.into()))
-        .await
+    match tokio::time::timeout(WEBSOCKET_WRITE_DEADLINE, async {
+        writer.lock().await.send(Message::Text(payload.into())).await
+    })
+    .await
     {
-        eprintln!("websocket result send failed: {error}");
+        Ok(Ok(())) => {}
+        Ok(Err(error)) => eprintln!("websocket result send failed: {error}"),
+        Err(_) => eprintln!("websocket result send exceeded bounded deadline"),
+    }
+}
+
+// Cancelling read-only futures is safe; mutating futures must continue until
+// their own authoritative outcome is recorded, even after client disconnect.
+async fn execute_with_read_only_deadline<F>(
+    invocation: &InvocationEnvelope,
+    deadline: Duration,
+    execution: F,
+) -> ResultEnvelope
+where
+    F: Future<Output = ResultEnvelope>,
+{
+    if crate::idempotency::is_mutation_capability(&invocation.capability) {
+        return execution.await;
+    }
+    match tokio::time::timeout(deadline, execution).await {
+        Ok(result) => result,
+        Err(_) => ResultEnvelope {
+            protocol_version: invocation.protocol_version.clone(),
+            request_id: invocation.request_id,
+            status: ResultStatus::Error,
+            data: None,
+            delta: None,
+            error: Some(CapabilityError {
+                code: ErrorCode::Timeout,
+                message: "read-only operation exceeded its execution deadline".into(),
+                recovery_hint: None,
+                details: json!({}),
+            }),
+            verification: VerificationStatus::Failed,
+            continuation: None,
+            policy: None,
+            timing: Timing { duration_ms: 0 },
+        },
     }
 }
 
