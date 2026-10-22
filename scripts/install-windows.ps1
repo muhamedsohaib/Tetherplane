@@ -6,7 +6,8 @@ param(
     [switch]$Force,
     [switch]$IncludeRelay,
     [switch]$InstallScheduledTask,
-    [string]$AgentArgumentsFile
+    [string]$AgentArgumentsFile,
+    [string]$AgentTaskName = "Tetherplane Agent"
 )
 
 $ErrorActionPreference = "Stop"
@@ -15,6 +16,17 @@ Set-StrictMode -Version Latest
 $package = (Resolve-Path -LiteralPath $PackagePath).Path
 $install = [IO.Path]::GetFullPath($InstallPrefix)
 $state = [IO.Path]::GetFullPath($StateDir)
+
+# Existing tasks must be reconciled before migrating from a launcher.
+# Silently replacing them can strand a child or duplicate a device identity.
+if ($InstallScheduledTask) {
+    if ($AgentTaskName -notmatch '^Tetherplane(?:[ -][A-Za-z0-9._-]+)*$') {
+        throw "scheduled task name must be Tetherplane-owned"
+    }
+    if (Get-ScheduledTask -TaskName $AgentTaskName -ErrorAction SilentlyContinue) {
+        throw "existing scheduled task requires stopped-and-orphan-free migration"
+    }
+}
 
 foreach ($required in @(
     "bin\tetherd.exe",
@@ -66,19 +78,24 @@ if ($InstallScheduledTask) {
     if (-not ($agentArgs -is [System.Array])) {
         throw "AgentArgumentsFile must contain a JSON array of tetherd arguments"
     }
-    $agentArgs | ConvertTo-Json -Depth 4 | Set-Content -LiteralPath (Join-Path $configDir "agent-args.json") -Encoding UTF8
+    if ($agentArgs.Count -eq 0 -or
+        $agentArgs -contains "--stdio-rpc" -or
+        $agentArgs -contains "--arguments-file" -or
+        $agentArgs -notcontains "--relay-url" -or
+        $agentArgs -notcontains "--device-id" -or
+        $agentArgs -notcontains "--device-credential-file") {
+        throw "scheduled agent requires relay identity and a credential-file reference"
+    }
+    $argsPath = Join-Path $configDir "agent-args.json"
+    $json = ConvertTo-Json -InputObject $agentArgs -Depth 4 -Compress
+    [IO.File]::WriteAllText($argsPath, $json, [Text.UTF8Encoding]::new($false))
 
-    $taskName = "Tetherplane Agent"
-    $action = New-ScheduledTaskAction -Execute "powershell.exe" -Argument ('-NoProfile -NonInteractive -WindowStyle Hidden -ExecutionPolicy Bypass -File "' + (Join-Path $install "launch\tetherplane-agent.ps1") + '"')
+    # Task Scheduler owns tetherd directly, not a PowerShell-spawned child.
+    $taskName = $AgentTaskName
+    $action = New-ScheduledTaskAction -Execute (Join-Path $install "bin\tetherd.exe") -Argument ('--arguments-file "' + $argsPath + '"')
     $trigger = New-ScheduledTaskTrigger -AtLogOn
-    $existingTask = Get-ScheduledTask -TaskName $taskName -ErrorAction SilentlyContinue
-    if ($existingTask -and -not $Force) {
-        throw "scheduled task already exists: $taskName"
-    }
-    if ($existingTask) {
-        Unregister-ScheduledTask -TaskName $taskName -Confirm:$false
-    }
-    Register-ScheduledTask -TaskName $taskName -Action $action -Trigger $trigger -RunLevel Limited -Force | Out-Null
+    $settings = New-ScheduledTaskSettingsSet -MultipleInstances IgnoreNew -RestartCount 99 -RestartInterval (New-TimeSpan -Minutes 1) -ExecutionTimeLimit ([TimeSpan]::Zero) -StartWhenAvailable -AllowStartIfOnBatteries -DontStopIfGoingOnBatteries
+    Register-ScheduledTask -TaskName $taskName -Action $action -Trigger $trigger -Settings $settings -RunLevel Limited | Out-Null
 }
 
 $receipt = [ordered]@{
