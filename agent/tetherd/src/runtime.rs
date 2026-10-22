@@ -163,25 +163,31 @@ impl AgentRuntime {
         let Some(store) = &self.idempotency_store else {
             return unavailable_result(&invocation);
         };
-        let guard = store.lock().await;
-
-        match guard.lookup(&invocation) {
-            Ok(IdempotencyLookup::Replay(result)) => *result,
-            Ok(IdempotencyLookup::Conflict) => conflict_result(&invocation),
-            Ok(IdempotencyLookup::Pending) => pending_result(&invocation),
-            Ok(IdempotencyLookup::Miss) => {
-                if let Err(error) = guard.reserve(&invocation) {
-                    return store_failure_result(&invocation, error);
+        // Lock only the durable admission decision. Never hold the global
+        // idempotency mutex while a provider may stall indefinitely.
+        {
+            let guard = store.lock().await;
+            match guard.lookup(&invocation) {
+                Ok(IdempotencyLookup::Replay(result)) => return *result,
+                Ok(IdempotencyLookup::Conflict) => return conflict_result(&invocation),
+                Ok(IdempotencyLookup::Pending) => return pending_result(&invocation),
+                Ok(IdempotencyLookup::Miss) => {
+                    if let Err(error) = guard.reserve(&invocation) {
+                        return store_failure_result(&invocation, error);
+                    }
                 }
-
-                let result = self.router.execute(invocation.clone()).await;
-                if let Err(error) = guard.complete(&invocation, &result) {
-                    return store_failure_result(&invocation, error);
-                }
-                result
+                Err(error) => return store_failure_result(&invocation, error),
             }
-            Err(error) => store_failure_result(&invocation, error),
         }
+
+        // Reservation survives a disconnect or crash. Dropping the bookkeeping
+        // lock does not cancel this operation or permit an automatic retry.
+        let result = self.router.execute(invocation.clone()).await;
+        let guard = store.lock().await;
+        if let Err(error) = guard.complete(&invocation, &result) {
+            return store_failure_result(&invocation, error);
+        }
+        result
     }
 }
 
