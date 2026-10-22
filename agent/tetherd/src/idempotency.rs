@@ -80,7 +80,9 @@ fn sync_directory(path: &Path) -> Result<(), CapabilityError> {
         // is synced before publication; power-loss metadata durability remains
         // an explicit Windows release gate, not a claimed guarantee.
         if !path.is_dir() {
-            return Err(provider_failure("idempotency directory is unavailable".into()));
+            return Err(provider_failure(
+                "idempotency directory is unavailable".into(),
+            ));
         }
         Ok(())
     }
