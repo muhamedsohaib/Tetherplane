@@ -522,8 +522,7 @@ mod lifecycle_tests {
         let error = provider
             .execute(&request("process.run", &extra))
             .await
-            .err()
-            .expect("fifth running child must not be spawned");
+            .expect_err("fifth running child must not be spawned");
         assert_eq!(error.code, tether_core::ErrorCode::ResourceConflict);
 
         let count = provider
