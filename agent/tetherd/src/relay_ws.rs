@@ -162,14 +162,11 @@ async fn connect_and_run(
                 } else {
                     Arc::clone(&work_slots)
                 };
-                let permit = match slots.try_acquire_owned() {
-                    Ok(permit) => permit,
-                    Err(_) => {
-                        let busy = overloaded_result(&invocation);
-                        write_invocation_result(Arc::clone(&writer), route_id, async move { busy })
-                            .await;
-                        continue;
-                    }
+                let Ok(permit) = slots.try_acquire_owned() else {
+                    let busy = overloaded_result(&invocation);
+                    write_invocation_result(Arc::clone(&writer), route_id, async move { busy })
+                        .await;
+                    continue;
                 };
                 let local_device_id = config.device_id.clone();
                 let runtime = Arc::clone(&runtime);
@@ -313,13 +310,17 @@ mod tests {
         use super::{
             ResultEnvelope, ResultStatus, Timing, VerificationStatus, write_invocation_result,
         };
-        use futures_util::{StreamExt, channel::mpsc};
+        use futures_util::sink;
         use std::sync::Arc;
         use std::time::Duration;
         use tokio::sync::Mutex;
 
-        let (sink, mut messages) = mpsc::channel(4);
-        let writer = Arc::new(Mutex::new(sink));
+        let (sender, mut messages) = tokio::sync::mpsc::channel(4);
+        let sink = sink::unfold(sender, |sender, message| async move {
+            sender.send(message).await.map_err(std::io::Error::other)?;
+            Ok::<_, std::io::Error>(sender)
+        });
+        let writer = Arc::new(Mutex::new(Box::pin(sink)));
         let stalled = tokio::spawn(write_invocation_result(
             Arc::clone(&writer),
             "slow-route".to_owned(),
@@ -343,7 +344,7 @@ mod tests {
                 }
             },
         ));
-        let received = tokio::time::timeout(Duration::from_millis(250), messages.next())
+        let received = tokio::time::timeout(Duration::from_millis(250), messages.recv())
             .await
             .expect("control response must not wait for stalled work")
             .expect("result writer disconnected");
