@@ -439,9 +439,20 @@ mod lifecycle_tests {
         .unwrap()
     }
 
+    fn current_rss_bytes() -> u64 {
+        let mut system = sysinfo::System::new();
+        system.refresh_processes(sysinfo::ProcessesToUpdate::All, true);
+        sysinfo::get_current_pid()
+            .ok()
+            .and_then(|pid| system.process(pid))
+            .map_or(0, sysinfo::Process::memory)
+    }
+
     #[tokio::test]
     async fn completed_sessions_are_bounded_and_oldest_expire() {
         let provider = ProcessProvider::with_session_limit(4);
+        let rss_before = current_rss_bytes();
+        let started = std::time::Instant::now();
         let mut handles = Vec::new();
         for _ in 0..12 {
             #[cfg(windows)]
@@ -476,5 +487,59 @@ mod lifecycle_tests {
             .execute(&request("process.read", &json!({"handle":handles[11]})))
             .await;
         assert!(latest.is_ok(), "latest completed session remains readable");
+        println!(
+            "PROCESS_RETENTION={{\"created\":12,\"retained\":{},\"capacity\":4,\"rss_before_bytes\":{},\"rss_after_bytes\":{},\"elapsed_ms\":{}}}",
+            sessions.len(),
+            rss_before,
+            current_rss_bytes(),
+            started.elapsed().as_millis(),
+        );
     }
+    #[tokio::test]
+    async fn active_processes_are_never_evicted_and_overflow_fails_closed() {
+        let provider = ProcessProvider::with_session_limit(4);
+        let mut handles = Vec::new();
+        for _ in 0..4 {
+            #[cfg(windows)]
+            let args = json!({ "program":"cmd.exe", "args":["/C", "ping -n 9 127.0.0.1 >NUL"], "wait_ms":0, "pty":false });
+            #[cfg(not(windows))]
+            let args = json!({ "program":"/bin/sh", "args":["-c", "sleep 8"], "wait_ms":0, "pty":false });
+            let run = provider
+                .execute(&request("process.run", &args))
+                .await
+                .unwrap();
+            assert_eq!(run.data["running"], true);
+            handles.push(run.data["handle"].as_str().unwrap().to_owned());
+        }
+
+        #[cfg(windows)]
+        let extra = json!({ "program":"cmd.exe", "args":["/C", "echo denied"], "wait_ms":0, "pty":false });
+        #[cfg(not(windows))]
+        let extra = json!({ "program":"/bin/sh", "args":["-c", "echo denied"], "wait_ms":0, "pty":false });
+        let error = provider
+            .execute(&request("process.run", &extra))
+            .await
+            .err()
+            .expect("fifth running child must not be spawned");
+        assert_eq!(error.code, tether_core::ErrorCode::ResourceConflict);
+
+        let count = provider
+            .execute(&request("process.list_sessions", &json!({})))
+            .await
+            .unwrap()
+            .data["sessions"]
+            .as_array()
+            .unwrap()
+            .len();
+        assert_eq!(count, 4);
+        for handle in handles {
+            let _ = provider
+                .execute(&request("process.terminate", &json!({
+                    "handle":handle,"grace_ms":0,"force":true
+                })))
+                .await
+                .unwrap();
+        }
+    }
+
 }
