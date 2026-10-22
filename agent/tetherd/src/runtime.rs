@@ -175,6 +175,11 @@ impl AgentRuntime {
                     if let Err(error) = guard.reserve(&invocation) {
                         return store_failure_result(&invocation, error);
                     }
+                    if let Err(error) = guard.mark_running(&invocation) {
+                        // An accepted reservation may now require reconciliation.
+                        // Do not run the provider if its start is not durable.
+                        return store_failure_result(&invocation, error);
+                    }
                 }
                 Err(error) => return store_failure_result(&invocation, error),
             }
