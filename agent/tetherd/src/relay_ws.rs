@@ -647,15 +647,12 @@ mod tests {
         let mut successful = super::overloaded_result(&invocation);
         successful.status = super::ResultStatus::Success;
         successful.error = None;
-        let result = super::execute_with_read_only_deadline(
-            &invocation,
-            Duration::from_millis(1),
-            async {
+        let result =
+            super::execute_with_read_only_deadline(&invocation, Duration::from_millis(1), async {
                 tokio::time::sleep(Duration::from_millis(15)).await;
                 successful
-            },
-        )
-        .await;
+            })
+            .await;
         assert!(matches!(result.status, super::ResultStatus::Success));
         assert!(super::is_safely_cancellable_read("filesystem.info"));
         assert!(!super::is_safely_cancellable_read("process.read"));
