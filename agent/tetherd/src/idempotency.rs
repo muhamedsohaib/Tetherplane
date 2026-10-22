@@ -463,6 +463,7 @@ fn provider_failure(message: String) -> CapabilityError {
 mod lifecycle_tests {
     use super::{IdempotencyLookup, IdempotencyStore, MutationPhase};
     use serde_json::json;
+    use std::io::Write as _;
 
     fn invocation() -> tether_core::InvocationEnvelope {
         serde_json::from_value(json!({
@@ -546,7 +547,6 @@ mod lifecycle_tests {
         if scenario == "effect_unrecorded" || scenario == "completion_unacknowledged" {
             let effect_path = root.join("external-effect.txt");
             let mut effect = std::fs::File::create(effect_path).unwrap();
-            use std::io::Write as _;
             effect.write_all(b"once").unwrap();
             effect.sync_all().unwrap();
         }
