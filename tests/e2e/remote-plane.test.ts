@@ -64,6 +64,7 @@ for (const authMode of ["static", "oidc"] as const) test(`${authMode} black-box 
         allowed_capabilities: [
           "device.status",
           "device.capabilities",
+          "process.run",
           "filesystem.read",
           "filesystem.write",
           "filesystem.append",
@@ -113,7 +114,7 @@ for (const authMode of ["static", "oidc"] as const) test(`${authMode} black-box 
       },
     ]),
     allowInsecureLocalhost: true,
-    routeTimeoutMs: 3_000,
+    routeTimeoutMs: 35_000,
   });
   const address = await relay.listen({
     host: "127.0.0.1",
@@ -202,6 +203,190 @@ for (const authMode of ["static", "oidc"] as const) test(`${authMode} black-box 
       tokenB,
       "remote-account-b",
     );
+
+    // End-to-end head-of-line test: real tetherd, real relay and MCP client.
+    // A Tetherplane-owned child confirms the slow operation has actually
+    // started before the independent control-plane request is sent.
+    const slowMarker = path.join(allowedRoot, "stall-marker.txt");
+    const script = `require("node:fs").writeFileSync(${JSON.stringify(slowMarker)}, "started");setTimeout(() => {}, 4500)`;
+    let slowFinished = false;
+    const slowOperation = clientA.callTool({
+      name: "process",
+      arguments: {
+        op: "run",
+        device: "Leno",
+        args: {
+          program: process.execPath,
+          args: ["-e", script],
+          wait_ms: 2_200,
+          pty: false,
+        },
+      },
+    }).finally(() => { slowFinished = true; });
+    await until(async () => {
+      try {
+        return await readFile(slowMarker, "utf8") === "started";
+      } catch {
+        return false;
+      }
+    }, 4_000, () => childStateError(child, stderr));
+    assert.equal(slowFinished, false, "the work request must still be pending");
+
+    let timeoutId: ReturnType<typeof setTimeout> | undefined;
+    try {
+      const control = await Promise.race([
+        clientA.callTool({
+          name: "device",
+          arguments: { op: "status", device: "Leno" },
+        }),
+        new Promise<never>((_resolve, reject) => {
+          timeoutId = setTimeout(
+            () => reject(new Error("control-plane request blocked by slow operation")),
+            1_500,
+          );
+        }),
+      ]);
+      assert.equal(control.isError, undefined);
+      assert.equal(String(structured(control).policy_mode), "background_only");
+      assert.equal(slowFinished, false, "status must complete before stalled work");
+    } finally {
+      if (timeoutId !== undefined) clearTimeout(timeoutId);
+    }
+    assert.equal((await slowOperation).isError, undefined);
+
+    // Phase 2: saturate all 16 real agent work slots; require responsive
+    // control calls and a prompt typed resource_conflict for the 17th.
+    // No production device or external service is touched.
+    const saturationLatenciesMs: number[] = [];
+    for (let cycle = 0; cycle < 2; cycle++) {
+      const releaseFile = path.join(allowedRoot, `release-cycle-${cycle}`);
+      const markers = Array.from({ length: 16 }, (_, i) =>
+        path.join(allowedRoot, `work-${cycle}-${i}.marker`));
+      const work = markers.map((workMarker) => {
+        const script = `const fs=require("node:fs");fs.appendFileSync(${JSON.stringify(workMarker)},"start\\n");const t=setInterval(()=>{if(fs.existsSync(${JSON.stringify(releaseFile)})){clearInterval(t);process.exit(0)}},35);setTimeout(()=>process.exit(0),30000)`;
+        return clientA!.callTool({
+          name: "process",
+          arguments: {
+            op: "run", device: "Leno",
+            args: { program: process.execPath, args: ["-e", script], wait_ms: 31_000, pty: false },
+          },
+        }).then(
+          (result) => ({ result, error: null as string | null }),
+          (error: unknown) => ({ result: null, error: String(error) }),
+        );
+      });
+      try {
+        await until(async () => {
+          try {
+            const values = await Promise.all(markers.map((p) => readFile(p, "utf8")));
+            return values.every((x) => x === "start\n");
+          } catch {
+            return false;
+          }
+        }, 18_000, () => childStateError(child, stderr)).catch(async (error: unknown) => {
+          const present = (await Promise.all(markers.map(async (p) =>
+            readFile(p, "utf8").then(() => 1, () => 0)))).reduce((a, b) => a + b, 0);
+          throw new Error(`saturation start: ${present}/16 markers observed; ${String(error)}`);
+        });
+
+        const overloadStart = performance.now();
+        const overload: Awaited<ReturnType<Client["callTool"]>> = await Promise.race([
+          clientA.callTool({ name: "files", arguments: {
+            op: "info", device: "Leno", args: { path: allowedRoot },
+          } }),
+          new Promise<never>((_, reject) =>
+            setTimeout(() => reject(new Error("overload response exceeded 2s")), 1900)),
+        ]);
+        assert.equal(overload.isError, true, "the 17th work request must be rejected");
+        assert.equal(errorCode(overload), "resource_conflict");
+        assert.ok(performance.now() - overloadStart < 2_000, "work overload must fail promptly");
+
+        // Keep <=2 control calls concurrently so this measures work-lane
+        // isolation rather than intentional control-lane rejection.
+        for (let batch = 0; batch < 6; batch++) {
+          const calls = (["status", "capabilities"] as const).map(async (op) => {
+            const startedAt = performance.now();
+            const result = await clientA!.callTool({
+              name: "device", arguments: { op, device: "Leno" },
+            });
+            const elapsedMs = performance.now() - startedAt;
+            assert.equal(result.isError, undefined, `control ${op} failed in saturation`);
+            if (op === "status") {
+              const liveness = structured(result).agent_liveness as Record<string, unknown>;
+              assert.equal(liveness?.process, "alive");
+              assert.equal(liveness?.transport, "authenticated");
+              assert.equal(liveness?.responsiveness, "responsive");
+              assert.equal(liveness?.state, "saturated");
+              assert.equal(liveness?.work_in_flight, 16);
+              assert.equal(liveness?.work_capacity, 16);
+              assert.equal(liveness?.control_capacity, 4);
+            }
+            assert.ok(elapsedMs < 2_000, `control ${op} exceeded 2s: ${elapsedMs}`);
+            saturationLatenciesMs.push(elapsedMs);
+          });
+          await Promise.all(calls);
+        }
+
+        if (cycle === 1) {
+          // Synthetic orderly WebSocket close, not a live TLS injection:
+          // old provider tasks remain active, but their uncertain results
+          // must not transfer to the new authenticated connection generation.
+          relay.deviceGateway.disconnectDevice("Leno");
+          await until(() => !relay.router.isOnline("Leno"), 2_000);
+          await until(() => relay.router.isOnline("Leno"), 8_000,
+            () => childStateError(child, stderr));
+
+          const startedAt = performance.now();
+          const reconnectedStatus = await clientA.callTool({
+            name: "device", arguments: { op: "status", device: "Leno" },
+          });
+          const elapsedMs = performance.now() - startedAt;
+          assert.equal(reconnectedStatus.isError, undefined);
+          assert.ok(elapsedMs < 2_000, `reconnected control exceeded 2s: ${elapsedMs}`);
+          saturationLatenciesMs.push(elapsedMs);
+
+          const stillBusy = await clientA.callTool({
+            name: "files", arguments: {
+              op: "info", device: "Leno", args: { path: allowedRoot },
+            },
+          });
+          assert.equal(errorCode(stillBusy), "resource_conflict",
+            "reconnect must not reset work budget while old tasks remain active");
+
+          const denied: Awaited<ReturnType<Client["callTool"]>> = await clientB.callTool({
+            name: "device", arguments: { op: "status", device: "Leno" },
+          });
+          assert.equal(errorCode(denied), "permission_denied",
+            "saturation and reconnect must not broaden account authority");
+        }
+      } finally {
+        await writeFile(releaseFile, "release", "utf8");
+      }
+      const completed = await Promise.all(work);
+      for (const outcome of completed) {
+        assert.equal(outcome.error, null, `saturated MCP request transport: ${outcome.error}`);
+        if (cycle === 1) {
+          assert.equal(errorCode(outcome.result!), "disconnected",
+            "an in-flight result lost across reconnect must remain uncertain");
+        } else {
+          assert.equal(outcome.result?.isError, undefined,
+            "a released saturated operation must finish");
+        }
+      }
+      await until(async () => {
+        const recovered = await clientA!.callTool({
+          name: "files",
+          arguments: { op: "info", device: "Leno", args: { path: allowedRoot } },
+        });
+        return recovered.isError === undefined;
+      }, 8_000, () => childStateError(child, stderr));
+      for (const mark of markers) {
+        assert.equal(await readFile(mark, "utf8"), "start\n", "no worker or mutation replay");
+      }
+    }
+    const ordered = [...saturationLatenciesMs].sort((a: number, b: number) => a - b);
+    const pct = (p: number) => Number(ordered[Math.ceil(p * ordered.length) - 1]!.toFixed(2));
+    console.log(`SATURATION_E2E=${JSON.stringify({authMode, samples: ordered.length, p50_ms: pct(.50), p95_ms: pct(.95), max_ms: pct(1), cycles: 2, work_slots: 16})}`);
 
     const remoteFile = path.join(allowedRoot, "remote.txt");
     const writeResult = await clientA.callTool({

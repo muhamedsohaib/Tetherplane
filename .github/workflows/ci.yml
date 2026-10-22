@@ -30,6 +30,14 @@ jobs:
       - name: Rust tests
         run: cargo test --workspace
 
+      - name: Process lifecycle measurements
+        run: cargo test -p tether-process-provider lifecycle_tests -- --nocapture
+
+      - name: Bounded process endurance soak
+        env:
+          TETHERPLANE_PHASE4_SOAK_SECONDS: '60'
+        run: cargo test -p tether-process-provider configured_128_session_ceiling_endurance_samples_resource_trends -- --nocapture
+
       - uses: actions/setup-node@v4
         with:
           node-version: 22
@@ -71,3 +79,8 @@ jobs:
         if: runner.os == 'Windows'
         shell: pwsh
         run: ./tests/release/windows-package-smoke.ps1
+
+      - name: Windows canary verifier negative contracts
+        if: runner.os == 'Windows'
+        shell: pwsh
+        run: ./tests/release/canary-verifier-fail-closed.ps1

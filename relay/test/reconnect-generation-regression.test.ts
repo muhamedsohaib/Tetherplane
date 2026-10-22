@@ -1,0 +1,252 @@
+import assert from "node:assert/strict";
+import test from "node:test";
+
+import type { InvocationEnvelope, ResultEnvelope } from "@tetherplane/protocol";
+import { DeviceRegistry, hashDeviceCredential } from "../src/devices/registry.ts";
+import { DeviceRouter, type RelayToDeviceMessage } from "../src/routing/device-router.ts";
+import { probeAuthenticatedAgent } from "../src/routing/agent-liveness.ts";
+
+const identity = {
+  accountId: "account-reconnect-test",
+  clientId: "client-reconnect-test",
+  principalId: "human:reconnect-test",
+};
+
+async function registryForTest(): Promise<DeviceRegistry> {
+  const registry = await DeviceRegistry.open();
+  const pending = await registry.startPairing({
+    deviceId: "Leno",
+    credentialHash: hashDeviceCredential("synthetic-regression-secret-only"),
+  });
+  await registry.approvePairing({
+    accountId: identity.accountId,
+    userCode: pending.userCode,
+  });
+  return registry;
+}
+
+function invocation(id: string, capability = "device.status"): InvocationEnvelope {
+  return {
+    protocol_version: "1.0",
+    request_id: id,
+    principal_id: "untrusted:incoming",
+    device_id: "Leno",
+    job_id: null,
+    capability,
+    arguments: {},
+    actor: { id: "incoming-client", kind: "ai_client" },
+    session_id: null,
+    response_mode: "compact",
+    idempotency_key: null,
+    preconditions: [],
+    expectations: [],
+  };
+}
+
+function success(requestId: string): ResultEnvelope {
+  return {
+    protocol_version: "1.0",
+    request_id: requestId,
+    status: "success",
+    data: { synthetic: true },
+    delta: null,
+    error: null,
+    verification: "not_applicable",
+    continuation: null,
+    policy: null,
+    timing: { duration_ms: 0 },
+  };
+}
+
+async function until(predicate: () => boolean): Promise<void> {
+  const limit = Date.now() + 1500;
+  while (!predicate()) {
+    if (Date.now() >= limit) throw new Error("synthetic test timed out");
+    await new Promise((resolve) => setTimeout(resolve, 5));
+  }
+}
+
+test("new authenticated connection survives stale predecessor disconnect", async () => {
+  const router = new DeviceRouter({ registry: await registryForTest(), timeoutMs: 2000 });
+  const old = router.connectDevice({
+    accountId: identity.accountId,
+    deviceId: "Leno",
+    send: async () => {},
+  });
+  const messages: RelayToDeviceMessage[] = [];
+  const current = router.connectDevice({
+    accountId: identity.accountId,
+    deviceId: "Leno",
+    send: async (message) => { messages.push(message); },
+  });
+  old.disconnect();
+  assert.equal(router.isOnline("Leno"), true);
+
+  const request = invocation("new-generation-status");
+  const pending = router.call(identity, request);
+  await until(() => messages.length === 1);
+  current.receive({ type: "result", routeId: messages[0]!.routeId, result: success(request.request_id) });
+  assert.equal((await pending).status, "success");
+});
+
+test("stale generation result cannot satisfy pending request on new connection", async () => {
+  const router = new DeviceRouter({ registry: await registryForTest(), timeoutMs: 2000 });
+  const oldMessages: RelayToDeviceMessage[] = [];
+  const old = router.connectDevice({
+    accountId: identity.accountId,
+    deviceId: "Leno",
+    send: async (message) => { oldMessages.push(message); },
+  });
+  const first = router.call(identity, invocation("first-generation"));
+  await until(() => oldMessages.length === 1);
+
+  const newMessages: RelayToDeviceMessage[] = [];
+  const current = router.connectDevice({
+    accountId: identity.accountId,
+    deviceId: "Leno",
+    send: async (message) => { newMessages.push(message); },
+  });
+  assert.equal((await first).error?.code, "disconnected");
+
+  const next = invocation("second-generation");
+  const active = router.call(identity, next);
+  await until(() => newMessages.length === 1);
+  old.receive({ type: "result", routeId: newMessages[0]!.routeId, result: success(next.request_id) });
+  old.disconnect();
+  assert.equal(router.isOnline("Leno"), true);
+  current.receive({ type: "result", routeId: newMessages[0]!.routeId, result: success(next.request_id) });
+  assert.equal((await active).status, "success");
+});
+
+test("failed send returns disconnected; reconnect never retries mutation automatically", async () => {
+  const router = new DeviceRouter({ registry: await registryForTest(), timeoutMs: 2000 });
+  let attempted = 0;
+  const old = router.connectDevice({
+    accountId: identity.accountId,
+    deviceId: "Leno",
+    send: async () => {
+      attempted++;
+      throw new Error("synthetic network reset / TLS EOF boundary");
+    },
+  });
+  const initial = invocation("nonreplayed-mutation", "process.run");
+  initial.idempotency_key = "synthetic-idem";
+  const result = await router.call(identity, initial);
+  assert.equal(result.error?.code, "disconnected");
+  assert.equal(attempted, 1);
+  old.disconnect();
+
+  let replacementSends = 0;
+  router.connectDevice({
+    accountId: identity.accountId,
+    deviceId: "Leno",
+    send: async () => { replacementSends++; },
+  });
+  await new Promise((resolve) => setTimeout(resolve, 20));
+  assert.equal(replacementSends, 0);
+});
+
+test("stalled send completion does not block independent control or accept late results", async () => {
+  const router = new DeviceRouter({ registry: await registryForTest(), timeoutMs: 120 });
+  const messages: RelayToDeviceMessage[] = [];
+  const connection = router.connectDevice({
+    accountId: identity.accountId,
+    deviceId: "Leno",
+    send: (message) => {
+      messages.push(message);
+      return message.invocation.capability === "process.run"
+        ? new Promise<void>(() => {})
+        : Promise.resolve();
+    },
+  });
+  const uncertainMutation = invocation("unconfirmed-send", "process.run");
+  uncertainMutation.idempotency_key = "never-replay-stalled-send";
+  const first = router.call(identity, uncertainMutation);
+  await until(() => messages.length === 1);
+
+  const started = performance.now();
+  const status = invocation("independent-status");
+  const control = router.call(identity, status);
+  await until(() => messages.length === 2);
+  connection.receive({
+    type: "result",
+    routeId: messages[1]!.routeId,
+    result: success(status.request_id),
+  });
+  assert.equal((await control).status, "success");
+  assert.ok(performance.now() - started < 2_000, "control must not wait for send");
+
+  const timedOut = await first;
+  assert.equal(timedOut.error?.code, "timeout", "timeout does not prove device delivery");
+  connection.receive({
+    type: "result",
+    routeId: messages[0]!.routeId,
+    result: success(uncertainMutation.request_id),
+  });
+
+  const next = invocation("post-timeout-status");
+  const followup = router.call(identity, next);
+  await until(() => messages.length === 3);
+  connection.receive({
+    type: "result",
+    routeId: messages[2]!.routeId,
+    result: success(next.request_id),
+  });
+  assert.equal((await followup).status, "success");
+  assert.equal(messages.filter((message) =>
+    message.invocation.request_id === uncertainMutation.request_id).length, 1,
+    "uncertain mutation must not be automatically resent");
+});
+
+test("independently timed authenticated probe never invents a root cause", async () => {
+  const router = new DeviceRouter({ registry: await registryForTest(), timeoutMs: 1500 });
+  const offline = await probeAuthenticatedAgent(router, identity, "Leno", 60);
+  assert.equal(offline.state, "disconnected");
+  assert.equal(offline.agent_response, "unknown");
+  assert.equal(offline.relay_health, "not_measured");
+
+  const messages: RelayToDeviceMessage[] = [];
+  const connection = router.connectDevice({
+    accountId: identity.accountId,
+    deviceId: "Leno",
+    send: async (message) => { messages.push(message); },
+  });
+  const start = performance.now();
+  const pending = await probeAuthenticatedAgent(router, identity, "Leno", 40);
+  assert.equal(pending.state, "unresponsive");
+  assert.equal(pending.agent_response, "unresponsive");
+  assert.equal(pending.transport, "unknown");
+  assert.ok(performance.now() - start < 500);
+  connection.disconnect();
+
+  const moreMessages: RelayToDeviceMessage[] = [];
+  const responding = router.connectDevice({
+    accountId: identity.accountId,
+    deviceId: "Leno",
+    send: async (message) => { moreMessages.push(message); },
+  });
+  const fresh = probeAuthenticatedAgent(router, identity, "Leno", 300);
+  await until(() => moreMessages.length === 1);
+  const requestId = moreMessages[0]!.invocation.request_id;
+  const answer = success(requestId);
+  answer.data = {
+    agent_liveness: {
+      process: "alive", transport: "authenticated", responsiveness: "responsive",
+      state: "saturated", work_in_flight: 16, work_capacity: 16,
+      control_in_flight: 1, control_capacity: 4,
+    },
+  };
+  responding.receive({
+    type: "result", routeId: moreMessages[0]!.routeId, result: answer,
+  });
+  const online = await fresh;
+  assert.equal(online.state, "saturated");
+  assert.equal(online.agent_response, "responsive");
+  assert.equal(online.authentication, "verified");
+  const unauthorized = await probeAuthenticatedAgent(router, {
+    ...identity, accountId: "other-account",
+  }, "Leno", 100);
+  assert.equal(unauthorized.state, "denied");
+  assert.equal(unauthorized.agent_response, "unknown");
+  responding.disconnect();
+});

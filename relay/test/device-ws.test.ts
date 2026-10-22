@@ -149,6 +149,72 @@ test("gateway can disconnect a revoked live device", async () => {
   }
 });
 
+test("real local TCP reset fences pending mutation and reconnect never replays it", async () => {
+  const secret = "isolated-reset-test-secret";
+  const registry = await pairedRegistry(secret);
+  const router = new DeviceRouter({ registry, timeoutMs: 1_000 });
+  const gateway = new DeviceWebSocketGateway({ registry, router });
+  const server = createServer();
+  gateway.attach(server, "/device");
+  await listen(server);
+  const address = server.address();
+  assert.ok(address && typeof address === "object");
+  const url = `ws://127.0.0.1:${address.port}/device`;
+  const headers = {
+    authorization: `Device ${secret}`,
+    "x-tetherplane-device-id": "Leno",
+  };
+  const first = new WebSocket(url, { headers });
+  let firstDelivery = 0;
+  let nextDelivery = 0;
+  const identity = {
+    accountId: "account-a", clientId: "client-a", principalId: "human:account-a",
+  };
+  let next: WebSocket | undefined;
+  try {
+    await opened(first);
+    await until(() => router.isOnline("Leno"));
+    first.on("message", () => { firstDelivery++; });
+    const mutation = { ...invocation("reset-mutating-route"),
+      capability: "process.run", idempotency_key: "no-automatic-replay" };
+    const pending = router.call(identity, mutation);
+    await until(() => firstDelivery === 1);
+    first.terminate(); // real local transport teardown, not a synthetic router callback
+    await closed(first);
+    assert.equal((await pending).error?.code, "disconnected");
+
+    next = new WebSocket(url, { headers });
+    await opened(next);
+    await until(() => router.isOnline("Leno"));
+    next.on("message", (raw) => {
+      nextDelivery++;
+      const received = JSON.parse(String(raw)) as {
+        routeId: string; invocation: { request_id: string };
+      };
+      next!.send(JSON.stringify({
+        type: "result", routeId: received.routeId,
+        result: {
+          protocol_version: "1.0", request_id: received.invocation.request_id,
+          status: "success", data: { agent_liveness: { state: "ready" } },
+          delta: null, error: null, verification: "not_applicable",
+          continuation: null, policy: null, timing: { duration_ms: 1 },
+        },
+      }));
+    });
+    await new Promise((resolve) => setTimeout(resolve, 50));
+    assert.equal(nextDelivery, 0, "uncertain mutation must not be replayed");
+    const recovered = await router.call(identity, invocation("reset-recovery-status"));
+    assert.equal(recovered.status, "success");
+    assert.equal(nextDelivery, 1);
+    assert.equal(firstDelivery, 1);
+  } finally {
+    first.terminate();
+    next?.terminate();
+    await gateway.close();
+    await closeServer(server);
+  }
+});
+
 async function pairedRegistry(
   secret: string,
 ): Promise<DeviceRegistry> {

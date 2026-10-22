@@ -1,7 +1,7 @@
 use std::collections::BTreeSet;
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
-use std::time::Instant;
+use std::time::{Duration, Instant};
 
 use async_trait::async_trait;
 use serde_json::{Value, json};
@@ -24,8 +24,9 @@ use tokio::sync::Mutex;
 
 use crate::audit::{AuditProvider, AuditStore};
 use crate::idempotency::{
-    IdempotencyLookup, IdempotencyStore, conflict_result, is_mutation_capability, pending_result,
-    store_failure_result, unavailable_result,
+    IdempotencyLookup, IdempotencyStore, MutationPhase, completion_unverified_result,
+    conflict_result, is_mutation_capability, pending_result, store_failure_result,
+    unavailable_result,
 };
 use crate::job::JobProvider;
 
@@ -163,24 +164,83 @@ impl AgentRuntime {
         let Some(store) = &self.idempotency_store else {
             return unavailable_result(&invocation);
         };
-        let guard = store.lock().await;
-
-        match guard.lookup(&invocation) {
-            Ok(IdempotencyLookup::Replay(result)) => *result,
-            Ok(IdempotencyLookup::Conflict) => conflict_result(&invocation),
-            Ok(IdempotencyLookup::Pending) => pending_result(&invocation),
-            Ok(IdempotencyLookup::Miss) => {
-                if let Err(error) = guard.reserve(&invocation) {
-                    return store_failure_result(&invocation, error);
+        let existing = {
+            let guard = store.lock().await;
+            match guard.lookup(&invocation) {
+                Ok(IdempotencyLookup::Replay(result)) => return *result,
+                Ok(IdempotencyLookup::Conflict) => return conflict_result(&invocation),
+                Ok(IdempotencyLookup::Pending) => true,
+                Ok(IdempotencyLookup::Miss) => {
+                    if let Err(error) = guard.reserve(&invocation) {
+                        return store_failure_result(&invocation, error);
+                    }
+                    if let Err(error) = guard.mark_running(&invocation) {
+                        return store_failure_result(&invocation, error);
+                    }
+                    false
                 }
-
-                let result = self.router.execute(invocation.clone()).await;
-                if let Err(error) = guard.complete(&invocation, &result) {
-                    return store_failure_result(&invocation, error);
-                }
-                result
+                Err(error) => return store_failure_result(&invocation, error),
             }
-            Err(error) => store_failure_result(&invocation, error),
+        };
+        if existing {
+            return Self::await_existing_idempotent_result(store, &invocation).await;
+        }
+
+        // Never hold the shared bookkeeping lock while the effect is running.
+        let result = self.router.execute(invocation.clone()).await;
+        let guard = store.lock().await;
+        if let Err(error) = guard.complete(&invocation, &result) {
+            eprintln!(
+                "idempotency completion persistence failed: {}",
+                error.message
+            );
+            return completion_unverified_result(&invocation);
+        }
+        result
+    }
+
+    fn pending_with_phase(
+        store: &IdempotencyStore,
+        invocation: &InvocationEnvelope,
+    ) -> ResultEnvelope {
+        let mut result = pending_result(invocation);
+        if let (Some(error), Ok(Some(phase))) =
+            (result.error.as_mut(), store.operation_phase(invocation))
+        {
+            error.details["operation_phase"] = json!(phase);
+        }
+        result
+    }
+
+    async fn await_existing_idempotent_result(
+        store: &Arc<Mutex<IdempotencyStore>>,
+        invocation: &InvocationEnvelope,
+    ) -> ResultEnvelope {
+        // Concurrent identical callers may observe the first authoritative
+        // completion, but never trigger a duplicate execution. Long or old
+        // unfinished reservations fail closed instead of blocking forever.
+        let deadline = tokio::time::Instant::now() + Duration::from_millis(1_200);
+        loop {
+            {
+                let guard = store.lock().await;
+                match guard.lookup(invocation) {
+                    Ok(IdempotencyLookup::Replay(result)) => return *result,
+                    Ok(IdempotencyLookup::Conflict) => return conflict_result(invocation),
+                    Ok(IdempotencyLookup::Pending) => {
+                        let phase = guard.operation_phase(invocation);
+                        if matches!(phase, Ok(Some(MutationPhase::ReconciliationRequired)))
+                            || tokio::time::Instant::now() >= deadline
+                        {
+                            return Self::pending_with_phase(&guard, invocation);
+                        }
+                    }
+                    Ok(IdempotencyLookup::Miss) => {
+                        return Self::pending_with_phase(&guard, invocation);
+                    }
+                    Err(error) => return store_failure_result(invocation, error),
+                }
+            }
+            tokio::time::sleep(Duration::from_millis(20)).await;
         }
     }
 }
@@ -376,5 +436,265 @@ fn invalid_arguments(message: &str) -> CapabilityError {
         message: message.to_owned(),
         recovery_hint: None,
         details: serde_json::json!({}),
+    }
+}
+
+#[cfg(test)]
+mod lifecycle_tests {
+    use super::{AgentRuntime, IdempotencyStore};
+    use async_trait::async_trait;
+    use serde_json::{Value, json};
+    use std::path::Path;
+    use std::sync::Arc;
+    use std::sync::atomic::{AtomicUsize, Ordering};
+    use std::time::Duration;
+    use tether_core::{
+        CapabilityError, CapabilityProvider, CapabilityRouter, ErrorCode, InvocationEnvelope,
+        ProviderResult, ResultStatus, VerificationStatus,
+    };
+    use tokio::sync::{Barrier, Mutex};
+
+    struct HeldEffect {
+        entered: Barrier,
+        release: Barrier,
+        executions: AtomicUsize,
+    }
+
+    impl HeldEffect {
+        fn new() -> Self {
+            Self {
+                entered: Barrier::new(2),
+                release: Barrier::new(2),
+                executions: AtomicUsize::new(0),
+            }
+        }
+    }
+
+    #[async_trait]
+    impl CapabilityProvider for HeldEffect {
+        fn namespace(&self) -> &'static str {
+            "filesystem"
+        }
+
+        async fn execute(
+            &self,
+            invocation: &InvocationEnvelope,
+        ) -> Result<ProviderResult, CapabilityError> {
+            self.executions.fetch_add(1, Ordering::SeqCst);
+            if invocation.arguments["held"] == true {
+                self.entered.wait().await;
+                self.release.wait().await;
+            }
+            Ok(ProviderResult {
+                data: json!({"effect":"finished"}),
+                delta: None,
+                verification: VerificationStatus::Verified,
+            })
+        }
+    }
+
+    fn request(key: &str, arguments: &Value) -> InvocationEnvelope {
+        serde_json::from_value(json!({
+            "protocol_version": "1.0",
+            "request_id": uuid::Uuid::new_v4(),
+            "device_id": "isolated-test-device",
+            "principal_id": "operator:isolated-test",
+            "job_id": null,
+            "capability": "filesystem.append",
+            "arguments": arguments,
+            "actor": {"id":"phase4b-test","kind":"ai_client"},
+            "session_id": null,
+            "response_mode": "compact",
+            "idempotency_key": key,
+            "preconditions": [],
+            "expectations": []
+        }))
+        .unwrap()
+    }
+
+    fn make_runtime(root: &Path, provider: Arc<HeldEffect>) -> Arc<AgentRuntime> {
+        let mut router = CapabilityRouter::new();
+        router.register(provider).unwrap();
+        Arc::new(AgentRuntime {
+            router,
+            bound_principal_id: None,
+            audit_store: None,
+            idempotency_store: Some(Arc::new(Mutex::new(IdempotencyStore::new(root).unwrap()))),
+        })
+    }
+
+    fn scratch() -> std::path::PathBuf {
+        std::env::temp_dir().join(format!(
+            "tetherplane-phase4b-{}",
+            uuid::Uuid::new_v4().simple()
+        ))
+    }
+
+    #[tokio::test]
+    async fn stalled_keyed_mutation_does_not_block_unrelated_keyed_mutation() {
+        let root = scratch();
+        let provider = Arc::new(HeldEffect::new());
+        let runtime = make_runtime(&root, Arc::clone(&provider));
+        let first = request("held-key", &json!({"held":true}));
+        let first_task = tokio::spawn({
+            let runtime = Arc::clone(&runtime);
+            async move { runtime.execute(first).await }
+        });
+
+        // Barrier proves A reached the provider effect, unlike sleeping for 250 ms.
+        tokio::time::timeout(Duration::from_secs(5), provider.entered.wait())
+            .await
+            .expect("mutation A must enter provider execution");
+        assert!(
+            !first_task.is_finished(),
+            "A must be held inside the provider"
+        );
+
+        let b = request("independent-key", &json!({"held":false}));
+        let b_result = tokio::time::timeout(Duration::from_secs(2), runtime.execute(b))
+            .await
+            .expect("unrelated mutation B must progress despite blocked A");
+        assert_eq!(b_result.status, ResultStatus::Success);
+        assert_eq!(provider.executions.load(Ordering::SeqCst), 2);
+        assert!(
+            !first_task.is_finished(),
+            "A must remain blocked until release"
+        );
+
+        provider.release.wait().await;
+        assert_eq!(first_task.await.unwrap().status, ResultStatus::Success);
+        std::fs::remove_dir_all(&root).unwrap();
+    }
+
+    #[tokio::test]
+    async fn concurrent_same_key_is_pending_and_cannot_duplicate_effect() {
+        let root = scratch();
+        let provider = Arc::new(HeldEffect::new());
+        let runtime = make_runtime(&root, Arc::clone(&provider));
+        let held = json!({"held":true});
+        let first_task = tokio::spawn({
+            let runtime = Arc::clone(&runtime);
+            let first = request("duplicate-key", &held);
+            async move { runtime.execute(first).await }
+        });
+        tokio::time::timeout(Duration::from_secs(5), provider.entered.wait())
+            .await
+            .expect("original must enter provider execution");
+        let duplicate = request("duplicate-key", &json!({"held":true}));
+        let pending = tokio::time::timeout(Duration::from_secs(4), runtime.execute(duplicate))
+            .await
+            .expect("duplicate must return bounded pending state");
+        assert_eq!(pending.status, ResultStatus::Error);
+        assert!(matches!(
+            pending.error.as_ref().map(|error| &error.code),
+            Some(ErrorCode::ActionUnverified)
+        ));
+        assert_eq!(
+            pending.error.as_ref().unwrap().details["operation_phase"],
+            "running"
+        );
+        assert_eq!(provider.executions.load(Ordering::SeqCst), 1);
+        assert!(!first_task.is_finished());
+
+        let independent = request("another-key", &json!({"held":false}));
+        let independent_result =
+            tokio::time::timeout(Duration::from_secs(2), runtime.execute(independent))
+                .await
+                .expect("different key must execute while first effect is held");
+        assert_eq!(independent_result.status, ResultStatus::Success);
+        assert_eq!(provider.executions.load(Ordering::SeqCst), 2);
+
+        provider.release.wait().await;
+        let initial_result = first_task.await.unwrap();
+        assert_eq!(initial_result.status, ResultStatus::Success);
+        let replay = runtime
+            .execute(request("duplicate-key", &json!({"held":true})))
+            .await;
+        assert_eq!(replay.status, ResultStatus::Success);
+        assert_eq!(replay.data, initial_result.data);
+        assert_eq!(provider.executions.load(Ordering::SeqCst), 2);
+        std::fs::remove_dir_all(&root).unwrap();
+    }
+
+    #[tokio::test]
+    async fn failed_completion_after_effect_is_uncertain_and_cannot_replay() {
+        let root = scratch();
+        let provider = Arc::new(HeldEffect::new());
+        let runtime = make_runtime(&root, Arc::clone(&provider));
+        let first_task = tokio::spawn({
+            let runtime = Arc::clone(&runtime);
+            async move {
+                runtime
+                    .execute(request("failed-completion", &json!({"held":true})))
+                    .await
+            }
+        });
+        tokio::time::timeout(Duration::from_secs(5), provider.entered.wait())
+            .await
+            .expect("provider reached effect before completion failure");
+        let pending = std::fs::read_dir(root.join("idempotency"))
+            .unwrap()
+            .map(|entry| entry.unwrap().path())
+            .find(|path| path.to_string_lossy().ends_with(".pending.json"))
+            .expect("running idempotency fence must be on disk");
+        let completion = pending.with_file_name(
+            pending
+                .file_name()
+                .unwrap()
+                .to_string_lossy()
+                .replace(".pending.json", ".complete.json"),
+        );
+        std::fs::create_dir(&completion).unwrap();
+        provider.release.wait().await;
+
+        let uncertain = first_task.await.unwrap();
+        assert_eq!(uncertain.status, ResultStatus::Error);
+        assert!(matches!(
+            uncertain.error.as_ref().map(|error| &error.code),
+            Some(ErrorCode::ActionUnverified)
+        ));
+        assert_eq!(
+            uncertain.error.as_ref().unwrap().details["operation_phase"],
+            "reconciliation_required"
+        );
+        assert_eq!(provider.executions.load(Ordering::SeqCst), 1);
+        std::fs::remove_dir(&completion).unwrap();
+        drop(runtime);
+        let next_provider = Arc::new(HeldEffect::new());
+        let restarted = make_runtime(&root, Arc::clone(&next_provider));
+        let retry = restarted
+            .execute(request("failed-completion", &json!({"held":true})))
+            .await;
+        assert_eq!(retry.status, ResultStatus::Error);
+        assert_eq!(
+            retry.error.as_ref().unwrap().details["operation_phase"],
+            "reconciliation_required"
+        );
+        assert_eq!(next_provider.executions.load(Ordering::SeqCst), 0);
+        std::fs::remove_dir_all(root).unwrap();
+    }
+
+    #[tokio::test]
+    async fn externally_completed_but_unrecorded_effect_requires_reconciliation() {
+        let root = scratch();
+        let invocation = request("unrecorded-effect", &json!({"held":false}));
+        let store = IdempotencyStore::new(&root).unwrap();
+        store.reserve(&invocation).unwrap();
+        store.mark_running(&invocation).unwrap();
+        let marker = root.join("external-effect.txt");
+        std::fs::write(&marker, "once").unwrap();
+        drop(store);
+
+        let provider = Arc::new(HeldEffect::new());
+        let runtime = make_runtime(&root, Arc::clone(&provider));
+        let retry = runtime.execute(invocation).await;
+        assert_eq!(retry.status, ResultStatus::Error);
+        assert_eq!(
+            retry.error.as_ref().unwrap().details["operation_phase"],
+            "reconciliation_required"
+        );
+        assert_eq!(provider.executions.load(Ordering::SeqCst), 0);
+        assert_eq!(std::fs::read_to_string(marker).unwrap(), "once");
+        std::fs::remove_dir_all(root).unwrap();
     }
 }
