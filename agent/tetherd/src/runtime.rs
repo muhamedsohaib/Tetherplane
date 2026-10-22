@@ -1,7 +1,7 @@
 use std::collections::BTreeSet;
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
-use std::time::Instant;
+use std::time::{Duration, Instant};
 
 use async_trait::async_trait;
 use serde_json::{Value, json};
@@ -24,7 +24,7 @@ use tokio::sync::Mutex;
 
 use crate::audit::{AuditProvider, AuditStore};
 use crate::idempotency::{
-    IdempotencyLookup, IdempotencyStore, conflict_result, is_mutation_capability, pending_result,
+    IdempotencyLookup, IdempotencyStore, MutationPhase, conflict_result, is_mutation_capability, pending_result,
     store_failure_result, unavailable_result,
 };
 use crate::job::JobProvider;
@@ -163,46 +163,82 @@ impl AgentRuntime {
         let Some(store) = &self.idempotency_store else {
             return unavailable_result(&invocation);
         };
-        // Lock only the durable admission decision. Never hold the global
-        // idempotency mutex while a provider may stall indefinitely.
-        {
+        let existing = {
             let guard = store.lock().await;
             match guard.lookup(&invocation) {
                 Ok(IdempotencyLookup::Replay(result)) => return *result,
                 Ok(IdempotencyLookup::Conflict) => return conflict_result(&invocation),
-                Ok(IdempotencyLookup::Pending) => {
-                    let mut result = pending_result(&invocation);
-                    // Report only the caller's own scoped reservation phase.
-                    // No mutation is replayed and no external outcome is inferred.
-                    if let (Some(error), Ok(Some(phase))) =
-                        (result.error.as_mut(), guard.operation_phase(&invocation))
-                    {
-                        error.details["operation_phase"] = json!(phase);
-                    }
-                    return result;
-                }
+                Ok(IdempotencyLookup::Pending) => true,
                 Ok(IdempotencyLookup::Miss) => {
                     if let Err(error) = guard.reserve(&invocation) {
                         return store_failure_result(&invocation, error);
                     }
                     if let Err(error) = guard.mark_running(&invocation) {
-                        // An accepted reservation may now require reconciliation.
-                        // Do not run the provider if its start is not durable.
                         return store_failure_result(&invocation, error);
                     }
+                    false
                 }
                 Err(error) => return store_failure_result(&invocation, error),
             }
+        };
+        if existing {
+            return Self::await_existing_idempotent_result(store, &invocation).await;
         }
 
-        // Reservation survives a disconnect or crash. Dropping the bookkeeping
-        // lock does not cancel this operation or permit an automatic retry.
+        // Never hold the shared bookkeeping lock while the effect is running.
         let result = self.router.execute(invocation.clone()).await;
         let guard = store.lock().await;
         if let Err(error) = guard.complete(&invocation, &result) {
             return store_failure_result(&invocation, error);
         }
         result
+    }
+
+    fn pending_with_phase(
+        store: &IdempotencyStore,
+        invocation: &InvocationEnvelope,
+    ) -> ResultEnvelope {
+        let mut result = pending_result(invocation);
+        if let (Some(error), Ok(Some(phase))) =
+            (result.error.as_mut(), store.operation_phase(invocation))
+        {
+            error.details["operation_phase"] = json!(phase);
+        }
+        result
+    }
+
+    async fn await_existing_idempotent_result(
+        store: &Arc<Mutex<IdempotencyStore>>,
+        invocation: &InvocationEnvelope,
+    ) -> ResultEnvelope {
+        // Concurrent identical callers may observe the first authoritative
+        // completion, but never trigger a duplicate execution. Long or old
+        // unfinished reservations fail closed instead of blocking forever.
+        let deadline = tokio::time::Instant::now() + Duration::from_millis(1_200);
+        loop {
+            {
+                let guard = store.lock().await;
+                match guard.lookup(invocation) {
+                    Ok(IdempotencyLookup::Replay(result)) => return *result,
+                    Ok(IdempotencyLookup::Conflict) => return conflict_result(invocation),
+                    Ok(IdempotencyLookup::Pending) => {
+                        let phase = guard.operation_phase(invocation);
+                        if matches!(
+                            phase,
+                            Ok(Some(MutationPhase::ReconciliationRequired))
+                        ) || tokio::time::Instant::now() >= deadline
+                        {
+                            return Self::pending_with_phase(&guard, invocation);
+                        }
+                    }
+                    Ok(IdempotencyLookup::Miss) => {
+                        return Self::pending_with_phase(&guard, invocation);
+                    }
+                    Err(error) => return store_failure_result(invocation, error),
+                }
+            }
+            tokio::time::sleep(Duration::from_millis(20)).await;
+        }
     }
 }
 
