@@ -492,6 +492,50 @@ mod tests {
         }
     }
 
+    #[tokio::test]
+    async fn stalled_read_only_invocation_expires_and_releases_capacity() {
+        use std::sync::Arc;
+        use std::time::Duration;
+        use tokio::sync::Semaphore;
+
+        let capacity = Arc::new(Semaphore::new(1));
+        let permit = Arc::clone(&capacity).try_acquire_owned().unwrap();
+        let invocation = synthetic_saturation_invocation();
+        let result = super::execute_with_read_only_deadline(
+            &invocation,
+            Duration::from_millis(25),
+            std::future::pending::<super::ResultEnvelope>(),
+        )
+        .await;
+        assert_eq!(result.error.unwrap().code, super::ErrorCode::Timeout);
+        drop(permit);
+        assert_eq!(capacity.available_permits(), 1);
+    }
+
+    #[tokio::test]
+    async fn stalled_writer_has_bounded_wait_without_monopolizing_socket() {
+        use futures_util::sink;
+        use std::sync::Arc;
+        use std::time::Duration;
+        use tokio::sync::Mutex;
+        use tokio_tungstenite::tungstenite::Message;
+
+        let writer = Arc::new(Mutex::new(Box::pin(sink::unfold((), |(), _: Message| async {
+            std::future::pending::<Result<(), std::io::Error>>().await?;
+            Ok::<_, std::io::Error>(())
+        }))));
+        let value = super::execute_with_read_only_deadline(
+            &synthetic_saturation_invocation(),
+            Duration::from_millis(5),
+            std::future::pending::<super::ResultEnvelope>(),
+        ).await;
+        let deadline = tokio::time::timeout(Duration::from_secs(3),
+            super::write_invocation_result(Arc::clone(&writer), "blocked".into(), async { value })
+        ).await;
+        assert!(deadline.is_ok(), "writer must not hang forever");
+        assert!(writer.try_lock().is_ok(), "blocked send must release mutex");
+    }
+
     #[test]
     fn relay_url_requires_wss_except_explicit_loopback_test_mode() {
         assert!(validate_relay_url("wss://relay.example.test/device", false).is_ok());
