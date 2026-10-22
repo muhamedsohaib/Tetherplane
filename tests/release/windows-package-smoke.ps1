@@ -20,6 +20,7 @@ $allow = Join-Path $root "allowed"
 $supervisorProcess = $null
 $taskName = $null
 $taskProcessId = $null
+$duplicateTaskName = $null
 
 try {
     New-Item -ItemType Directory -Force -Path $root,$allow | Out-Null
@@ -179,6 +180,22 @@ try {
         throw "scheduled native test agent did not start exactly once"
     }
     $taskProcessId = [int]$taskAgent[0].ProcessId
+    $duplicateTaskName = "Tetherplane CI-" + [guid]::NewGuid().ToString("N")
+    $duplicateRejected = $false
+    try {
+        & $installScript -PackagePath $stage -InstallPrefix (Join-Path $root "duplicate-install") -StateDir (Join-Path $root "duplicate-state") -InstallScheduledTask -AgentTaskName $duplicateTaskName -AgentArgumentsFile $taskArgs
+    }
+    catch {
+        if ([string]$_.Exception.Message -like "*a tetherd process is already running*") {
+            $duplicateRejected = $true
+        }
+        else {
+            throw
+        }
+    }
+    if (-not $duplicateRejected) {
+        throw "installer accepted a second scheduled agent while one was live"
+    }
     Stop-ScheduledTask -TaskName $taskName
     $deadline = [DateTime]::UtcNow.AddSeconds(15)
     do {
@@ -207,6 +224,13 @@ try {
     Write-Output "WINDOWS_PACKAGE_SMOKE_OK"
 }
 finally {
+    if ($duplicateTaskName) {
+        $duplicate = Get-ScheduledTask -TaskName $duplicateTaskName -ErrorAction SilentlyContinue
+        if ($duplicate) {
+            Stop-ScheduledTask -TaskName $duplicateTaskName -ErrorAction SilentlyContinue
+            Unregister-ScheduledTask -TaskName $duplicateTaskName -Confirm:$false -ErrorAction SilentlyContinue
+        }
+    }
     if ($taskName) {
         $registered = Get-ScheduledTask -TaskName $taskName -ErrorAction SilentlyContinue
         if ($registered) {
