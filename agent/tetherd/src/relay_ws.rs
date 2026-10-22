@@ -1,7 +1,7 @@
+use std::future::Future;
 use std::path::Path;
 use std::sync::Arc;
 use std::time::Duration;
-use std::future::Future;
 
 use futures_util::{Sink, SinkExt, StreamExt};
 use serde::{Deserialize, Serialize};
@@ -166,12 +166,8 @@ async fn connect_and_run(
                     Ok(permit) => permit,
                     Err(_) => {
                         let busy = overloaded_result(&invocation);
-                        write_invocation_result(
-                            Arc::clone(&writer),
-                            route_id,
-                            async move { busy },
-                        )
-                        .await;
+                        write_invocation_result(Arc::clone(&writer), route_id, async move { busy })
+                            .await;
                         continue;
                     }
                 };
@@ -183,9 +179,7 @@ async fn connect_and_run(
                 drop(tokio::spawn(async move {
                     let _permit = permit;
                     write_invocation_result(writer, route_id, async move {
-                        if invocation.device_id.as_deref()
-                            == Some(local_device_id.as_str())
-                        {
+                        if invocation.device_id.as_deref() == Some(local_device_id.as_str()) {
                             runtime.execute(invocation).await
                         } else {
                             wrong_device_result(&invocation, &local_device_id)
@@ -214,11 +208,8 @@ async fn connect_and_run(
 
 // The lock is acquired only after the provider future is complete, so a
 // stalled operation cannot monopolize the result writer.
-async fn write_invocation_result<S, F>(
-    writer: Arc<Mutex<S>>,
-    route_id: String,
-    execution: F,
-) where
+async fn write_invocation_result<S, F>(writer: Arc<Mutex<S>>, route_id: String, execution: F)
+where
     S: Sink<Message> + Unpin + Send + 'static,
     S::Error: std::fmt::Display,
     F: Future<Output = ResultEnvelope> + Send,
@@ -235,7 +226,12 @@ async fn write_invocation_result<S, F>(
             return;
         }
     };
-    if let Err(error) = writer.lock().await.send(Message::Text(payload.into())).await {
+    if let Err(error) = writer
+        .lock()
+        .await
+        .send(Message::Text(payload.into()))
+        .await
+    {
         eprintln!("websocket result send failed: {error}");
     }
 }
@@ -314,11 +310,13 @@ mod tests {
 
     #[tokio::test]
     async fn stalled_work_does_not_block_control_result_delivery() {
-        use super::{write_invocation_result, ResultEnvelope, ResultStatus, Timing, VerificationStatus};
+        use super::{
+            ResultEnvelope, ResultStatus, Timing, VerificationStatus, write_invocation_result,
+        };
+        use futures_util::{StreamExt, channel::mpsc};
         use std::sync::Arc;
         use std::time::Duration;
         use tokio::sync::Mutex;
-        use futures_util::{channel::mpsc, StreamExt};
 
         let (sink, mut messages) = mpsc::channel(4);
         let writer = Arc::new(Mutex::new(sink));
