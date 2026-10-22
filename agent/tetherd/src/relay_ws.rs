@@ -173,21 +173,57 @@ async fn connect_and_run(
                 let local_device_id = config.device_id.clone();
                 let runtime = Arc::clone(&runtime);
                 let writer = Arc::clone(&writer);
+                let status_requested = invocation.capability == "device.status";
+                let work_capacity = Arc::clone(&work_slots);
+                let control_capacity = Arc::clone(&control_slots);
                 // Dropping the JoinHandle detaches execution: a connection
                 // failure must not cancel a mutation after it has begun.
                 drop(tokio::spawn(async move {
                     let _permit = permit;
                     write_invocation_result(writer, route_id, async move {
-                        if invocation.device_id.as_deref() == Some(local_device_id.as_str()) {
-                            execute_with_read_only_deadline(
-                                &invocation,
-                                READ_ONLY_EXECUTION_DEADLINE,
-                                runtime.execute(invocation.clone()),
-                            )
-                            .await
-                        } else {
-                            wrong_device_result(&invocation, &local_device_id)
+                        let mut result =
+                            if invocation.device_id.as_deref() == Some(local_device_id.as_str()) {
+                                execute_with_read_only_deadline(
+                                    &invocation,
+                                    READ_ONLY_EXECUTION_DEADLINE,
+                                    runtime.execute(invocation.clone()),
+                                )
+                                .await
+                            } else {
+                                wrong_device_result(&invocation, &local_device_id)
+                            };
+                        // Only successful, authorized device.status calls expose
+                        // capacity. This is a live request sample, not a heartbeat.
+                        if status_requested
+                            && matches!(result.status, ResultStatus::Success)
+                            && let Some(serde_json::Value::Object(data)) = result.data.as_mut()
+                        {
+                            let work_in_flight =
+                                MAX_IN_FLIGHT_WORK - work_capacity.available_permits();
+                            let control_in_flight =
+                                MAX_IN_FLIGHT_CONTROL - control_capacity.available_permits();
+                            let state = if work_in_flight == MAX_IN_FLIGHT_WORK {
+                                "saturated"
+                            } else if work_in_flight > 0 {
+                                "degraded"
+                            } else {
+                                "ready"
+                            };
+                            data.insert(
+                                "agent_liveness".into(),
+                                json!({
+                                    "process": "alive",
+                                    "transport": "authenticated",
+                                    "responsiveness": "responsive",
+                                    "state": state,
+                                    "work_in_flight": work_in_flight,
+                                    "work_capacity": MAX_IN_FLIGHT_WORK,
+                                    "control_in_flight": control_in_flight,
+                                    "control_capacity": MAX_IN_FLIGHT_CONTROL
+                                }),
+                            );
                         }
+                        result
                     })
                     .await;
                 }));
