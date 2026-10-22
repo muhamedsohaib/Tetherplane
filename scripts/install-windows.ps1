@@ -37,7 +37,9 @@ if ($InstallScheduledTask) {
     $agentTasks = @(Get-ScheduledTask -ErrorAction Stop | Where-Object {
         $taskNameMatches = $_.TaskName -match '(?i)^Tetherplane(?:\s+\S+)*\s+Agent$'
         $nativeActionMatches = @($_.Actions | Where-Object {
-            [string]$_.Execute -match '(?i)[\\/]tetherd\.exe$'
+            # COM-handler and other scheduled-task action types have no Execute.
+            $execute = $_.PSObject.Properties['Execute']
+            $null -ne $execute -and [string]$execute.Value -match '(?i)[\\/]tetherd\.exe$'
         }).Count -gt 0
         $taskNameMatches -or $nativeActionMatches
     })
