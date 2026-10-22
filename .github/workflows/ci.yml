@@ -74,3 +74,8 @@ jobs:
         if: runner.os == 'Windows'
         shell: pwsh
         run: ./tests/release/windows-package-smoke.ps1
+
+      - name: Windows canary verifier negative contracts
+        if: runner.os == 'Windows'
+        shell: pwsh
+        run: ./tests/release/canary-verifier-fail-closed.ps1
