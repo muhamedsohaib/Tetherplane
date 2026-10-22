@@ -145,9 +145,10 @@ impl IdempotencyStore {
     /// Persist execution start before invoking an external mutation.
     /// A mismatch or a restarted generation cannot be silently resumed.
     pub fn mark_running(&self, invocation: &InvocationEnvelope) -> Result<(), CapabilityError> {
-        let key = invocation.idempotency_key.as_deref().ok_or_else(|| {
-            provider_failure("idempotency key is missing".into())
-        })?;
+        let key = invocation
+            .idempotency_key
+            .as_deref()
+            .ok_or_else(|| provider_failure("idempotency key is missing".into()))?;
         let paths = self.record_paths(invocation, key)?;
         let mut record = read_json::<PendingRecord>(&paths.pending, "pending idempotency record")?;
         if record.fingerprint != request_fingerprint(invocation)?
@@ -156,10 +157,9 @@ impl IdempotencyStore {
             return Err(idempotency_conflict(invocation));
         }
         record.phase = MutationPhase::Running;
-        let temporary = self.directory.join(format!(
-            ".running.{}.tmp",
-            Uuid::new_v4().as_simple()
-        ));
+        let temporary = self
+            .directory
+            .join(format!(".running.{}.tmp", Uuid::new_v4().as_simple()));
         let content = serde_json::to_vec_pretty(&record).map_err(|error| {
             provider_failure(format!("failed to encode running mutation: {error}"))
         })?;
@@ -187,7 +187,8 @@ impl IdempotencyStore {
         let paths = self.record_paths(invocation, key)?;
         let fingerprint = request_fingerprint(invocation)?;
         if paths.completed.exists() {
-            let record = read_json::<CompletedRecord>(&paths.completed, "completed idempotency record")?;
+            let record =
+                read_json::<CompletedRecord>(&paths.completed, "completed idempotency record")?;
             if record.fingerprint != fingerprint {
                 return Err(idempotency_conflict(invocation));
             }
