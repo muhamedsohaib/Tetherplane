@@ -638,6 +638,31 @@ mod tests {
         assert!(writer.try_lock().is_ok(), "blocked send must release mutex");
     }
 
+    #[tokio::test]
+    async fn stalled_pong_send_cannot_block_reader_forever() {
+        use futures_util::sink;
+        use std::sync::Arc;
+        use std::time::Duration;
+        use tokio::sync::Mutex;
+        use tokio_tungstenite::tungstenite::Message;
+
+        let writer = Arc::new(Mutex::new(Box::pin(sink::unfold(
+            (),
+            |(), _: Message| async {
+                std::future::pending::<Result<(), std::io::Error>>().await?;
+                Ok::<_, std::io::Error>(())
+            },
+        ))));
+        let failure = super::pong_with_deadline(
+            &writer,
+            Message::Pong(vec![1].into()),
+            Duration::from_millis(20),
+        )
+        .await;
+        assert!(matches!(failure, Err(super::RelayFailure::Retryable(_))));
+        assert!(writer.try_lock().is_ok(), "pong timeout must release sink lock");
+    }
+
     #[test]
     fn relay_url_requires_wss_except_explicit_loopback_test_mode() {
         assert!(validate_relay_url("wss://relay.example.test/device", false).is_ok());
