@@ -26,6 +26,18 @@ if ($InstallScheduledTask) {
     if (Get-ScheduledTask -TaskName $AgentTaskName -ErrorAction SilentlyContinue) {
         throw "existing scheduled task requires stopped-and-orphan-free migration"
     }
+    # A stopped legacy task can still restart at the next logon. Refuse
+    # registration even if that task currently has no running agent.
+    $agentTasks = @(Get-ScheduledTask -ErrorAction Stop | Where-Object {
+        $taskNameMatches = $_.TaskName -match '(?i)^Tetherplane(?:\s+\S+)*\s+Agent$'
+        $nativeActionMatches = @($_.Actions | Where-Object {
+            [string]$_.Execute -match '(?i)[\\/]tetherd\.exe$'
+        }).Count -gt 0
+        $taskNameMatches -or $nativeActionMatches
+    })
+    if ($agentTasks.Count -gt 0) {
+        throw "existing Tetherplane agent task requires explicit migration before registering another"
+    }
     # New names must not run beside a differently named live legacy agent.
     # Multiple identical device registrations would supersede one another.
     $runningAgents = @(Get-CimInstance Win32_Process -Filter "Name='tetherd.exe'" -ErrorAction Stop)
