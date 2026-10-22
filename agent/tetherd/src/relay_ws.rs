@@ -195,7 +195,7 @@ async fn connect_and_run(
                         // Only successful, authorized device.status calls expose
                         // capacity. This is a live request sample, not a heartbeat.
                         if status_requested
-                            && matches!(result.status, ResultStatus::Success)
+                            && matches!(&result.status, ResultStatus::Success)
                             && let Some(serde_json::Value::Object(data)) = result.data.as_mut()
                         {
                             let work_in_flight =
