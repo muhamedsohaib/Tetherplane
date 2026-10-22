@@ -358,6 +358,27 @@ mod tests {
         stalled.abort();
     }
 
+    fn synthetic_saturation_invocation() -> tether_core::InvocationEnvelope {
+            let fake_invocation: tether_core::InvocationEnvelope =
+                serde_json::from_value(serde_json::json!({
+                    "protocol_version": "1.0",
+                    "request_id": uuid::Uuid::new_v4(),
+                    "device_id": "Leno",
+                    "principal_id": null,
+                    "job_id": null,
+                    "capability": "filesystem.info",
+                    "arguments": {},
+                    "actor": { "id": "synthetic", "kind": "ai_client" },
+                    "session_id": null,
+                    "response_mode": "compact",
+                    "idempotency_key": null,
+                    "preconditions": [],
+                    "expectations": []
+                }))
+                .expect("valid synthetic invocation");
+        fake_invocation
+    }
+
     #[tokio::test]
     async fn synthetic_saturation_preserves_control_budget_ping_and_reclaims_slots() {
         use super::{
@@ -378,23 +399,7 @@ mod tests {
             Ok::<_, std::io::Error>(sender)
         });
         let writer = Arc::new(Mutex::new(Box::pin(sink)));
-        let fake_invocation: tether_core::InvocationEnvelope =
-            serde_json::from_value(serde_json::json!({
-                "protocol_version": "1.0",
-                "request_id": uuid::Uuid::new_v4(),
-                "device_id": "Leno",
-                "principal_id": null,
-                "job_id": null,
-                "capability": "filesystem.info",
-                "arguments": {},
-                "actor": { "id": "synthetic", "kind": "ai_client" },
-                "session_id": null,
-                "response_mode": "compact",
-                "idempotency_key": null,
-                "preconditions": [],
-                "expectations": []
-            }))
-            .expect("valid synthetic invocation");
+        let fake_invocation = synthetic_saturation_invocation();
 
         let mut latencies = Vec::new();
         for cycle in 0..32 {
@@ -414,7 +419,7 @@ mod tests {
                 .collect::<Vec<_>>();
             assert!(Arc::clone(&control).try_acquire_owned().is_err());
             drop(control_permits.pop());
-            let _control_permit = Arc::clone(&control).try_acquire_owned().unwrap();
+            let control_permit = Arc::clone(&control).try_acquire_owned().unwrap();
             let started = Instant::now();
             let result = ResultEnvelope {
                 protocol_version: "1.0".into(),
@@ -456,7 +461,7 @@ mod tests {
                 .expect("ping channel closed");
             assert!(matches!(pong, Message::Pong(_)));
             assert!(ping_started.elapsed() < Duration::from_secs(2));
-            drop(_control_permit);
+            drop(control_permit);
             drop(control_permits);
             drop(work_permits);
             assert_eq!(work.available_permits(), MAX_IN_FLIGHT_WORK);
