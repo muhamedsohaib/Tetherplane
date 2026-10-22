@@ -270,7 +270,10 @@ for (const authMode of ["static", "oidc"] as const) test(`${authMode} black-box 
             op: "run", device: "Leno",
             args: { program: process.execPath, args: ["-e", script], wait_ms: 21_000, pty: false },
           },
-        });
+        }).then(
+          (result) => ({ result, error: null as string | null }),
+          (error: unknown) => ({ result: null, error: String(error) }),
+        );
       });
       try {
         await until(async () => {
@@ -280,7 +283,11 @@ for (const authMode of ["static", "oidc"] as const) test(`${authMode} black-box 
           } catch {
             return false;
           }
-        }, 12_000, () => childStateError(child, stderr));
+        }, 12_000, () => childStateError(child, stderr)).catch(async (error: unknown) => {
+          const present = (await Promise.all(markers.map(async (p) =>
+            readFile(p, "utf8").then(() => 1, () => 0)))).reduce((a, b) => a + b, 0);
+          throw new Error(`saturation start: ${present}/16 markers observed; ${String(error)}`);
+        });
 
         const overloadStart = performance.now();
         const overload: Awaited<ReturnType<Client["callTool"]>> = await Promise.race([
@@ -313,8 +320,9 @@ for (const authMode of ["static", "oidc"] as const) test(`${authMode} black-box 
         await writeFile(releaseFile, "release", "utf8");
       }
       const completed = await Promise.all(work);
-      for (const value of completed) {
-        assert.equal(value.isError, undefined, "a released saturated operation must finish");
+      for (const outcome of completed) {
+        assert.equal(outcome.error, null, `saturated MCP request transport: ${outcome.error}`);
+        assert.equal(outcome.result?.isError, undefined, "a released saturated operation must finish");
       }
       const recovered = await clientA.callTool({
         name: "files",
