@@ -79,7 +79,9 @@ fn sync_directory(path: &Path) -> Result<(), CapabilityError> {
         // Rust std cannot portably fsync a Windows directory entry. File data
         // is synced before publication; power-loss metadata durability remains
         // an explicit Windows release gate, not a claimed guarantee.
-        let _ = path;
+        if !path.is_dir() {
+            return Err(provider_failure("idempotency directory is unavailable".into()));
+        }
         Ok(())
     }
 }
