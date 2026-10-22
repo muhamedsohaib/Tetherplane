@@ -546,4 +546,89 @@ mod lifecycle_tests {
                 .unwrap();
         }
     }
+    #[cfg(target_os = "linux")]
+    fn os_handle_thread_counts() -> (usize, usize) {
+        let handles = std::fs::read_dir("/proc/self/fd").map_or(0, Iterator::count);
+        let threads = std::fs::read_dir("/proc/self/task").map_or(0, Iterator::count);
+        (handles, threads)
+    }
+
+    #[cfg(windows)]
+    fn os_handle_thread_counts() -> (usize, usize) {
+        let query = format!(
+            "$p=Get-Process -Id {}; Write-Output $p.HandleCount; Write-Output $p.Threads.Count",
+            std::process::id()
+        );
+        let output = std::process::Command::new("powershell.exe")
+            .args(["-NoProfile", "-NonInteractive", "-Command", &query])
+            .output();
+        let Ok(output) = output else { return (0, 0); };
+        let text = String::from_utf8_lossy(&output.stdout);
+        let mut lines = text.lines().filter_map(|line| line.trim().parse::<usize>().ok());
+        (lines.next().unwrap_or(0), lines.next().unwrap_or(0))
+    }
+
+    #[cfg(not(any(target_os = "linux", windows)))]
+    fn os_handle_thread_counts() -> (usize, usize) {
+        (0, 0)
+    }
+
+    #[tokio::test]
+    async fn configured_128_session_ceiling_endurance_samples_resource_trends() {
+        // Real child processes; no network and no human-owned processes.
+        let provider = ProcessProvider::with_session_limit(128);
+        let start = std::time::Instant::now();
+        let content = "X".repeat(1024);
+        let mut snapshots = Vec::new();
+        let mut first_handle = String::new();
+        let mut last_handle = String::new();
+        let mut processes = sysinfo::System::new();
+        for index in 0..288 {
+            #[cfg(windows)]
+            let args = json!({
+                "program":"cmd.exe","args":["/C", format!("echo {content}")],
+                "wait_ms":1200,"pty":false
+            });
+            #[cfg(not(windows))]
+            let args = json!({
+                "program":"/bin/sh","args":["-c", format!("printf '%s\\n' '{content}'")],
+                "wait_ms":1200,"pty":false
+            });
+            let run = provider.execute(&request("process.run", &args)).await.unwrap();
+            assert_eq!(run.data["running"], false);
+            let handle = run.data["handle"].as_str().unwrap().to_owned();
+            if index == 0 { first_handle = handle.clone(); }
+            last_handle = handle;
+            if (index + 1) % 48 == 0 {
+                let retained = provider.handles.lock().unwrap().len();
+                let (os_handles, os_threads) = os_handle_thread_counts();
+                processes.refresh_processes(sysinfo::ProcessesToUpdate::All, true);
+                let process = sysinfo::get_current_pid()
+                    .ok()
+                    .and_then(|pid| processes.process(pid));
+                let rss = process.map_or(0, sysinfo::Process::memory);
+                let cpu = process.map_or(0.0, sysinfo::Process::cpu_usage);
+                assert!(retained <= 128, "session handle count must stay bounded");
+                let sample = json!({
+                    "created":index + 1,"retained":retained,"rss_bytes":rss,
+                    "os_handles":os_handles,"threads":os_threads,
+                    "cpu_pct_sample":cpu,
+                    "elapsed_ms":start.elapsed().as_millis()
+                });
+                println!("PROCESS_ENDURANCE_SAMPLE={sample}");
+                snapshots.push(sample);
+            }
+        }
+        assert_eq!(snapshots.len(), 6);
+        assert_eq!(provider.handles.lock().unwrap().len(), 128);
+        let gone = provider.execute(&request(
+            "process.read", &json!({"handle":first_handle})
+        )).await;
+        assert!(gone.is_err(), "old completed handle must be evicted");
+        let current = provider.execute(&request(
+            "process.read", &json!({"handle":last_handle,"mode":"tail","tail_bytes":8})
+        )).await;
+        assert!(current.is_ok(), "newest output must remain readable");
+    }
+
 }
