@@ -218,7 +218,7 @@ for (const authMode of ["static", "oidc"] as const) test(`${authMode} black-box 
         args: {
           program: process.execPath,
           args: ["-e", script],
-          wait_ms: 3_000,
+          wait_ms: 2_200,
           pty: false,
         },
       },
