@@ -174,10 +174,9 @@ impl AgentRuntime {
                     let mut result = pending_result(&invocation);
                     // Report only the caller's own scoped reservation phase.
                     // No mutation is replayed and no external outcome is inferred.
-                    if let (Some(error), Ok(Some(phase))) = (
-                        result.error.as_mut(),
-                        guard.operation_phase(&invocation),
-                    ) {
+                    if let (Some(error), Ok(Some(phase))) =
+                        (result.error.as_mut(), guard.operation_phase(&invocation))
+                    {
                         error.details["operation_phase"] = json!(phase);
                     }
                     return result;
