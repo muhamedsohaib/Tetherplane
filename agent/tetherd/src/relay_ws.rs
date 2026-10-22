@@ -520,18 +520,24 @@ mod tests {
         use tokio::sync::Mutex;
         use tokio_tungstenite::tungstenite::Message;
 
-        let writer = Arc::new(Mutex::new(Box::pin(sink::unfold((), |(), _: Message| async {
-            std::future::pending::<Result<(), std::io::Error>>().await?;
-            Ok::<_, std::io::Error>(())
-        }))));
+        let writer = Arc::new(Mutex::new(Box::pin(sink::unfold(
+            (),
+            |(), _: Message| async {
+                std::future::pending::<Result<(), std::io::Error>>().await?;
+                Ok::<_, std::io::Error>(())
+            },
+        ))));
         let value = super::execute_with_read_only_deadline(
             &synthetic_saturation_invocation(),
             Duration::from_millis(5),
             std::future::pending::<super::ResultEnvelope>(),
-        ).await;
-        let deadline = tokio::time::timeout(Duration::from_secs(3),
-            super::write_invocation_result(Arc::clone(&writer), "blocked".into(), async { value })
-        ).await;
+        )
+        .await;
+        let deadline = tokio::time::timeout(
+            Duration::from_secs(3),
+            super::write_invocation_result(Arc::clone(&writer), "blocked".into(), async { value }),
+        )
+        .await;
         assert!(deadline.is_ok(), "writer must not hang forever");
         assert!(writer.try_lock().is_ok(), "blocked send must release mutex");
     }
