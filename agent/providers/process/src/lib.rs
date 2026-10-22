@@ -3,9 +3,12 @@
 mod output;
 mod session;
 
-use std::collections::BTreeSet;
+use std::collections::VecDeque;
 use std::sync::{Arc, Mutex};
 use std::time::Duration;
+use tokio::sync::Mutex as AsyncMutex;
+
+const MAX_RETAINED_SESSIONS: usize = 128;
 
 use async_trait::async_trait;
 use serde_json::{Value, json};
@@ -20,8 +23,10 @@ use session::ProcessSession;
 
 pub struct ProcessProvider {
     sessions: HandleRegistry<Arc<ProcessSession>>,
-    handles: Mutex<BTreeSet<String>>,
+    handles: Mutex<VecDeque<String>>,
     ownership: Arc<TrustedOwnershipRegistry>,
+    admission: AsyncMutex<()>,
+    max_sessions: usize,
 }
 
 impl ProcessProvider {
@@ -34,9 +39,52 @@ impl ProcessProvider {
     pub fn with_ownership(ownership: Arc<TrustedOwnershipRegistry>) -> Self {
         Self {
             sessions: HandleRegistry::new(),
-            handles: Mutex::new(BTreeSet::new()),
+            handles: Mutex::new(VecDeque::new()),
             ownership,
+            admission: AsyncMutex::new(()),
+            max_sessions: MAX_RETAINED_SESSIONS,
         }
+    }
+
+    #[cfg(test)]
+    fn with_session_limit(max_sessions: usize) -> Self {
+        let mut provider = Self::new();
+        provider.max_sessions = max_sessions;
+        provider
+    }
+
+    async fn reclaim_finished_sessions(&self) -> Result<(), CapabilityError> {
+        let handles = self.handles
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner)
+            .clone();
+        if handles.len() < self.max_sessions {
+            return Ok(());
+        }
+        for handle in handles {
+            let session = self.sessions.with(&handle, Arc::clone)?;
+            let (running, _) = session.status().await?;
+            if !running {
+                self.sessions.remove(&handle);
+                self.handles
+                    .lock()
+                    .unwrap_or_else(std::sync::PoisonError::into_inner)
+                    .retain(|candidate| candidate != &handle);
+                self.ownership.unregister(&ResourceKey::Process(session.pid()));
+            }
+            if self.handles
+                .lock()
+                .unwrap_or_else(std::sync::PoisonError::into_inner)
+                .len() < self.max_sessions {
+                return Ok(());
+            }
+        }
+        Err(CapabilityError {
+            code: ErrorCode::ResourceConflict,
+            message: "process session capacity exhausted; terminate or wait for owned sessions".into(),
+            recovery_hint: None,
+            details: json!({ "max_sessions": self.max_sessions }),
+        })
     }
 
     async fn run(
@@ -48,16 +96,22 @@ impl ProcessProvider {
         let args = string_array_argument(arguments, "args")?;
         let wait_ms = u64_argument(arguments, "wait_ms", 250)?;
         let pty = bool_argument(arguments, "pty", false)?;
-        let session = Arc::new(ProcessSession::spawn(program, &args, pty).await?);
-        self.ownership.register(
-            ResourceKey::Process(session.pid()),
-            ResourceOrigin::Tetherplane,
-        );
-        let handle = self.sessions.insert("proc", Arc::clone(&session));
-        self.handles
-            .lock()
-            .unwrap_or_else(std::sync::PoisonError::into_inner)
-            .insert(handle.clone());
+        // Serialize admissions only; wait_for_exit must not monopolize this lock.
+        let (session, handle) = {
+            let _admission = self.admission.lock().await;
+            self.reclaim_finished_sessions().await?;
+            let session = Arc::new(ProcessSession::spawn(program, &args, pty).await?);
+            self.ownership.register(
+                ResourceKey::Process(session.pid()),
+                ResourceOrigin::Tetherplane,
+            );
+            let handle = self.sessions.insert("proc", Arc::clone(&session));
+            self.handles
+                .lock()
+                .unwrap_or_else(std::sync::PoisonError::into_inner)
+                .push_back(handle.clone());
+            (session, handle)
+        };
 
         let _ = session
             .wait_for_exit(Duration::from_millis(wait_ms))
@@ -363,7 +417,7 @@ mod lifecycle_tests {
     fn request(capability: &str, arguments: Value) -> tether_core::InvocationEnvelope {
         serde_json::from_value(json!({
             "protocol_version": "1.0",
-            "request_id": uuid::Uuid::new_v4(),
+            "request_id": "00000000-0000-4000-8000-000000000009",
             "device_id": "Leno",
             "principal_id": null,
             "job_id": null,
