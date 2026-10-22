@@ -359,24 +359,22 @@ mod tests {
     }
 
     fn synthetic_saturation_invocation() -> tether_core::InvocationEnvelope {
-            let fake_invocation: tether_core::InvocationEnvelope =
-                serde_json::from_value(serde_json::json!({
-                    "protocol_version": "1.0",
-                    "request_id": uuid::Uuid::new_v4(),
-                    "device_id": "Leno",
-                    "principal_id": null,
-                    "job_id": null,
-                    "capability": "filesystem.info",
-                    "arguments": {},
-                    "actor": { "id": "synthetic", "kind": "ai_client" },
-                    "session_id": null,
-                    "response_mode": "compact",
-                    "idempotency_key": null,
-                    "preconditions": [],
-                    "expectations": []
-                }))
-                .expect("valid synthetic invocation");
-        fake_invocation
+        serde_json::from_value(serde_json::json!({
+            "protocol_version": "1.0",
+            "request_id": uuid::Uuid::new_v4(),
+            "device_id": "Leno",
+            "principal_id": null,
+            "job_id": null,
+            "capability": "filesystem.info",
+            "arguments": {},
+            "actor": { "id": "synthetic", "kind": "ai_client" },
+            "session_id": null,
+            "response_mode": "compact",
+            "idempotency_key": null,
+            "preconditions": [],
+            "expectations": []
+        }))
+        .expect("valid synthetic invocation")
     }
 
     #[tokio::test]
