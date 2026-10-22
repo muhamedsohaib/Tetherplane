@@ -54,7 +54,8 @@ impl ProcessProvider {
     }
 
     async fn reclaim_finished_sessions(&self) -> Result<(), CapabilityError> {
-        let handles = self.handles
+        let handles = self
+            .handles
             .lock()
             .unwrap_or_else(std::sync::PoisonError::into_inner)
             .clone();
@@ -70,18 +71,23 @@ impl ProcessProvider {
                     .lock()
                     .unwrap_or_else(std::sync::PoisonError::into_inner)
                     .retain(|candidate| candidate != &handle);
-                self.ownership.unregister(&ResourceKey::Process(session.pid()));
+                self.ownership
+                    .unregister(&ResourceKey::Process(session.pid()));
             }
-            if self.handles
+            if self
+                .handles
                 .lock()
                 .unwrap_or_else(std::sync::PoisonError::into_inner)
-                .len() < self.max_sessions {
+                .len()
+                < self.max_sessions
+            {
                 return Ok(());
             }
         }
         Err(CapabilityError {
             code: ErrorCode::ResourceConflict,
-            message: "process session capacity exhausted; terminate or wait for owned sessions".into(),
+            message: "process session capacity exhausted; terminate or wait for owned sessions"
+                .into(),
             recovery_hint: None,
             details: json!({ "max_sessions": self.max_sessions }),
         })
