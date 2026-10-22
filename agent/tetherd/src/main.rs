@@ -43,18 +43,21 @@ fn parse_args() -> Result<CliOptions, String> {
 
 fn parse_args_from(arguments: Vec<String>) -> Result<CliOptions, String> {
     const MAX_ARGUMENTS_FILE_BYTES: u64 = 16 * 1024;
-    let expanded = if arguments.first().is_some_and(|arg| arg == "--arguments-file") {
+    let expanded = if arguments
+        .first()
+        .is_some_and(|arg| arg == "--arguments-file")
+    {
         if arguments.len() != 2 {
             return Err("--arguments-file requires exactly one file path".into());
         }
         let path = PathBuf::from(&arguments[1]);
-        let metadata = std::fs::metadata(&path)
-            .map_err(|_| "unable to inspect arguments file".to_owned())?;
+        let metadata =
+            std::fs::metadata(&path).map_err(|_| "unable to inspect arguments file".to_owned())?;
         if !metadata.is_file() || metadata.len() > MAX_ARGUMENTS_FILE_BYTES {
             return Err("arguments file must be a regular file of at most 16 KiB".into());
         }
-        let contents = std::fs::read(&path)
-            .map_err(|_| "unable to read arguments file".to_owned())?;
+        let contents =
+            std::fs::read(&path).map_err(|_| "unable to read arguments file".to_owned())?;
         if contents.len() as u64 > MAX_ARGUMENTS_FILE_BYTES {
             return Err("arguments file exceeds 16 KiB".into());
         }
@@ -315,7 +318,7 @@ async fn main() {
 
 #[cfg(test)]
 mod arguments_file_tests {
-    use super::{parse_args_from, TransportMode};
+    use super::{TransportMode, parse_args_from};
     use std::fs;
 
     fn with_file(contents: &str, assert_file: impl FnOnce(String)) {
@@ -338,17 +341,24 @@ mod arguments_file_tests {
             "Leno",
             "--device-credential-file",
             "C:/isolated-test/credential.txt",
-        ]).expect("serialize fixture");
+        ])
+        .expect("serialize fixture");
         with_file(&args, |file| {
             let parsed = parse_args_from(vec!["--arguments-file".into(), file])
                 .unwrap_or_else(|error| panic!("valid arguments file rejected: {error}"));
             match parsed.transport {
                 TransportMode::Relay {
-                    url, device_id, credential_file, allow_insecure_localhost
+                    url,
+                    device_id,
+                    credential_file,
+                    allow_insecure_localhost,
                 } => {
                     assert_eq!(url, "wss://relay.example.test/device");
                     assert_eq!(device_id, "Leno");
-                    assert_eq!(credential_file.to_string_lossy(), "C:/isolated-test/credential.txt");
+                    assert_eq!(
+                        credential_file.to_string_lossy(),
+                        "C:/isolated-test/credential.txt"
+                    );
                     assert!(!allow_insecure_localhost);
                 }
                 TransportMode::Stdio => panic!("relay arguments became stdio transport"),
@@ -368,10 +378,15 @@ mod arguments_file_tests {
                 assert!(parse_args_from(vec!["--arguments-file".into(), file]).is_err());
             });
         }
-        assert!(parse_args_from(vec![
-            "--relay-url".into(), "wss://relay.example.test/device".into(),
-            "--arguments-file".into(), "elsewhere.json".into(),
-        ]).is_err());
+        assert!(
+            parse_args_from(vec![
+                "--relay-url".into(),
+                "wss://relay.example.test/device".into(),
+                "--arguments-file".into(),
+                "elsewhere.json".into(),
+            ])
+            .is_err()
+        );
         assert!(parse_args_from(vec!["--arguments-file".into()]).is_err());
     }
 
