@@ -4,6 +4,7 @@ import test from "node:test";
 import type { InvocationEnvelope, ResultEnvelope } from "@tetherplane/protocol";
 import { DeviceRegistry, hashDeviceCredential } from "../src/devices/registry.ts";
 import { DeviceRouter, type RelayToDeviceMessage } from "../src/routing/device-router.ts";
+import { probeAuthenticatedAgent } from "../src/routing/agent-liveness.ts";
 
 const identity = {
   accountId: "account-reconnect-test",
@@ -195,4 +196,57 @@ test("stalled send completion does not block independent control or accept late 
   assert.equal(messages.filter((message) =>
     message.invocation.request_id === uncertainMutation.request_id).length, 1,
     "uncertain mutation must not be automatically resent");
+});
+
+test("independently timed authenticated probe never invents a root cause", async () => {
+  const router = new DeviceRouter({ registry: await registryForTest(), timeoutMs: 1500 });
+  const offline = await probeAuthenticatedAgent(router, identity, "Leno", 60);
+  assert.equal(offline.state, "disconnected");
+  assert.equal(offline.agent_response, "unknown");
+  assert.equal(offline.relay_health, "not_measured");
+
+  const messages: RelayToDeviceMessage[] = [];
+  const connection = router.connectDevice({
+    accountId: identity.accountId,
+    deviceId: "Leno",
+    send: async (message) => { messages.push(message); },
+  });
+  const start = performance.now();
+  const pending = await probeAuthenticatedAgent(router, identity, "Leno", 40);
+  assert.equal(pending.state, "unresponsive");
+  assert.equal(pending.agent_response, "unresponsive");
+  assert.equal(pending.transport, "unknown");
+  assert.ok(performance.now() - start < 500);
+  connection.disconnect();
+
+  const moreMessages: RelayToDeviceMessage[] = [];
+  const responding = router.connectDevice({
+    accountId: identity.accountId,
+    deviceId: "Leno",
+    send: async (message) => { moreMessages.push(message); },
+  });
+  const fresh = probeAuthenticatedAgent(router, identity, "Leno", 300);
+  await until(() => moreMessages.length === 1);
+  const requestId = moreMessages[0]!.invocation.request_id;
+  const answer = success(requestId);
+  answer.data = {
+    agent_liveness: {
+      process: "alive", transport: "authenticated", responsiveness: "responsive",
+      state: "saturated", work_in_flight: 16, work_capacity: 16,
+      control_in_flight: 1, control_capacity: 4,
+    },
+  };
+  responding.receive({
+    type: "result", routeId: moreMessages[0]!.routeId, result: answer,
+  });
+  const online = await fresh;
+  assert.equal(online.state, "saturated");
+  assert.equal(online.agent_response, "responsive");
+  assert.equal(online.authentication, "verified");
+  const unauthorized = await probeAuthenticatedAgent(router, {
+    ...identity, accountId: "other-account",
+  }, "Leno", 100);
+  assert.equal(unauthorized.state, "denied");
+  assert.equal(unauthorized.agent_response, "unknown");
+  responding.disconnect();
 });
