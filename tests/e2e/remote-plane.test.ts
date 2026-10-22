@@ -64,6 +64,7 @@ for (const authMode of ["static", "oidc"] as const) test(`${authMode} black-box 
         allowed_capabilities: [
           "device.status",
           "device.capabilities",
+          "process.run",
           "filesystem.read",
           "filesystem.write",
           "filesystem.append",
@@ -202,6 +203,56 @@ for (const authMode of ["static", "oidc"] as const) test(`${authMode} black-box 
       tokenB,
       "remote-account-b",
     );
+
+    // End-to-end head-of-line test: real tetherd, real relay and MCP client.
+    // A Tetherplane-owned child confirms the slow operation has actually
+    // started before the independent control-plane request is sent.
+    const slowMarker = path.join(allowedRoot, "stall-marker.txt");
+    const script = `require("node:fs").writeFileSync(${JSON.stringify(slowMarker)}, "started");setTimeout(() => {}, 4500)`;
+    let slowFinished = false;
+    const slowOperation = clientA.callTool({
+      name: "process",
+      arguments: {
+        op: "run",
+        device: "Leno",
+        args: {
+          program: process.execPath,
+          args: ["-e", script],
+          wait_ms: 3_000,
+          pty: false,
+        },
+      },
+    }).finally(() => { slowFinished = true; });
+    await until(async () => {
+      try {
+        return await readFile(slowMarker, "utf8") === "started";
+      } catch {
+        return false;
+      }
+    }, 4_000, () => childStateError(child, stderr));
+    assert.equal(slowFinished, false, "the work request must still be pending");
+
+    let timeoutId: ReturnType<typeof setTimeout> | undefined;
+    try {
+      const control = await Promise.race([
+        clientA.callTool({
+          name: "device",
+          arguments: { op: "status", device: "Leno" },
+        }),
+        new Promise<never>((_resolve, reject) => {
+          timeoutId = setTimeout(
+            () => reject(new Error("control-plane request blocked by slow operation")),
+            1_500,
+          );
+        }),
+      ]);
+      assert.equal(control.isError, undefined);
+      assert.equal(String(structured(control).policy_mode), "background_only");
+      assert.equal(slowFinished, false, "status must complete before stalled work");
+    } finally {
+      if (timeoutId !== undefined) clearTimeout(timeoutId);
+    }
+    assert.equal((await slowOperation).isError, undefined);
 
     const remoteFile = path.join(allowedRoot, "remote.txt");
     const writeResult = await clientA.callTool({
