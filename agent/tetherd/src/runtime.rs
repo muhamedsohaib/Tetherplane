@@ -24,8 +24,8 @@ use tokio::sync::Mutex;
 
 use crate::audit::{AuditProvider, AuditStore};
 use crate::idempotency::{
-    IdempotencyLookup, IdempotencyStore, MutationPhase, conflict_result, is_mutation_capability, pending_result,
-    store_failure_result, unavailable_result,
+    IdempotencyLookup, IdempotencyStore, MutationPhase, conflict_result, is_mutation_capability,
+    pending_result, store_failure_result, unavailable_result,
 };
 use crate::job::JobProvider;
 
@@ -223,10 +223,8 @@ impl AgentRuntime {
                     Ok(IdempotencyLookup::Conflict) => return conflict_result(invocation),
                     Ok(IdempotencyLookup::Pending) => {
                         let phase = guard.operation_phase(invocation);
-                        if matches!(
-                            phase,
-                            Ok(Some(MutationPhase::ReconciliationRequired))
-                        ) || tokio::time::Instant::now() >= deadline
+                        if matches!(phase, Ok(Some(MutationPhase::ReconciliationRequired)))
+                            || tokio::time::Instant::now() >= deadline
                         {
                             return Self::pending_with_phase(&guard, invocation);
                         }
