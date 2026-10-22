@@ -201,6 +201,7 @@ impl AgentRuntime {
         result
     }
 
+    #[expect(dead_code, reason = "historical negative control intentionally does not use the fixed waiter")]
     async fn await_existing_idempotent_result(
         store: &Arc<Mutex<IdempotencyStore>>,
         invocation: &InvocationEnvelope,
@@ -482,7 +483,7 @@ mod lifecycle_tests {
         }
     }
 
-    fn request(key: &str, arguments: Value) -> InvocationEnvelope {
+    fn request(key: &str, arguments: &Value) -> InvocationEnvelope {
         serde_json::from_value(json!({
             "protocol_version": "1.0",
             "request_id": uuid::Uuid::new_v4(),
@@ -524,7 +525,7 @@ mod lifecycle_tests {
         let root = scratch();
         let provider = Arc::new(HeldEffect::new());
         let runtime = make_runtime(&root, Arc::clone(&provider));
-        let first = request("held-key", json!({"held":true}));
+        let first = request("held-key", &json!({"held":true}));
         let first_task = tokio::spawn({
             let runtime = Arc::clone(&runtime);
             async move { runtime.execute(first).await }
@@ -539,7 +540,7 @@ mod lifecycle_tests {
             "A must be held inside the provider"
         );
 
-        let b = request("independent-key", json!({"held":false}));
+        let b = request("independent-key", &json!({"held":false}));
         let b_result = tokio::time::timeout(Duration::from_secs(2), runtime.execute(b))
             .await
             .expect("unrelated mutation B must progress despite blocked A");
@@ -563,13 +564,13 @@ mod lifecycle_tests {
         let held = json!({"held":true});
         let first_task = tokio::spawn({
             let runtime = Arc::clone(&runtime);
-            let first = request("duplicate-key", held.clone());
+            let first = request("duplicate-key", &held);
             async move { runtime.execute(first).await }
         });
         tokio::time::timeout(Duration::from_secs(5), provider.entered.wait())
             .await
             .expect("original must enter provider execution");
-        let duplicate = request("duplicate-key", json!({"held":true}));
+        let duplicate = request("duplicate-key", &json!({"held":true}));
         let pending = tokio::time::timeout(Duration::from_secs(4), runtime.execute(duplicate))
             .await
             .expect("duplicate must return bounded pending state");
@@ -585,7 +586,7 @@ mod lifecycle_tests {
         assert_eq!(provider.executions.load(Ordering::SeqCst), 1);
         assert!(!first_task.is_finished());
 
-        let independent = request("another-key", json!({"held":false}));
+        let independent = request("another-key", &json!({"held":false}));
         let independent_result =
             tokio::time::timeout(Duration::from_secs(2), runtime.execute(independent))
                 .await
@@ -597,7 +598,7 @@ mod lifecycle_tests {
         let initial_result = first_task.await.unwrap();
         assert_eq!(initial_result.status, ResultStatus::Success);
         let replay = runtime
-            .execute(request("duplicate-key", json!({"held":true})))
+            .execute(request("duplicate-key", &json!({"held":true})))
             .await;
         assert_eq!(replay.status, ResultStatus::Success);
         assert_eq!(replay.data, initial_result.data);
@@ -608,7 +609,7 @@ mod lifecycle_tests {
     #[tokio::test]
     async fn externally_completed_but_unrecorded_effect_requires_reconciliation() {
         let root = scratch();
-        let invocation = request("unrecorded-effect", json!({"held":false}));
+        let invocation = request("unrecorded-effect", &json!({"held":false}));
         let store = IdempotencyStore::new(&root).unwrap();
         store.reserve(&invocation).unwrap();
         store.mark_running(&invocation).unwrap();
