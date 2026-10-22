@@ -205,6 +205,22 @@ try {
     if (Get-Process -Id $taskProcessId -ErrorAction SilentlyContinue) {
         throw "stopping the native scheduled task left an orphaned tetherd child"
     }
+    # A stopped task is still dangerous: both tasks could start at next logon.
+    $stoppedTaskRejected = $false
+    try {
+        & $installScript -PackagePath $stage -InstallPrefix (Join-Path $root "duplicate-install") -StateDir (Join-Path $root "duplicate-state") -InstallScheduledTask -AgentTaskName $duplicateTaskName -AgentArgumentsFile $taskArgs
+    }
+    catch {
+        if ([string]$_.Exception.Message -like "*existing Tetherplane agent task*") {
+            $stoppedTaskRejected = $true
+        }
+        else {
+            throw
+        }
+    }
+    if (-not $stoppedTaskRejected) {
+        throw "installer accepted another task despite a registered stopped agent task"
+    }
     Write-Output "WINDOWS_NATIVE_TASK_STOP_NO_ORPHAN_OK"
 
     $sentinel = Join-Path $state "preserve-me.txt"
