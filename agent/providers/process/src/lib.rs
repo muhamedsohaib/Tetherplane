@@ -503,7 +503,8 @@ mod lifecycle_tests {
             #[cfg(windows)]
             let args = json!({ "program":"cmd.exe", "args":["/C", "ping -n 9 127.0.0.1 >NUL"], "wait_ms":0, "pty":false });
             #[cfg(not(windows))]
-            let args = json!({ "program":"/bin/sh", "args":["-c", "sleep 8"], "wait_ms":0, "pty":false });
+            let args =
+                json!({ "program":"/bin/sh", "args":["-c", "sleep 8"], "wait_ms":0, "pty":false });
             let run = provider
                 .execute(&request("process.run", &args))
                 .await
@@ -513,9 +514,11 @@ mod lifecycle_tests {
         }
 
         #[cfg(windows)]
-        let extra = json!({ "program":"cmd.exe", "args":["/C", "echo denied"], "wait_ms":0, "pty":false });
+        let extra =
+            json!({ "program":"cmd.exe", "args":["/C", "echo denied"], "wait_ms":0, "pty":false });
         #[cfg(not(windows))]
-        let extra = json!({ "program":"/bin/sh", "args":["-c", "echo denied"], "wait_ms":0, "pty":false });
+        let extra =
+            json!({ "program":"/bin/sh", "args":["-c", "echo denied"], "wait_ms":0, "pty":false });
         let error = provider
             .execute(&request("process.run", &extra))
             .await
@@ -534,12 +537,14 @@ mod lifecycle_tests {
         assert_eq!(count, 4);
         for handle in handles {
             let _ = provider
-                .execute(&request("process.terminate", &json!({
-                    "handle":handle,"grace_ms":0,"force":true
-                })))
+                .execute(&request(
+                    "process.terminate",
+                    &json!({
+                        "handle":handle,"grace_ms":0,"force":true
+                    }),
+                ))
                 .await
                 .unwrap();
         }
     }
-
 }
