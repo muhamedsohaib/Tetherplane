@@ -896,7 +896,7 @@ function Install-DeviceAgentTask {
     }
     $expectedActionArguments = '--arguments-file "' + $argsPath + '"'
     $existingTask = Get-ScheduledTask -TaskName $TaskName -ErrorAction SilentlyContinue
-    $tasks = @(Get-ScheduledTask -ErrorAction Stop)
+    $tasks = @(Get-ScheduledTask -ErrorAction Stop | Where-Object { $null -ne $_ })
     $agentTasks = @($tasks | Where-Object {
         $taskNameMatches = $_.TaskName -match '(?i)^Tetherplane(?:\s+\S+)*\s+Agent$'
         $nativeActionMatches = @($_.Actions | Where-Object {
