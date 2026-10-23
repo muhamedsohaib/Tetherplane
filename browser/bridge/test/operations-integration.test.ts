@@ -66,8 +66,11 @@ test(
     );
 
     phase("chromium-launch");
+    // Fail with the launcher's own typed error and owned-process cleanup
+    // before this 30-second test deadline; never increase the test budget.
     const control = await launchCdpOwnedBrowser({
       executablePath,
+      launchTimeoutMs: 12_000,
     });
     phase("chromium-ready");
     const backend = new CdpBrowserBackend({
