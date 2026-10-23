@@ -47,3 +47,39 @@ jobs:
           path: ${{ runner.temp }}/cdp-startup/cdp-startup-trial-*.jsonl
           if-no-files-found: error
           retention-days: 14
+
+  startup-contention:
+    name: Startup only (${{ matrix.parallelism }} concurrent)
+    strategy:
+      fail-fast: false
+      matrix:
+        parallelism: [1, 2]
+    runs-on: windows-latest
+    timeout-minutes: 12
+    steps:
+      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683
+        with:
+          persist-credentials: false
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020
+        with:
+          node-version: "22"
+      - name: Install pinned toolchain
+        shell: pwsh
+        run: |
+          corepack enable
+          if ($LASTEXITCODE -ne 0) { throw 'Corepack enable failed' }
+          corepack prepare pnpm@10.34.5 --activate
+          if ($LASTEXITCODE -ne 0) { throw 'Pinned pnpm activation failed' }
+          pnpm install --frozen-lockfile
+          if ($LASTEXITCODE -ne 0) { throw 'Frozen workspace install failed' }
+      - name: Five startup-only trials, with a fresh process and profiles each time
+        shell: pwsh
+        run: ./scripts/measure-windows-cdp-startup.ps1 -Scenario startup -Parallelism ${{ matrix.parallelism }} -EvidenceDirectory '${{ runner.temp }}/startup-probe'
+      - name: Retain sanitized contention probe receipts
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: startup-contention-${{ github.sha }}-${{ matrix.parallelism }}
+          path: ${{ runner.temp }}/startup-probe/cdp-startup-trial-*.jsonl
+          if-no-files-found: error
+          retention-days: 14
