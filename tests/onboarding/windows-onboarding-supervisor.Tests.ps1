@@ -39,7 +39,7 @@ Describe "native Scheduled Task ownership for a newly paired Windows device" {
             [string]$Principal.RunLevel -eq "Limited"
         }
         Assert-MockCalled Start-ScheduledTask -Exactly 1 -Scope It
-        $args = @(Get-Content -LiteralPath $script:argsPath -Raw | ConvertFrom-Json)
+        $args = [string[]](ConvertFrom-Json -InputObject (Get-Content -LiteralPath $script:argsPath -Raw))
         $args -contains "--device-credential-file" | Should Be $true
         $args -contains (Join-Path $script:state "device.credential") | Should Be $true
         $args -contains "--principal-profile" | Should Be $true
