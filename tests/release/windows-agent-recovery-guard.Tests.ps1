@@ -124,6 +124,37 @@ Describe 'guarded native agent recovery: isolated synthetic task contract' {
         $r.status | Should Be 'started_local'
         Assert-MockCalled Start-ScheduledTask -Exactly 1 -Scope It
     }
+    It 'rejects a newly enabled competing agent during the final preflight' {
+        $script:task.State = 'Ready'; $script:runningAgents = @()
+        $script:scanNumber = 0
+        $script:lateAgentTask = [pscustomobject]@{
+            TaskName = 'Tetherplane Other Agent'
+            Settings = [pscustomobject]@{ Enabled = $true }
+            Actions = @([pscustomobject]@{ Execute = $script:exe })
+        }
+        Mock Get-ScheduledTask {
+            if ($TaskName) { return $script:task }
+            $script:scanNumber++
+            if ($script:scanNumber -ge 2) { return @($script:task) + @($script:lateAgentTask) }
+            return $script:task
+        }
+        { Invoke-GuardedAgentRecovery @script:pins -Recover } | Should Throw
+        Assert-MockCalled Start-ScheduledTask -Exactly 0 -Scope It
+    }
+    It 'rejects identity bytes changed between preflight and launch' {
+        $script:task.State = 'Ready'; $script:runningAgents = @()
+        $script:processChecks = 0
+        Mock Get-CimInstance {
+            $script:processChecks++
+            if ($script:processChecks -eq 2) {
+                [IO.File]::AppendAllText($script:argsFile, ' ')
+            }
+            return @()
+        }
+        { Invoke-GuardedAgentRecovery @script:pins -Recover } | Should Throw
+        Assert-MockCalled Start-ScheduledTask -Exactly 0 -Scope It
+    }
+
     It 'refuses an orphan with an approved executable path' {
         $script:task.State = 'Ready'
         { Invoke-GuardedAgentRecovery @script:pins -Recover } | Should Throw
