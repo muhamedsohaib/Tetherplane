@@ -59,8 +59,7 @@ jobs:
             $stderrText = Get-Content -LiteralPath $stderr -Raw -ErrorAction SilentlyContinue
             if ($stderrText) { Write-Output $stderrText }
             if ($child.ExitCode -ne 0) { throw "CDP_DOWNLOAD_TRIAL_FAILED=$attempt" }
-            if ($stdoutText -notmatch 'B6 CDP operational path' -or $stdoutText -notmatch '(?m)^# pass 1\s*
-) {
+            if ($stdoutText -notmatch 'B6 CDP operational path' -or $stdoutText -notmatch '(?m)^# pass 1\b') {
               throw "CDP_DOWNLOAD_TRIAL_NOT_EXECUTED=$attempt"
             }
           }
