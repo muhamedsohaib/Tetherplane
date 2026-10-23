@@ -8,8 +8,11 @@ on:
       - "relay/test/device-heartbeat.test.ts"
       - "scripts/install-windows.ps1"
       - "tests/release/windows-package-smoke.ps1"
+      - "tests/release/windows-installer-preservation.ps1"
+      - "tests/release/windows-release-publication-contract.test.mjs"
       - "packaging/windows/**"
       - ".github/workflows/reliability-contract.yml"
+      - ".github/workflows/release.yml"
   pull_request:
     paths:
       - "agent/tetherd/src/main.rs"
@@ -17,8 +20,11 @@ on:
       - "relay/test/device-heartbeat.test.ts"
       - "scripts/install-windows.ps1"
       - "tests/release/windows-package-smoke.ps1"
+      - "tests/release/windows-installer-preservation.ps1"
+      - "tests/release/windows-release-publication-contract.test.mjs"
       - "packaging/windows/**"
       - ".github/workflows/reliability-contract.yml"
+      - ".github/workflows/release.yml"
 
 permissions:
   contents: read
@@ -66,6 +72,11 @@ jobs:
       - name: Windows actual task owner/stop and package smoke
         shell: pwsh
         run: ./tests/release/windows-package-smoke.ps1
+      - name: Windows installer preserves existing files and device state
+        shell: pwsh
+        run: ./tests/release/windows-installer-preservation.ps1
+      - name: Guard public release from unsigned Windows archive publication
+        run: node --test tests/release/windows-release-publication-contract.test.mjs
       - name: Fingerprint disposable unsigned test binary
         shell: pwsh
         run: |
