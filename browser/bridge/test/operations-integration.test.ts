@@ -74,6 +74,7 @@ test(
       const control = await launchCdpOwnedBrowser({
         executablePath,
         launchTimeoutMs: 12_000,
+        onStartupDiagnostic: event => console.log("CDP_STARTUP=" + JSON.stringify(event)),
       });
       phase("chromium-ready");
       backend = new CdpBrowserBackend({
