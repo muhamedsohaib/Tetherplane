@@ -125,12 +125,19 @@ Describe "managed install integrity and repair" {
         Install-ManagedDeviceFiles -PackagePath $script:pkg -InstallPrefix $script:install | Out-Null
         $state = Join-Path $script:tempRoot "state"
         Install-DeviceIdentity -StateDir $state -DeviceId "TESTPC01" | Out-Null
-        Mock Get-ScheduledTask { [pscustomobject]@{ Principal = [pscustomobject]@{ UserId = "S-1-5-21-foreign" }; Actions = @([pscustomobject]@{ Arguments = "-File C:\Other\agent.ps1" }); State = "Ready" } }
+        Mock Get-ScheduledTask { [pscustomobject]@{ TaskName = "Tetherplane Agent"; Principal = [pscustomobject]@{ UserId = "S-1-5-21-foreign" }; Actions = @([pscustomobject]@{ Execute = "C:\Other\tetherd.exe"; Arguments = "--arguments-file C:\Other\args.json" }); State = "Ready" } }
         Mock Register-ScheduledTask { return $null }
         { Install-DeviceAgentTask -InstallPrefix $script:install -StateDir $state -DeviceId "TESTPC01" -RelayUrl "wss://x/device" } | Should Throw
-        Mock Get-ScheduledTask { [pscustomobject]@{ Principal = [pscustomobject]@{ UserId = ([Security.Principal.WindowsIdentity]::GetCurrent()).User.Value }; Actions = @([pscustomobject]@{ Arguments = "-File `"$script:install\launch\tetherplane-agent.ps1`"" }); State = "Ready" } }
+        $argsFile = Join-Path $script:install "config\agent-args.json"
+        [IO.File]::WriteAllText($argsFile, '["--relay-url","wss://x/device"]', [Text.UTF8Encoding]::new($false))
+        $nativeAction = [pscustomobject]@{
+            Execute = (Join-Path $script:install "bin\tetherd.exe")
+            Arguments = ('--arguments-file "' + $argsFile + '"')
+        }
+        Mock Get-ScheduledTask { [pscustomobject]@{ TaskName = "Tetherplane Agent"; Principal = [pscustomobject]@{ UserId = ([Security.Principal.WindowsIdentity]::GetCurrent()).User.Value }; Actions = @($nativeAction); State = "Ready" } }
         $reused = Install-DeviceAgentTask -InstallPrefix $script:install -StateDir $state -DeviceId "TESTPC01" -RelayUrl "wss://x/device"
         $reused.reused | Should Be $true
+        $reused.native_task | Should Be $true
         Assert-MockCalled Register-ScheduledTask -Times 0 -Exactly -Scope It
     }
 }
