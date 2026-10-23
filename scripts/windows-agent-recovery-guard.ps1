@@ -10,8 +10,7 @@ param(
     [Parameter(Mandatory = $true)][string]$ExpectedPrincipalSha256,
     [Parameter(Mandatory = $true)][string]$ExpectedDeviceId,
     [Parameter(Mandatory = $true)][string]$ExpectedRelayUrl,
-    [switch]$StartIfMissing,
-    [string]$ReceiptPath = ""
+    [switch]$StartIfMissing
 )
 
 $ErrorActionPreference = "Stop"
@@ -176,9 +175,13 @@ function Invoke-GuardedAgentRecovery {
     if ($processes.Count -eq 1) {
         $matches = ([string]$processes[0].ExecutablePath -ieq $exe)
     }
-    $decision = Get-GuardDecision -TaskState ([string]$task.State) 
-        -AgentCount $processes.Count -AgentMatchesTask $matches 
-        -CompetingAgentTaskEnabled ($competing.Count -ne 0)
+    $decisionInputs = @{
+        TaskState = [string]$task.State
+        AgentCount = $processes.Count
+        AgentMatchesTask = $matches
+        CompetingAgentTaskEnabled = ($competing.Count -ne 0)
+    }
+    $decision = Get-GuardDecision @decisionInputs
 
     if ($decision -eq 'healthy') {
         return [pscustomobject]@{ status = 'healthy'; started = $false; agent_count = 1 }
@@ -216,10 +219,16 @@ function Invoke-GuardedAgentRecovery {
 
 if ($MyInvocation.InvocationName -ne '.') {
     try {
-        $result = Invoke-GuardedAgentRecovery -TargetTaskName $TaskName 
-            -ExeSha256 $ExpectedExeSha256 -ArgsSha256 $ExpectedArgsSha256 
-            -PrincipalSha256 $ExpectedPrincipalSha256 -DeviceId $ExpectedDeviceId 
-            -RelayUrl $ExpectedRelayUrl -Recover:$StartIfMissing
+        $inputs = @{
+            TargetTaskName = $TaskName
+            ExeSha256 = $ExpectedExeSha256
+            ArgsSha256 = $ExpectedArgsSha256
+            PrincipalSha256 = $ExpectedPrincipalSha256
+            DeviceId = $ExpectedDeviceId
+            RelayUrl = $ExpectedRelayUrl
+            Recover = [bool]$StartIfMissing
+        }
+        $result = Invoke-GuardedAgentRecovery @inputs
         $result | ConvertTo-Json -Compress | Write-Output
     } catch {
         # No credentials, arbitrary paths or OS command lines are printed.
