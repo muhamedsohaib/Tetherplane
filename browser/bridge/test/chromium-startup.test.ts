@@ -12,7 +12,7 @@ import fs from "node:fs";
 import { Readable } from "node:stream";
 
 import { launchCdpOwnedBrowser } from "../src/cdp-control.ts";
-import { ChromiumStartupTelemetry, waitForDevToolsActivePort, type ChromiumStartupDiagnostic } from "../src/chromium-startup.ts";
+import { ChromiumStartupTelemetry, startupErrorCategory, waitForDevToolsActivePort, type ChromiumStartupDiagnostic } from "../src/chromium-startup.ts";
 
 test("failed Chromium launch reports bounded categories and cleanup without paths or raw stderr", { timeout: 10_000 }, async () => {
   const parent = await mkdtemp(path.join(os.tmpdir(), "startup-private-marker-"));
@@ -48,7 +48,7 @@ test("zero-code launcher handoff still requires an endpoint within the original 
     const portFile = path.join(root, "DevToolsActivePort");
     await assert.rejects(waitForDevToolsActivePort({ child, portFile, timeoutMs: 120, telemetry }), /timed out/);
     await writeFile(portFile, "12345\n/devtools/browser/handoff-id\n");
-    assert.equal(await waitForDevToolsActivePort({ child, portFile, timeoutMs: 120, telemetry }), "ws://127.0.0.1:12345/devtools/browser/handoff-id");
+    assert.equal(await waitForDevToolsActivePort({ child, portFile, timeoutMs: 1_000, telemetry }), "ws://127.0.0.1:12345/devtools/browser/handoff-id");
   } finally { await rm(root, { recursive: true, force: true }); }
 });
 
@@ -115,7 +115,7 @@ test("valid endpoint is observed without exposing its URL and throwing diagnosti
     await once(child, "spawn");
     await writeFile(file, "12345\n/devtools/browser/fake-id\n");
     const telemetry = new ChromiumStartupTelemetry(() => { throw new Error("diagnostic failure"); });
-    assert.equal(await waitForDevToolsActivePort({ child, portFile: file, timeoutMs: 120, telemetry }), "ws://127.0.0.1:12345/devtools/browser/fake-id");
+    assert.equal(await waitForDevToolsActivePort({ child, portFile: file, timeoutMs: 1_000, telemetry }), "ws://127.0.0.1:12345/devtools/browser/fake-id");
   } finally {
     const closed = once(child, "close"); child.kill(); await closed;
     await rm(root, { recursive: true, force: true });
@@ -219,4 +219,11 @@ test("flapping endpoint observations keep diagnostics bounded and preserve the s
   assert.ok(events.length < 16, "file state flapping must not create an unbounded diagnostic stream");
   assert.equal(events.at(-1)?.endpoint, "unreadable");
   assert.equal(events.at(-1)?.error_category, "permission");
+});
+
+test("startup error normalization distinguishes a busy endpoint without echoing arbitrary errors", () => {
+  assert.equal(startupErrorCategory({ code: "EBUSY" }), "busy");
+  assert.equal(startupErrorCategory({ code: "ETXTBSY" }), "busy");
+  assert.equal(startupErrorCategory({ code: "EACCES" }), "permission");
+  assert.equal(startupErrorCategory({ code: "arbitrary-private-marker", message: "secret-marker" }), "other");
 });

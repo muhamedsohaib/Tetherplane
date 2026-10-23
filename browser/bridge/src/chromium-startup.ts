@@ -29,11 +29,12 @@ export type ChromiumStartupDiagnostic = {
   profile_removed?: boolean;
   launcher_stopped?: boolean | null;
   browser_process_stopped?: boolean | null;
-  error_category?: "permission" | "not_found" | "not_directory" | "resource" | "other";
+  error_category?: "permission" | "not_found" | "not_directory" | "resource" | "busy" | "other";
 };
 
 export function startupErrorCategory(error: unknown): NonNullable<ChromiumStartupDiagnostic["error_category"]> {
   const code = (error as NodeJS.ErrnoException | null)?.code;
+  if (code === "EBUSY" || code === "ETXTBSY") return "busy";
   if (code === "EACCES" || code === "EPERM") return "permission";
   if (code === "ENOENT") return "not_found";
   if (code === "ENOTDIR" || code === "EEXIST") return "not_directory";
