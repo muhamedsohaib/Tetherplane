@@ -102,8 +102,8 @@
     const phrase=enabled?'RESTORE LEGACY ACCESS':'ENFORCE DEVICE GRANTS';
     return '<article class="mono-glass rounded-2xl p-5 tp-page-card"><div class="tp-kicker">+-- OWNER DEVICE AUTHORITY // REVISION '+text(s.revision)+'</div><div class="tp-content"><h2 class="tp-card-title text-white">'+(enabled?'ENFORCED: ungranted clients are denied':'NOT ENFORCED: existing relay behavior still applies')+'</h2><p class="tp-dim">This relay policy only restricts an already authenticated OAuth client on a specific paired computer. Local device capability and directory restrictions remain final. A chat where the app is not selected cannot be enabled by this panel.</p></div>'+
       '<label class="tp-label" for="tp-authority-device">COMPUTER</label><select id="tp-authority-device" class="tp-input">'+deviceOptions+'</select>'+
-      '<label class="tp-label" for="tp-authority-client">EXACT AUTHENTICATED CLIENT ID</label><input id="tp-authority-client" class="tp-input" maxlength="128" autocomplete="off" spellcheck="false" placeholder="Existing OAuth client ID">'+
-      '<label class="tp-label" for="tp-authority-principal">EXACT PRINCIPAL ID</label><input id="tp-authority-principal" class="tp-input" maxlength="128" autocomplete="off" spellcheck="false" placeholder="Existing approved principal ID">'+
+      '<label class="tp-label" for="tp-authority-client">EXACT AUTHENTICATED CLIENT ID</label><input id="tp-authority-client" class="tp-input" maxlength="1024" autocomplete="off" spellcheck="false" placeholder="Existing OAuth client ID">'+
+      '<label class="tp-label" for="tp-authority-principal">EXACT PRINCIPAL ID</label><input id="tp-authority-principal" class="tp-input" maxlength="256" autocomplete="off" spellcheck="false" placeholder="Existing approved principal ID">'+
       '<label class="tp-label" for="tp-authority-level">AUTHORITY</label><select id="tp-authority-level" class="tp-input"><option value="blocked">Blocked</option><option value="observe">Observe — read/status only</option><option value="operate">Operate — selected background actions, still locally restricted</option></select>'+
       '<p class="tp-dim">Enter the exact existing client and principal (not a token). Save stages one grant without activating or widening device-local policy.</p><div class="tp-actions"><button class="mono-btn rounded-xl tp-action" onclick="portalAuthoritySave()">[ Stage access grant ]</button>'+refresh+'</div>'+
       '<div class="tp-kicker" style="margin-top:16px">RECORDED GRANTS</div>'+(grantRows||'<p class="tp-dim">No explicit grants. Enabling now denies all routed MCP requests.</p>')+
@@ -131,8 +131,8 @@
     const principalId=$('tp-authority-principal')?.value?.trim()||'';
     const level=$('tp-authority-level')?.value||'blocked';
     if(!live.devices.some(d=>d.deviceId===deviceId&&active(d))||
-      !/^[A-Za-z0-9][A-Za-z0-9._:-]{0,127}$/.test(clientId)||
-      !/^[A-Za-z0-9][A-Za-z0-9._:-]{0,127}$/.test(principalId)||
+      !/^[^\s\u0000-\u001f\u007f]{1,1024}$/u.test(clientId)||
+      !/^[^\s\u0000-\u001f\u007f]{1,256}$/u.test(principalId)||
       !['blocked','observe','operate'].includes(level)){toast('Choose one paired device, exact existing client/principal, and access level.');return;}
     const grants=s.grants.filter(g=>!(g.deviceId===deviceId&&g.clientId===clientId&&g.principalId===principalId))
       .map(g=>({deviceId:g.deviceId,clientId:g.clientId,principalId:g.principalId,level:g.level}));

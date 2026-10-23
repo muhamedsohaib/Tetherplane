@@ -366,8 +366,9 @@ export async function loadOwnerAuthorityConfig(file: string): Promise<{owner: Cl
     throw new Error("Owner authority requires exact owner and absolute stateFile");
   const o = cfg.owner as Record<string, unknown>;
   if (Object.keys(o).some(k => !["accountId","clientId","principalId"].includes(k)) ||
-    ["accountId","clientId","principalId"].some(k => typeof o[k] !== "string" ||
-      !/^[A-Za-z0-9][A-Za-z0-9._:-]{0,127}$/.test(o[k] as string)))
+    typeof o.accountId !== "string" || !/^[A-Za-z0-9][A-Za-z0-9._:-]{0,127}$/.test(o.accountId) ||
+    typeof o.clientId !== "string" || !/^[^\s\x00-\x1F\x7F]{1,1024}$/u.test(o.clientId) ||
+    typeof o.principalId !== "string" || !/^[^\s\x00-\x1F\x7F]{1,256}$/u.test(o.principalId))
     throw new Error("Owner authority requires accountId, clientId and principalId of an existing registered identity");
   return {
     owner: {

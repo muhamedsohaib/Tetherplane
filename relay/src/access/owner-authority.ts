@@ -33,6 +33,8 @@ export class AuthorityError extends Error {
 }
 
 const ID = /^[A-Za-z0-9][A-Za-z0-9._:-]{0,127}$/;
+const CLIENT_ID = /^[^\s\x00-\x1F\x7F]{1,1024}$/u;
+const PRINCIPAL_ID = /^[^\s\x00-\x1F\x7F]{1,256}$/u;
 const DEVICE_ID = /^[A-Za-z0-9][A-Za-z0-9._-]{0,127}$/;
 const OBSERVE = new Set([
   "device.status", "device.capabilities",
@@ -57,15 +59,14 @@ const OPERATE = new Set([
 // Those remain subject to separately reviewed device-local authorization.
 
 function validIdentity(identity: ClientIdentity): boolean {
-  return [identity.accountId, identity.clientId, identity.principalId]
-    .every(value => typeof value === "string" && ID.test(value));
+  return ID.test(identity.accountId) && CLIENT_ID.test(identity.clientId) && PRINCIPAL_ID.test(identity.principalId);
 }
 function validGrant(raw: unknown): raw is DeviceAccessGrant {
   if (!raw || typeof raw !== "object" || Array.isArray(raw)) return false;
   const g = raw as Partial<DeviceAccessGrant>;
   return typeof g.deviceId === "string" && DEVICE_ID.test(g.deviceId)
-    && typeof g.clientId === "string" && ID.test(g.clientId)
-    && typeof g.principalId === "string" && ID.test(g.principalId)
+    && typeof g.clientId === "string" && CLIENT_ID.test(g.clientId)
+    && typeof g.principalId === "string" && PRINCIPAL_ID.test(g.principalId)
     && typeof g.pairedAt === "string" && !Number.isNaN(Date.parse(g.pairedAt))
     && ["blocked", "observe", "operate"].includes(g.level ?? "");
 }
@@ -166,8 +167,8 @@ export class OwnerDeviceAuthority {
         if (Object.keys(g).some(field => !["deviceId","clientId","principalId","level"].includes(field)))
           throw new AuthorityError("invalid_arguments", "unsupported authority grant field");
         if (typeof g.deviceId !== "string" || !DEVICE_ID.test(g.deviceId)
-          || typeof g.clientId !== "string" || !ID.test(g.clientId)
-          || typeof g.principalId !== "string" || !ID.test(g.principalId)
+          || typeof g.clientId !== "string" || !CLIENT_ID.test(g.clientId)
+          || typeof g.principalId !== "string" || !PRINCIPAL_ID.test(g.principalId)
           || !["blocked", "observe", "operate"].includes(String(g.level))) {
           throw new AuthorityError("invalid_arguments", "authority grant must name an exact device, client, principal and supported level");
         }
