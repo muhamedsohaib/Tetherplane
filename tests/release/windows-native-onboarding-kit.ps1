@@ -15,7 +15,6 @@ $kit = Join-Path $root "kit"
 $install = Join-Path $root "installed"
 $state = Join-Path $root "isolated-state"
 $taskName = "Tetherplane CI-" + [Guid]::NewGuid().ToString("N")
-$deviceId = "CIKIT" + [Guid]::NewGuid().ToString("N").Substring(0, 10)
 $registered = $false
 $agentPid = -1
 $native = Join-Path $install "bin\tetherd.exe"
@@ -44,6 +43,9 @@ try {
     }
 
     . (Join-Path $repo "scripts\setup-windows-device.ps1")
+    # Dot-sourcing binds the setup script's empty DeviceId default in this scope.
+    # Generate this CI-only identity only after importing the setup functions.
+    $deviceId = "CIKIT" + [Guid]::NewGuid().ToString("N").Substring(0, 10)
     $verified = Confirm-DevicePackage -PackagePath $kit
     if (-not $verified.ok) { throw "unsigned disposable package integrity check failed" }
     [void](Install-ManagedDeviceFiles -PackagePath $kit -InstallPrefix $install)
