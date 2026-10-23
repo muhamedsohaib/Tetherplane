@@ -14,7 +14,7 @@ This supports *periodic re-evaluation* as a recovery approach. It does not prove
 
 `scripts/windows-agent-recovery-guard.ps1` inspects the **existing approved native task**. It does not create or migrate an agent task. It never handles raw credentials, creates a new device identity, changes OAuth/scope config, terminates processes, downloads binaries or disables other tasks.
 
-For every check, require all of these independently pinned inputs: existing task name; approved agent SHA-256; installed local argument-file SHA-256; approved principal-profile SHA-256; device ID; relay WSS URL. The guard also checks current user SID vs task principal, action `tetherd.exe --arguments-file`, path-redirection ancestors, local credential/profile/state presence, exact device and URL inside the JSON argument file, single-instance setting, and **all** other enabled native Tetherplane agent tasks.
+For every check, require all of these independently pinned inputs: existing task name; approved agent SHA-256; installed local argument-file SHA-256; approved principal-profile SHA-256; device ID; relay WSS URL; the reviewed task RunLevel (`Highest` or `Limited`). The guard also checks current user SID vs task principal, action `tetherd.exe --arguments-file`, path-redirection ancestors, local credential/profile/state presence, exact device and URL inside the JSON argument file, single-instance setting, and **all** other enabled native Tetherplane agent tasks.
 
 Decision policy:
 
