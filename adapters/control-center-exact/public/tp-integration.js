@@ -9,7 +9,7 @@
   const oldShowPortal=window.showPortalView;
   const oldAppendMiniLog=window.appendMiniLog;
   const oldToggleTheme=window.toggleThemeMode;
-  const live={csrf:null,expiresAt:null,relayOrigin:null,devices:[],observedAt:null,mutationUncertain:false,inFlight:false};
+  const live={csrf:null,expiresAt:null,relayOrigin:null,devices:[],observedAt:null,directoryUnavailable:false,mutationUncertain:false,inFlight:false};
   const $ = id => document.getElementById(id);
   const text = value => tpEsc(String(value??''));
   const when = value => value ? tpTime(value) : 'Not reported';
@@ -21,7 +21,7 @@
   function toast(value){window.showToast(String(value).slice(0,200));}
   function setText(id,value){const node=$(id);if(node)node.textContent=String(value);}
   function clearLive(){
-    live.csrf=null;live.expiresAt=null;live.relayOrigin=null;live.devices=[];live.observedAt=null;live.mutationUncertain=false;
+    live.csrf=null;live.expiresAt=null;live.relayOrigin=null;live.devices=[];live.observedAt=null;live.directoryUnavailable=false;live.mutationUncertain=false;
     tpDemo.session=false;tpDemo.devices=[];tpDemo.refreshAt=null;tpDemo.pendingRevokeId=null;
     setText('active-node-summary','SIGN IN REQUIRED');
     setText('mini-console-log','');
@@ -37,7 +37,7 @@
     tpDemo.devices=payload.devices.map(d=>({id:d.deviceId,pairedAt:d.pairedAt,revokedAt:d.revokedAt,status:stateLabel(d),connectivity:d.connectivity}));
     tpDemo.refreshAt=new Date(payload.observedAt);
     setText('active-node-summary',`${payload.devices.length} DIRECTORY RECORDS`);
-    live.mutationUncertain=false;
+    live.directoryUnavailable=false;live.mutationUncertain=false;
   }
   async function api(path,{method='GET',body=null,csrf=true}={}) {
     const controller=new AbortController(),tm=setTimeout(()=>controller.abort(),12000);
@@ -66,7 +66,7 @@
       const data=await api('/api/devices');hydrate(data);
       if(tpCurrentView!=='home')window.renderActivePortalPage();
       if(notify){toast('Directory refreshed from authenticated relay');log(`[#] ${live.devices.length} account device record(s).`);}
-    }catch(e){live.devices=[];tpDemo.devices=[];tpDemo.refreshAt=null;live.mutationUncertain=true;failure(e);}
+    }catch(e){live.devices=[];tpDemo.devices=[];tpDemo.refreshAt=null;live.directoryUnavailable=true;live.mutationUncertain=true;setText('active-node-summary','DIRECTORY UNAVAILABLE');failure(e);}
     finally{live.inFlight=false;}
   }
   function cardDevice(d,review=false){
@@ -91,6 +91,9 @@
         `Enter an already-issued account-scoped relay access credential. It is held by the local server only, in memory, for up to 15 minutes. Browser OAuth/PKCE needs a separately approved client registration.`,
         `<form id="tp-live-login" onsubmit="portalLogin(event)"><label class="tp-label" for="tp-live-token">RELAY CLIENT ACCESS CREDENTIAL</label><input class="tp-input" id="tp-live-token" type="password" autocomplete="off" spellcheck="false" maxlength="8192" placeholder="Authorized bearer credential" required><div class="tp-actions"><button class="mono-btn rounded-xl tp-action" type="submit">[ Sign in ]</button>${tpButton('Back to Plane','home')}</div></form>`),
       tpCard('RELAY AUTHORITY','Account access is explicit.','No demo sign-in, automatic OAuth client creation, device-token reuse or stored browser credentials. For a denied/expired token use your established credential workflow.',tpButton('Security guidance','security'))
+    ]);
+    if(live.directoryUnavailable&&['control','devices','access','pairing'].includes(view))return tpGrid([
+      tpCard('DIRECTORY UNAVAILABLE','Current device state could not be verified.',`Last successful observation: ${now}. Pairing and connectivity are currently unverified. Refresh the directory before another device action.`,badge('refreshPortalDirectory()'))
     ]);
     if(view==='control')return tpGrid([
       tpCard('01 // DIRECTORY','Device directory records',`<div class="tp-card-large text-white">${count}</div><p>Authenticated account records. Paired does not imply online.</p>`,actions(tpButton('View Devices','devices'),tpButton('Add a Device','pairing'))),
@@ -146,8 +149,10 @@
   window.startPortalDemo=function(){toast('Synthetic demonstration is disabled in connected mode.');};
   window.portalSignOut=async function(){
     const csrf=live.csrf;
-    try{if(csrf)await api('/api/logout',{method:'POST'});}catch{}// Clear local authority even when logout transport fails.
-    clearLive();window.renderMinimalNodes();oldShowPortal.call(window,'home');toast('Local session ended.');
+    let confirmed=false;
+    try{if(csrf){await api('/api/logout',{method:'POST'});confirmed=true;}}catch{}// Clear page state even when server sign-out is unconfirmed.
+    clearLive();window.renderMinimalNodes();oldShowPortal.call(window,'home');
+    toast(confirmed?'Local session ended.':'Server sign-out was not confirmed. Reload and retry sign-out before leaving this browser.');
   };
   window.refreshPortalDirectory=function(){void refresh({notify:true});};
   window.portalReview=function(id){oldShowPortal.call(window,'access');const entry=Array.from(document.querySelectorAll('.tp-entry')).find(e=>e.textContent.includes(id));if(entry)entry.scrollIntoView({behavior:'smooth',block:'center'});};
@@ -205,9 +210,14 @@
     try{args=match[4]?JSON.parse(match[4]):{};if(!args||Array.isArray(args)||typeof args!=='object')throw Error();}
     catch{log('[!] MCP arguments must be one JSON object.');return;}
     if(live.inFlight){log('[!] Another request is in progress.');return;}
+    if(live.mutationUncertain){log('[!] A previous result is unverified. Refresh directory and confirm the action outcome before another MCP command.');return;}
     live.inFlight=true;log(`[>] MCP ${tool}.${op} on ${device||'relay'}`);
     try{const payload=await api('/api/mcp/call',{method:'POST',body:{tool,op,device,args}});const result=payload.result;
-      if(result?.isError){log('[!] MCP operation denied or failed: '+JSON.stringify(result.structuredContent||result).slice(0,1800));}
+      if(result?.isError){
+        log('[!] MCP operation denied or failed: '+JSON.stringify(result.structuredContent||result).slice(0,1800));
+        const code=result.structuredContent?.error?.code;
+        if(['timeout','disconnected'].includes(code))failure(new Error(`MCP result is unverified (${code}). Confirm the action outcome before retrying.`),true);
+      }
       else{log('[+] MCP response: '+JSON.stringify(result?.structuredContent||result).slice(0,1800));}
     }catch(e){failure(e,true);}
     finally{live.inFlight=false;}
