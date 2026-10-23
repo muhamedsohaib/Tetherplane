@@ -26,6 +26,12 @@ Describe 'guarded native agent recovery: pure denial and idempotency' {
     It 'rejects a foreign running executable' {
         { Get-GuardDecision -TaskState Running -AgentCount 1 -AgentMatchesTask $false -CompetingAgentTaskEnabled $false } | Should Throw
     }
+    It 'preserves a protected higher-integrity process without claiming ownership' {
+        Get-GuardDecision -TaskState Running -AgentCount 1 -AgentMatchesTask $false -CompetingAgentTaskEnabled $false -AgentPathUnavailable $true | Should Be 'present_unverified'
+    }
+    It 'denies a possible orphan when its executable path is inaccessible' {
+        { Get-GuardDecision -TaskState Ready -AgentCount 1 -AgentMatchesTask $false -CompetingAgentTaskEnabled $false -AgentPathUnavailable $true } | Should Throw
+    }
     It 'rejects two active tetherd processes' {
         { Get-GuardDecision -TaskState Running -AgentCount 2 -AgentMatchesTask $true -CompetingAgentTaskEnabled $false } | Should Throw
     }
@@ -117,6 +123,12 @@ Describe 'guarded native agent recovery: isolated synthetic task contract' {
     It 'refuses an orphan with an approved executable path' {
         $script:task.State = 'Ready'
         { Invoke-GuardedAgentRecovery @script:pins -Recover } | Should Throw
+        Assert-MockCalled Start-ScheduledTask -Exactly 0 -Scope It
+    }
+    It 'never starts when a running protected process hides its executable path' {
+        $script:runningAgents = @([pscustomobject]@{ ExecutablePath = $null })
+        $r = Invoke-GuardedAgentRecovery @script:pins -Recover
+        $r.status | Should Be 'present_unverified'
         Assert-MockCalled Start-ScheduledTask -Exactly 0 -Scope It
     }
     It 'refuses a second enabled agent task' {
