@@ -39,6 +39,10 @@ jobs:
       - name: Five fresh Chromium download trials — bounded failure and owned process cleanup
         shell: pwsh
         run: ./scripts/measure-windows-cdp-startup.ps1 -EvidenceDirectory '${{ runner.temp }}/cdp-startup'
+      - name: Verify measurement cleanup acceptance contract
+        if: always()
+        shell: pwsh
+        run: ./tests/reliability/windows-cdp-measurement-contract.ps1
       - name: Retain sanitized startup receipts, including failed trials
         if: always()
         uses: actions/upload-artifact@v4

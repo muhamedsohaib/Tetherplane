@@ -26,6 +26,11 @@ for ($trial = 1; $trial -le 5; $trial++) {
     $lines = @($text -split '\r?\n' | Where-Object { $_ -match '^(# )?CDP_STARTUP=\{' })
     $lines | ForEach-Object { ($_ -replace '^# ', '').Substring('CDP_STARTUP='.Length) } | Set-Content -LiteralPath $receipt -Encoding utf8
     $lines | Write-Output
+    $events = @($lines | ForEach-Object { ($_ -replace '^# ', '').Substring('CDP_STARTUP='.Length) | ConvertFrom-Json })
+    $cleanup = @($events | Where-Object stage -eq 'cleanup')
+    $expectedCleanup = if ($Scenario -eq 'b6') { 1 } else { $Parallelism }
+    $verifiedCleanup = @($cleanup | Where-Object { $_.profile_removed -eq $true -and $_.launcher_stopped -eq $true -and $_.browser_process_stopped -eq $true })
+    $cleanupVerified = $cleanup.Count -eq $expectedCleanup -and $verifiedCleanup.Count -eq $expectedCleanup
     $executed = $text -match '(?m)^# pass 1\b' -and $text -match 'B6_STAGE=cleanup-complete'
     if ($Scenario -eq 'startup') {
         $resultLine = @($text -split '\r?\n' | Where-Object { $_ -match '^CDP_PROBE_RESULT=\{' })
@@ -35,8 +40,8 @@ for ($trial = 1; $trial -le 5; $trial++) {
             $executed = $result.sessions -eq $Parallelism -and $result.passed -eq $true -and @($result.codes).Count -eq $Parallelism
         }
     }
-    $passed = $exited -and $child.ExitCode -eq 0 -and $executed
-    $summary = @{ trial=$trial; scenario=$Scenario; parallelism=$Parallelism; exited=$exited; exit_code=$child.ExitCode; passed=[bool]$passed; source_sha=$env:GITHUB_SHA; runner_os=$env:RUNNER_OS; runner_arch=$env:RUNNER_ARCH; image_version=$env:ImageVersion; node_version=(& $nodeExe --version) } | ConvertTo-Json -Compress
+    $passed = $exited -and $child.ExitCode -eq 0 -and $executed -and $cleanupVerified
+    $summary = @{ trial=$trial; scenario=$Scenario; parallelism=$Parallelism; cleanup_verified=[bool]$cleanupVerified; exited=$exited; exit_code=$child.ExitCode; passed=[bool]$passed; source_sha=$env:GITHUB_SHA; runner_os=$env:RUNNER_OS; runner_arch=$env:RUNNER_ARCH; image_version=$env:ImageVersion; node_version=(& $nodeExe --version) } | ConvertTo-Json -Compress
     Add-Content -LiteralPath $receipt -Value $summary -Encoding utf8
     Write-Output "CDP_TRIAL_RESULT=$summary"
     if (-not $passed) { $failed++ }

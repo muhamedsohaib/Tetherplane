@@ -1,0 +1,122 @@
+{
+  "source_sha": "bd4184715e974ec47ebbd8a3a6c005377dcebc72",
+  "run_id": 40001604404,
+  "job_id": 120578817783,
+  "os": "Ubuntu",
+  "browser_pass": 80,
+  "browser_fail": 1,
+  "failed_boundary": "12-second DevToolsActivePort startup deadline",
+  "events": [
+    {
+      "stage": "selected",
+      "elapsed_ms": 1517,
+      "spawned": false,
+      "exited": false,
+      "closed": false,
+      "exit_code": null,
+      "signal": null,
+      "endpoint": "missing",
+      "stderr_bytes": 0,
+      "stderr_capped": false,
+      "stderr_categories": [],
+      "source": "argument",
+      "family": "chrome",
+      "version": null
+    },
+    {
+      "stage": "profile",
+      "elapsed_ms": 1518,
+      "spawned": false,
+      "exited": false,
+      "closed": false,
+      "exit_code": null,
+      "signal": null,
+      "endpoint": "missing",
+      "stderr_bytes": 0,
+      "stderr_capped": false,
+      "stderr_categories": [],
+      "profile_writable": true
+    },
+    {
+      "stage": "spawn",
+      "elapsed_ms": 1521,
+      "spawned": true,
+      "exited": false,
+      "closed": false,
+      "exit_code": null,
+      "signal": null,
+      "endpoint": "missing",
+      "stderr_bytes": 0,
+      "stderr_capped": false,
+      "stderr_categories": []
+    },
+    {
+      "stage": "failure",
+      "elapsed_ms": 13533,
+      "spawned": true,
+      "exited": false,
+      "closed": false,
+      "exit_code": null,
+      "signal": null,
+      "endpoint": "missing",
+      "stderr_bytes": 573,
+      "stderr_capped": false,
+      "stderr_categories": [],
+      "error_category": "other"
+    },
+    {
+      "stage": "exit",
+      "elapsed_ms": 14798,
+      "spawned": true,
+      "exited": true,
+      "closed": false,
+      "exit_code": null,
+      "signal": "killed",
+      "endpoint": "missing",
+      "stderr_bytes": 1396,
+      "stderr_capped": false,
+      "stderr_categories": [
+        "sandbox",
+        "gpu"
+      ],
+      "error_category": "not_found"
+    },
+    {
+      "stage": "cleanup",
+      "elapsed_ms": 14820,
+      "spawned": true,
+      "exited": true,
+      "closed": false,
+      "exit_code": null,
+      "signal": "killed",
+      "endpoint": "missing",
+      "stderr_bytes": 1396,
+      "stderr_capped": false,
+      "stderr_categories": [
+        "sandbox",
+        "gpu"
+      ],
+      "error_category": "not_found",
+      "profile_removed": true,
+      "launcher_stopped": true,
+      "browser_process_stopped": null
+    },
+    {
+      "stage": "close",
+      "elapsed_ms": 14820,
+      "spawned": true,
+      "exited": true,
+      "closed": true,
+      "exit_code": null,
+      "signal": "killed",
+      "endpoint": "missing",
+      "stderr_bytes": 1396,
+      "stderr_capped": false,
+      "stderr_categories": [
+        "sandbox",
+        "gpu"
+      ],
+      "error_category": "not_found"
+    }
+  ]
+}
