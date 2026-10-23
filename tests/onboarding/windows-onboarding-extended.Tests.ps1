@@ -191,12 +191,21 @@ Describe "composed setup CLI" {
         $first = & (Join-Path $repo "scripts\setup-windows-device.ps1") -Run -PackagePath $script:pkg -DeviceId "TESTPC01" -InstallPrefix $install -StateDir $state -Pair -PairingOrigin $script:mock.Url | ConvertFrom-Json
         $first.ok | Should Be $true
         $first.pairing.userCode | Should Be "ABCD-1234"
-        $first.approval_instruction | Should Match "approve_pairing"
+        $first.approval_instruction | Should Match "http://127[.]0[.]0[.]1:8791"
+        $first.approval_instruction | Should Match "VAULTER"
+        $first.approval_instruction | Should Match "Pairing"
+        $first.approval_instruction | Should Match "ABCD-1234"
         $first.approval_instruction | Should Match "TESTPC01"
+        $first.approval_instruction | Should Not Match "approve_pairing"
         Test-Path -LiteralPath (Join-Path $state "pairing.json") | Should Be $true
         Remove-Item -LiteralPath (Join-Path $script:tempRoot "requests.log")
         $second = & (Join-Path $repo "scripts\setup-windows-device.ps1") -Run -PackagePath $script:pkg -DeviceId "TESTPC01" -InstallPrefix $install -StateDir $state -Pair -PairingOrigin $script:mock.Url | ConvertFrom-Json
         $second.pairing.userCode | Should Be "ABCD-1234"
+        $second.pairing.resumed | Should Be $true
+        $second.approval_instruction | Should Match "http://127[.]0[.]0[.]1:8791"
+        $second.approval_instruction | Should Match "ABCD-1234"
+        $second.approval_instruction | Should Match "TESTPC01"
+        $second.approval_instruction | Should Not Match "approve_pairing"
         Test-Path -LiteralPath (Join-Path $script:tempRoot "requests.log") | Should Be $false
     }
 }

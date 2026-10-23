@@ -41,13 +41,20 @@ test(
   "B6 CDP operational path proves native upload download diagnostics checkpoint and conflict",
   { timeout: 30_000 },
   async () => {
+    // Only fixed stage names, never an actual browser URL, credential or path.
+    const phase = (name: string): void => {
+      console.log("B6_STAGE=" + name);
+    };
+    phase("chromium-discovery");
     const executablePath = findInstalledChromium();
     assert.ok(
       executablePath,
       "expected an installed compatible Chromium executable",
     );
 
+    phase("fixture-start");
     const lab = await startBrowserLab();
+    phase("fixture-ready");
     const temp = await mkdtemp(
       path.join(os.tmpdir(), "tetherplane-b6-"),
     );
@@ -58,9 +65,14 @@ test(
       "utf8",
     );
 
+    phase("chromium-launch");
+    // Fail with the launcher's own typed error and owned-process cleanup
+    // before this 30-second test deadline; never increase the test budget.
     const control = await launchCdpOwnedBrowser({
       executablePath,
+      launchTimeoutMs: 12_000,
     });
+    phase("chromium-ready");
     const backend = new CdpBrowserBackend({
       control,
       pollIntervalMs: 20,
@@ -69,7 +81,9 @@ test(
     const semantics = new SemanticSnapshotEngine();
 
     try {
+      phase("create-tab");
       const page = await backend.createTab(lab.origin);
+      phase("tab-created");
       ownership.register({
         page_id: page.page_id,
         ownership: "tetherplane",
@@ -81,7 +95,9 @@ test(
         semantics,
       });
 
+      phase("observe");
       const observed = await backend.observe(page.page_id);
+      phase("observed");
       const snapshot = semantics.snapshot(observed.nodes, {
         revision: observed.semantic_revision,
       });
@@ -101,6 +117,7 @@ test(
       assert.ok(downloadLink);
       assert.ok(failRequest);
 
+      phase("native-upload");
       await operations.upload({
         page_id: page.page_id,
         mode: "background_only",
@@ -108,6 +125,7 @@ test(
         file_path: uploadPath,
       });
 
+      phase("wait-upload");
       const uploaded = await waitUntil(async () => {
         const response = await fetch(
           new URL("/api/upload-state", lab.origin),
@@ -138,6 +156,7 @@ test(
         ).backend_id,
       });
 
+      phase("wait-diagnostics");
       const diagnostics = await waitUntil(async () => {
         const result = await operations.diagnostics({
           page_id: page.page_id,
@@ -162,6 +181,7 @@ test(
         ),
       );
 
+      phase("click-download");
       await backend.perform(page.page_id, {
         kind: "click",
         backend_id: semantics.reacquire(
@@ -170,6 +190,10 @@ test(
         ).backend_id,
       });
 
+      // Keep the original five-second completion contract. On failure,
+      // report bounded event and final-file evidence rather than silently
+      // retrying or treating an unfinished download as complete.
+      phase("wait-download");
       const completedDownload = await waitUntil(async () => {
         const result = await operations.downloads({
           page_id: page.page_id,
@@ -179,7 +203,34 @@ test(
             (download) => download.state === "complete",
           ) ?? null
         );
+      }).catch(async (cause: unknown) => {
+        let diagnostic = "download observation unavailable";
+        try {
+          const observation = await operations.downloads({
+            page_id: page.page_id,
+          });
+          diagnostic = JSON.stringify({
+            truncated: observation.truncated,
+            downloads: observation.downloads.slice(0, 10).map((download) => ({
+              filename: download.filename.slice(0, 100),
+              state: download.state,
+              bytes_received: download.bytes_received,
+              total_bytes: download.total_bytes,
+              final_file_exists: download.local_path
+                ? existsSync(download.local_path)
+                : false,
+            })),
+          });
+        } catch {
+          // Preserve the primary timeout rather than hiding it with a
+          // secondary observation failure.
+        }
+        throw new Error(
+          "B6_DOWNLOAD_COMPLETION_UNVERIFIED " + diagnostic,
+          { cause },
+        );
       });
+      phase("download-complete");
       assert.match(
         completedDownload.handle,
         /^download_[0-9a-f]{16}$/,
@@ -197,6 +248,7 @@ test(
         "browser-lab-download\n",
       );
 
+      phase("checkpoint");
       const checkpoint = await operations.checkpoint({
         page_id: page.page_id,
         mode: "background_only",
@@ -241,12 +293,16 @@ test(
         "resource_conflict",
       );
     } finally {
+      phase("cleanup-browser");
       await backend.shutdown();
+      phase("cleanup-lab");
       await lab.close();
+      phase("cleanup-temp");
       await rm(temp, {
         recursive: true,
         force: true,
       });
+      phase("cleanup-complete");
     }
   },
 );

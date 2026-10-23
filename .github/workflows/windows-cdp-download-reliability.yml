@@ -1,0 +1,66 @@
+name: Windows CDP download reliability
+
+# A focused, independent regression for the observed Windows-only
+# Browser.downloadProgress completion timeout in the B6 CDP browser path.
+# Each attempt launches a fresh, disposable Chromium profile and local lab.
+# No live user browser, human tab, OAuth token or device is involved.
+on:
+  pull_request:
+    paths:
+      - "browser/bridge/**"
+      - "fixtures/browser-lab/**"
+      - ".github/workflows/windows-cdp-download-reliability.yml"
+
+permissions:
+  contents: read
+
+jobs:
+  windows-cdp-download:
+    runs-on: windows-latest
+    timeout-minutes: 12
+    steps:
+      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683
+        with:
+          persist-credentials: false
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020
+        with:
+          node-version: "22"
+      - name: Install pinned workspace toolchain
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = 'Stop'
+          corepack enable
+          if ($LASTEXITCODE -ne 0) { throw 'Corepack enable failed' }
+          corepack prepare pnpm@10.34.5 --activate
+          if ($LASTEXITCODE -ne 0) { throw 'Pinned pnpm activation failed' }
+          pnpm install --frozen-lockfile
+          if ($LASTEXITCODE -ne 0) { throw 'Frozen lockfile installation failed' }
+      - name: Five fresh Chromium download trials — bounded failure and owned process cleanup
+        shell: pwsh
+        working-directory: browser/bridge
+        run: |
+          $ErrorActionPreference = 'Stop'
+          $nodeExe = (Get-Command node.exe -ErrorAction Stop).Source
+          for ($attempt = 1; $attempt -le 5; $attempt++) {
+            Write-Output "CDP_DOWNLOAD_TRIAL=$attempt"
+            $stdout = Join-Path $env:RUNNER_TEMP "cdp-download-$attempt.stdout.log"
+            $stderr = Join-Path $env:RUNNER_TEMP "cdp-download-$attempt.stderr.log"
+            $child = Start-Process -FilePath $nodeExe -NoNewWindow -PassThru -WorkingDirectory (Get-Location).Path -ArgumentList @('--test', '--test-name-pattern=B6.*CDP.*operational.*path', 'test/operations-integration.test.ts') -RedirectStandardOutput $stdout -RedirectStandardError $stderr
+            $exited = $child.WaitForExit(65000)
+            if (-not $exited) {
+              # Kill only this disposable test process tree on the CI runner.
+              & taskkill.exe /PID $child.Id /T /F 1>$null 2>$null
+              Write-Output (Get-Content -LiteralPath $stdout -Raw -ErrorAction SilentlyContinue)
+              Write-Output (Get-Content -LiteralPath $stderr -Raw -ErrorAction SilentlyContinue)
+              throw "CDP_DOWNLOAD_TRIAL_NO_EXIT=$attempt"
+            }
+            $stdoutText = Get-Content -LiteralPath $stdout -Raw
+            Write-Output $stdoutText
+            $stderrText = Get-Content -LiteralPath $stderr -Raw -ErrorAction SilentlyContinue
+            if ($stderrText) { Write-Output $stderrText }
+            if ($child.ExitCode -ne 0) { throw "CDP_DOWNLOAD_TRIAL_FAILED=$attempt" }
+            if ($stdoutText -notmatch 'B6 CDP operational path' -or $stdoutText -notmatch '(?m)^# pass 1\b') {
+              throw "CDP_DOWNLOAD_TRIAL_NOT_EXECUTED=$attempt"
+            }
+          }
+          Write-Output "CDP_DOWNLOAD_RELIABILITY=5_OF_5"

@@ -38,6 +38,16 @@ function Test-CredentialHash {
     return (($hash | ForEach-Object { $_.ToString("x2") }) -join "")
 }
 
+function Get-PairingApprovalNextStep {
+    param([Parameter(Mandatory = $true)][string]$DeviceId, [Parameter(Mandatory = $true)][string]$UserCode)
+    return (@(
+        "On VAULTER itself, open the existing authenticated Tetherplane Control Center at http://127.0.0.1:8791 (local to VAULTER, not the device being installed).",
+        "Sign in with the already authorized account, open Pairing, enter the device-generated code $UserCode and confirm you initiated pairing for device $DeviceId.",
+        "Verify that approval identifies exactly device $DeviceId and refresh the account directory; only then finalize the existing device setup.",
+        "If approval is expired, unavailable or uncertain, stop and inspect state instead of blindly retrying. Do not export credentials or register a new OAuth client."
+    ) -join " ")
+}
+
 function Request-DevicePairing {
     param(
         [Parameter(Mandatory = $true)][string]$RelayUrl,
@@ -67,7 +77,7 @@ function Request-DevicePairing {
         device_id = $DeviceId
         userCode = [string]$response.userCode
         expiresAt = [string]$response.expiresAt
-        next = "ask the already connected ChatGPT plugin to approve code $($response.userCode) for computer $DeviceId with device(op=""approve_pairing"", args={userCode:""$($response.userCode)"", expectedDeviceId:""$DeviceId""}); then resume setup to finalize the background agent"
+        next = (Get-PairingApprovalNextStep -DeviceId $DeviceId -UserCode ([string]$response.userCode))
     }
     if ($StateDir) { Write-PairingRecord -StateDir $StateDir -DeviceId $DeviceId -UserCode $result.userCode -ExpiresAt $result.expiresAt }
     return $result
@@ -88,7 +98,7 @@ function Read-PairingRecord {
         device_id = $DeviceId
         userCode = [string]$record.userCode
         expiresAt = [string]$record.expiresAt
-        next = "a pending approval code is still valid; ask the already connected ChatGPT plugin to approve it, then resume setup to finalize the background agent"
+        next = (Get-PairingApprovalNextStep -DeviceId $DeviceId -UserCode ([string]$record.userCode))
     }
 }
 

@@ -17,7 +17,7 @@
     "prebuild": "pnpm --filter @tetherplane/compact-mcp build",
     "build": "tsc -p tsconfig.json",
     "pretest": "pnpm --filter @tetherplane/compact-mcp build",
-    "test": "node --test test/*.test.ts",
+    "test": "node --test test/*.test.ts test/*.test.mjs",
     "pretypecheck": "pnpm --filter @tetherplane/compact-mcp build",
     "typecheck": "tsc --noEmit -p tsconfig.test.json"
   },

@@ -31,6 +31,18 @@ Describe "setup-windows-device" {
         if ($script:tempRoot) { Remove-Item -LiteralPath $script:tempRoot -Recurse -Force -ErrorAction SilentlyContinue }
     }
 
+    It "uses the approved VAULTER Control Center rather than an unsupported MCP pairing operation" {
+        $instruction = Get-ApprovalInstruction -DeviceId "TESTPC01" -UserCode "ABCD-1234"
+        $instruction | Should Match "http://127\.0\.0\.1:8791"
+        $instruction | Should Match "VAULTER"
+        $instruction | Should Match "Pairing"
+        $instruction | Should Match "TESTPC01"
+        $instruction | Should Match "ABCD-1234"
+        $instruction | Should Match "(?i)uncertain"
+        $instruction | Should Not Match "approve_pairing"
+        $instruction | Should Not Match "device\(op="
+    }
+
     It "rejects a package with a missing manifest" {
         Remove-Item -LiteralPath (Join-Path $script:pkg "manifest.json")
         { Confirm-DevicePackage -PackagePath $script:pkg } | Should Throw
@@ -84,6 +96,29 @@ Describe "pair-windows-device against a loopback mock relay" {
     AfterEach {
         Stop-MockRelay $script:mock
         if ($script:tempRoot) { Remove-Item -LiteralPath $script:tempRoot -Recurse -Force -ErrorAction SilentlyContinue }
+    }
+
+    It "instructs new-device pairing through the authorized existing Control Center" {
+        $result = Request-DevicePairing -RelayUrl $script:mock.Url -DeviceId "TESTPC01" -Credential "TEST-CREDENTIAL-ABCDEFGHIJKLMNOP"
+        $result.userCode | Should Be "ABCD-1234"
+        $result.next | Should Match "http://127\.0\.0\.1:8791"
+        $result.next | Should Match "VAULTER"
+        $result.next | Should Match "TESTPC01"
+        $result.next | Should Match "ABCD-1234"
+        $result.next | Should Match "(?i)verify"
+        $result.next | Should Not Match "approve_pairing"
+    }
+
+    It "keeps a pending device code and repeats the safe portal instructions" {
+        $state = Join-Path $script:tempRoot "pending-state"
+        $expiry = [DateTimeOffset]::UtcNow.AddMinutes(30).ToString("o")
+        Write-PairingRecord -StateDir $state -DeviceId "TESTPC01" -UserCode "A1B2-C3D4" -ExpiresAt $expiry
+        $result = Read-PairingRecord -StateDir $state -DeviceId "TESTPC01"
+        $result.resumed | Should Be $true
+        $result.userCode | Should Be "A1B2-C3D4"
+        $result.next | Should Match "http://127\.0\.0\.1:8791"
+        $result.next | Should Match "A1B2-C3D4"
+        $result.next | Should Not Match "approve_pairing"
     }
 
     It "posts only the credential hash and shows the approval code" {

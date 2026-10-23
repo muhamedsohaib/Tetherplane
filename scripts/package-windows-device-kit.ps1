@@ -272,12 +272,17 @@ Prerequisite
 Add this computer
   1. Unzip this kit anywhere and open PowerShell in the folder.
   2. .\setup.cmd -DeviceId <NAME> -Pair
-       Installs the agent, creates this computer's own credential, and prints an
-       expiring approval code plus the exact ChatGPT request to run.
-  3. In ChatGPT, using your existing Tetherplane plugin, run the printed
-       device(op="approve_pairing", args={userCode:"...", expectedDeviceId:"<NAME>"})
+       Installs the agent, creates this computer's credential, and prints a
+       device-generated, expiring pairing code.
+  3. On VAULTER itself, open the existing authenticated Tetherplane Control
+       Center at http://127.0.0.1:8791 (VAULTER loopback, NOT this computer).
+       Sign in with the already approved account, open Pairing, enter the code,
+       and confirm that you initiated pairing for <NAME>.
+       Confirm the relay response names exactly <NAME>; refresh the account
+       directory. If approval is unavailable or uncertain, stop and verify.
+       Do not use an MCP device tool to approve pairing or export credentials.
   4. .\setup.cmd -DeviceId <NAME> -Finalize
-       Creates the per-user background task and starts it.
+       Only after pairing is verified; starts the per-user background agent.
   5. .\doctor-tetherplane.ps1
        Reports install, relay reachability, pairing, agent and policy status.
 
@@ -307,8 +312,14 @@ with -VerifyOnly -RequireTrustedSignature and those independent values.
 
 Run setup-windows-device.ps1 with -Run, -RequireTrustedSignature,
 -ExpectedPublisherSubject, -ExpectedSignerThumbprint and -ExpectedSourceCommit.
-Use -Pair and then -Finalize only for the intended new device. Existing device
-upgrades preserve local identity and require complete ownership evidence.
+Use -Pair for the intended new device. On VAULTER itself, open the approved
+local Control Center at http://127.0.0.1:8791; sign in, open Pairing, submit
+the generated code with owner confirmation, and verify that the approved device
+matches the expected ID in the account directory. The loopback address is local
+to VAULTER and is not a portal on this new computer. If approval is uncertain,
+stop and inspect before retrying. Only then use -Finalize.
+Existing device upgrades preserve local identity and require complete ownership
+evidence. No additional OAuth client, token export or MCP approval operation.
 
 The target must already be on the relay's Tailscale tailnet. New devices keep
 the device.status-only profile and background_only operation. No credential
