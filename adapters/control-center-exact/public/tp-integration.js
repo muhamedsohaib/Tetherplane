@@ -10,6 +10,7 @@
   const oldAppendMiniLog=window.appendMiniLog;
   const oldToggleTheme=window.toggleThemeMode;
   const live={csrf:null,expiresAt:null,relayOrigin:null,devices:[],observedAt:null,directoryUnavailable:false,mutationUncertain:false,inFlight:false};
+  const authority={snapshot:null,unavailable:false,error:null};
   const $ = id => document.getElementById(id);
   const text = value => tpEsc(String(value??''));
   const when = value => value ? tpTime(value) : 'Not reported';
@@ -22,6 +23,7 @@
   function setText(id,value){const node=$(id);if(node)node.textContent=String(value);}
   function clearLive(){
     live.csrf=null;live.expiresAt=null;live.relayOrigin=null;live.devices=[];live.observedAt=null;live.directoryUnavailable=false;live.mutationUncertain=false;
+    authority.snapshot=null;authority.unavailable=false;authority.error=null;
     tpDemo.session=false;tpDemo.devices=[];tpDemo.refreshAt=null;tpDemo.pendingRevokeId=null;
     setText('active-node-summary','SIGN IN REQUIRED');
     setText('mini-console-log','');
@@ -43,8 +45,8 @@
     const controller=new AbortController(),tm=setTimeout(()=>controller.abort(),12000);
     try {
       const response=await fetch(path,{method,mode:'same-origin',redirect:'error',cache:'no-store',credentials:'same-origin',signal:controller.signal,
-        headers:{accept:'application/json',...(method==='POST'?{'content-type':'application/json'}:{}),...(csrf&&method==='POST'&&live.csrf?{'x-csrf-token':live.csrf}:{})},
-        ...(method==='POST'?{body:JSON.stringify(body||{})}:{})});
+        headers:{accept:'application/json',...(['POST','PUT'].includes(method)?{'content-type':'application/json'}:{}),...(csrf&&['POST','PUT'].includes(method)&&live.csrf?{'x-csrf-token':live.csrf}:{})},
+        ...(['POST','PUT'].includes(method)?{body:JSON.stringify(body||{})}:{})});
       if(!(response.headers.get('content-type')||'').startsWith('application/json'))throw Error('Unexpected portal response');
       const data=await response.json();
       if(!response.ok){const e=new Error(data?.error?.message||`HTTP ${response.status}`);e.code=data?.error?.code||'http_error';e.status=response.status;throw e;}
@@ -84,6 +86,77 @@
   tpPageInfo.settings=['SETTINGS','Only what matters.','Current local session and relay facts; no credentials displayed.'];
   tpPageInfo.challenge=['BROWSER CHALLENGE','Identity approval.','Browser authentication is not enabled for this portal.'];
   tpPageInfo.approval=['DEVICE APPROVAL','Device-local authority.','Approvals must be issued by the approved authenticated mechanism, never by a browser flag.'];
+
+  // Additive backend-only owner controls; original supplied HTML remains byte-identical.
+  function authorityPanel(){
+    const s=authority.snapshot;
+    const refresh='<button class="mono-btn rounded-xl tp-action" onclick="portalAuthorityLoad()">[ Refresh authority ]</button>';
+    if(!s)return '<article class="mono-glass rounded-2xl p-5 tp-page-card"><div class="tp-kicker">+-- OWNER DEVICE AUTHORITY</div><p class="tp-dim">This is a separate relay grant gate. ChatGPT app permissions, OAuth identity and each device-local policy still apply. No browser flag can authorize a device.</p><p class="tp-dim">'+
+      text(authority.error||'Owner management identity not verified; load only using the already-approved local owner session.')+
+      '</p>'+refresh+'</article>';
+    const current=live.devices.filter(d=>active(d));
+    const deviceOptions=current.map(d=>'<option value="'+text(d.deviceId)+'">'+text(d.deviceId)+'</option>').join('');
+    const grantRows=s.grants.map(g=>'<div class="tp-entry"><div class="tp-entry-main"><div class="text-white">'+text(g.deviceId)+' · '+text(g.level.toUpperCase())+'</div><div class="tp-dim">CLIENT: '+text(g.clientId)+' · PRINCIPAL: '+text(g.principalId)+'</div></div></div>').join('');
+    const clients=s.clients.map(c=>'<div class="tp-dim">Observed: '+text(c.clientId)+' / '+text(c.principalId)+' · '+text(when(c.seenAt))+'</div>').join('');
+    const enabled=s.enabled===true;
+    const phrase=enabled?'RESTORE LEGACY ACCESS':'ENFORCE DEVICE GRANTS';
+    return '<article class="mono-glass rounded-2xl p-5 tp-page-card"><div class="tp-kicker">+-- OWNER DEVICE AUTHORITY // REVISION '+text(s.revision)+'</div><div class="tp-content"><h2 class="tp-card-title text-white">'+(enabled?'ENFORCED: ungranted clients are denied':'NOT ENFORCED: existing relay behavior still applies')+'</h2><p class="tp-dim">This relay policy only restricts an already authenticated OAuth client on a specific paired computer. Local device capability and directory restrictions remain final. A chat where the app is not selected cannot be enabled by this panel.</p></div>'+
+      '<label class="tp-label" for="tp-authority-device">COMPUTER</label><select id="tp-authority-device" class="tp-input">'+deviceOptions+'</select>'+
+      '<label class="tp-label" for="tp-authority-client">EXACT AUTHENTICATED CLIENT ID</label><input id="tp-authority-client" class="tp-input" maxlength="128" autocomplete="off" spellcheck="false" placeholder="Existing OAuth client ID">'+
+      '<label class="tp-label" for="tp-authority-principal">EXACT PRINCIPAL ID</label><input id="tp-authority-principal" class="tp-input" maxlength="128" autocomplete="off" spellcheck="false" placeholder="Existing approved principal ID">'+
+      '<label class="tp-label" for="tp-authority-level">AUTHORITY</label><select id="tp-authority-level" class="tp-input"><option value="blocked">Blocked</option><option value="observe">Observe — read/status only</option><option value="operate">Operate — selected background actions, still locally restricted</option></select>'+
+      '<p class="tp-dim">Enter the exact existing client and principal (not a token). Save stages one grant without activating or widening device-local policy.</p><div class="tp-actions"><button class="mono-btn rounded-xl tp-action" onclick="portalAuthoritySave()">[ Stage access grant ]</button>'+refresh+'</div>'+
+      '<div class="tp-kicker" style="margin-top:16px">RECORDED GRANTS</div>'+(grantRows||'<p class="tp-dim">No explicit grants. Enabling now denies all routed MCP requests.</p>')+
+      '<div class="tp-kicker" style="margin-top:16px">OBSERVED AUTHENTICATED CLIENTS</div>'+(clients||'<p class="tp-dim">No client identity observations yet; an app blocked before the relay will not appear here.</p>')+
+      '<label class="tp-label" for="tp-authority-confirm">OWNER CONFIRMATION: '+text(phrase)+'</label><input id="tp-authority-confirm" class="tp-input" autocomplete="off" spellcheck="false" placeholder="'+text(phrase)+'">'+
+      '<div class="tp-actions"><button class="mono-btn rounded-xl tp-action" onclick="portalAuthorityEnforce()">'+(enabled?'[ Restore legacy mode ]':'[ Activate deny-by-default ]')+'</button></div>'+
+      '</article>';
+  }
+  window.portalAuthorityLoad=async function(){
+    if(live.inFlight||!tpDemo.session)return;
+    live.inFlight=true;
+    try {
+      const data=await api('/api/authority');
+      authority.snapshot=data;authority.unavailable=false;authority.error=null;
+      log('[#] Owner authority inspected; revision '+data.revision+(data.enabled?' enforced':' staged only')+'.');
+      window.renderActivePortalPage();
+    }catch(e){authority.snapshot=null;authority.unavailable=true;authority.error=e.message;failure(e);}
+    finally{live.inFlight=false;}
+  };
+  window.portalAuthoritySave=async function(){
+    const s=authority.snapshot;
+    if(!s||live.inFlight||live.directoryUnavailable||live.mutationUncertain)return;
+    const deviceId=$('tp-authority-device')?.value||'';
+    const clientId=$('tp-authority-client')?.value?.trim()||'';
+    const principalId=$('tp-authority-principal')?.value?.trim()||'';
+    const level=$('tp-authority-level')?.value||'blocked';
+    if(!live.devices.some(d=>d.deviceId===deviceId&&active(d))||
+      !/^[A-Za-z0-9][A-Za-z0-9._:-]{0,127}$/.test(clientId)||
+      !/^[A-Za-z0-9][A-Za-z0-9._:-]{0,127}$/.test(principalId)||
+      !['blocked','observe','operate'].includes(level)){toast('Choose one paired device, exact existing client/principal, and access level.');return;}
+    const grants=s.grants.filter(g=>!(g.deviceId===deviceId&&g.clientId===clientId&&g.principalId===principalId))
+      .map(g=>({deviceId:g.deviceId,clientId:g.clientId,principalId:g.principalId,level:g.level}));
+    grants.push({deviceId,clientId,principalId,level});
+    live.inFlight=true;
+    try{const updated=await api('/api/authority/grants',{method:'PUT',body:{revision:s.revision,grants}});
+      authority.snapshot=null;log('[#] Owner grant staged with revision '+updated.revision+'.');toast('Owner access grant saved; check enforcement status.');}
+    catch(e){authority.snapshot=null;failure(e,true);}
+    finally{live.inFlight=false;window.renderActivePortalPage();}
+    if(!live.mutationUncertain)void window.portalAuthorityLoad();
+  };
+  window.portalAuthorityEnforce=async function(){
+    const s=authority.snapshot;
+    if(!s||live.inFlight||live.directoryUnavailable||live.mutationUncertain)return;
+    const confirmation=s.enabled?'RESTORE LEGACY ACCESS':'ENFORCE DEVICE GRANTS';
+    if($('tp-authority-confirm')?.value!==confirmation){toast('Type the exact owner confirmation phrase.');return;}
+    live.inFlight=true;
+    try{const updated=await api('/api/authority/enforcement',{method:'POST',body:{revision:s.revision,enabled:!s.enabled,confirmation}});
+      authority.snapshot=null;log('[#] Authority enforcement changed at revision '+updated.revision+'.');toast('Owner authority changed; refresh to inspect.');}
+    catch(e){authority.snapshot=null;failure(e,true);}
+    finally{live.inFlight=false;window.renderActivePortalPage();}
+    if(!live.mutationUncertain)void window.portalAuthorityLoad();
+  };
+
   window.renderPortalPage=function(view){
     const ds=live.devices, count=ds.length, now=text(when(live.observedAt));
     if(view==='auth') return tpGrid([
@@ -106,9 +179,9 @@
       tpCard('SEPARATE STATES','Pairing versus transport','The relay may report transport presence. A transport connection is not proof that a requested operation is permitted.',tpButton('Review Access','access'))
     ])+`<article class="mono-glass rounded-2xl p-5 tp-page-card"><div class="tp-kicker">+-- ACCOUNT DEVICE RECORDS</div>${ds.length?ds.map(d=>cardDevice(d,true)).join(''):'<div class="tp-dim" style="margin-top:12px">No devices are paired to this account.</div>'}</article>`;
     if(view==='access')return tpGrid([
-      tpCard('SCOPE // ACCOUNT','Relay access grants','Only devices returned for the signed-in account may be managed. The local Policy Broker remains unchanged.'),
-      tpCard('DESTRUCTIVE OPERATION','Revocation requires confirmation','Enter the exact case-sensitive device ID. The revoked device must be paired again using a new credential.')
-    ])+`<article class="mono-glass rounded-2xl p-5 tp-page-card"><div class="tp-kicker">+-- ACCOUNT GRANTS</div>${ds.length?ds.map(d=>cardDevice(d,false)).join(''):'<div class="tp-dim" style="margin-top:12px">No device grants returned.</div>'}</article>`;
+      tpCard('SCOPE // ACCOUNT','Authenticated device pairing','Account-scoped pairing and revocation are distinct from owner-controlled operation grants.'),
+      tpCard('LOCAL POLICY','Device still holds final authority','Only the explicitly bound owner portal client can stage access grants. ChatGPT app availability and prompts remain a separate platform boundary.')
+    ])+authorityPanel()+`<article class="mono-glass rounded-2xl p-5 tp-page-card"><div class="tp-kicker">+-- ACCOUNT PAIRINGS / REVOKE</div>${ds.length?ds.map(d=>cardDevice(d,false)).join(''):'<div class="tp-dim" style="margin-top:12px">No devices paired.</div>'}</article>`;
     if(view==='pairing')return tpGrid([
       tpCard('01 // APPROVED PROCESS','Device-side ownership','1. Begin pairing on an authorized device.<p style="margin-top:6px">2. Receive the device-generated one-time code.</p><p style="margin-top:6px">3. Verify the source device and confirm ownership before submitting.</p><p style="margin-top:12px">Approving a code changes real relay account access, not device-local permission grants.</p>'),
       `<article class="mono-glass rounded-2xl p-5 tp-page-card"><div class="tp-kicker">02 // PAIRING FORM</div><div class="tp-content"><h2 class="tp-card-title text-white">Pairing code</h2><p class="tp-dim">Exact code: 4 hexadecimal characters, dash, 4 hexadecimal characters. Never approve an unsolicited code.</p></div><label for="tp-pair-code" class="tp-label">DEVICE CODE</label><input id="tp-pair-code" class="tp-input" maxlength="9" autocomplete="off" spellcheck="false" placeholder="AB12-CD34" oninput="tpPairValidate()"><label class="tp-check"><input type="checkbox" id="tp-pair-ownership" onchange="tpPairValidate()"><span>I initiated pairing on a device I am authorized to manage.</span></label><p id="tp-pair-error" class="tp-error" hidden></p><div class="tp-actions"><button class="mono-btn rounded-xl tp-action" id="tp-pair-submit" onclick="tpPairSubmit()" disabled>[ Approve pairing ]</button><button class="mono-btn rounded-xl tp-action" onclick="tpPairClear()">[ Clear ]</button></div><div id="tp-pair-result" class="tp-dim" style="margin-top:12px" role="status"></div></article>`

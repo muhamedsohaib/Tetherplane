@@ -90,6 +90,8 @@ export class ExactPortal {
     catch{throw err(502,'relay_unavailable','The relay could not be reached. Do not retry an uncertain mutation without refreshing.');}
     if(response.status===401){await response.body?.cancel();throw err(401,'authentication_required','Relay authorization expired or was rejected.');}
     if(response.status===403){await response.body?.cancel();throw err(403,'permission_denied','The relay denied this action.');}
+    if(response.status===409){await response.body?.cancel();throw err(409,'conflict','Owner authority changed. Refresh before editing.');}
+    if(response.status===404 && path.startsWith('/authority')){await response.body?.cancel();throw err(503,'authority_unavailable','Owner access management is not configured on this relay.');}
     if(!response.ok){await response.body?.cancel();if(path==='/pair/approve'&&response.status===400)throw err(400,'pairing_rejected','The code is invalid, expired or already consumed. Check the authorized device before trying again.');throw err(502,'relay_unavailable','Relay rejected the request. Confirm the current state before retrying.');}
     if(!(response.headers.get('content-type')||'').toLowerCase().startsWith('application/json')){await response.body?.cancel();throw err(502,'invalid_relay_response','Unsupported relay response.');}
     const raw=await this.readResponse(response,512*1024);
@@ -169,10 +171,10 @@ export class ExactPortal {
         res.end(req.method==='HEAD'?undefined:data);return;
       }
       const revoke=/^\/api\/devices\/([A-Za-z0-9][A-Za-z0-9._-]{0,127})\/revoke$/.exec(path);
-      const methods=path==='/api/session'?['GET','POST']:path==='/api/devices'?['GET']:[ '/api/logout','/api/pair/approve','/api/mcp/call'].includes(path)||revoke?['POST']:[];
+      const methods=path==='/api/session'?['GET','POST']:['/api/devices','/api/authority'].includes(path)?['GET']:path==='/api/authority/grants'?['PUT']:[ '/api/logout','/api/pair/approve','/api/mcp/call','/api/authority/enforcement'].includes(path)||revoke?['POST']:[];
       if(!methods.length)throw err(404,'not_found','Unknown endpoint.');
       if(!methods.includes(req.method))throw err(405,'method_not_allowed','Unsupported method.');
-      if(req.method==='POST'){
+      if(req.method==='POST'||req.method==='PUT'){
         if(req.headers.origin!==this.origin)throw err(403,'origin_denied','Same-origin request required.');
         if(!/^application\/json(?:\s*;\s*charset=utf-8)?$/i.test(req.headers['content-type']||''))throw err(415,'unsupported_media_type','JSON content type required.');
       }
@@ -189,7 +191,7 @@ export class ExactPortal {
         send(res,200,this.view(session,devices),{'set-cookie':`${this.cookieName}=${id}; HttpOnly; SameSite=Strict; Path=/; Max-Age=900`});return;
       }
       const {id,session}=this.session(req);sessionId=id;
-      if(req.method==='POST')this.requireCsrf(req,session);
+      if(req.method==='POST'||req.method==='PUT')this.requireCsrf(req,session);
       if(path==='/api/logout') {this.sessions.delete(id);send(res,200,{signedOut:true},{'set-cookie':`${this.cookieName}=; HttpOnly; SameSite=Strict; Path=/; Max-Age=0`});return;}
       if(path==='/api/pair/approve'){
         this.limit('pair',10);const body=await readBody(req);
@@ -209,6 +211,24 @@ export class ExactPortal {
         const result=await this.relay(`/devices/${encodeURIComponent(deviceId)}/revoke`,session.token,'POST',{});
         if(!obj(result)||result.deviceId!==deviceId||typeof result.revokedAt!=='string')throw err(502,'invalid_relay_response','Unexpected revocation response.');
         send(res,200,{revoked:true});return;
+      }
+      if(path==='/api/authority'){
+        const snapshot=await this.relay('/authority',session.token);
+        if(!obj(snapshot)||typeof snapshot.enabled!=='boolean'||!Number.isSafeInteger(snapshot.revision)||
+          !Array.isArray(snapshot.grants)||!Array.isArray(snapshot.clients)||!Array.isArray(snapshot.levels))
+          throw err(502,'invalid_relay_response','Unexpected owner authority response.');
+        send(res,200,snapshot);return;
+      }
+      if(path==='/api/authority/grants'||path==='/api/authority/enforcement'){
+        const body=await readBody(req,16384);
+        await this.directory(session.token);
+        if(!this.sessions.has(id)||session.expires<=this.now())throw err(401,'authentication_required','Session expired before policy update.');
+        const endpoint=path==='/api/authority/grants'?'/authority/grants':'/authority/enforcement';
+        const method=path==='/api/authority/grants'?'PUT':'POST';
+        const result=await this.relay(endpoint,session.token,method,body);
+        if(!obj(result)||!Number.isSafeInteger(result.revision))
+          throw err(502,'invalid_relay_response','Unverified authority revision. Refresh before proceeding.');
+        send(res,200,result);return;
       }
       if(path==='/api/mcp/call'){
         const body=await readBody(req,16384);
