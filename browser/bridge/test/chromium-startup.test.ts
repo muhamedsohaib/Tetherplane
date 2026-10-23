@@ -188,3 +188,25 @@ for (const scenario of ["terminal child", "expired deadline"] as const) {
     }
   });
 }
+
+test("endpoint deadline abort preserves the last file observation instead of reporting permission failure", { timeout: 5_000 }, async () => {
+  const child = spawn(process.execPath, ["-e", "setInterval(()=>{},1000)"], { stdio: "ignore", windowsHide: true });
+  const originalRead = fs.createReadStream;
+  const events: ChromiumStartupDiagnostic[] = [];
+  let reads = 0;
+  try {
+    await once(child, "spawn");
+    fs.createReadStream = (() => Readable.from((async function* () {
+      if (reads++ > 0) throw Object.assign(new Error("controlled deadline abort"), { name: "AbortError" });
+      yield Buffer.from("invalid endpoint\n");
+    })())) as unknown as typeof originalRead;
+    syncBuiltinESMExports();
+    const telemetry = new ChromiumStartupTelemetry(event => events.push(event));
+    await assert.rejects(waitForDevToolsActivePort({ child, portFile: "controlled-fixture", timeoutMs: 250, telemetry }), /timed out/);
+    telemetry.emit("failure");
+    assert.equal(events.at(-1)?.endpoint, "invalid");
+  } finally {
+    fs.createReadStream = originalRead; syncBuiltinESMExports();
+    const closed = once(child, "close"); child.kill(); await closed;
+  }
+});

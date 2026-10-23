@@ -167,6 +167,9 @@ export async function waitForDevToolsActivePort(options: {
       options.telemetry.endpoint("invalid");
     } catch (error) {
       if (error instanceof CdpBackendError) throw error;
+      if ((error as Error).name === "AbortError" || performance.now() >= deadline) {
+        throw new CdpBackendError("timeout", "timed out waiting for isolated Chromium DevTools endpoint");
+      }
       options.telemetry.endpoint((error as NodeJS.ErrnoException).code === "ENOENT" ? "missing" : "unreadable");
     }
     await new Promise(resolve => setTimeout(resolve, 25));
