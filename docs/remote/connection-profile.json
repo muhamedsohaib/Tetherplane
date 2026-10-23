@@ -1,0 +1,48 @@
+{
+  "profile_version": "2026-10-15.1",
+  "description": "Tetherplane native connection profile. Public endpoints and requirements only; no secrets, tokens, or private identifiers.",
+  "mcp_url": "https://vaulter.tailf65eba.ts.net/mcp",
+  "mcp_resource": "https://vaulter.tailf65eba.ts.net/mcp",
+  "oidc_issuer": "https://vaulter.tailf65eba.ts.net/",
+  "oidc_discovery": "https://vaulter.tailf65eba.ts.net/.well-known/openid-configuration",
+  "jwks_uri": "https://vaulter.tailf65eba.ts.net/jwks",
+  "oauth_authorization_endpoint": "https://vaulter.tailf65eba.ts.net/auth",
+  "oauth_token_endpoint": "https://vaulter.tailf65eba.ts.net/token",
+  "oauth_registration_endpoint": "https://vaulter.tailf65eba.ts.net/reg",
+  "device_transport": {
+    "mode": "outbound-only",
+    "relay_url": "wss://vaulter.tailf65eba.ts.net:10000/device",
+    "note": "Verified from the live Leno launch configuration and the Vaulter tailnet serve mapping (:10000 proxies to the relay). The controlled computer needs no inbound port but must be joined to the same tailnet. No other device path is supported."
+  },
+  "scopes": ["tetherplane:access", "openid", "offline_access"],
+  "default_mcp_tools": ["device", "files", "process", "browser", "desktop", "batch"],
+  "chatgpt_use": {
+    "note": "Using ChatGPT on another computer reuses the one existing plugin connection for the account/workspace. No new app, OAuth client, or pairing is needed.",
+    "reuse_connection": true
+  },
+  "native_connection": {
+    "observed": "2026-10-15",
+    "mcp_url": "https://vaulter.tailf65eba.ts.net/mcp",
+    "display_names_observed": ["Tetherplane2.0", "Tetherplane Native Web Test"],
+    "oauth_public_client_ids": [
+      "t-0jeFHrhm3EzaWM1fuOfP1zyTGMpARztnIO6ziAE4Q",
+      "T-rTtzjxJilq5RgB88VP3ZDU5arOUApPS_oAuYcIu5b"
+    ],
+    "note": "Both are public OAuth clients (token_endpoint_auth_method none, PKCE S256) already registered at the issuer. Reuse the existing connection; never register a client per computer."
+  },
+  "add_controlled_computer": {
+    "note": "Each controlled computer is installed and paired once with its own locally generated device credential. Never copy a credential between computers.",
+    "one_credential_per_device": true
+  },
+  "windows_package_requirements": {
+    "platform": "windows",
+    "architecture": "x64",
+    "node_runtime_required": true,
+    "per_user_install": true,
+    "manifest_files": ["bin/tetherd.exe", "adapters/compact-mcp/dist/stdio-server.js", "protocol/schemas/result.schema.json", "launch/tetherplane-mcp.ps1", "manifest.json"]
+  },
+  "policy_defaults": {
+    "mode": "background_only",
+    "authority": "local device Policy Broker; the relay never overrides a local denial"
+  }
+}

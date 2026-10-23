@@ -1,0 +1,253 @@
+name: Windows trusted signing candidate
+
+# Manual candidate preparation only. This workflow never tags, publishes a
+# release, installs on a personal computer, or provisions a signing identity.
+# The signing runner must be dedicated, ephemeral and administrator-provisioned.
+on:
+  workflow_dispatch:
+    inputs:
+      source_commit:
+        description: Exact current main commit SHA reviewed for signing
+        required: true
+        type: string
+
+permissions:
+  contents: read
+
+concurrency:
+  group: windows-trusted-signing
+  cancel-in-progress: false
+
+jobs:
+  preflight:
+    runs-on: windows-latest
+    timeout-minutes: 5
+    permissions:
+      contents: read
+      actions: read
+    outputs:
+      source_commit: ${{ steps.configuration.outputs.source_commit }}
+      publisher_subject: ${{ steps.configuration.outputs.publisher_subject }}
+      signer_thumbprint: ${{ steps.configuration.outputs.signer_thumbprint }}
+      adapter_path: ${{ steps.configuration.outputs.adapter_path }}
+      adapter_sha256: ${{ steps.configuration.outputs.adapter_sha256 }}
+      timestamp_url: ${{ steps.configuration.outputs.timestamp_url }}
+    steps:
+      - name: Require approved configuration and current main revision
+        id: configuration
+        shell: pwsh
+        env:
+          GH_TOKEN: ${{ github.token }}
+          REQUESTED_SOURCE: ${{ inputs.source_commit }}
+          SIGNING_READY: ${{ vars.TETHERPLANE_SIGNING_READY }}
+          PUBLISHER_SUBJECT: ${{ vars.TETHERPLANE_PUBLISHER_SUBJECT }}
+          SIGNER_THUMBPRINT: ${{ vars.TETHERPLANE_SIGNER_THUMBPRINT }}
+          ADAPTER_PATH: ${{ vars.TETHERPLANE_SIGNING_ADAPTER_PATH }}
+          ADAPTER_SHA256: ${{ vars.TETHERPLANE_SIGNING_ADAPTER_SHA256 }}
+          TIMESTAMP_URL: ${{ vars.TETHERPLANE_TIMESTAMP_URL }}
+        run: |
+          $ErrorActionPreference = 'Stop'
+          if ($env:GITHUB_EVENT_NAME -ne 'workflow_dispatch' -or $env:GITHUB_REF -ne 'refs/heads/main') {
+            throw 'Trusted signing is restricted to manual dispatch from main.'
+          }
+          if ($env:SIGNING_READY -cne 'true') {
+            throw 'Trusted signing is not provisioned: obtain provider approval, configure the protected environment and dedicated ephemeral runner, then set TETHERPLANE_SIGNING_READY=true.'
+          }
+          if ($env:REQUESTED_SOURCE -notmatch '^[0-9a-f]{40}$' -or $env:REQUESTED_SOURCE -cne $env:GITHUB_SHA) {
+            throw 'The requested source must be the exact current main workflow commit.'
+          }
+          if ([string]::IsNullOrWhiteSpace($env:PUBLISHER_SUBJECT) -or $env:PUBLISHER_SUBJECT -match '[\x00-\x1f]' -or
+              $env:SIGNER_THUMBPRINT -notmatch '^[a-fA-F0-9]{40}$' -or $env:ADAPTER_SHA256 -notmatch '^[a-fA-F0-9]{64}$') {
+            throw 'Independently approved publisher, leaf thumbprint and adapter SHA-256 are required.'
+          }
+          if ($env:ADAPTER_PATH -notmatch '^[A-Za-z]:\\' -or $env:ADAPTER_PATH -match '[\x00-\x1f]' -or [IO.Path]::GetExtension($env:ADAPTER_PATH) -ine '.ps1') {
+            throw 'The adapter must be an administrator-installed absolute Windows .ps1 path.'
+          }
+          $timestamp = $null
+          if (-not [Uri]::TryCreate($env:TIMESTAMP_URL, [UriKind]::Absolute, [ref]$timestamp) -or
+              @('http', 'https') -notcontains $timestamp.Scheme -or -not $timestamp.Host -or $timestamp.UserInfo -or $timestamp.Query -or $timestamp.Fragment -or
+              $env:TIMESTAMP_URL -match '[\x00-\x20]') {
+            throw 'An approved HTTP(S) timestamp URL without credentials, query or fragment is required.'
+          }
+          $headers = @{ Authorization = "Bearer $env:GH_TOKEN"; Accept = 'application/vnd.github+json'; 'X-GitHub-Api-Version' = '2022-11-28' }
+          $api = "$env:GITHUB_API_URL/repos/$env:GITHUB_REPOSITORY"
+          $main = Invoke-RestMethod -Uri "$api/branches/main" -Headers $headers
+          if ($main.commit.sha -cne $env:REQUESTED_SOURCE) { throw 'Main advanced; review and dispatch its new exact commit.' }
+          try { $environment = Invoke-RestMethod -Uri "$api/environments/windows-code-signing" -Headers $headers }
+          catch { throw 'The windows-code-signing environment must exist and its protection must be readable before signing.' }
+          $reviewRules = @($environment.protection_rules | Where-Object { $_.type -eq 'required_reviewers' -and @($_.reviewers).Count -gt 0 })
+          if ($reviewRules.Count -eq 0) { throw 'The signing environment requires a human reviewer protection rule.' }
+          $branchPolicy = $environment.deployment_branch_policy
+          if ($null -eq $branchPolicy) { throw 'The signing environment requires a branch restriction.' }
+          if ($branchPolicy.protected_branches) {
+            if (-not $main.protected) { throw 'Main is not protected by the configured signing environment branch policy.' }
+          } elseif ($branchPolicy.custom_branch_policies) {
+            $branches = Invoke-RestMethod -Uri "$api/environments/windows-code-signing/deployment-branch-policies?per_page=100" -Headers $headers
+            if ($branches.total_count -ne 1 -or $branches.branch_policies[0].name -cne 'main' -or $branches.branch_policies[0].type -cne 'branch') {
+              throw 'Custom signing environment restrictions must allow only the main branch.'
+            }
+          } else { throw 'The signing environment branch restriction is invalid.' }
+          $values = [ordered]@{
+            source_commit = $env:REQUESTED_SOURCE
+            publisher_subject = $env:PUBLISHER_SUBJECT
+            signer_thumbprint = $env:SIGNER_THUMBPRINT.ToUpperInvariant()
+            adapter_path = $env:ADAPTER_PATH
+            adapter_sha256 = $env:ADAPTER_SHA256.ToLowerInvariant()
+            timestamp_url = $env:TIMESTAMP_URL
+          }
+          foreach ($name in $values.Keys) { "$name=$($values[$name])" | Out-File -LiteralPath $env:GITHUB_OUTPUT -Encoding utf8 -Append }
+
+  build:
+    needs: preflight
+    runs-on: windows-latest
+    timeout-minutes: 45
+    outputs:
+      request_sha256: ${{ steps.request.outputs.request_sha256 }}
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        with:
+          ref: ${{ needs.preflight.outputs.source_commit }}
+          persist-credentials: false
+      - uses: dtolnay/rust-toolchain@b725eda525362e7cf34af9a7243cac1e3f01a7ec # stable
+      - name: Test and build the reviewed Windows agent
+        shell: powershell
+        run: |
+          $ErrorActionPreference = 'Stop'
+          cargo test --workspace --locked
+          if ($LASTEXITCODE -ne 0) { throw 'Rust workspace tests failed.' }
+          cargo build --release --locked -p tetherd
+          if ($LASTEXITCODE -ne 0) { throw 'Windows agent build failed.' }
+          & powershell.exe -NoProfile -NonInteractive -File scripts/run-onboarding-tests.ps1
+          if ($LASTEXITCODE -ne 0) { throw 'Windows onboarding tests failed.' }
+      - name: Prepare data-only request from the exact clean checkout
+        id: request
+        shell: powershell
+        env:
+          SOURCE_COMMIT: ${{ needs.preflight.outputs.source_commit }}
+        run: |
+          $ErrorActionPreference = 'Stop'
+          $inputRoot = Join-Path $env:RUNNER_TEMP 'tetherplane-signing-input'
+          $payload = Join-Path $inputRoot 'payload'
+          New-Item -ItemType Directory -Path (Join-Path $payload 'bin'), (Join-Path $payload 'launch') | Out-Null
+          Copy-Item -LiteralPath 'target/release/tetherd.exe' -Destination (Join-Path $payload 'bin/tetherd.exe')
+          Copy-Item -LiteralPath 'packaging/windows/tetherplane-agent.ps1' -Destination (Join-Path $payload 'launch/tetherplane-agent.ps1')
+          foreach ($name in @('setup-windows-device.ps1', 'pair-windows-device.ps1', 'doctor-tetherplane.ps1')) {
+            Copy-Item -LiteralPath (Join-Path 'scripts' $name) -Destination (Join-Path $payload $name)
+          }
+          $request = & ./scripts/new-windows-signing-request.ps1 -PayloadPath $payload -OutputPath (Join-Path $inputRoot 'request.json') -SourceCommit $env:SOURCE_COMMIT
+          "request_sha256=$($request.request_sha256)" | Out-File -LiteralPath $env:GITHUB_OUTPUT -Encoding utf8 -Append
+      - name: Upload immutable unsigned request for the approved signer
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        with:
+          name: signing-input-${{ github.run_id }}-${{ github.run_attempt }}
+          path: ${{ runner.temp }}/tetherplane-signing-input/
+          if-no-files-found: error
+          retention-days: 7
+
+  sign:
+    needs: [preflight, build]
+    runs-on: [self-hosted, Windows, X64, tetherplane-signing]
+    environment: windows-code-signing
+    timeout-minutes: 20
+    permissions:
+      contents: read
+      actions: read
+    steps:
+      - name: Check out reviewed orchestration helpers only
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        with:
+          ref: ${{ needs.preflight.outputs.source_commit }}
+          persist-credentials: false
+          path: trusted
+          sparse-checkout-cone-mode: false
+          sparse-checkout: |
+            /scripts/new-windows-signing-request.ps1
+            /scripts/invoke-windows-signing-adapter.ps1
+            /scripts/windows-signing-content.ps1
+      - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4
+        with:
+          name: signing-input-${{ github.run_id }}-${{ github.run_attempt }}
+          path: ${{ runner.temp }}/tetherplane-signing-input
+      - name: Sign only isolated validated copies through the pinned adapter
+        shell: powershell
+        env:
+          SOURCE_COMMIT: ${{ needs.preflight.outputs.source_commit }}
+          REQUEST_SHA256: ${{ needs.build.outputs.request_sha256 }}
+          ADAPTER_PATH: ${{ needs.preflight.outputs.adapter_path }}
+          ADAPTER_SHA256: ${{ needs.preflight.outputs.adapter_sha256 }}
+          TIMESTAMP_URL: ${{ needs.preflight.outputs.timestamp_url }}
+        run: |
+          $ErrorActionPreference = 'Stop'
+          $inputRoot = Join-Path $env:RUNNER_TEMP 'tetherplane-signing-input'
+          & ./trusted/scripts/invoke-windows-signing-adapter.ps1 `
+            -RequestPath (Join-Path $inputRoot 'request.json') `
+            -ExpectedRequestSha256 $env:REQUEST_SHA256 -ExpectedSourceCommit $env:SOURCE_COMMIT `
+            -PayloadPath (Join-Path $inputRoot 'payload') -OutputPath (Join-Path $env:RUNNER_TEMP 'tetherplane-signed-payload') `
+            -AdapterPath $env:ADAPTER_PATH -ExpectedAdapterSha256 $env:ADAPTER_SHA256 -TimestampUrl $env:TIMESTAMP_URL | Out-Null
+      - name: Upload signer output for independent trust verification
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        with:
+          name: unverified-signer-output-${{ github.run_id }}-${{ github.run_attempt }}
+          path: ${{ runner.temp }}/tetherplane-signed-payload/
+          if-no-files-found: error
+          retention-days: 7
+
+  verify:
+    needs: [preflight, build, sign]
+    runs-on: windows-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        with:
+          ref: ${{ needs.preflight.outputs.source_commit }}
+          persist-credentials: false
+      - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4
+        with:
+          name: signing-input-${{ github.run_id }}-${{ github.run_attempt }}
+          path: ${{ runner.temp }}/tetherplane-signing-input
+      - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4
+        with:
+          name: unverified-signer-output-${{ github.run_id }}-${{ github.run_attempt }}
+          path: ${{ runner.temp }}/tetherplane-signed-payload
+      - name: Verify every signature before producing final manifests and ZIP
+        shell: powershell
+        env:
+          SOURCE_COMMIT: ${{ needs.preflight.outputs.source_commit }}
+          REQUEST_SHA256: ${{ needs.build.outputs.request_sha256 }}
+          PUBLISHER_SUBJECT: ${{ needs.preflight.outputs.publisher_subject }}
+          SIGNER_THUMBPRINT: ${{ needs.preflight.outputs.signer_thumbprint }}
+        run: |
+          $ErrorActionPreference = 'Stop'
+          $inputRoot = Join-Path $env:RUNNER_TEMP 'tetherplane-signing-input'
+          $signedPayload = Join-Path $env:RUNNER_TEMP 'tetherplane-signed-payload'
+          . ./scripts/new-windows-signing-request.ps1
+          [void](Confirm-WindowsSignedPayload -RequestPath (Join-Path $inputRoot 'request.json') -ExpectedRequestSha256 $env:REQUEST_SHA256 -ExpectedSourceCommit $env:SOURCE_COMMIT -UnsignedPayloadPath (Join-Path $inputRoot 'payload') -SignedPayloadPath $signedPayload)
+          $tools = @(Get-ChildItem -LiteralPath "${env:ProgramFiles(x86)}/Windows Kits/10/bin" -Filter signtool.exe -Recurse | Where-Object { $_.Directory.Name -eq 'x64' } | Sort-Object FullName -Descending)
+          if ($tools.Count -eq 0) { throw 'Windows SDK SignTool is required for independent verification.' }
+          $signTool = $tools[0].FullName
+          . ./scripts/setup-windows-device.ps1
+          foreach ($relative in @(Get-WindowsSigningPayloadPaths)) {
+            $file = Join-Path $signedPayload $relative
+            [void](Assert-TrustedDeviceSignature -Path $file -ExpectedPublisherSubject $env:PUBLISHER_SUBJECT -ExpectedSignerThumbprint $env:SIGNER_THUMBPRINT -SignToolPath $signTool)
+          }
+          $kit = Join-Path $env:RUNNER_TEMP 'tetherplane-trusted-candidate'
+          & ./scripts/package-windows-device-kit.ps1 -OutputPath $kit -SkipBuild -Zip -RequireTrustedSignature `
+            -ExpectedPublisherSubject $env:PUBLISHER_SUBJECT -ExpectedSignerThumbprint $env:SIGNER_THUMBPRINT `
+            -ExpectedSourceCommit $env:SOURCE_COMMIT -SignedPayloadPath $signedPayload -TetherdPath (Join-Path $signedPayload 'bin/tetherd.exe') `
+            -SigningRequestPath (Join-Path $inputRoot 'request.json') -ExpectedSigningRequestSha256 $env:REQUEST_SHA256 -UnsignedPayloadPath (Join-Path $inputRoot 'payload')
+          $verification = @{
+            ZipPath = "$kit.zip"; RequireTrustedSignature = $true
+            ExpectedPublisherSubject = $env:PUBLISHER_SUBJECT; ExpectedSignerThumbprint = $env:SIGNER_THUMBPRINT
+            ExpectedSourceCommit = $env:SOURCE_COMMIT; SignToolPath = $signTool
+          }
+          & ./scripts/verify-windows-device-kit.ps1 @verification -VerifyOnly
+          & ./scripts/verify-windows-device-kit.ps1 @verification
+      - name: Upload independently verified signed candidate
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        with:
+          name: tetherplane-trusted-candidate-${{ needs.preflight.outputs.source_commit }}-${{ github.run_id }}-${{ github.run_attempt }}
+          path: |
+            ${{ runner.temp }}/tetherplane-trusted-candidate.zip
+            ${{ runner.temp }}/tetherplane-trusted-candidate.zip.sha256
+          if-no-files-found: error
+          retention-days: 14

@@ -1,0 +1,72 @@
+name: Windows native onboarding kit contract
+
+# Test-only integration of PR16's Node-free kit with PR44's native tetherd
+# task ownership. Never signs, publishes, pairs production identities,
+# provisions OAuth/DCR, or installs on a personal computer.
+on:
+  push:
+    branches:
+      - "feature/windows-native-onboarding-kit-*"
+    paths:
+      - "scripts/*windows*.ps1"
+      - "scripts/*device*.ps1"
+      - "scripts/*onboarding*.ps1"
+      - "scripts/*doctor*.ps1"
+      - "docs/remote/connection-profile.json"
+      - "tests/onboarding/**"
+      - "tests/release/windows-native-onboarding-kit.ps1"
+      - ".github/workflows/windows-native-onboarding-kit.yml"
+  pull_request:
+    paths:
+      - "scripts/*windows*.ps1"
+      - "scripts/*device*.ps1"
+      - "scripts/*onboarding*.ps1"
+      - "scripts/*doctor*.ps1"
+      - "docs/remote/connection-profile.json"
+      - "tests/onboarding/**"
+      - "tests/release/windows-native-onboarding-kit.ps1"
+      - ".github/workflows/windows-native-onboarding-kit.yml"
+
+permissions:
+  contents: read
+
+jobs:
+  isolated-windows-acceptance:
+    runs-on: windows-latest
+    timeout-minutes: 45
+    steps:
+      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
+        with:
+          persist-credentials: false
+      - uses: dtolnay/rust-toolchain@b725eda525362e7cf34af9a7243cac1e3f01a7ec
+        with:
+          toolchain: "1.99.1"
+      - name: Build exact-source native agent
+        shell: powershell
+        run: |
+          $ErrorActionPreference = 'Stop'
+          cargo build --release --locked -p tetherd
+          if ($LASTEXITCODE -ne 0) { throw 'native agent build failed' }
+      - name: Existing onboarding and signing-policy regressions
+        shell: powershell
+        run: |
+          $ErrorActionPreference = 'Stop'
+          & powershell.exe -NoProfile -NonInteractive -File scripts/run-onboarding-tests.ps1
+          if ($LASTEXITCODE -ne 0) { throw 'Pester onboarding regression suite failed' }
+      - name: Package and independently verify unsigned disposable device-only ZIP
+        shell: powershell
+        run: |
+          $ErrorActionPreference = 'Stop'
+          $kit = Join-Path $env:RUNNER_TEMP 'tetherplane-ci-native-kit'
+          & powershell.exe -NoProfile -NonInteractive -File scripts/package-windows-device-kit.ps1 -OutputPath $kit -SkipBuild -Zip
+          if ($LASTEXITCODE -ne 0) { throw 'agent-only package construction failed' }
+          & powershell.exe -NoProfile -NonInteractive -File scripts/verify-windows-device-kit.ps1 -ZipPath ($kit + '.zip')
+          if ($LASTEXITCODE -ne 0) { throw 'new-computer offline package verification failed' }
+      - name: Real disposable native Scheduled Task ownership and rollback-safe stop
+        shell: powershell
+        env:
+          TETHERPLANE_DISPOSABLE_NATIVE_TEST: "1"
+        run: |
+          $ErrorActionPreference = 'Stop'
+          & powershell.exe -NoProfile -NonInteractive -File tests/release/windows-native-onboarding-kit.ps1
+          if ($LASTEXITCODE -ne 0) { throw 'native task ownership test failed' }
