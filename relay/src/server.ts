@@ -13,7 +13,9 @@ import type { AddressInfo } from "node:net";
 
 import type {
   ClientAuthenticator,
+  ClientIdentity,
 } from "./auth/static-auth.ts";
+import { OwnerDeviceAuthority } from "./access/owner-authority.ts";
 import {
   DeviceRegistry,
 } from "./devices/registry.ts";
@@ -45,6 +47,7 @@ export type RelayListenAddress = {
 
 export class RelayServer {
   readonly registry: DeviceRegistry;
+  readonly authority: OwnerDeviceAuthority | null;
   readonly router: DeviceRouter;
   readonly deviceGateway: DeviceWebSocketGateway;
   readonly mcpGateway: RemoteMcpHttpGateway;
@@ -62,6 +65,7 @@ export class RelayServer {
     secure: boolean;
     allowInsecureLocalhost: boolean;
     registry: DeviceRegistry;
+    authority: OwnerDeviceAuthority | null;
     router: DeviceRouter;
     deviceGateway: DeviceWebSocketGateway;
     mcpGateway: RemoteMcpHttpGateway;
@@ -74,6 +78,7 @@ export class RelayServer {
     this.#allowInsecureLocalhost =
       options.allowInsecureLocalhost;
     this.registry = options.registry;
+    this.authority = options.authority;
     this.router = options.router;
     this.deviceGateway = options.deviceGateway;
     this.mcpGateway = options.mcpGateway;
@@ -90,14 +95,18 @@ export class RelayServer {
     allowInsecureLocalhost?: boolean;
     routeTimeoutMs?: number;
     authLoginBridgeToken?: string;
+    authority?: { owner: ClientIdentity; stateFile?: string };
   }): Promise<RelayServer> {
     const registry = await DeviceRegistry.open(
       options.stateFile
         ? { stateFile: options.stateFile }
         : {},
     );
+    const authority = options.authority
+      ? await OwnerDeviceAuthority.open({ registry, ...options.authority })
+      : null;
     const router = new DeviceRouter({
-      registry,
+      registry, authority,
       ...(options.routeTimeoutMs === undefined
         ? {}
         : { timeoutMs: options.routeTimeoutMs }),
@@ -114,6 +123,7 @@ export class RelayServer {
     const healthGateway = new RelayHealthHttpGateway();
     const controlGateway = new RelayControlHttpGateway({
       registry,
+      authority,
       authenticator: options.authenticator,
       disconnectDevice: (deviceId) =>
         deviceGateway.disconnectDevice(deviceId),
@@ -146,6 +156,7 @@ export class RelayServer {
       allowInsecureLocalhost:
         options.allowInsecureLocalhost ?? false,
       registry,
+      authority,
       router,
       deviceGateway,
       mcpGateway,

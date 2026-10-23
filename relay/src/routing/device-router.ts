@@ -6,6 +6,7 @@ import type {
 } from "@tetherplane/protocol";
 
 import type { ClientIdentity } from "../auth/static-auth.ts";
+import type { OwnerDeviceAuthority } from "../access/owner-authority.ts";
 import type { DeviceRegistry } from "../devices/registry.ts";
 
 export type RelayToDeviceMessage = {
@@ -41,15 +42,18 @@ type PendingRoute = {
 
 export class DeviceRouter {
   readonly #registry: DeviceRegistry;
+  readonly #authority: OwnerDeviceAuthority | null;
   readonly #timeoutMs: number;
   readonly #connections = new Map<string, ActiveConnection>();
   readonly #pending = new Map<string, PendingRoute>();
 
   constructor(options: {
     registry: DeviceRegistry;
+    authority?: OwnerDeviceAuthority | null;
     timeoutMs?: number;
   }) {
     this.#registry = options.registry;
+    this.#authority = options.authority ?? null;
     this.#timeoutMs = options.timeoutMs ?? 30_000;
   }
 
@@ -114,6 +118,13 @@ export class DeviceRouter {
       );
     }
     const connection = resolved.connection;
+    const binding = this.#registry.getDevice(connection.deviceId);
+    if (!binding || binding.revokedAt !== null)
+      return errorResult(invocation.request_id, "permission_denied", "device binding has been revoked");
+    const access = this.#authority?.evaluate(identity, connection.deviceId, binding.pairedAt, invocation);
+    if (access && !access.allowed)
+      return errorResult(invocation.request_id, "permission_denied", access.reason,
+        { decision: "deny", source: "relay.owner_device_authority" });
     const routedInvocation: InvocationEnvelope = {
       ...structuredClone(invocation),
       device_id: connection.deviceId,
@@ -311,6 +322,7 @@ function errorResult(
     | "disconnected"
     | "provider_failure",
   message: string,
+  policy: Record<string, unknown> | null = null,
 ): ResultEnvelope {
   return {
     protocol_version: "1.0",
@@ -326,7 +338,7 @@ function errorResult(
     },
     verification: "failed",
     continuation: null,
-    policy: null,
+    policy,
     timing: { duration_ms: 0 },
   };
 }

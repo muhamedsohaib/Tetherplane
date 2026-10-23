@@ -1,4 +1,5 @@
 import { z } from "zod";
+import type { ClientIdentity } from "./auth/static-auth.ts";
 import { OidcClientAuthenticator } from "./auth/oidc-auth.ts";
 import {
   StaticClientAuthenticator,
@@ -18,6 +19,7 @@ export type RelayCliOptions = {
   port: number;
   stateFile: string;
   authConfig: string;
+  authorityConfig?: string;
   tlsCert?: string;
   tlsKey?: string;
   allowInsecureLocalhost: boolean;
@@ -35,6 +37,7 @@ export function parseRelayArgs(
     "devices.json",
   );
   let authConfig: string | undefined;
+  let authorityConfig: string | undefined;
   let tlsCert: string | undefined;
   let tlsKey: string | undefined;
   let allowInsecureLocalhost = false;
@@ -74,6 +77,9 @@ export function parseRelayArgs(
           "--auth-config",
         );
         break;
+      case "--authority-config":
+        authorityConfig = requiredValue(args, ++index, "--authority-config");
+        break;
       case "--tls-cert":
         tlsCert = requiredValue(args, ++index, "--tls-cert");
         break;
@@ -112,6 +118,7 @@ export function parseRelayArgs(
     port,
     stateFile,
     authConfig,
+    ...(authorityConfig ? { authorityConfig } : {}),
     ...(tlsCert === undefined
       ? {}
       : { tlsCert, tlsKey: tlsKey! }),
@@ -341,5 +348,31 @@ export async function loadClientAuth(
         environment,
       ),
     ),
+  };
+}
+
+
+/** Optional, separate owner policy binding; no token, signing key or client registration. */
+export async function loadOwnerAuthorityConfig(file: string): Promise<{owner: ClientIdentity; stateFile: string}> {
+  let raw: unknown;
+  try { raw = JSON.parse(await readFile(file, "utf8")); }
+  catch { throw new Error("Unable to read owner authority configuration JSON"); }
+  if (!raw || typeof raw !== "object" || Array.isArray(raw))
+    throw new Error("Invalid owner authority configuration");
+  const cfg = raw as Record<string, unknown>;
+  if (Object.keys(cfg).some(k => !["owner", "stateFile"].includes(k)) ||
+    !cfg.owner || typeof cfg.owner !== "object" || Array.isArray(cfg.owner) ||
+    typeof cfg.stateFile !== "string" || !path.isAbsolute(cfg.stateFile))
+    throw new Error("Owner authority requires exact owner and absolute stateFile");
+  const o = cfg.owner as Record<string, unknown>;
+  if (Object.keys(o).some(k => !["accountId","clientId","principalId"].includes(k)) ||
+    ["accountId","clientId","principalId"].some(k => typeof o[k] !== "string" ||
+      !/^[A-Za-z0-9][A-Za-z0-9._:-]{0,127}$/.test(o[k] as string)))
+    throw new Error("Owner authority requires accountId, clientId and principalId of an existing registered identity");
+  return {
+    owner: {
+      accountId: o.accountId as string, clientId: o.clientId as string, principalId: o.principalId as string,
+    },
+    stateFile: cfg.stateFile,
   };
 }

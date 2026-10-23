@@ -4,6 +4,7 @@ import { readFile } from "node:fs/promises";
 
 import {
   loadClientAuth,
+  loadOwnerAuthorityConfig,
   parseRelayArgs,
 } from "./cli-config.ts";
 import { RelayServer } from "./server.ts";
@@ -22,6 +23,10 @@ async function main(): Promise<void> {
     authLoginBridgeToken,
   } = await loadClientAuth(options.authConfig);
 
+  const authority = options.authorityConfig
+    ? await loadOwnerAuthorityConfig(options.authorityConfig)
+    : undefined;
+
   const tls =
     options.tlsCert && options.tlsKey
       ? {
@@ -32,6 +37,7 @@ async function main(): Promise<void> {
 
   const relay = await RelayServer.create({
     stateFile: options.stateFile,
+    ...(authority ? { authority } : {}),
     authenticator,
     ...(oauth ? { oauth } : {}),
     ...(authLoginBridgeToken
@@ -91,6 +97,7 @@ Required security:
 Options:
   --auth-config <path>       OIDC configuration or static token_env metadata.
   --state-file <path>       Device registry state file.
+  --authority-config <path> Optional separate owner access manager config.
   --host <host>             Bind host. Default: 127.0.0.1.
   --port <port>             Bind port. Default: 8788.
   --tls-cert <path>         PEM certificate.
