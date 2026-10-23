@@ -217,9 +217,141 @@ function Invoke-GuardedAgentRecovery {
     }
     if (@($taskNow.Actions).Count -ne 1 -or
         [string]$taskNow.Actions[0].Execute -ine $exe -or
-        [string]$taskNow.Actions[0].Arguments -cne [string]$actions[0].Arguments) {
-        throw "native task action changed during recovery preflight"
+        [string]$taskNow.Actions[0].Arguments -cne [string]$actions[0].Arguments -or
+        [string]$taskNow.Settings.MultipleInstances -ne 'IgnoreNew' -or
+        [string]$taskNow.Principal.RunLevel -cne $RunLevel -or
+        [string]$taskNow.Principal.LogonType -ne 'Interactive') {
+        throw "native task ownership or action changed during recovery preflight"
     }
+    if ((Resolve-GuardOwnerSid -PrincipalUserId ([string]$taskNow.Principal.UserId)) -cne $currentSid) {
+        throw "native task principal changed during recovery preflight"
+    }
+    $triggersNow = @($taskNow.Triggers)
+    if ($triggersNow.Count -ne 1 -or -not [bool]$triggersNow[0].Enabled -or
+        [string]$triggersNow[0].CimClass.CimClassName -ne 'MSFT_TaskLogonTrigger') {
+        throw "native task trigger changed during recovery preflight"
+    }
+    # Another agent task may have been enabled after the first scan. A
+    # per-task IgnoreNew setting does not prevent cross-task duplication.
+    $tasksNow = @(Get-ScheduledTask -ErrorAction Stop)
+    $competingNow = @($tasksNow | Where-Object {
+        if ($_.TaskName -eq $TargetTaskName -or -not [bool]$_.Settings.Enabled) { return $false }
+        $namedAgent = $_.TaskName -match '(?i)^Tetherplane(?:[ -]\\S+)*[ -]Agent
+    $deadline = [DateTime]::UtcNow.AddSeconds(8)
+    do {
+        Start-Sleep -Milliseconds 250
+        $startedAgents = @(Get-CimInstance Win32_Process -Filter "Name='tetherd.exe'" -ErrorAction Stop)
+        if ($startedAgents.Count -eq 1 -and
+            [string]$startedAgents[0].ExecutablePath -ieq $exe) {
+            return [pscustomobject]@{ status = 'started_local'; started = $true; agent_count = 1 }
+        }
+        if ($startedAgents.Count -gt 1) { throw "agent cardinality changed after start" }
+    } while ([DateTime]::UtcNow -lt $deadline)
+    throw "start issued but agent startup is unverified; do not retry automatically"
+}
+
+if ($MyInvocation.InvocationName -ne '.') {
+    try {
+        $inputs = @{
+            TargetTaskName = $TaskName
+            ExeSha256 = $ExpectedExeSha256
+            ArgsSha256 = $ExpectedArgsSha256
+            PrincipalSha256 = $ExpectedPrincipalSha256
+            DeviceId = $ExpectedDeviceId
+            RelayUrl = $ExpectedRelayUrl
+            RunLevel = $ExpectedRunLevel
+            Recover = [bool]$StartIfMissing
+        }
+        $result = Invoke-GuardedAgentRecovery @inputs
+        $result | ConvertTo-Json -Compress | Write-Output
+    } catch {
+        # No credentials, arbitrary paths or OS command lines are printed.
+        Write-Error ("TETHERPLANE_RECOVERY_DENIED: " + $_.Exception.Message)
+        exit 1
+    }
+}
+ -or
+                      $_.TaskName -match '(?i)^Tetherplane(?:[ -]\\S+)*[ -]Canary(?:[ -]V\\d+)?
+    $deadline = [DateTime]::UtcNow.AddSeconds(8)
+    do {
+        Start-Sleep -Milliseconds 250
+        $startedAgents = @(Get-CimInstance Win32_Process -Filter "Name='tetherd.exe'" -ErrorAction Stop)
+        if ($startedAgents.Count -eq 1 -and
+            [string]$startedAgents[0].ExecutablePath -ieq $exe) {
+            return [pscustomobject]@{ status = 'started_local'; started = $true; agent_count = 1 }
+        }
+        if ($startedAgents.Count -gt 1) { throw "agent cardinality changed after start" }
+    } while ([DateTime]::UtcNow -lt $deadline)
+    throw "start issued but agent startup is unverified; do not retry automatically"
+}
+
+if ($MyInvocation.InvocationName -ne '.') {
+    try {
+        $inputs = @{
+            TargetTaskName = $TaskName
+            ExeSha256 = $ExpectedExeSha256
+            ArgsSha256 = $ExpectedArgsSha256
+            PrincipalSha256 = $ExpectedPrincipalSha256
+            DeviceId = $ExpectedDeviceId
+            RelayUrl = $ExpectedRelayUrl
+            RunLevel = $ExpectedRunLevel
+            Recover = [bool]$StartIfMissing
+        }
+        $result = Invoke-GuardedAgentRecovery @inputs
+        $result | ConvertTo-Json -Compress | Write-Output
+    } catch {
+        # No credentials, arbitrary paths or OS command lines are printed.
+        Write-Error ("TETHERPLANE_RECOVERY_DENIED: " + $_.Exception.Message)
+        exit 1
+    }
+}
+
+        $nativeAgent = @($_.Actions | Where-Object {
+            $exec = $_.PSObject.Properties['Execute']
+            $null -ne $exec -and [string]$exec.Value -match '(?i)[\\/]tetherd\\.exe
+    $deadline = [DateTime]::UtcNow.AddSeconds(8)
+    do {
+        Start-Sleep -Milliseconds 250
+        $startedAgents = @(Get-CimInstance Win32_Process -Filter "Name='tetherd.exe'" -ErrorAction Stop)
+        if ($startedAgents.Count -eq 1 -and
+            [string]$startedAgents[0].ExecutablePath -ieq $exe) {
+            return [pscustomobject]@{ status = 'started_local'; started = $true; agent_count = 1 }
+        }
+        if ($startedAgents.Count -gt 1) { throw "agent cardinality changed after start" }
+    } while ([DateTime]::UtcNow -lt $deadline)
+    throw "start issued but agent startup is unverified; do not retry automatically"
+}
+
+if ($MyInvocation.InvocationName -ne '.') {
+    try {
+        $inputs = @{
+            TargetTaskName = $TaskName
+            ExeSha256 = $ExpectedExeSha256
+            ArgsSha256 = $ExpectedArgsSha256
+            PrincipalSha256 = $ExpectedPrincipalSha256
+            DeviceId = $ExpectedDeviceId
+            RelayUrl = $ExpectedRelayUrl
+            RunLevel = $ExpectedRunLevel
+            Recover = [bool]$StartIfMissing
+        }
+        $result = Invoke-GuardedAgentRecovery @inputs
+        $result | ConvertTo-Json -Compress | Write-Output
+    } catch {
+        # No credentials, arbitrary paths or OS command lines are printed.
+        Write-Error ("TETHERPLANE_RECOVERY_DENIED: " + $_.Exception.Message)
+        exit 1
+    }
+}
+
+        }).Count -gt 0
+        $namedAgent -or $nativeAgent
+    })
+    if ($competingNow.Count -ne 0) {
+        throw "competing agent task appeared during recovery preflight"
+    }
+    [void](Assert-GuardHash -LiteralPath $exe -ExpectedSha256 $ExeSha256)
+    [void](Assert-GuardHash -LiteralPath $argsFile -ExpectedSha256 $ArgsSha256)
+    [void](Assert-GuardHash -LiteralPath $profile -ExpectedSha256 $PrincipalSha256)
     Start-ScheduledTask -TaskName $TargetTaskName -ErrorAction Stop
     $deadline = [DateTime]::UtcNow.AddSeconds(8)
     do {
