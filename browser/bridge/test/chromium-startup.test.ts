@@ -84,25 +84,34 @@ test("stderr floods are drained with a bounded scan and split categories never e
   assert.ok(events.length <= 5);
 });
 
-test("missing, invalid and unreadable endpoints time out while a living child remains unready", { timeout: 5_000 }, async () => {
+test("missing, invalid and unreadable endpoints fail closed with truthful file observations", { timeout: 10_000 }, async () => {
   const root = await mkdtemp(path.join(os.tmpdir(), "startup-endpoint-"));
-  const child = spawn(process.execPath, ["-e", "setInterval(()=>{},1000)"], { stdio: "ignore", windowsHide: true });
   try {
-    await once(child, "spawn");
     for (const scenario of ["missing", "invalid", "unreadable"] as const) {
+      const child = spawn(process.execPath, ["-e", "setInterval(()=>{},1000)"], { stdio: "ignore", windowsHide: true });
+      await once(child, "spawn");
+      const closed = once(child, "close");
       const file = path.join(root, scenario);
       if (scenario === "invalid") await writeFile(file, "99999\n/devtools/browser/fake\n");
       const events: ChromiumStartupDiagnostic[] = [];
-      const telemetry = new ChromiumStartupTelemetry(event => events.push(event));
+      const telemetry = new ChromiumStartupTelemetry(event => {
+        events.push(event);
+        // Classification is an IO assertion, not a 120ms disk benchmark.
+        // End the owned fixture as soon as the real file state is observed.
+        if (scenario !== "missing" && event.stage === "endpoint" && event.endpoint === scenario) child.kill();
+      });
       const started = performance.now();
-      await assert.rejects(waitForDevToolsActivePort({ child, portFile: scenario === "unreadable" ? root : file, timeoutMs: 120, telemetry }), /timed out/);
-      telemetry.emit("failure");
-      assert.equal(events.at(-1)?.endpoint, scenario);
-      assert.ok(performance.now() - started >= 120);
-      assert.equal(child.exitCode, null);
+      try {
+        await assert.rejects(waitForDevToolsActivePort({ child, portFile: scenario === "unreadable" ? root : file, timeoutMs: scenario === "missing" ? 120 : 5_000, telemetry }), scenario === "missing" ? /timed out/ : /isolated Chromium exited/);
+        telemetry.emit("failure");
+        assert.equal(events.at(-1)?.endpoint, scenario);
+        if (scenario === "missing") {
+          assert.ok(performance.now() - started >= 120);
+          assert.equal(child.exitCode, null);
+        }
+      } finally { child.kill(); await closed; }
     }
   } finally {
-    const closed = once(child, "close"); child.kill(); await closed;
     await rm(root, { recursive: true, force: true });
   }
 });

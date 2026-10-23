@@ -1,0 +1,57 @@
+[
+  {
+    "summary_lines": [
+      "browser/bridge test: ℹ tests 76",
+      "browser/bridge test: ℹ pass 74",
+      "browser/bridge test: ℹ fail 1",
+      "browser/bridge test: ℹ cancelled 1"
+    ],
+    "source_state": "evolving patch before final receipt; not an exact-head stability claim",
+    "log": "chromium-workspace-tests.log",
+    "failure_lines": [
+      "browser/bridge test: ✖ B6 worker exits with failure and cleans its lab when Chromium launch fails (6308.1473ms)",
+      "browser/bridge test: ✖ B6 CDP operational path proves native upload download diagnostics checkpoint and conflict (30150.9692ms)",
+      "browser/bridge test: ✖ failing tests:"
+    ]
+  },
+  {
+    "summary_lines": [],
+    "source_state": "evolving patch before final receipt; not an exact-head stability claim",
+    "log": "chromium-browser-post-abort.log",
+    "failure_lines": []
+  },
+  {
+    "summary_lines": [],
+    "source_state": "evolving patch before final receipt; not an exact-head stability claim",
+    "log": "chromium-browser-no-fixture-probe.log",
+    "failure_lines": []
+  },
+  {
+    "summary_lines": [
+      "browser/bridge test: ℹ tests 81",
+      "browser/bridge test: ℹ pass 80",
+      "browser/bridge test: ℹ fail 1",
+      "browser/bridge test: ℹ cancelled 0"
+    ],
+    "source_state": "evolving patch before final receipt; not an exact-head stability claim",
+    "log": "chromium-final-workspace-tests.log",
+    "failure_lines": [
+      "browser/bridge test: ✖ zero-code launcher handoff still requires an endpoint within the original deadline (1835.84ms)",
+      "browser/bridge test: ✖ failing tests:"
+    ]
+  },
+  {
+    "summary_lines": [
+      "browser/bridge test: ℹ tests 82",
+      "browser/bridge test: ℹ pass 81",
+      "browser/bridge test: ℹ fail 1",
+      "browser/bridge test: ℹ cancelled 0"
+    ],
+    "source_state": "evolving patch before final receipt; not an exact-head stability claim",
+    "log": "chromium-workspace-acceptance-final.log",
+    "failure_lines": [
+      "browser/bridge test: ✖ missing, invalid and unreadable endpoints time out while a living child remains unready (1263.9741ms)",
+      "browser/bridge test: ✖ failing tests:"
+    ]
+  }
+]

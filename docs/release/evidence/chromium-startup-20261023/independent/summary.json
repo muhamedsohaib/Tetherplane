@@ -1,0 +1,23 @@
+{
+  "family": "edge",
+  "version": "155.0.4283.62",
+  "endpoint_after_spawn_ms": 666,
+  "spawn_elapsed_ms": 695,
+  "endpoint_elapsed_ms": 1361,
+  "endpoint_deadline_ms": 12000,
+  "test_deadline_ms": 30000,
+  "download_deadline_ms": 5000,
+  "trial_passed": true,
+  "startup_suite_passed": 12,
+  "typecheck_passed": true,
+  "profile_removed": true,
+  "launcher_stopped": true,
+  "browser_process_stopped": true,
+  "child_close_observed": true,
+  "test_duration_ms": 6165.85,
+  "node_version": "v24.19.0",
+  "source_head_before": "3a78784be22a64ea34c10316d8f8562c912734dd",
+  "source_head_after": "bd4184715e974ec47ebbd8a3a6c005377dcebc72",
+  "working_tree_before": "three startup source/test files modified",
+  "working_tree_after": "clean"
+}
