@@ -23,11 +23,10 @@ type AuthorityState = {
 };
 
 export class AuthorityError extends Error {
-  constructor(
-    readonly code: "permission_denied" | "invalid_arguments" | "conflict",
-    message: string,
-  ) {
+  readonly code: "permission_denied" | "invalid_arguments" | "conflict";
+  constructor(code: "permission_denied" | "invalid_arguments" | "conflict", message: string) {
     super(message);
+    this.code = code;
     this.name = "AuthorityError";
   }
 }
