@@ -4,7 +4,9 @@
 // device registry. It never connects to VAULTER, a real agent or a real issuer.
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
+import { execFile } from 'node:child_process';
 import { createServer } from 'node:http';
+import { promisify } from 'node:util';
 import { fileURLToPath } from 'node:url';
 
 import { ExactPortal } from '../server.mjs';
@@ -14,6 +16,8 @@ import {
   hashDeviceCredential,
 } from '../../../relay/src/devices/registry.ts';
 import { RelayControlHttpGateway } from '../../../relay/src/devices/control-http.ts';
+
+const execFileAsync = promisify(execFile);
 
 async function createHarness(t) {
   const registry = await DeviceRegistry.open();
@@ -189,4 +193,76 @@ test('real relay + exact portal: account isolation, typed revocation and device 
     })).status,
     403,
   );
+});
+
+test('actual PowerShell pairing client -> real relay -> exact portal owner approval', async t => {
+  const h = await createHarness(t);
+  const deviceId = 'NewDeviceQA01';
+  // Test-only value. Never use live device IDs, credentials or a production relay.
+  const syntheticCredential = 'synthetic-qa-only-device-credential-12345';
+  const powerShell = process.platform === 'win32' ? 'powershell.exe' : 'pwsh';
+  const pairScript = fileURLToPath(new URL('../../../scripts/pair-windows-device.ps1', import.meta.url));
+  const quote = value => "'" + String(value).replaceAll("'", "''") + "'";
+  const command = [
+    '. ' + quote(pairScript),
+    '$record = Request-DevicePairing -RelayUrl ' + quote(h.relayOrigin)
+      + ' -DeviceId ' + quote(deviceId)
+      + ' -Credential ' + quote(syntheticCredential),
+    '$record | ConvertTo-Json -Compress -Depth 5',
+  ].join('; ');
+  const { stdout } = await execFileAsync(powerShell, [
+    '-NoProfile', '-NonInteractive', '-Command', command,
+  ], { timeout: 25_000, windowsHide: true, maxBuffer: 32 * 1024 });
+  const result = JSON.parse(stdout.trim().replace(/^\uFEFF/, ''));
+
+  assert.equal(result.ok, true);
+  assert.equal(result.device_id, deviceId);
+  assert.match(result.userCode, /^[0-9A-F]{4}-[0-9A-F]{4}$/);
+  assert.match(result.next, /VAULTER/);
+  assert.match(result.next, /Pairing/);
+  assert.match(result.next, /uncertain/);
+  assert.doesNotMatch(result.next, /approve_pairing/);
+  // The device's unapproved credential must not grant account access.
+  assert.equal(await h.registry.authenticateDevice(deviceId, syntheticCredential), null);
+
+  const owner = await h.signIn('test-owner-token');
+  const outsider = await h.signIn('test-outsider-token');
+  assert.equal(owner.status, 200);
+  assert.equal(outsider.status, 200);
+  assert.deepEqual(outsider.data.devices, []);
+
+  const noCsrf = await h.send('/api/pair/approve', {
+    method: 'POST', session: owner, csrf: false,
+    body: { userCode: result.userCode, confirmOwnership: true },
+  });
+  assert.equal(noCsrf.status, 403);
+  const noOwnerConfirmation = await h.send('/api/pair/approve', {
+    method: 'POST', session: owner,
+    body: { userCode: result.userCode, confirmOwnership: false },
+  });
+  assert.equal(noOwnerConfirmation.status, 400);
+  assert.equal(await h.registry.authenticateDevice(deviceId, syntheticCredential), null);
+
+  const approval = await h.send('/api/pair/approve', {
+    method: 'POST', session: owner,
+    body: { userCode: result.userCode, confirmOwnership: true },
+  });
+  assert.equal(approval.status, 200);
+  assert.deepEqual(approval.data, { paired: true, deviceId });
+  assert.equal(
+    await h.registry.authenticateDevice(deviceId, syntheticCredential),
+    'test-account-a',
+  );
+  const directory = await h.send('/api/devices', { session: owner });
+  assert.equal(directory.status, 200);
+  assert.equal(directory.data.devices.length, 1);
+  assert.equal(directory.data.devices[0].deviceId, deviceId);
+  assert.deepEqual((await h.send('/api/devices', { session: outsider })).data.devices, []);
+
+  // The one-time code cannot be reused: avoid assuming a lost response is safe to retry.
+  const replay = await h.send('/api/pair/approve', {
+    method: 'POST', session: owner,
+    body: { userCode: result.userCode, confirmOwnership: true },
+  });
+  assert.notEqual(replay.status, 200);
 });
