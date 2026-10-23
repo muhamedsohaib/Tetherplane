@@ -29,6 +29,18 @@ Describe "device kit builder" {
         if ($script:tempRoot) { Remove-Item -LiteralPath $script:tempRoot -Recurse -Force -ErrorAction SilentlyContinue }
     }
 
+    It "ships actionable local Control Center pairing instructions, never a nonexistent MCP approval" {
+        $kit = Build-TestKit $script:tempRoot
+        $readme = Get-Content -LiteralPath (Join-Path $kit "README.txt") -Raw
+        $readme | Should Match "http://127\.0\.0\.1:8791"
+        $readme | Should Match "VAULTER"
+        $readme | Should Match "Pairing"
+        $readme | Should Match "(?i)confirm"
+        $readme | Should Match "(?i)uncertain"
+        $readme | Should Not Match "approve_pairing"
+        $readme | Should Not Match "device\(op="
+    }
+
     It "builds an agent-only kit that verifies and needs no source-build tooling" {
         $kit = Build-TestKit $script:tempRoot
         . (Join-Path $kit "setup-windows-device.ps1")

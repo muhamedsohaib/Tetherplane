@@ -2,7 +2,7 @@
 #
 # End-to-end flow on a NEW controlled computer:
 #   verify package -> managed install -> local identity -> pair (explicit) ->
-#   owner approval via the connected ChatGPT plugin -> finalize agent task.
+#   owner approval via the existing authenticated Control Center -> finalize agent task.
 #
 # New installs receive an explicit least-privilege launch-bound principal
 # (device.status acceptance only). Existing principals are never rewritten.
@@ -860,9 +860,11 @@ function Install-DeviceIdentity {
 function Get-ApprovalInstruction {
     param([Parameter(Mandatory = $true)][string]$DeviceId, [Parameter(Mandatory = $true)][string]$UserCode)
     return (@(
-        "Ask the already connected ChatGPT plugin to approve this pairing:",
-        "device(op=""approve_pairing"", args={userCode:""$UserCode"", expectedDeviceId:""$DeviceId""})",
-        "No token export or extra client is needed; approval binds to the authenticated ChatGPT account."
+        "Approve the device-generated pairing code through the existing authenticated Tetherplane Control Center (NOT an MCP device tool).",
+        "On VAULTER itself, open http://127.0.0.1:8791 in a browser. This loopback address is local to VAULTER, not to the new computer.",
+        "Sign in with the already authorized account, choose Pairing, enter code $UserCode and confirm you initiated pairing for device $DeviceId.",
+        "Verify that the relay approval response names exactly device $DeviceId; refresh the account directory before finalizing the setup.",
+        "If the portal is unavailable, the code expires or the result is uncertain, stop and inspect current state. Never blindly retry, export credentials or register another OAuth client."
     ) -join "`n")
 }
 
