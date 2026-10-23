@@ -11,6 +11,7 @@ Describe 'guarded native agent recovery: pure denial and idempotency' {
             ExpectedPrincipalSha256 = ('c' * 64)
             ExpectedDeviceId = 'TEST01'
             ExpectedRelayUrl = 'wss://example.invalid/device'
+            ExpectedRunLevel = 'Highest'
         }
         . $guard @load
     }
@@ -58,6 +59,7 @@ Describe 'guarded native agent recovery: isolated synthetic task contract' {
             ExpectedPrincipalSha256 = ('c' * 64)
             ExpectedDeviceId = 'TEST01'
             ExpectedRelayUrl = 'wss://example.invalid/device'
+            ExpectedRunLevel = 'Highest'
         }
         . $guard @load
         $script:root = Join-Path ([IO.Path]::GetTempPath()) ('tp-recovery-guard-test-' + [Guid]::NewGuid().ToString('N'))
@@ -82,12 +84,14 @@ Describe 'guarded native agent recovery: isolated synthetic task contract' {
             PrincipalSha256 = (Get-FileHash -LiteralPath $script:principal -Algorithm SHA256).Hash
             DeviceId = 'TEST01'
             RelayUrl = 'wss://example.invalid/device'
+            RunLevel = 'Highest'
         }
         $script:task = [pscustomobject]@{
             TaskName = 'Tetherplane Test Canary'
             State = 'Running'
             Settings = [pscustomobject]@{ Enabled = $true; MultipleInstances = 'IgnoreNew' }
-            Principal = [pscustomobject]@{ UserId = ([Security.Principal.WindowsIdentity]::GetCurrent()).User.Value; LogonType = 'Interactive' }
+            Principal = [pscustomobject]@{ UserId = ([Security.Principal.WindowsIdentity]::GetCurrent()).User.Value; LogonType = 'Interactive'; RunLevel = 'Highest' }
+            Triggers = @([pscustomobject]@{ Enabled = $true; CimClass = [pscustomobject]@{ CimClassName = 'MSFT_TaskLogonTrigger' } })
             Actions = @([pscustomobject]@{ Execute = $script:exe; Arguments = ('--arguments-file "' + $script:argsFile + '"') })
         }
         $script:extraTasks = @()
@@ -150,6 +154,18 @@ Describe 'guarded native agent recovery: isolated synthetic task contract' {
     It 'refuses a foreign task owner before starting' {
         $script:task.State = 'Ready'; $script:runningAgents = @()
         $script:task.Principal.UserId = 'S-1-5-18'
+        { Invoke-GuardedAgentRecovery @script:pins -Recover } | Should Throw
+        Assert-MockCalled Start-ScheduledTask -Exactly 0 -Scope It
+    }
+    It 'rejects an unexpected task privilege level' {
+        $script:task.State = 'Ready'; $script:runningAgents = @()
+        $script:task.Principal.RunLevel = 'Limited'
+        { Invoke-GuardedAgentRecovery @script:pins -Recover } | Should Throw
+        Assert-MockCalled Start-ScheduledTask -Exactly 0 -Scope It
+    }
+    It 'rejects a disabled or replaced logon trigger' {
+        $script:task.State = 'Ready'; $script:runningAgents = @()
+        $script:task.Triggers[0].Enabled = $false
         { Invoke-GuardedAgentRecovery @script:pins -Recover } | Should Throw
         Assert-MockCalled Start-ScheduledTask -Exactly 0 -Scope It
     }
