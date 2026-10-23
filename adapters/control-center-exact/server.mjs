@@ -92,6 +92,7 @@ export class ExactPortal {
     if(response.status===403){await response.body?.cancel();throw err(403,'permission_denied','The relay denied this action.');}
     if(response.status===409){await response.body?.cancel();throw err(409,'conflict','Owner authority changed. Refresh before editing.');}
     if(response.status===404 && path.startsWith('/authority')){await response.body?.cancel();throw err(503,'authority_unavailable','Owner access management is not configured on this relay.');}
+    if(response.status===400&&path.startsWith('/authority/')){await response.body?.cancel();throw err(400,'invalid_arguments','Owner authority rejected this request. Check the exact confirmation and refresh current grants.');}
     if(!response.ok){await response.body?.cancel();if(path==='/pair/approve'&&response.status===400)throw err(400,'pairing_rejected','The code is invalid, expired or already consumed. Check the authorized device before trying again.');throw err(502,'relay_unavailable','Relay rejected the request. Confirm the current state before retrying.');}
     if(!(response.headers.get('content-type')||'').toLowerCase().startsWith('application/json')){await response.body?.cancel();throw err(502,'invalid_relay_response','Unsupported relay response.');}
     const raw=await this.readResponse(response,512*1024);
