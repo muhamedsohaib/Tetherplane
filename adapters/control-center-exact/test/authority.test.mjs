@@ -1,13 +1,11 @@
 // Owner-only Control Center authority against the actual relay HTTP gateway.
 // No live VAULTER, OAuth registration, production token, or owner private HTML.
 import assert from "node:assert/strict";
-import { once } from "node:events";
 import { mkdtemp, rm } from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 import test from "node:test";
-import WebSocket from "ws";
 
 import { ExactPortal } from "../server.mjs";
 import { RelayServer } from "../../../relay/src/server.ts";
