@@ -624,7 +624,7 @@ class OwnedChromiumControl implements LaunchedCdpControl {
       throw new CdpBackendError("provider_failure", "failed to clean isolated Chromium resources");
     } finally {
       this.#child.stderr?.destroy();
-      this.#startupTelemetry.emit("cleanup", { profile_removed: !existsSync(this.profile_dir), launcher_stopped: this.#child.exitCode !== null || this.#child.signalCode !== null, browser_process_stopped: observedProcessStopped(this.#browserPid) });
+      this.#startupTelemetry.emit("cleanup", { profile_removed: !existsSync(this.profile_dir), launcher_stopped: observedProcessStopped(this.#child.pid ?? null), browser_process_stopped: observedProcessStopped(this.#browserPid) });
     }
   }
 
@@ -934,10 +934,13 @@ export async function launchCdpOwnedBrowser(options: {
   }
 
   const basename = path.basename(executablePath).toLowerCase();
+  const family: NonNullable<ChromiumStartupDiagnostic["family"]> = /^(chrome|google-chrome|google-chrome-stable)(\.exe)?$/.test(basename) ? "chrome" : /^(msedge|microsoft-edge)(\.exe)?$/.test(basename) ? "edge" : /^(chromium|chromium-browser)(\.exe)?$/.test(basename) ? "chromium" : "other";
   telemetry.emit("selected", {
     source: executablePath === process.env.TETHERPLANE_CHROMIUM ? "environment" : options.executablePath ? "argument" : "discovery",
-    family: /^(chrome|google-chrome|google-chrome-stable)(\.exe)?$/.test(basename) ? "chrome" : /^(msedge|microsoft-edge)(\.exe)?$/.test(basename) ? "edge" : /^(chromium|chromium-browser)(\.exe)?$/.test(basename) ? "chromium" : "other",
-    version: options.onStartupDiagnostic ? await chromiumFileVersion(executablePath) : null,
+    family,
+    // Arbitrary executables (including the failure fixture) are not browser
+    // version probes. Keep their failed-spawn path free of helper processes.
+    version: options.onStartupDiagnostic && family !== "other" ? await chromiumFileVersion(executablePath) : null,
   });
   const parent = options.profileParent ?? os.tmpdir();
   let profileDir: string;
@@ -1017,7 +1020,7 @@ export async function launchCdpOwnedBrowser(options: {
       throw new CdpBackendError("provider_failure", "failed to clean isolated Chromium resources");
     } finally {
       child.stderr?.destroy();
-      telemetry.emit("cleanup", { profile_removed: !existsSync(profileDir), launcher_stopped: child.exitCode !== null || child.signalCode !== null, browser_process_stopped: observedProcessStopped(browserPid) });
+      telemetry.emit("cleanup", { profile_removed: !existsSync(profileDir), launcher_stopped: observedProcessStopped(child.pid ?? null), browser_process_stopped: observedProcessStopped(browserPid) });
     }
     if (error instanceof CdpBackendError) {
       throw error;

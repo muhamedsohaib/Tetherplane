@@ -210,3 +210,13 @@ test("endpoint deadline abort preserves the last file observation instead of rep
     const closed = once(child, "close"); child.kill(); await closed;
   }
 });
+
+test("flapping endpoint observations keep diagnostics bounded and preserve the safe failure category", () => {
+  const events: ChromiumStartupDiagnostic[] = [];
+  const telemetry = new ChromiumStartupTelemetry(event => events.push(event));
+  for (let i = 0; i < 1_000; i++) telemetry.endpoint(i % 2 === 0 ? "missing" : "unreadable", "permission");
+  telemetry.emit("failure");
+  assert.ok(events.length < 16, "file state flapping must not create an unbounded diagnostic stream");
+  assert.equal(events.at(-1)?.endpoint, "unreadable");
+  assert.equal(events.at(-1)?.error_category, "permission");
+});

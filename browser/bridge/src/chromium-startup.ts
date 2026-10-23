@@ -27,7 +27,7 @@ export type ChromiumStartupDiagnostic = {
   version?: string | null;
   profile_writable?: boolean;
   profile_removed?: boolean;
-  launcher_stopped?: boolean;
+  launcher_stopped?: boolean | null;
   browser_process_stopped?: boolean | null;
   error_category?: "permission" | "not_found" | "not_directory" | "resource" | "other";
 };
@@ -50,6 +50,8 @@ export class ChromiumStartupTelemetry {
   #exitCode: number | null = null;
   #signal: ChromiumStartupDiagnostic["signal"] = null;
   #endpoint: EndpointState = "missing";
+  #endpointError: ChromiumStartupDiagnostic["error_category"];
+  readonly #observedEndpoints = new Set<EndpointState>(["missing"]);
   #bytes = 0;
   #capped = false;
   #carry = "";
@@ -63,7 +65,7 @@ export class ChromiumStartupTelemetry {
         spawned: this.#spawned, exited: this.#exited, closed: this.#closed,
         exit_code: this.#exitCode, signal: this.#signal, endpoint: this.#endpoint,
         stderr_bytes: this.#bytes, stderr_capped: this.#capped,
-        stderr_categories: [...this.#categories], ...fields });
+        stderr_categories: [...this.#categories], ...(this.#endpointError ? { error_category: this.#endpointError } : {}), ...fields });
     } catch { /* Diagnostics cannot change the launch result or cleanup. */ }
   }
 
@@ -99,9 +101,11 @@ export class ChromiumStartupTelemetry {
     this.#carry = text.slice(-256);
   }
 
-  endpoint(state: EndpointState): void {
-    if (this.#endpoint === state) return;
+  endpoint(state: EndpointState, category?: ChromiumStartupDiagnostic["error_category"]): void {
     this.#endpoint = state;
+    this.#endpointError = category;
+    if (this.#observedEndpoints.has(state)) return;
+    this.#observedEndpoints.add(state);
     this.emit("endpoint");
   }
 }
@@ -170,7 +174,7 @@ export async function waitForDevToolsActivePort(options: {
       if ((error as Error).name === "AbortError" || performance.now() >= deadline) {
         throw new CdpBackendError("timeout", "timed out waiting for isolated Chromium DevTools endpoint");
       }
-      options.telemetry.endpoint((error as NodeJS.ErrnoException).code === "ENOENT" ? "missing" : "unreadable");
+      options.telemetry.endpoint((error as NodeJS.ErrnoException).code === "ENOENT" ? "missing" : "unreadable", startupErrorCategory(error));
     }
     await new Promise(resolve => setTimeout(resolve, 25));
   }
