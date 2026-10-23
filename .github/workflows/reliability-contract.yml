@@ -8,6 +8,7 @@ on:
       - "relay/test/device-heartbeat.test.ts"
       - "scripts/install-windows.ps1"
       - "tests/release/windows-package-smoke.ps1"
+      - "tests/release/windows-installer-preservation.ps1"
       - "packaging/windows/**"
       - ".github/workflows/reliability-contract.yml"
   pull_request:
@@ -17,6 +18,7 @@ on:
       - "relay/test/device-heartbeat.test.ts"
       - "scripts/install-windows.ps1"
       - "tests/release/windows-package-smoke.ps1"
+      - "tests/release/windows-installer-preservation.ps1"
       - "packaging/windows/**"
       - ".github/workflows/reliability-contract.yml"
 
@@ -66,6 +68,9 @@ jobs:
       - name: Windows actual task owner/stop and package smoke
         shell: pwsh
         run: ./tests/release/windows-package-smoke.ps1
+      - name: Windows installer preserves existing files and device state
+        shell: pwsh
+        run: ./tests/release/windows-installer-preservation.ps1
       - name: Fingerprint disposable unsigned test binary
         shell: pwsh
         run: |
