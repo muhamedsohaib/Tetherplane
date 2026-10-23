@@ -201,6 +201,12 @@ export class RelayControlHttpGateway {
     response: ServerResponse,
     identity: ClientIdentity,
   ): Promise<void> {
+    // In the opt-in owner-managed mode, an AI client sharing the device
+    // account cannot implicitly approve a new computer or revoke one.
+    if (this.#authority && !this.#authority.isOwner(identity)) {
+      writeJson(response, 403, { error: { code: "permission_denied", message: "device pairing requires the configured owner client" } });
+      return;
+    }
     const body = await readObjectBody(request);
     const userCode = stringField(body, "userCode");
     const binding = await this.#registry.approvePairing({
@@ -215,6 +221,10 @@ export class RelayControlHttpGateway {
     identity: ClientIdentity,
     deviceId: string,
   ): Promise<void> {
+    if (this.#authority && !this.#authority.isOwner(identity)) {
+      writeJson(response, 403, { error: { code: "permission_denied", message: "device revocation requires the configured owner client" } });
+      return;
+    }
     const binding = this.#registry.getDevice(deviceId);
     if (
       !binding ||
