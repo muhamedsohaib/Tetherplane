@@ -168,7 +168,7 @@ export class OwnerDeviceAuthority {
         if (typeof g.deviceId !== "string" || !DEVICE_ID.test(g.deviceId)
           || typeof g.clientId !== "string" || !CLIENT_ID.test(g.clientId)
           || typeof g.principalId !== "string" || !PRINCIPAL_ID.test(g.principalId)
-          || !["blocked", "observe", "operate"].includes(String(g.level))) {
+          || typeof g.level !== "string" || !["blocked", "observe", "operate"].includes(g.level)) {
           throw new AuthorityError("invalid_arguments", "authority grant must name an exact device, client, principal and supported level");
         }
         const device = this.#registry.getDevice(g.deviceId);

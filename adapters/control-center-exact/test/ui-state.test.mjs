@@ -112,3 +112,115 @@ test('UI reports an unconfirmed server sign-out when logout transport fails', as
   assert.match(p.toasts.at(-1), /reload and retry/i);
   assert.doesNotMatch(p.toasts.at(-1), /session ended/i);
 });
+
+test('UI discards owner authority arriving after sign-out', async () => {
+  const p = await page(() => response({ result: {} }));
+  const originalFetch = p.context.fetch;
+  let finish;
+  const delayed = new Promise(resolve => { finish = resolve; });
+  p.context.fetch = (path, options) => path === '/api/authority' ? delayed : originalFetch(path, options);
+  const loading = p.context.portalAuthorityLoad();
+  await nextTurn();
+  await p.context.portalSignOut();
+  finish(response({ enabled: true, revision: 7, clients: [], grants: [{
+    deviceId: 'SyntheticDevice', clientId: 'private-owner-client', principalId: 'private-owner-principal', level: 'observe',
+  }] }));
+  await loading;
+  assert.equal(p.context.tpDemo.session, false);
+  assert.doesNotMatch(p.context.renderPortalPage('access'), /private-owner-(client|principal)/,
+    'a late response must not restore the previous owner policy to the signed-out page');
+});
+
+for (const failed of [false, true]) {
+  test(`UI ignores a previous session authority ${failed ? 'failure' : 'response'} after a new sign-in`, async () => {
+    const p = await page(() => response({ result: {} }));
+    const originalFetch = p.context.fetch;
+    let finish, reject, reads = 0;
+    const delayed = new Promise((resolve, fail) => { finish = resolve; reject = fail; });
+    p.context.fetch = (path, options) => {
+      if (path !== '/api/authority') return originalFetch(path, options);
+      if (++reads === 1) return delayed;
+      return response({ enabled: false, revision: 9, clients: [], grants: [{
+        deviceId: 'SyntheticDevice', clientId: 'current-client', principalId: 'current-principal', level: 'blocked',
+      }] });
+    };
+    const stale = p.context.portalAuthorityLoad();
+    await p.context.portalSignOut();
+    p.nodes.set('tp-live-token', { value: 'synthetic-existing-credential' });
+    await p.context.portalLogin({ preventDefault() {} });
+    await p.context.portalAuthorityLoad();
+    if (failed) reject(Error('old session failure'));
+    else finish(response({ enabled: true, revision: 1, clients: [], grants: [] }));
+    await stale;
+    const rendered = p.context.renderPortalPage('access');
+    assert.equal(p.context.tpDemo.session, true);
+    assert.match(rendered, /current-client/);
+    assert.match(rendered, /REVISION 9/);
+    assert.doesNotMatch(rendered, /old session failure/);
+  });
+}
+
+for (const enabled of [false, true]) {
+  test(`UI describes ${enabled ? 'immediate enforced' : 'staged'} grant edits`, async () => {
+    const p = await page(() => response({ result: {} }));
+    p.context.fetch = async () => response({ enabled, revision: 2, clients: [], grants: [] });
+    await p.context.portalAuthorityLoad();
+    const rendered = p.context.renderPortalPage('access');
+    assert.match(rendered, enabled ? /Save applies this grant immediately/ : /Save stages one grant/);
+    assert.match(rendered, enabled ? /\[ Save enforced grant \]/ : /\[ Stage access grant \]/);
+  });
+}
+
+for (const operation of ['save', 'enforce']) {
+  for (const status of [200, 401]) {
+    test(`UI fences old authority ${operation} ${status} from a replacement session request`, async t => {
+      const p = await page(() => response({ result: {} }));
+      const originalFetch = p.context.fetch;
+      let finishMutation, finishLoad, reads = 0;
+      const mutation = new Promise(resolve => { finishMutation = resolve; });
+      const nextLoad = new Promise(resolve => { finishLoad = resolve; });
+      t.after(() => finishLoad(response({ enabled: false, revision: 9, clients: [], grants: [] })));
+      p.context.fetch = (path, options) => {
+        if (path === '/api/authority') {
+          if (++reads === 1) return response({ enabled: false, revision: 1, clients: [], grants: [] });
+          return nextLoad;
+        }
+        if (path === (operation === 'save' ? '/api/authority/grants' : '/api/authority/enforcement')) return mutation;
+        return originalFetch(path, options);
+      };
+      await p.context.portalAuthorityLoad();
+      for (const [id, value] of [
+        ['tp-authority-device', 'SyntheticDevice'], ['tp-authority-client', 'existing-client'],
+        ['tp-authority-principal', 'existing-principal'], ['tp-authority-level', 'blocked'],
+        ['tp-authority-confirm', 'ENFORCE DEVICE GRANTS'],
+      ]) p.nodes.set(id, { value });
+      const saving = operation === 'save' ? p.context.portalAuthoritySave() : p.context.portalAuthorityEnforce();
+      await p.context.portalSignOut();
+      p.nodes.set('tp-live-token', { value: 'synthetic-existing-credential' });
+      await p.context.portalLogin({ preventDefault() {} });
+      const current = p.context.portalAuthorityLoad();
+      finishMutation(response(status === 200 ? { revision: 2 } : { error: { code: 'unauthorized', message: 'Old session expired' } }, status));
+      await saving;
+      assert.equal(p.context.tpDemo.session, true, 'an old mutation must not invalidate a replacement session');
+      void p.context.portalAuthorityLoad();
+      assert.equal(reads, 2, 'old completion must not unlock or reload while the new session request is in flight');
+      finishLoad(response({ enabled: false, revision: 9, clients: [], grants: [] }));
+      await current;
+      assert.match(p.context.renderPortalPage('access'), /REVISION 9/);
+    });
+  }
+}
+
+test('UI clears previous owner authority when explicitly signing in again', async () => {
+  const p = await page(() => response({ result: {} }));
+  const originalFetch = p.context.fetch;
+  p.context.fetch = (path, options) => path === '/api/authority'
+    ? response({ enabled: false, revision: 1, clients: [], grants: [{
+      deviceId: 'SyntheticDevice', clientId: 'previous-owner-client', principalId: 'previous-owner-principal', level: 'blocked',
+    }] }) : originalFetch(path, options);
+  await p.context.portalAuthorityLoad();
+  assert.match(p.context.renderPortalPage('access'), /previous-owner-client/);
+  p.nodes.set('tp-live-token', { value: 'synthetic-existing-credential' });
+  await p.context.portalLogin({ preventDefault() {} });
+  assert.doesNotMatch(p.context.renderPortalPage('access'), /previous-owner-(client|principal)/);
+});

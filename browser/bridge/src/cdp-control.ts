@@ -48,6 +48,7 @@ type CdpResponse = {
 type PendingRequest = {
   resolve(value: Record<string, unknown>): void;
   reject(error: CdpBackendError): void;
+  timer: ReturnType<typeof setTimeout>;
 };
 
 type CdpEventListener = (event: {
@@ -56,15 +57,17 @@ type CdpEventListener = (event: {
   params: Record<string, unknown>;
 }) => void;
 
-class CdpWire {
+export class CdpWire {
   readonly #socket: WebSocket;
   readonly #pending = new Map<number, PendingRequest>();
   readonly #eventListeners = new Set<CdpEventListener>();
   #nextId = 1;
   #closed = false;
+  readonly #requestTimeoutMs: number;
 
-  private constructor(socket: WebSocket) {
+  private constructor(socket: WebSocket, requestTimeoutMs: number) {
     this.#socket = socket;
+    this.#requestTimeoutMs = requestTimeoutMs;
 
     socket.on("message", (data) => {
       this.#handleMessage(String(data));
@@ -87,15 +90,43 @@ class CdpWire {
     });
   }
 
-  static async connect(url: string): Promise<CdpWire> {
+  static async connect(url: string, options: {
+    connectTimeoutMs?: number;
+    requestTimeoutMs?: number;
+  } = {}): Promise<CdpWire> {
+    const connectTimeoutMs = options.connectTimeoutMs ?? 10_000;
+    const requestTimeoutMs = options.requestTimeoutMs ?? 10_000;
+    for (const budget of [connectTimeoutMs, requestTimeoutMs]) {
+      if (!Number.isSafeInteger(budget) || budget < 1 || budget > 2_147_483_647) {
+        throw new TypeError("CDP deadlines must be positive finite timer budgets");
+      }
+    }
     const socket = new WebSocket(url);
-    await Promise.race([
-      once(socket, "open").then(() => undefined),
-      once(socket, "error").then(([error]) =>
-        Promise.reject(error),
-      ),
-    ]);
-    return new CdpWire(socket);
+    await new Promise<void>((resolve, reject) => {
+      const cleanup = (): void => {
+        clearTimeout(timer);
+        socket.off("open", opened);
+        socket.off("error", failed);
+        socket.off("close", closed);
+      };
+      const opened = (): void => { cleanup(); resolve(); };
+      const failed = (error: Error): void => { cleanup(); reject(error); };
+      const closed = (): void => {
+        cleanup();
+        reject(new CdpBackendError("provider_failure", "CDP connection closed before opening"));
+      };
+      const timer = setTimeout(() => {
+        cleanup();
+        // ws emits an error when an opening handshake is terminated.
+        socket.once("error", () => {});
+        socket.terminate();
+        reject(new CdpBackendError("timeout", "timed out opening CDP connection"));
+      }, connectTimeoutMs);
+      socket.once("open", opened);
+      socket.once("error", failed);
+      socket.once("close", closed);
+    });
+    return new CdpWire(socket, requestTimeoutMs);
   }
 
   send(
@@ -114,7 +145,12 @@ class CdpWire {
 
     const id = this.#nextId++;
     return new Promise((resolve, reject) => {
-      this.#pending.set(id, { resolve, reject });
+      const timer = setTimeout(() => {
+        this.#pending.delete(id);
+        // The browser may have executed this command. Never resend it.
+        reject(new CdpBackendError("timeout", "timed out waiting for CDP command response"));
+      }, this.#requestTimeoutMs);
+      this.#pending.set(id, { resolve, reject, timer });
       try {
         this.#socket.send(
           JSON.stringify({
@@ -126,6 +162,7 @@ class CdpWire {
         );
       } catch (error) {
         this.#pending.delete(id);
+        clearTimeout(timer);
         reject(
           new CdpBackendError(
             "provider_failure",
@@ -189,6 +226,7 @@ class CdpWire {
       return;
     }
     this.#pending.delete(message.id);
+    clearTimeout(pending.timer);
 
     if (message.error) {
       pending.reject(
@@ -218,6 +256,7 @@ class CdpWire {
 
   #rejectPending(error: CdpBackendError): void {
     for (const pending of this.#pending.values()) {
+      clearTimeout(pending.timer);
       pending.reject(error);
     }
     this.#pending.clear();
@@ -893,6 +932,7 @@ export async function launchCdpOwnedBrowser(options: {
     windowsHide: true,
   });
 
+  let wire: CdpWire | undefined;
   try {
     await Promise.race([
       once(child, "spawn").then(() => undefined),
@@ -908,7 +948,7 @@ export async function launchCdpOwnedBrowser(options: {
         timeoutMs:
           options.launchTimeoutMs ?? DEFAULT_CDP_LAUNCH_TIMEOUT_MS,
       });
-    const wire = await CdpWire.connect(websocketUrl);
+    wire = await CdpWire.connect(websocketUrl);
     const browserPid = await discoverBrowserPid(wire);
     const downloadDir = path.join(profileDir, "Downloads");
     await mkdir(downloadDir, { recursive: true });
@@ -927,6 +967,7 @@ export async function launchCdpOwnedBrowser(options: {
       browserPid,
     });
   } catch (error) {
+    wire?.close();
     await stopOwnedChromiumProcesses(child, null);
     await rm(profileDir, {
       recursive: true,
