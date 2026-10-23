@@ -60,3 +60,25 @@ Describe "native Scheduled Task ownership for a newly paired Windows device" {
         Test-Path -LiteralPath $script:argsPath | Should Be $false
     }
 }
+
+Describe "native Scheduled Task principal SID authorization" {
+    BeforeEach {
+        . (Join-Path $repo "scripts\setup-windows-device.ps1")
+    }
+
+    It "accepts the exact currently authorized user SID" {
+        Test-CurrentDeviceTaskOwner -PrincipalUserId (Get-CurrentUserSid) | Should Be $true
+    }
+
+    It "resolves an unqualified current user account name to that same SID" {
+        $shortName = (([Security.Principal.WindowsIdentity]::GetCurrent()).Name -split '\\')[-1]
+        Test-CurrentDeviceTaskOwner -PrincipalUserId $shortName | Should Be $true
+    }
+
+    It "denies a different SID, an unresolved account and empty identity" {
+        $foreignSid = if ((Get-CurrentUserSid) -eq "S-1-5-18") { "S-1-5-32-544" } else { "S-1-5-18" }
+        Test-CurrentDeviceTaskOwner -PrincipalUserId $foreignSid | Should Be $false
+        Test-CurrentDeviceTaskOwner -PrincipalUserId ("TETHERPLANE_NO_SUCH_ACCOUNT_" + [Guid]::NewGuid().ToString("N")) | Should Be $false
+        Test-CurrentDeviceTaskOwner -PrincipalUserId "" | Should Be $false
+    }
+}
