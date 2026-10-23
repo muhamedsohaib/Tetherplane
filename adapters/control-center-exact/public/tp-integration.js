@@ -11,6 +11,7 @@
   const oldToggleTheme=window.toggleThemeMode;
   const live={csrf:null,expiresAt:null,relayOrigin:null,devices:[],observedAt:null,directoryUnavailable:false,mutationUncertain:false,inFlight:false};
   const authority={snapshot:null,unavailable:false,error:null};
+  let sessionEpoch=0;
   const $ = id => document.getElementById(id);
   const text = value => tpEsc(String(value??''));
   const when = value => value ? tpTime(value) : 'Not reported';
@@ -22,7 +23,8 @@
   function toast(value){window.showToast(String(value).slice(0,200));}
   function setText(id,value){const node=$(id);if(node)node.textContent=String(value);}
   function clearLive(){
-    live.csrf=null;live.expiresAt=null;live.relayOrigin=null;live.devices=[];live.observedAt=null;live.directoryUnavailable=false;live.mutationUncertain=false;
+    sessionEpoch++;
+    live.csrf=null;live.expiresAt=null;live.relayOrigin=null;live.devices=[];live.observedAt=null;live.directoryUnavailable=false;live.mutationUncertain=false;live.inFlight=false;
     authority.snapshot=null;authority.unavailable=false;authority.error=null;
     tpDemo.session=false;tpDemo.devices=[];tpDemo.refreshAt=null;tpDemo.pendingRevokeId=null;
     setText('active-node-summary','SIGN IN REQUIRED');
@@ -105,7 +107,7 @@
       '<label class="tp-label" for="tp-authority-client">EXACT AUTHENTICATED CLIENT ID</label><input id="tp-authority-client" class="tp-input" maxlength="1024" autocomplete="off" spellcheck="false" placeholder="Existing OAuth client ID">'+
       '<label class="tp-label" for="tp-authority-principal">EXACT PRINCIPAL ID</label><input id="tp-authority-principal" class="tp-input" maxlength="256" autocomplete="off" spellcheck="false" placeholder="Existing approved principal ID">'+
       '<label class="tp-label" for="tp-authority-level">AUTHORITY</label><select id="tp-authority-level" class="tp-input"><option value="blocked">Blocked</option><option value="observe">Observe — read/status only</option><option value="operate">Operate — selected background actions, still locally restricted</option></select>'+
-      '<p class="tp-dim">Enter the exact existing client and principal (not a token). Save stages one grant without activating or widening device-local policy.</p><div class="tp-actions"><button class="mono-btn rounded-xl tp-action" onclick="portalAuthoritySave()">[ Stage access grant ]</button>'+refresh+'</div>'+
+      '<p class="tp-dim">Enter the exact existing client and principal (not a token). '+(enabled?'Save applies this grant immediately because enforcement is active.':'Save stages one grant without activating enforcement.')+' Device-local policy remains final.</p><div class="tp-actions"><button class="mono-btn rounded-xl tp-action" onclick="portalAuthoritySave()">'+(enabled?'[ Save enforced grant ]':'[ Stage access grant ]')+'</button>'+refresh+'</div>'+
       '<div class="tp-kicker" style="margin-top:16px">RECORDED GRANTS</div>'+(grantRows||'<p class="tp-dim">No explicit grants. Enabling now denies all routed MCP requests.</p>')+
       '<div class="tp-kicker" style="margin-top:16px">OBSERVED AUTHENTICATED CLIENTS</div>'+(clients||'<p class="tp-dim">No client identity observations yet; an app blocked before the relay will not appear here.</p>')+
       '<label class="tp-label" for="tp-authority-confirm">OWNER CONFIRMATION: '+text(phrase)+'</label><input id="tp-authority-confirm" class="tp-input" autocomplete="off" spellcheck="false" placeholder="'+text(phrase)+'">'+
@@ -114,18 +116,21 @@
   }
   window.portalAuthorityLoad=async function(){
     if(live.inFlight||!tpDemo.session)return;
+    const epoch=sessionEpoch;
     live.inFlight=true;
     try {
       const data=await api('/api/authority');
+      if(epoch!==sessionEpoch||!tpDemo.session)return;
       authority.snapshot=data;authority.unavailable=false;authority.error=null;
       log('[#] Owner authority inspected; revision '+data.revision+(data.enabled?' enforced':' staged only')+'.');
       window.renderActivePortalPage();
-    }catch(e){authority.snapshot=null;authority.unavailable=true;authority.error=e.message;failure(e);}
-    finally{live.inFlight=false;}
+    }catch(e){if(epoch!==sessionEpoch)return;authority.snapshot=null;authority.unavailable=true;authority.error=e.message;failure(e);}
+    finally{if(epoch===sessionEpoch)live.inFlight=false;}
   };
   window.portalAuthoritySave=async function(){
     const s=authority.snapshot;
     if(!s||live.inFlight||live.directoryUnavailable||live.mutationUncertain)return;
+    const epoch=sessionEpoch;
     const deviceId=$('tp-authority-device')?.value||'';
     const clientId=$('tp-authority-client')?.value?.trim()||'';
     const principalId=$('tp-authority-principal')?.value?.trim()||'';
@@ -139,22 +144,25 @@
     grants.push({deviceId,clientId,principalId,level});
     live.inFlight=true;
     try{const updated=await api('/api/authority/grants',{method:'PUT',body:{revision:s.revision,grants}});
-      authority.snapshot=null;log('[#] Owner grant staged with revision '+updated.revision+'.');toast('Owner access grant saved; check enforcement status.');}
-    catch(e){authority.snapshot=null;failure(e,true);}
-    finally{live.inFlight=false;window.renderActivePortalPage();}
-    if(!live.mutationUncertain)void window.portalAuthorityLoad();
+      if(epoch!==sessionEpoch)return;
+      authority.snapshot=null;log('[#] Owner grant '+(s.enabled?'applied':'staged')+' with revision '+updated.revision+'.');toast(s.enabled?'Owner access grant applied immediately.':'Owner access grant staged; enforcement remains inactive.');}
+    catch(e){if(epoch!==sessionEpoch)return;authority.snapshot=null;failure(e,true);}
+    finally{if(epoch===sessionEpoch){live.inFlight=false;window.renderActivePortalPage();}}
+    if(epoch===sessionEpoch&&!live.mutationUncertain)void window.portalAuthorityLoad();
   };
   window.portalAuthorityEnforce=async function(){
     const s=authority.snapshot;
     if(!s||live.inFlight||live.directoryUnavailable||live.mutationUncertain)return;
+    const epoch=sessionEpoch;
     const confirmation=s.enabled?'RESTORE LEGACY ACCESS':'ENFORCE DEVICE GRANTS';
     if($('tp-authority-confirm')?.value!==confirmation){toast('Type the exact owner confirmation phrase.');return;}
     live.inFlight=true;
     try{const updated=await api('/api/authority/enforcement',{method:'POST',body:{revision:s.revision,enabled:!s.enabled,confirmation}});
+      if(epoch!==sessionEpoch)return;
       authority.snapshot=null;log('[#] Authority enforcement changed at revision '+updated.revision+'.');toast('Owner authority changed; refresh to inspect.');}
-    catch(e){authority.snapshot=null;failure(e,true);}
-    finally{live.inFlight=false;window.renderActivePortalPage();}
-    if(!live.mutationUncertain)void window.portalAuthorityLoad();
+    catch(e){if(epoch!==sessionEpoch)return;authority.snapshot=null;failure(e,true);}
+    finally{if(epoch===sessionEpoch){live.inFlight=false;window.renderActivePortalPage();}}
+    if(epoch===sessionEpoch&&!live.mutationUncertain)void window.portalAuthorityLoad();
   };
 
   window.renderPortalPage=function(view){
@@ -214,7 +222,7 @@
     const input=$('tp-live-token');const token=input?.value||'';if(input)input.value='';
     if(!token)return;
     live.inFlight=true;
-    try{const result=await api('/api/session',{method:'POST',body:{token},csrf:false});hydrate(result);window.renderMinimalNodes();oldShowPortal.call(window,'control');toast('Authenticated account directory loaded');log('[#] Relay account session authorized.');}
+    try{const result=await api('/api/session',{method:'POST',body:{token},csrf:false});clearLive();hydrate(result);window.renderMinimalNodes();oldShowPortal.call(window,'control');toast('Authenticated account directory loaded');log('[#] Relay account session authorized.');}
     catch(e){failure(e);}
     finally{live.inFlight=false;}
   };

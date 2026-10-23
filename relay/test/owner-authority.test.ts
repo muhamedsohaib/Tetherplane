@@ -126,3 +126,23 @@ test("concurrent owner edits are serialized with CAS instead of silently overwri
   assert.equal(writes.filter(w=>w.status==="rejected").length,1);
   assert.equal(f.auth.snapshot(owner).revision,1);
 });
+
+test("malformed access levels cannot replace a blocked grant or corrupt persisted authority", async t => {
+  const f = await fixture(t);
+  const grant = { deviceId: "Surface", clientId: chat.clientId, principalId: chat.principalId, level: "blocked" };
+  await f.auth.replaceGrants(owner, { revision: 0, grants: [grant] });
+  await f.auth.setEnabled(owner, { revision: 1, enabled: true, confirmation: "ENFORCE DEVICE GRANTS" });
+  const before = await readFile(f.file, "utf8");
+  for (const level of [["blocked"], ["observe"], ["operate"], {}, null, true, 1]) {
+    await assert.rejects(
+      () => f.auth.replaceGrants(owner, { revision: 2, grants: [{ ...grant, level }] }),
+      { code: "invalid_arguments" },
+      "only an exact string access level may enter the owner policy",
+    );
+    assert.equal(f.auth.evaluate(chat, "Surface", f.paired.pairedAt, invocation("device.status")).allowed, false);
+    assert.equal(await readFile(f.file, "utf8"), before, "invalid edits must leave the durable policy unchanged");
+  }
+  const reopened = await OwnerDeviceAuthority.open({ owner, registry: f.registry, stateFile: f.file });
+  assert.equal(reopened.snapshot(owner).revision, 2);
+  assert.equal(reopened.evaluate(chat, "Surface", f.paired.pairedAt, invocation("device.status")).allowed, false);
+});
