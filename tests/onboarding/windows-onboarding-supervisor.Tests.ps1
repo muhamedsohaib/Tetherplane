@@ -30,10 +30,10 @@ Describe "native Scheduled Task ownership for a newly paired Windows device" {
         $result = Install-DeviceAgentTask -InstallPrefix $script:install -StateDir $script:state -DeviceId "TESTPC01" -RelayUrl "wss://example.invalid/device"
         $result.native_task | Should Be $true
         $result.started | Should Be $true
-        $expectedArguments = '--arguments-file "' + $script:argsPath + '"'
+        $script:expectedArguments = '--arguments-file "' + $script:argsPath + '"'
         Assert-MockCalled Register-ScheduledTask -Exactly 1 -Scope It -ParameterFilter {
             [string]$Action.Execute -ieq $script:exe -and
-            [string]$Action.Arguments -ceq $expectedArguments -and
+            [string]$Action.Arguments -ceq $script:expectedArguments -and
             [string]$Settings.MultipleInstances -eq "IgnoreNew" -and
             [int]$Settings.RestartCount -eq 99 -and
             [string]$Principal.RunLevel -eq "Limited"
