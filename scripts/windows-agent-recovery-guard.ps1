@@ -10,6 +10,7 @@ param(
     [Parameter(Mandatory = $true)][string]$ExpectedPrincipalSha256,
     [Parameter(Mandatory = $true)][string]$ExpectedDeviceId,
     [Parameter(Mandatory = $true)][string]$ExpectedRelayUrl,
+    [Parameter(Mandatory = $true)][ValidateSet('Highest', 'Limited')][string]$ExpectedRunLevel,
     [switch]$StartIfMissing
 )
 
@@ -105,6 +106,7 @@ function Invoke-GuardedAgentRecovery {
         [string]$PrincipalSha256,
         [string]$DeviceId,
         [string]$RelayUrl,
+        [ValidateSet('Highest', 'Limited')][string]$RunLevel,
         [switch]$Recover
     )
     if ($TargetTaskName -notmatch '^Tetherplane(?:[ -][A-Za-z0-9._-]+)*$') {
@@ -118,8 +120,14 @@ function Invoke-GuardedAgentRecovery {
     if ([string]$task.Settings.MultipleInstances -ne 'IgnoreNew') {
         throw "native task single-instance protection missing"
     }
-    if ([string]$task.Principal.LogonType -ne 'Interactive') {
-        throw "native task logon type changed"
+    if ([string]$task.Principal.LogonType -ne 'Interactive' -or
+        [string]$task.Principal.RunLevel -cne $RunLevel) {
+        throw "native task principal settings changed"
+    }
+    $triggers = @($task.Triggers)
+    if ($triggers.Count -ne 1 -or -not [bool]$triggers[0].Enabled -or
+        [string]$triggers[0].CimClass.CimClassName -ne 'MSFT_TaskLogonTrigger') {
+        throw "native task logon trigger differs from reviewed installation"
     }
     $ownerSid = Resolve-GuardOwnerSid -PrincipalUserId ([string]$task.Principal.UserId)
     $currentSid = ([Security.Principal.WindowsIdentity]::GetCurrent()).User.Value
@@ -235,6 +243,7 @@ if ($MyInvocation.InvocationName -ne '.') {
             PrincipalSha256 = $ExpectedPrincipalSha256
             DeviceId = $ExpectedDeviceId
             RelayUrl = $ExpectedRelayUrl
+            RunLevel = $ExpectedRunLevel
             Recover = [bool]$StartIfMissing
         }
         $result = Invoke-GuardedAgentRecovery @inputs
