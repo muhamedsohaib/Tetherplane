@@ -7,6 +7,8 @@ on:
       - "relay/src/devices/ws-gateway.ts"
       - "relay/test/device-heartbeat.test.ts"
       - "scripts/install-windows.ps1"
+      - "scripts/windows-agent-recovery-guard.ps1"
+      - "tests/release/windows-agent-recovery-guard.Tests.ps1"
       - "tests/release/windows-package-smoke.ps1"
       - "packaging/windows/**"
       - ".github/workflows/reliability-contract.yml"
@@ -16,6 +18,8 @@ on:
       - "relay/src/devices/ws-gateway.ts"
       - "relay/test/device-heartbeat.test.ts"
       - "scripts/install-windows.ps1"
+      - "scripts/windows-agent-recovery-guard.ps1"
+      - "tests/release/windows-agent-recovery-guard.Tests.ps1"
       - "tests/release/windows-package-smoke.ps1"
       - "packaging/windows/**"
       - ".github/workflows/reliability-contract.yml"
@@ -92,3 +96,22 @@ jobs:
             target/release/UNSIGNED-TEST-ONLY.txt
           retention-days: 1
           if-no-files-found: error
+
+  windows-recovery-guard:
+    runs-on: windows-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
+        with:
+          persist-credentials: false
+      - name: Verify fail-closed native task recovery in Windows PowerShell 5.1
+        shell: powershell
+        run: |
+          $ErrorActionPreference = 'Stop'
+          Import-Module Pester -RequiredVersion 3.4.0 -ErrorAction Stop
+          $result = Invoke-Pester -Script tests/release/windows-agent-recovery-guard.Tests.ps1 -PassThru
+          if ($result.FailedCount -ne 0 -or $result.SkippedCount -ne 0 -or
+              $result.PendingCount -ne 0 -or $result.TotalCount -lt 15) {
+            throw ('Guard regressions failed or incomplete: ' + ($result | Out-String))
+          }
+          Write-Output ("TETHERPLANE_WINDOWS_GUARD_PASS count={0}" -f $result.PassedCount)
