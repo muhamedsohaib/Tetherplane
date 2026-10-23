@@ -9,10 +9,12 @@ import type {
   ClientIdentity,
 } from "../auth/static-auth.ts";
 import type { DeviceRegistry } from "./registry.ts";
+import { AuthorityError, type OwnerDeviceAuthority } from "../access/owner-authority.ts";
 
 export class RelayControlHttpGateway {
   readonly #registry: DeviceRegistry;
   readonly #authenticator: ClientAuthenticator;
+  readonly #authority: OwnerDeviceAuthority | null;
   readonly #disconnectDevice: (deviceId: string) => void;
   #attachedServer: Server | null = null;
   #requestHandler:
@@ -22,10 +24,12 @@ export class RelayControlHttpGateway {
   constructor(options: {
     registry: DeviceRegistry;
     authenticator: ClientAuthenticator;
+    authority?: OwnerDeviceAuthority | null;
     disconnectDevice(deviceId: string): void;
   }) {
     this.#registry = options.registry;
     this.#authenticator = options.authenticator;
+    this.#authority = options.authority ?? null;
     this.#disconnectDevice = options.disconnectDevice;
   }
 
@@ -79,6 +83,50 @@ export class RelayControlHttpGateway {
         return;
       }
 
+      if (url.pathname === "/authority" && request.method === "GET") {
+        const identity = await this.#requireIdentity(request, response);
+        if (!identity) return;
+        if (!this.#authority) {
+          writeJson(response, 404, { error: { code: "capability_unavailable", message: "owner device authority is not configured" } });
+          return;
+        }
+        if (!this.#authority.isOwner(identity)) {
+          writeJson(response, 403, { error: { code: "permission_denied", message: "only the configured owner may view access grants" } });
+          return;
+        }
+        writeJson(response, 200, this.#authority.snapshot(identity));
+        return;
+      }
+      if (url.pathname === "/authority/grants" && request.method === "PUT") {
+        const identity = await this.#requireIdentity(request, response);
+        if (!identity) return;
+        if (!this.#authority || !this.#authority.isOwner(identity)) {
+          writeJson(response, 403, { error: { code: "permission_denied", message: "owner access management is unavailable for this client" } });
+          return;
+        }
+        const body = await readObjectBody(request);
+        const revision = await this.#authority.replaceGrants(identity, {
+          revision: body.revision as number, grants: body.grants,
+        });
+        writeJson(response, 200, { revision, updated: true });
+        return;
+      }
+      if (url.pathname === "/authority/enforcement" && request.method === "POST") {
+        const identity = await this.#requireIdentity(request, response);
+        if (!identity) return;
+        if (!this.#authority || !this.#authority.isOwner(identity)) {
+          writeJson(response, 403, { error: { code: "permission_denied", message: "owner access management is unavailable for this client" } });
+          return;
+        }
+        const body = await readObjectBody(request);
+        const revision = await this.#authority.setEnabled(identity, {
+          revision: body.revision as number,
+          enabled: body.enabled as boolean,
+          confirmation: body.confirmation as string,
+        });
+        writeJson(response, 200, { revision, enabled: body.enabled });
+        return;
+      }
       if (
         request.method === "GET" &&
         url.pathname === "/devices"
@@ -112,6 +160,11 @@ export class RelayControlHttpGateway {
     } catch (error) {
       if (response.headersSent) {
         if (!response.writableEnded) response.end();
+        return;
+      }
+      if (error instanceof AuthorityError) {
+        const status = error.code === "permission_denied" ? 403 : error.code === "conflict" ? 409 : 400;
+        writeJson(response, status, { error: { code: error.code, message: error.message } });
         return;
       }
       writeJson(response, 400, {
@@ -148,6 +201,12 @@ export class RelayControlHttpGateway {
     response: ServerResponse,
     identity: ClientIdentity,
   ): Promise<void> {
+    // In the opt-in owner-managed mode, an AI client sharing the device
+    // account cannot implicitly approve a new computer or revoke one.
+    if (this.#authority && !this.#authority.isOwner(identity)) {
+      writeJson(response, 403, { error: { code: "permission_denied", message: "device pairing requires the configured owner client" } });
+      return;
+    }
     const body = await readObjectBody(request);
     const userCode = stringField(body, "userCode");
     const binding = await this.#registry.approvePairing({
@@ -162,6 +221,10 @@ export class RelayControlHttpGateway {
     identity: ClientIdentity,
     deviceId: string,
   ): Promise<void> {
+    if (this.#authority && !this.#authority.isOwner(identity)) {
+      writeJson(response, 403, { error: { code: "permission_denied", message: "device revocation requires the configured owner client" } });
+      return;
+    }
     const binding = this.#registry.getDevice(deviceId);
     if (
       !binding ||
@@ -180,6 +243,7 @@ export class RelayControlHttpGateway {
       accountId: identity.accountId,
       deviceId,
     });
+    await this.#authority?.revokeGrants(deviceId);
     this.#disconnectDevice(deviceId);
     writeJson(response, 200, revoked);
   }
