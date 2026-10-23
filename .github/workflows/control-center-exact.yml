@@ -1,0 +1,30 @@
+name: Exact portal boundary tests
+on:
+  push:
+    branches: ['feature/control-center-exact-ui-backend-20261020']
+  pull_request:
+    paths:
+      - 'adapters/control-center-exact/**'
+      - '.github/workflows/control-center-exact.yml'
+permissions:
+  contents: read
+jobs:
+  portal:
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, windows-latest]
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 6
+    steps:
+      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683
+        with:
+          persist-credentials: false
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020
+        with:
+          node-version: '24.19.0'
+      - name: Exact tested source
+        run: git rev-parse HEAD
+      - name: Portal and OAuth boundary tests (no production requests)
+        working-directory: adapters/control-center-exact
+        run: node --test test/*.test.mjs
