@@ -13,10 +13,10 @@
 - [x] Reproduce a connected CDP peer withholding a reply and a TCP peer withholding its WebSocket upgrade; both must produce typed timeout errors within an explicit budget.
 - [x] Add the smallest deadlines and release timers/listeners on success, disconnect, explicit close and send failure. Never resend a timed-out command; discard late replies without confusing later request IDs.
 - [x] Verify out-of-order success, protocol error, disconnect and cleanup with actual loopback sockets.
-- [x] Run browser (68), final portal (41) and relay (91) suites; workspace TypeScript typecheck/build and diff checks. Workspace test run reached native E2E pretest, which is blocked locally by unavailable `link.exe`; do not claim local native E2E passed.
+- [x] Run browser (69 after failure-cleanup follow-up), final portal (41) and relay (91) suites; workspace TypeScript typecheck/build and diff checks. Workspace test run reached native E2E pretest, which is blocked locally by unavailable `link.exe`; do not claim local native E2E passed.
 - [x] Obtain independent review: 29 focused tests passed with no remaining actionable finding. Initial review findings and mutation/replacement-session follow-ups were reproduced RED before correction.
 - [ ] Run the five-trial Windows CDP and full native tests on hosted CI at the pushed source SHA.
-- [ ] Push a draft stacked on PR #50. Report exact SHA and distinguish the reproduced transport defect from the still unproven cause of earlier hosted hangs. Keep Vercel and live acceptance holds visible.
+- [x] Push draft #52 stacked on PR #50. Initial source `9b734579` passed hosted portal tests and five fresh Windows CDP trials; full quality included a separate hung Ubuntu PR job. Keep per-commit results distinct and Vercel/live acceptance holds visible.
 
 ## Independent review follow-up
 
@@ -26,3 +26,7 @@ The reviewer reproduced malformed array access levels being persisted and treate
 - [x] Fence authority load/save/enforcement results/errors/finalization by the local UI session epoch. Clear prior authority on explicit replacement login. Do not restore prior owner metadata, invalidate a replacement session or unlock its request after sign-out.
 - [x] Describe grant edits as immediate while enforcement is active, and staged only while inactive. Preserve all existing owner identity, CSRF, revision and confirmation checks.
 - [x] Independently review the final source changes and verify the relay/portal/workspace suites subject to the documented local native-linker blocker. Live owner grants and user sessions remain untouched.
+
+## Failed-launch test-worker cleanup
+
+The B6 fixture server was allocated before browser launch, while its cleanup block began after successful launch. An actual B6 subprocess with Node supplied as the disposable Chromium executable failed launch but remained alive past a six-second observation window. Moving all post-listener setup into the cleanup scope makes it exit with the expected failure and `cleanup-complete` in under one second locally. Nested finalization also cleans the lab and temporary directory if browser shutdown fails. The regression fails if startup failure is hidden or a listener pins the worker; it never opens a user browser or relaxes test budgets.

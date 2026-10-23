@@ -55,32 +55,34 @@ test(
     phase("fixture-start");
     const lab = await startBrowserLab();
     phase("fixture-ready");
-    const temp = await mkdtemp(
-      path.join(os.tmpdir(), "tetherplane-b6-"),
-    );
-    const uploadPath = path.join(temp, "upload.txt");
-    await writeFile(
-      uploadPath,
-      "native-upload-content",
-      "utf8",
-    );
-
-    phase("chromium-launch");
-    // Fail with the launcher's own typed error and owned-process cleanup
-    // before this 30-second test deadline; never increase the test budget.
-    const control = await launchCdpOwnedBrowser({
-      executablePath,
-      launchTimeoutMs: 12_000,
-    });
-    phase("chromium-ready");
-    const backend = new CdpBrowserBackend({
-      control,
-      pollIntervalMs: 20,
-    });
-    const ownership = new BrowserOwnershipRegistry();
-    const semantics = new SemanticSnapshotEngine();
-
+    let temp: string | undefined;
+    let backend: CdpBrowserBackend | undefined;
     try {
+      temp = await mkdtemp(
+        path.join(os.tmpdir(), "tetherplane-b6-"),
+      );
+      const uploadPath = path.join(temp, "upload.txt");
+      await writeFile(
+        uploadPath,
+        "native-upload-content",
+        "utf8",
+      );
+
+      phase("chromium-launch");
+      // Fail with the launcher's own typed error and owned-process cleanup
+      // before this 30-second test deadline; never increase the test budget.
+      const control = await launchCdpOwnedBrowser({
+        executablePath,
+        launchTimeoutMs: 12_000,
+      });
+      phase("chromium-ready");
+      backend = new CdpBrowserBackend({
+        control,
+        pollIntervalMs: 20,
+      });
+      const ownership = new BrowserOwnershipRegistry();
+      const semantics = new SemanticSnapshotEngine();
+
       phase("create-tab");
       const page = await backend.createTab(lab.origin);
       phase("tab-created");
@@ -294,15 +296,18 @@ test(
       );
     } finally {
       phase("cleanup-browser");
-      await backend.shutdown();
-      phase("cleanup-lab");
-      await lab.close();
-      phase("cleanup-temp");
-      await rm(temp, {
-        recursive: true,
-        force: true,
-      });
-      phase("cleanup-complete");
+      try {
+        await backend?.shutdown();
+      } finally {
+        phase("cleanup-lab");
+        try {
+          await lab.close();
+        } finally {
+          phase("cleanup-temp");
+          if (temp) await rm(temp, { recursive: true, force: true });
+          phase("cleanup-complete");
+        }
+      }
     }
   },
 );
