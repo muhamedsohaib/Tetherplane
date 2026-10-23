@@ -72,7 +72,7 @@ try {
         throw "native scheduled-task command line leaks identity configuration"
     }
 
-    $args = @(Get-Content -LiteralPath $agentArgsPath -Raw -ErrorAction Stop | ConvertFrom-Json)
+    $args = [string[]](ConvertFrom-Json -InputObject (Get-Content -LiteralPath $agentArgsPath -Raw -ErrorAction Stop))
     foreach ($mustContain in @("--device-id", $deviceId, "--device-credential-file", "--principal-profile", "--state-dir")) {
         if ($args -notcontains $mustContain) { throw "local argument-file contract is missing $mustContain" }
     }
