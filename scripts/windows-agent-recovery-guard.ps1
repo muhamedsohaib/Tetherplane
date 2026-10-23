@@ -231,118 +231,15 @@ function Invoke-GuardedAgentRecovery {
         [string]$triggersNow[0].CimClass.CimClassName -ne 'MSFT_TaskLogonTrigger') {
         throw "native task trigger changed during recovery preflight"
     }
-    # Another agent task may have been enabled after the first scan. A
-    # per-task IgnoreNew setting does not prevent cross-task duplication.
+    # Another agent task may have been enabled after the first scan.
     $tasksNow = @(Get-ScheduledTask -ErrorAction Stop)
     $competingNow = @($tasksNow | Where-Object {
         if ($_.TaskName -eq $TargetTaskName -or -not [bool]$_.Settings.Enabled) { return $false }
-        $namedAgent = $_.TaskName -match '(?i)^Tetherplane(?:[ -]\\S+)*[ -]Agent
-    $deadline = [DateTime]::UtcNow.AddSeconds(8)
-    do {
-        Start-Sleep -Milliseconds 250
-        $startedAgents = @(Get-CimInstance Win32_Process -Filter "Name='tetherd.exe'" -ErrorAction Stop)
-        if ($startedAgents.Count -eq 1 -and
-            [string]$startedAgents[0].ExecutablePath -ieq $exe) {
-            return [pscustomobject]@{ status = 'started_local'; started = $true; agent_count = 1 }
-        }
-        if ($startedAgents.Count -gt 1) { throw "agent cardinality changed after start" }
-    } while ([DateTime]::UtcNow -lt $deadline)
-    throw "start issued but agent startup is unverified; do not retry automatically"
-}
-
-if ($MyInvocation.InvocationName -ne '.') {
-    try {
-        $inputs = @{
-            TargetTaskName = $TaskName
-            ExeSha256 = $ExpectedExeSha256
-            ArgsSha256 = $ExpectedArgsSha256
-            PrincipalSha256 = $ExpectedPrincipalSha256
-            DeviceId = $ExpectedDeviceId
-            RelayUrl = $ExpectedRelayUrl
-            RunLevel = $ExpectedRunLevel
-            Recover = [bool]$StartIfMissing
-        }
-        $result = Invoke-GuardedAgentRecovery @inputs
-        $result | ConvertTo-Json -Compress | Write-Output
-    } catch {
-        # No credentials, arbitrary paths or OS command lines are printed.
-        Write-Error ("TETHERPLANE_RECOVERY_DENIED: " + $_.Exception.Message)
-        exit 1
-    }
-}
- -or
-                      $_.TaskName -match '(?i)^Tetherplane(?:[ -]\\S+)*[ -]Canary(?:[ -]V\\d+)?
-    $deadline = [DateTime]::UtcNow.AddSeconds(8)
-    do {
-        Start-Sleep -Milliseconds 250
-        $startedAgents = @(Get-CimInstance Win32_Process -Filter "Name='tetherd.exe'" -ErrorAction Stop)
-        if ($startedAgents.Count -eq 1 -and
-            [string]$startedAgents[0].ExecutablePath -ieq $exe) {
-            return [pscustomobject]@{ status = 'started_local'; started = $true; agent_count = 1 }
-        }
-        if ($startedAgents.Count -gt 1) { throw "agent cardinality changed after start" }
-    } while ([DateTime]::UtcNow -lt $deadline)
-    throw "start issued but agent startup is unverified; do not retry automatically"
-}
-
-if ($MyInvocation.InvocationName -ne '.') {
-    try {
-        $inputs = @{
-            TargetTaskName = $TaskName
-            ExeSha256 = $ExpectedExeSha256
-            ArgsSha256 = $ExpectedArgsSha256
-            PrincipalSha256 = $ExpectedPrincipalSha256
-            DeviceId = $ExpectedDeviceId
-            RelayUrl = $ExpectedRelayUrl
-            RunLevel = $ExpectedRunLevel
-            Recover = [bool]$StartIfMissing
-        }
-        $result = Invoke-GuardedAgentRecovery @inputs
-        $result | ConvertTo-Json -Compress | Write-Output
-    } catch {
-        # No credentials, arbitrary paths or OS command lines are printed.
-        Write-Error ("TETHERPLANE_RECOVERY_DENIED: " + $_.Exception.Message)
-        exit 1
-    }
-}
-
+        $namedAgent = $_.TaskName -match '(?i)^Tetherplane(?:[ -]\S+)*[ -]Agent$' -or
+                      $_.TaskName -match '(?i)^Tetherplane(?:[ -]\S+)*[ -]Canary(?:[ -]V\d+)?$'
         $nativeAgent = @($_.Actions | Where-Object {
             $exec = $_.PSObject.Properties['Execute']
-            $null -ne $exec -and [string]$exec.Value -match '(?i)[\\/]tetherd\\.exe
-    $deadline = [DateTime]::UtcNow.AddSeconds(8)
-    do {
-        Start-Sleep -Milliseconds 250
-        $startedAgents = @(Get-CimInstance Win32_Process -Filter "Name='tetherd.exe'" -ErrorAction Stop)
-        if ($startedAgents.Count -eq 1 -and
-            [string]$startedAgents[0].ExecutablePath -ieq $exe) {
-            return [pscustomobject]@{ status = 'started_local'; started = $true; agent_count = 1 }
-        }
-        if ($startedAgents.Count -gt 1) { throw "agent cardinality changed after start" }
-    } while ([DateTime]::UtcNow -lt $deadline)
-    throw "start issued but agent startup is unverified; do not retry automatically"
-}
-
-if ($MyInvocation.InvocationName -ne '.') {
-    try {
-        $inputs = @{
-            TargetTaskName = $TaskName
-            ExeSha256 = $ExpectedExeSha256
-            ArgsSha256 = $ExpectedArgsSha256
-            PrincipalSha256 = $ExpectedPrincipalSha256
-            DeviceId = $ExpectedDeviceId
-            RelayUrl = $ExpectedRelayUrl
-            RunLevel = $ExpectedRunLevel
-            Recover = [bool]$StartIfMissing
-        }
-        $result = Invoke-GuardedAgentRecovery @inputs
-        $result | ConvertTo-Json -Compress | Write-Output
-    } catch {
-        # No credentials, arbitrary paths or OS command lines are printed.
-        Write-Error ("TETHERPLANE_RECOVERY_DENIED: " + $_.Exception.Message)
-        exit 1
-    }
-}
-
+            $null -ne $exec -and [string]$exec.Value -match '(?i)[\\/]tetherd\.exe$'
         }).Count -gt 0
         $namedAgent -or $nativeAgent
     })
