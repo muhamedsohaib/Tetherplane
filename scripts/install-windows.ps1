@@ -17,6 +17,17 @@ $package = (Resolve-Path -LiteralPath $PackagePath).Path
 $install = [IO.Path]::GetFullPath($InstallPrefix)
 $state = [IO.Path]::GetFullPath($StateDir)
 
+# Install/runtime files and durable device state must be in separate trees.
+# A future uninstall or failed repair must never delete the device identity.
+$installRoot = $install.TrimEnd([char[]]@('\', '/'))
+$stateRoot = $state.TrimEnd([char[]]@('\', '/'))
+$comparison = [StringComparison]::OrdinalIgnoreCase
+if ([string]::Equals($installRoot, $stateRoot, $comparison) -or
+    $installRoot.StartsWith(($stateRoot + [IO.Path]::DirectorySeparatorChar), $comparison) -or
+    $stateRoot.StartsWith(($installRoot + [IO.Path]::DirectorySeparatorChar), $comparison)) {
+    throw "install prefix and state directory must not overlap; choose independent paths"
+}
+
 # Existing tasks must be reconciled before migrating from a launcher.
 # Silently replacing them can strand a child or duplicate a device identity.
 if ($InstallScheduledTask) {
@@ -61,12 +72,12 @@ foreach ($required in @(
 }
 
 if (Test-Path -LiteralPath $install) {
-    $existing = @(Get-ChildItem -LiteralPath $install -Force -ErrorAction SilentlyContinue)
-    if ($existing.Count -gt 0 -and -not $Force) {
-        throw "install prefix is not empty; use -Force to replace a prior Tetherplane install"
-    }
-    if ($Force) {
-        Remove-Item -LiteralPath $install -Recurse -Force
+    # Legacy -Force is retained for command-line compatibility but must never
+    # silently delete a populated install prefix. Versioned side-by-side
+    # installation and an independently verified rollback are required.
+    $existing = @(Get-ChildItem -LiteralPath $install -Force -ErrorAction Stop)
+    if ($existing.Count -gt 0) {
+        throw "refusing to overwrite or delete a nonempty install prefix (including with -Force); use a fresh versioned prefix and a reviewed migration"
     }
 }
 
