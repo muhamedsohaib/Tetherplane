@@ -111,7 +111,7 @@ jobs:
           Import-Module Pester -RequiredVersion 3.4.0 -ErrorAction Stop
           $result = Invoke-Pester -Script tests/release/windows-agent-recovery-guard.Tests.ps1 -PassThru
           if ($result.FailedCount -ne 0 -or $result.SkippedCount -ne 0 -or
-              $result.PendingCount -ne 0 -or $result.TotalCount -lt 18) {
+              $result.PendingCount -ne 0 -or $result.TotalCount -lt 20) {
             throw ('Guard regressions failed or incomplete: ' + ($result | Out-String))
           }
           Write-Output ("TETHERPLANE_WINDOWS_GUARD_PASS count={0}" -f $result.PassedCount)
