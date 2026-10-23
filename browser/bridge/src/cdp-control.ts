@@ -10,6 +10,7 @@ import {
   mkdtemp,
   readFile,
   rm,
+  writeFile,
 } from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
@@ -31,6 +32,14 @@ import type {
 import {
   stopOwnedChromiumProcesses,
 } from "./process-cleanup.ts";
+import {
+  ChromiumStartupTelemetry,
+  chromiumFileVersion,
+  observedProcessStopped,
+  startupErrorCategory,
+  waitForDevToolsActivePort,
+  type ChromiumStartupDiagnostic,
+} from "./chromium-startup.ts";
 
 type CdpResponse = {
   id?: number;
@@ -278,6 +287,7 @@ class OwnedChromiumControl implements LaunchedCdpControl {
   readonly #wire: CdpWire;
   readonly #browserPid: number | null;
   readonly #downloadDir: string;
+  readonly #startupTelemetry: ChromiumStartupTelemetry;
   readonly #sessions = new Map<string, string>();
   readonly #sessionTargets = new Map<string, string>();
   readonly #diagnosticsEnabled = new Set<string>();
@@ -306,11 +316,13 @@ class OwnedChromiumControl implements LaunchedCdpControl {
     downloadDir: string;
     executablePath: string;
     browserPid: number | null;
+    startupTelemetry: ChromiumStartupTelemetry;
   }) {
     this.#child = options.child;
     this.#wire = options.wire;
     this.#browserPid = options.browserPid;
     this.#downloadDir = options.downloadDir;
+    this.#startupTelemetry = options.startupTelemetry;
     this.profile_dir = options.profileDir;
     this.executable_path = options.executablePath;
     this.#eventListener = (event) => {
@@ -605,17 +617,15 @@ class OwnedChromiumControl implements LaunchedCdpControl {
       .catch(() => undefined);
     this.#wire.close();
 
-    await stopOwnedChromiumProcesses(
-      this.#child,
-      this.#browserPid,
-    );
-
-    await rm(this.profile_dir, {
-      recursive: true,
-      force: true,
-      maxRetries: 20,
-      retryDelay: 50,
-    });
+    try {
+      await stopOwnedChromiumProcesses(this.#child, this.#browserPid);
+      await rm(this.profile_dir, { recursive: true, force: true, maxRetries: 20, retryDelay: 50 });
+    } catch {
+      throw new CdpBackendError("provider_failure", "failed to clean isolated Chromium resources");
+    } finally {
+      this.#child.stderr?.destroy();
+      this.#startupTelemetry.emit("cleanup", { profile_removed: !existsSync(this.profile_dir), launcher_stopped: observedProcessStopped(this.#child.pid ?? null), browser_process_stopped: observedProcessStopped(this.#browserPid) });
+    }
   }
 
   #handleCdpEvent(event: {
@@ -911,7 +921,9 @@ export async function launchCdpOwnedBrowser(options: {
   executablePath?: string;
   profileParent?: string;
   launchTimeoutMs?: number;
+  onStartupDiagnostic?: (event: ChromiumStartupDiagnostic) => void;
 } = {}): Promise<LaunchedCdpControl> {
+  const telemetry = new ChromiumStartupTelemetry(options.onStartupDiagnostic);
   const executablePath =
     options.executablePath ?? findInstalledChromium();
   if (!executablePath || !isExecutableFile(executablePath)) {
@@ -921,18 +933,47 @@ export async function launchCdpOwnedBrowser(options: {
     );
   }
 
+  const basename = path.basename(executablePath).toLowerCase();
+  const family: NonNullable<ChromiumStartupDiagnostic["family"]> = /^(chrome|google-chrome|google-chrome-stable)(\.exe)?$/.test(basename) ? "chrome" : /^(msedge|microsoft-edge)(\.exe)?$/.test(basename) ? "edge" : /^(chromium|chromium-browser)(\.exe)?$/.test(basename) ? "chromium" : "other";
+  telemetry.emit("selected", {
+    source: executablePath === process.env.TETHERPLANE_CHROMIUM ? "environment" : options.executablePath ? "argument" : "discovery",
+    family,
+    // Arbitrary executables (including the failure fixture) are not browser
+    // version probes. Keep their failed-spawn path free of helper processes.
+    version: options.onStartupDiagnostic && family !== "other" ? await chromiumFileVersion(executablePath) : null,
+  });
   const parent = options.profileParent ?? os.tmpdir();
-  await mkdir(parent, { recursive: true });
-  const profileDir = await mkdtemp(
-    path.join(parent, "tetherplane-cdp-"),
-  );
+  let profileDir: string;
+  try {
+    await mkdir(parent, { recursive: true });
+    profileDir = await mkdtemp(path.join(parent, "tetherplane-cdp-"));
+  } catch (error) {
+    telemetry.emit("failure", { profile_writable: false, error_category: startupErrorCategory(error) });
+    throw new CdpBackendError("provider_failure", "failed to prepare isolated Chromium profile");
+  }
+  // Probe only our newly created, disposable profile. Never inspect a human profile.
+  try {
+    const probe = path.join(profileDir, ".startup-write-probe");
+    await writeFile(probe, "", { flag: "wx" });
+    await rm(probe);
+    telemetry.emit("profile", { profile_writable: true });
+  } catch (error) {
+    telemetry.emit("failure", { profile_writable: false, error_category: startupErrorCategory(error) });
+    try { await rm(profileDir, { recursive: true, force: true }); }
+    catch { throw new CdpBackendError("provider_failure", "failed to clean isolated Chromium profile"); }
+    finally { telemetry.emit("cleanup", { profile_removed: !existsSync(profileDir) }); }
+    throw new CdpBackendError("provider_failure", "failed to prepare isolated Chromium profile");
+  }
   const args = buildIsolatedChromiumArgs(profileDir);
+  if (options.onStartupDiagnostic) args.unshift("--enable-logging=stderr");
   const child = spawn(executablePath, args, {
-    stdio: "ignore",
+    stdio: ["ignore", "ignore", "pipe"],
     windowsHide: true,
   });
+  telemetry.attach(child);
 
   let wire: CdpWire | undefined;
+  let browserPid: number | null = null;
   try {
     await Promise.race([
       once(child, "spawn").then(() => undefined),
@@ -944,12 +985,13 @@ export async function launchCdpOwnedBrowser(options: {
     const websocketUrl =
       await waitForDevToolsActivePort({
         child,
-        profileDir,
+        portFile: path.join(profileDir, "DevToolsActivePort"),
+        telemetry,
         timeoutMs:
           options.launchTimeoutMs ?? DEFAULT_CDP_LAUNCH_TIMEOUT_MS,
       });
     wire = await CdpWire.connect(websocketUrl);
-    const browserPid = await discoverBrowserPid(wire);
+    browserPid = await discoverBrowserPid(wire);
     const downloadDir = path.join(profileDir, "Downloads");
     await mkdir(downloadDir, { recursive: true });
     await wire.send("Browser.setDownloadBehavior", {
@@ -958,6 +1000,7 @@ export async function launchCdpOwnedBrowser(options: {
       eventsEnabled: true,
     });
 
+    telemetry.emit("ready");
     return new OwnedChromiumControl({
       child,
       wire,
@@ -965,24 +1008,26 @@ export async function launchCdpOwnedBrowser(options: {
       downloadDir,
       executablePath,
       browserPid,
+      startupTelemetry: telemetry,
     });
   } catch (error) {
+    telemetry.emit("failure", { error_category: startupErrorCategory(error) });
     wire?.close();
-    await stopOwnedChromiumProcesses(child, null);
-    await rm(profileDir, {
-      recursive: true,
-      force: true,
-      maxRetries: 20,
-      retryDelay: 50,
-    });
+    try {
+      await stopOwnedChromiumProcesses(child, browserPid);
+      await rm(profileDir, { recursive: true, force: true, maxRetries: 20, retryDelay: 50 });
+    } catch {
+      throw new CdpBackendError("provider_failure", "failed to clean isolated Chromium resources");
+    } finally {
+      child.stderr?.destroy();
+      telemetry.emit("cleanup", { profile_removed: !existsSync(profileDir), launcher_stopped: observedProcessStopped(child.pid ?? null), browser_process_stopped: observedProcessStopped(browserPid) });
+    }
     if (error instanceof CdpBackendError) {
       throw error;
     }
     throw new CdpBackendError(
       "provider_failure",
-      error instanceof Error
-        ? `failed to launch isolated Chromium: ${error.message}`
-        : "failed to launch isolated Chromium",
+      "failed to launch isolated Chromium",
     );
   }
 }
@@ -1013,54 +1058,6 @@ async function discoverBrowserPid(
     return null;
   }
   return null;
-}
-
-async function waitForDevToolsActivePort(options: {
-  child: ChildProcess;
-  profileDir: string;
-  timeoutMs: number;
-}): Promise<string> {
-  const portFile = path.join(
-    options.profileDir,
-    "DevToolsActivePort",
-  );
-  const deadline = Date.now() + options.timeoutMs;
-
-  while (Date.now() < deadline) {
-    try {
-      const raw = await readFile(portFile, "utf8");
-      const [portLine, pathLine] = raw
-        .split(/\r?\n/)
-        .map((line) => line.trim());
-      const port = Number(portLine);
-      if (
-        Number.isInteger(port) &&
-        port > 0 &&
-        pathLine?.startsWith("/devtools/browser/")
-      ) {
-        return `ws://127.0.0.1:${port}${pathLine}`;
-      }
-    } catch {
-      // Chrome writes the file after DevTools has bound its port.
-    }
-
-    if (
-      options.child.exitCode !== null &&
-      options.child.exitCode !== 0
-    ) {
-      throw new CdpBackendError(
-        "provider_failure",
-        `isolated Chromium exited with code ${options.child.exitCode}`,
-      );
-    }
-
-    await sleep(25);
-  }
-
-  throw new CdpBackendError(
-    "timeout",
-    "timed out waiting for isolated Chromium DevTools endpoint",
-  );
 }
 
 function flattenFrameTree(

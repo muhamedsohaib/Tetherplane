@@ -1,0 +1,48 @@
+{
+  "source_sha": "e35782baaa7cd0ec12c9e01bae96af2f44c55378",
+  "requested_stack": {
+    "pr49": "959ba8220581610fb8f184b8de9ecdf25eaedec3",
+    "pr50": "ac074f181a5555f461ad5d0e170b19f92ee5a052",
+    "pr52": "e35782baaa7cd0ec12c9e01bae96af2f44c55378"
+  },
+  "runner_image": "windows-2025-vs2026",
+  "image_version": "20261021.278.1",
+  "runs": [
+    {
+      "run_id": 39994004381,
+      "event": "push",
+      "windows_job": 120552700489,
+      "windows": "success",
+      "ubuntu": "success",
+      "browser_pass": 69,
+      "browser_fail": 0
+    },
+    {
+      "run_id": 39994011081,
+      "event": "pull_request",
+      "windows_job": 120552720888,
+      "windows": "failure",
+      "ubuntu": "success",
+      "browser_pass": 68,
+      "browser_fail": 1,
+      "failed_boundary": "DevToolsActivePort not published within 12 seconds",
+      "b6_duration_ms": 12468.3474,
+      "cleanup_complete": true
+    },
+    {
+      "run_id": 39994011449,
+      "event": "pull_request",
+      "windows_job": 120552722669,
+      "windows": "failure",
+      "failed_trial": 1,
+      "trials_2_to_5": "not run",
+      "failed_boundary": "DevToolsActivePort not published within 12 seconds",
+      "b6_duration_ms": 12288.4068,
+      "cleanup_complete": true
+    }
+  ],
+  "historical_executable_family": "not reported",
+  "historical_executable_version": "not reported",
+  "historical_stderr": "discarded by stdio ignore",
+  "conclusion": "Image version alone does not explain the different outcomes. Historical startup root cause is unproven."
+}
