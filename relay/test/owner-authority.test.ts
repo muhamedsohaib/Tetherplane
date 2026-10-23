@@ -109,8 +109,10 @@ test("revocation deletes grants and new pairing cannot inherit previous access",
   const pending = await f.registry.startPairing({ deviceId:"Surface", credentialHash:hashDeviceCredential("new-synthetic-pairing-secret") });
   const paired = await f.registry.approvePairing({accountId: owner.accountId,userCode: pending.userCode});
   assert.equal(f.auth.evaluate(chat,"Surface",paired.pairedAt,invocation("device.status")).allowed,false);
-  await assert.rejects(() => f.auth.setEnabled(owner,{revision:2,enabled:false,confirmation:"ENABLE"}),/exact owner confirmation/);
-  assert.equal(await f.auth.setEnabled(owner,{revision:3,enabled:false,confirmation:"RESTORE LEGACY ACCESS"}),4);
+  const currentRevision = f.auth.snapshot(owner).revision;
+  assert.equal(currentRevision, 3, "revoking a device must invalidate the old policy revision");
+  await assert.rejects(() => f.auth.setEnabled(owner,{revision:currentRevision,enabled:false,confirmation:"ENABLE"}),/exact owner confirmation/);
+  assert.equal(await f.auth.setEnabled(owner,{revision:currentRevision,enabled:false,confirmation:"RESTORE LEGACY ACCESS"}),currentRevision + 1);
 });
 
 test("concurrent owner edits are serialized with CAS instead of silently overwriting grants", async t => {

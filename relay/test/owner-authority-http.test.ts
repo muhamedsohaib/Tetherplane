@@ -54,7 +54,11 @@ async function harness(t: import("node:test").TestContext) {
       },
       ...(body === undefined ? {} : { body: JSON.stringify(body) }),
     });
-    return { status: resp.status, data: await resp.json() };
+    // A 401 challenge may intentionally have no JSON body. Preserve its
+    // HTTP status rather than turning correct authentication denial into a
+    // JSON parser error in the test harness.
+    const raw = await resp.text();
+    return { status: resp.status, data: raw ? JSON.parse(raw) : null };
   }
   const pending = await relay.registry.startPairing({
     deviceId: "Surface", credentialHash: hashDeviceCredential("synthetic-WS-credential-for-owner-QA"),
