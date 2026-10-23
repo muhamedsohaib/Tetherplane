@@ -78,14 +78,19 @@ function Get-GuardDecision {
         [string]$TaskState,
         [int]$AgentCount,
         [bool]$AgentMatchesTask,
-        [bool]$CompetingAgentTaskEnabled
+        [bool]$CompetingAgentTaskEnabled,
+        [bool]$AgentPathUnavailable = $false
     )
     if ($CompetingAgentTaskEnabled) { throw "competing agent task enabled" }
     if ($AgentCount -gt 1) { throw "multiple native agents present" }
     if ($AgentCount -eq 1) {
-        if (-not $AgentMatchesTask -or $TaskState -ne 'Running') {
-            throw "unknown or orphan agent present"
+        if ($TaskState -ne 'Running') { throw "unknown or orphan agent present" }
+        if ($AgentPathUnavailable) {
+            # A least-privilege guard cannot inspect a higher-integrity
+            # process path; presence is NOT provenance. Never start again.
+            return 'present_unverified'
         }
+        if (-not $AgentMatchesTask) { throw "unknown or orphan agent present" }
         return 'healthy'
     }
     if ($AgentCount -eq 0 -and $TaskState -eq 'Ready') { return 'missing' }
@@ -172,19 +177,23 @@ function Invoke-GuardedAgentRecovery {
     })
     $processes = @(Get-CimInstance Win32_Process -Filter "Name='tetherd.exe'" -ErrorAction Stop)
     $matches = $false
+    $pathUnavailable = $false
     if ($processes.Count -eq 1) {
-        $matches = ([string]$processes[0].ExecutablePath -ieq $exe)
+        $processPath = [string]$processes[0].ExecutablePath
+        $pathUnavailable = [string]::IsNullOrWhiteSpace($processPath)
+        $matches = ($processPath -ieq $exe)
     }
     $decisionInputs = @{
         TaskState = [string]$task.State
         AgentCount = $processes.Count
         AgentMatchesTask = $matches
         CompetingAgentTaskEnabled = ($competing.Count -ne 0)
+        AgentPathUnavailable = $pathUnavailable
     }
     $decision = Get-GuardDecision @decisionInputs
 
-    if ($decision -eq 'healthy') {
-        return [pscustomobject]@{ status = 'healthy'; started = $false; agent_count = 1 }
+    if ($decision -eq 'healthy' -or $decision -eq 'present_unverified') {
+        return [pscustomobject]@{ status = $decision; started = $false; agent_count = 1 }
     }
     if (-not $Recover) {
         return [pscustomobject]@{ status = 'would_start'; started = $false; agent_count = 0 }
