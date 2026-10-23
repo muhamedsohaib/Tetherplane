@@ -866,6 +866,22 @@ function Get-ApprovalInstruction {
     ) -join "`n")
 }
 
+# Task Scheduler may return an unqualified local account name even when the
+# task was registered under DOMAIN\user. Compare canonical SIDs, not labels.
+# Unresolvable principals and other SIDs remain denied.
+function Test-CurrentDeviceTaskOwner {
+    param([string]$PrincipalUserId = "")
+    if ([string]::IsNullOrWhiteSpace($PrincipalUserId)) { return $false }
+    $expectedSid = Get-CurrentUserSid
+    if ($PrincipalUserId -match '^S-1-') { return ($PrincipalUserId -ceq $expectedSid) }
+    try {
+        $resolvedSid = ([Security.Principal.NTAccount]$PrincipalUserId).Translate([Security.Principal.SecurityIdentifier]).Value
+        return ($resolvedSid -ceq $expectedSid)
+    } catch {
+        return $false
+    }
+}
+
 function Install-DeviceAgentTask {
     param(
         [Parameter(Mandatory = $true)][string]$InstallPrefix,
@@ -910,10 +926,9 @@ function Install-DeviceAgentTask {
     }
     $runningAgents = @(Get-CimInstance Win32_Process -Filter "Name='tetherd.exe'" -ErrorAction Stop)
     if ($existingTask) {
-        $owner = [string]$existingTask.Principal.UserId
-        $owners = @((Get-CurrentUserSid), ([Security.Principal.WindowsIdentity]::GetCurrent()).Name)
         $actions = @($existingTask.Actions)
-        if ($owners -notcontains $owner -or $actions.Count -ne 1 -or
+        if (-not (Test-CurrentDeviceTaskOwner -PrincipalUserId ([string]$existingTask.Principal.UserId)) -or
+            $actions.Count -ne 1 -or
             [string]$actions[0].Execute -ine $tetherd -or
             [string]$actions[0].Arguments -cne $expectedActionArguments) {
             throw "existing task is not the exact native Tetherplane agent owned by this identity"
