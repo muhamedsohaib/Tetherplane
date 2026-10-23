@@ -1,78 +1,62 @@
+# The obsolete launcher/supervisor runtime test is replaced by the PR44
+# native Scheduled Task ownership contract. All process/task calls below are
+# mocked; real task lifecycle proof is in windows-native-onboarding-kit.ps1
+# on an explicitly opted-in disposable GitHub Windows runner.
 $repo = (Resolve-Path (Join-Path $PSScriptRoot "..\..")).Path
-. (Join-Path $PSScriptRoot "helpers.ps1")
 
-function Get-OwnAgents($install) {
-    return @(Get-Process -Name tetherd -ErrorAction SilentlyContinue | Where-Object {
-        try { $_.Path -like ($install + "*") } catch { $false }
-    })
-}
-
-function Split-CommandLine($commandLine) {
-    $tokens = @()
-    foreach ($match in [regex]::Matches($commandLine, '"([^"]*)"|(\S+)')) {
-        if ($match.Groups[1].Success) { $tokens += $match.Groups[1].Value } else { $tokens += $match.Groups[2].Value }
-    }
-    return $tokens
-}
-
-Describe "packaged supervisor launches the agent with the generated arguments" {
-    It "passes each generated argument intact and never starts a duplicate agent" {
-        $tetherd = Join-Path $repo "target\release\tetherd.exe"
-        if (-not (Test-Path -LiteralPath $tetherd -PathType Leaf)) {
-            throw "built tetherd is required for this acceptance test; run cargo build --release -p tetherd first"
-        }
+Describe "native Scheduled Task ownership for a newly paired Windows device" {
+    BeforeEach {
         . (Join-Path $repo "scripts\setup-windows-device.ps1")
-        $base = Join-Path ([IO.Path]::GetTempPath()) ("tp sup " + [Guid]::NewGuid().ToString("N"))
-        New-Item -ItemType Directory -Force -Path $base | Out-Null
-        $install = Join-Path $base "install dir"
-        $state = Join-Path $base "state dir"
-        $supervisors = @()
-        try {
-            New-Item -ItemType Directory -Force -Path (Join-Path $install "bin"),(Join-Path $install "launch"),(Join-Path $install "config") | Out-Null
-            Copy-Item -LiteralPath $tetherd -Destination (Join-Path $install "bin\tetherd.exe")
-            Copy-Item -LiteralPath (Join-Path $repo "packaging\windows\tetherplane-agent.ps1") -Destination (Join-Path $install "launch\tetherplane-agent.ps1")
-            Install-DeviceIdentity -StateDir $state -DeviceId "TESTPC01" | Out-Null
-            Mock Get-ScheduledTask { return $null }
-            Mock Register-ScheduledTask { return $null }
-            Mock Start-ScheduledTask { return $null }
-            Install-DeviceAgentTask -InstallPrefix $install -StateDir $state -DeviceId "TESTPC01" -RelayUrl "wss://127.0.0.1:9/device" | Out-Null
-
-            $expected = @(Get-Content -LiteralPath (Join-Path $install "config\agent-args.json") -Raw | ConvertFrom-Json | ForEach-Object { $_ } | ForEach-Object { [string]$_ })
-            $expected.Count | Should BeGreaterThan 8
-
-            $supervisorPath = Join-Path $install "launch\tetherplane-agent.ps1"
-            $argLine = ('-NoProfile -NonInteractive -ExecutionPolicy Bypass -File "{0}"' -f $supervisorPath)
-            $first = Start-Process -FilePath "powershell.exe" -ArgumentList $argLine -WindowStyle Hidden -PassThru
-            $supervisors += $first
-
-            $agent = $null
-            $deadline = [DateTime]::UtcNow.AddSeconds(30)
-            while ([DateTime]::UtcNow -lt $deadline) {
-                $agents = @(Get-OwnAgents $install)
-                if ($agents.Count -ge 1) { $agent = $agents[0]; break }
-                Start-Sleep -Milliseconds 300
-            }
-            if (-not $agent) { throw "the supervisor did not start the agent within 30 seconds" }
-
-            $cim = Get-CimInstance Win32_Process -Filter ("ProcessId = " + $agent.Id)
-            $tokens = @(Split-CommandLine ([string]$cim.CommandLine))
-            $tokens.Count | Should Be ($expected.Count + 1)
-            $tokens[0] | Should Be (Join-Path $install "bin\tetherd.exe")
-            (($tokens | Select-Object -Skip 1) -join "|") | Should Be ($expected -join "|")
-
-            $second = Start-Process -FilePath "powershell.exe" -ArgumentList $argLine -WindowStyle Hidden -PassThru
-            $supervisors += $second
-            $secondExited = $second.WaitForExit(15000)
-            $secondExited | Should Be $true
-            Start-Sleep -Milliseconds 1500
-            @(Get-OwnAgents $install).Count | Should Be 1
-        } finally {
-            foreach ($supervisor in $supervisors) {
-                if ($supervisor -and -not $supervisor.HasExited) { try { $supervisor.Kill() } catch { } }
-            }
-            foreach ($child in @(Get-OwnAgents $install)) { try { $child.Kill() } catch { } }
-            Start-Sleep -Milliseconds 800
-            Remove-Item -LiteralPath $base -Recurse -Force -ErrorAction SilentlyContinue
+        $script:tempRoot = Join-Path ([IO.Path]::GetTempPath()) ("tp-native-task-unit-" + [Guid]::NewGuid().ToString("N"))
+        $script:install = Join-Path $script:tempRoot "install"
+        $script:state = Join-Path $script:tempRoot "state"
+        $script:exe = Join-Path $script:install "bin\tetherd.exe"
+        $script:argsPath = Join-Path $script:install "config\agent-args.json"
+        New-Item -ItemType Directory -Path (Join-Path $script:install "bin"),(Join-Path $script:install "config") -Force | Out-Null
+        [IO.File]::WriteAllText($script:exe, "CI synthetic executable - never launch")
+        [void](Install-DeviceIdentity -StateDir $script:state -DeviceId "TESTPC01")
+        Mock Get-ScheduledTask { return $null }
+        Mock Register-ScheduledTask { return $null }
+        Mock Start-ScheduledTask { return $null }
+    }
+    AfterEach {
+        if ($script:tempRoot -and (Test-Path -LiteralPath $script:tempRoot)) {
+            Remove-Item -LiteralPath $script:tempRoot -Recurse -Force -ErrorAction SilentlyContinue
         }
+    }
+
+    It "owns tetherd directly and hides device identity behind an arguments file" {
+        Mock Get-CimInstance { return @() }
+        $result = Install-DeviceAgentTask -InstallPrefix $script:install -StateDir $script:state -DeviceId "TESTPC01" -RelayUrl "wss://example.invalid/device"
+        $result.native_task | Should Be $true
+        $result.started | Should Be $true
+        $expectedArguments = '--arguments-file "' + $script:argsPath + '"'
+        Assert-MockCalled Register-ScheduledTask -Exactly 1 -Scope It -ParameterFilter {
+            [string]$Action.Execute -ieq $script:exe -and
+            [string]$Action.Arguments -ceq $expectedArguments -and
+            [string]$Settings.MultipleInstances -eq "IgnoreNew" -and
+            [int]$Settings.RestartCount -eq 99 -and
+            [string]$Principal.RunLevel -eq "Limited"
+        }
+        Assert-MockCalled Start-ScheduledTask -Exactly 1 -Scope It
+        $args = @(Get-Content -LiteralPath $script:argsPath -Raw | ConvertFrom-Json)
+        $args -contains "--device-credential-file" | Should Be $true
+        $args -contains (Join-Path $script:state "device.credential") | Should Be $true
+        $args -contains "--principal-profile" | Should Be $true
+        $profile = Get-Content -LiteralPath (Join-Path $script:state "principal.json") -Raw | ConvertFrom-Json
+        @($profile.allowed_capabilities) | Should Be @("device.status")
+    }
+
+    It "rejects an already running agent before registering a competing task" {
+        Mock Get-CimInstance {
+            return [pscustomobject]@{
+                Name = "tetherd.exe"
+                ExecutablePath = $script:exe
+            }
+        }
+        { Install-DeviceAgentTask -InstallPrefix $script:install -StateDir $script:state -DeviceId "TESTPC01" -RelayUrl "wss://example.invalid/device" } | Should Throw
+        Assert-MockCalled Register-ScheduledTask -Times 0 -Exactly -Scope It
+        Assert-MockCalled Start-ScheduledTask -Times 0 -Exactly -Scope It
+        Test-Path -LiteralPath $script:argsPath | Should Be $false
     }
 }
