@@ -41,7 +41,9 @@ try {
 
     $node = (Get-Command node.exe -ErrorAction Stop).Source
     $fixture = (Resolve-Path (Join-Path $PSScriptRoot 'fixtures/cdp-owned-idle.cjs')).Path
-    $child = Start-Process -FilePath $node -ArgumentList ('"' + $fixture + '"') -WorkingDirectory $repoRoot -WindowStyle Hidden -PassThru
+    # Reuse the isolated CI host console; creating a new console can attach an
+    # OS-managed conhost descendant and falsify the one-process fixture contract.
+    $child = Start-Process -FilePath $node -ArgumentList ('"' + $fixture + '"') -WorkingDirectory $repoRoot -NoNewWindow -PassThru
     $childStarted = $child.StartTime.ToUniversalTime()
 
     # Fail closed on first identity observation; no metric is accepted before
