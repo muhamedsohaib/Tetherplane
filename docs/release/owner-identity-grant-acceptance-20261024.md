@@ -9,6 +9,7 @@ Date: 2026-10-24. Draft review only. **Do not deploy to VAULTER, activate enforc
 - The draft relay can bind a **separate management identity** using `--authority-config` with exact `owner.accountId`, `owner.clientId`, `owner.principalId`, and a protected absolute grant-state path. Only an authenticated client matching all three can administer grants. The **same person/principal in the ordinary ChatGPT OAuth client is not the owner manager**.
 - **Live management identity NOT YET VERIFIED.** No authorization, configuration file, process arguments, tokens, private keys or grants were read from VAULTER; its Tetherplane principal does not expose process or browser control. Do not evade that boundary.
 - The opt-in authority defaults to `enabled:false`; the presence of a registered OAuth client or a green test does **not** imply enforcement is active.
+- **Fail-closed state guarantee:** once an operator explicitly configures `--authority-config`, the designated protected persistent authority-state file MUST already exist and be valid. Its absence now causes relay initialization to fail instead of silently dropping back to unrestricted legacy authorization. Bootstrap requires an explicit owner-controlled, access-restricted JSON state `{ "version":1, "revision":0, "enabled":false, "grants":[] }` before enabling the configured relay. Do not delete or regenerate the live state after activation. State backup and rollback must preserve grants and revisions.
 
 ## Proposed minimum viable access matrix (not owner-approved)
 

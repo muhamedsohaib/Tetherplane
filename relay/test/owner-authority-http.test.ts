@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import { once } from "node:events";
-import { mkdtemp, rm } from "node:fs/promises";
+import { mkdtemp, rm, writeFile } from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
 import test from "node:test";
@@ -34,9 +34,11 @@ async function harness(t: import("node:test").TestContext) {
     { token: "synthetic-other-token", ...other },
     { token: "synthetic-outsider-token", ...outsider },
   ]);
+  const stateFile = path.join(dir, "authority.json");
+  await writeFile(stateFile, JSON.stringify({ version: 1, revision: 0, enabled: false, grants: [] }) + "\n", { mode: 0o600 });
   const relay = await RelayServer.create({
     authenticator, allowInsecureLocalhost: true,
-    authority: { owner, stateFile: path.join(dir, "authority.json") },
+    authority: { owner, stateFile },
   });
   const address = await relay.listen({ host: "127.0.0.1", port: 0 });
   const wsList: WebSocket[] = [];

@@ -98,7 +98,8 @@ export class OwnerDeviceAuthority {
       let raw: string;
       try { raw = await readFile(authority.#stateFile, "utf8"); }
       catch (e) {
-        if ((e as NodeJS.ErrnoException).code === "ENOENT") return authority;
+        if ((e as NodeJS.ErrnoException).code === "ENOENT")
+          throw new Error("owner authority state file is missing; refusing legacy authorization fallback");
         throw e;
       }
       const parsed = JSON.parse(raw) as unknown;

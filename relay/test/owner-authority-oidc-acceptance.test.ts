@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import { randomUUID } from "node:crypto";
-import { mkdtemp, readFile, rm } from "node:fs/promises";
+import { mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
 import test from "node:test";
@@ -91,6 +91,7 @@ test("real signed OAuth identities enforce per-client/device presets, owner sepa
   assert.equal(await auth.authenticate(wrongAudienceToken), null);
 
   const stateFile = path.join(workdir, "owner-authority.json");
+  await writeFile(stateFile, JSON.stringify({ version: 1, revision: 0, enabled: false, grants: [] }) + "\n", { mode: 0o600 });
   const relay = await RelayServer.create({
     authenticator: auth,
     authority: { owner, stateFile },

@@ -1,5 +1,5 @@
 import assert from "node:assert/strict";
-import { mkdtemp, readFile, rm } from "node:fs/promises";
+import { mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
 import test from "node:test";
@@ -30,9 +30,24 @@ async function fixture(t: import("node:test").TestContext) {
   const pending = await registry.startPairing({ deviceId: "Surface", credentialHash: hashDeviceCredential("synthetic-owner-authority-secret") });
   const paired = await registry.approvePairing({ accountId: owner.accountId, userCode: pending.userCode });
   const file = path.join(folder, "authority.json");
+  await writeFile(file, JSON.stringify({ version: 1, revision: 0, enabled: false, grants: [] }) + "\n", { mode: 0o600 });
   const auth = await OwnerDeviceAuthority.open({ owner, registry, stateFile: file });
   return { registry, auth, file, paired };
 }
+
+test("configured owner authority refuses missing policy state instead of silently re-enabling legacy access", async t => {
+  const folder = await mkdtemp(path.join(os.tmpdir(), "tp-owner-missing-state-"));
+  t.after(async () => { await rm(folder, { recursive: true, force: true }); });
+  const registry = await DeviceRegistry.open();
+  await assert.rejects(
+    () => OwnerDeviceAuthority.open({
+      owner,
+      registry,
+      stateFile: path.join(folder, "never-created.json"),
+    }),
+    /state file is missing; refusing legacy authorization fallback/,
+  );
+});
 
 test("owner grants require explicit identity, device pairing, revision, and confirmation", async t => {
   const f = await fixture(t);
