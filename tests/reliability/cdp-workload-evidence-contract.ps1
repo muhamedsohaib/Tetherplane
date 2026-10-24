@@ -19,6 +19,7 @@ $child = [pscustomobject]@{
 $sample = Get-WorkloadScopedSample -Processes @($root,$child) -RootProcessId 20001 -RootStartedUtc $time -ElapsedMilliseconds 2000
 Should ($sample.valid -eq $true -and $sample.process_count -eq 2) 'Correct tree rejected'
 Should ($sample.working_set_mib -eq 15) 'Resource aggregation incorrect'
+Should (-not ($sample.PSObject.Properties.Name -contains 'identities')) 'Successful observer exposed process identities'
 
 $reuse = Get-WorkloadScopedSample -Processes @($root,$child) -RootProcessId 20001 -RootStartedUtc $time.AddSeconds(-30) -ElapsedMilliseconds 2000
 Should ($reuse.valid -eq $false) 'Reused root PID accepted'
@@ -30,11 +31,19 @@ Should ($older.valid -eq $true -and $older.process_count -eq 1) 'Older unrelated
 
 $orphan = Get-WorkloadScopedSample -Processes @($child) -RootProcessId 20001 -RootStartedUtc $time -ElapsedMilliseconds 2000
 Should ($orphan.valid -eq $false) 'Missing root treated as valid'
+Should (-not ($orphan.PSObject.Properties.Name -contains 'identities')) 'Unknown observer sample exposed process identities'
 
 $missing = $root.PSObject.Copy()
 $missing.KernelModeTime = $null
 $sampleMissing = Get-WorkloadScopedSample -Processes @($missing) -RootProcessId 20001 -RootStartedUtc $time -ElapsedMilliseconds 2000
 Should ($sampleMissing.valid -eq $true -and $null -eq $sampleMissing.cpu_time_ms) 'Missing CPU metric silently reported as zero'
+
+# A broken WMI metric getter must not bubble private exception text or crash the sampler.
+$broken = $root.PSObject.Copy()
+$broken.PSObject.Properties.Remove('WorkingSetSize')
+Add-Member -InputObject $broken -MemberType ScriptProperty -Name WorkingSetSize -Value { throw 'private-process-marker' }
+$observerError = Get-WorkloadScopedSample -Processes @($broken) -RootProcessId 20001 -RootStartedUtc $time -ElapsedMilliseconds 2000
+Should ($observerError.valid -eq $false) 'Throwing process observer falsely returned success'
 
 $run = [guid]::NewGuid().ToString()
 $sha = '506cae4ad96a893210e6c095f433431dd87fdc88'
@@ -64,4 +73,4 @@ foreach ($field in @('run_id','source_sha','test_exit_code','guard_expired','pro
 $old = $receipt.PSObject.Copy()
 $old.ended_utc='2026-10-24T01:00:00Z'
 Should (-not (Test-WorkloadOutcome -Receipt $old -ExpectedRunId $run -ExpectedSourceSha $sha)) 'Overlong stale receipt accepted'
-Write-Output 'CDP_WORKLOAD_FAIL_CLOSED_CONTRACT=16_OF_16'
+Write-Output 'CDP_WORKLOAD_FAIL_CLOSED_CONTRACT=PASS'
