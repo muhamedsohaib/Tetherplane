@@ -46,7 +46,7 @@ try {
 
     # Fail closed on first identity observation; no metric is accepted before
     # Get-WorkloadScopedSample checks both PID and exact process creation time.
-    while ($sampleRows.Count -lt 12 -and $stopwatch.ElapsedMilliseconds -lt 6_500) {
+    while ($sampleRows.Count -lt 12 -and $stopwatch.ElapsedMilliseconds -lt 6500) {
         if ($child.HasExited) { break }
         try {
             $snapshot = @(Get-CimInstance -ClassName Win32_Process -ErrorAction Stop)
@@ -74,7 +74,7 @@ try {
     }
     if ($sampleRows.Count -lt 2) { throw 'insufficient_observations' }
     # The fixture exits by itself. Never extend Chromium's separate 12s limit.
-    if (-not $child.WaitForExit(6_000)) {
+    if (-not $child.WaitForExit(6000)) {
         $guardExpired = $true
         throw 'fixture_guard_expired'
     }
@@ -110,7 +110,7 @@ try {
                 }
                 if ($currentlyOwned) {
                     $child.Kill()
-                    [void]$child.WaitForExit(3_000)
+                    [void]$child.WaitForExit(3000)
                 } else {
                     $failureStage = 'cleanup_identity_unverified'
                 }
