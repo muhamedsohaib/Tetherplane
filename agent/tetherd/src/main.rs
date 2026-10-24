@@ -9,6 +9,7 @@ mod stdio_rpc;
 
 use std::path::PathBuf;
 use std::sync::Arc;
+use std::time::Duration;
 
 use runtime::AgentRuntime;
 use tether_browser_provider::{BrowserBridgeConfig, BrowserProvider};
