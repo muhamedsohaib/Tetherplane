@@ -9,7 +9,7 @@
   const oldShowPortal=window.showPortalView;
   const oldAppendMiniLog=window.appendMiniLog;
   const oldToggleTheme=window.toggleThemeMode;
-  const live={csrf:null,expiresAt:null,relayOrigin:null,devices:[],observedAt:null,mutationUncertain:false,inFlight:false};
+  const live={csrf:null,expiresAt:null,relayOrigin:null,devices:[],observedAt:null,directoryUnavailable:false,mutationUncertain:false,inFlight:false,health:new Map()};
   const $ = id => document.getElementById(id);
   const text = value => tpEsc(String(value??''));
   const when = value => value ? tpTime(value) : 'Not reported';
@@ -20,9 +20,100 @@
   function log(value){oldAppendMiniLog.call(window,text(String(value).slice(0,2600)));}
   function toast(value){window.showToast(String(value).slice(0,200));}
   function setText(id,value){const node=$(id);if(node)node.textContent=String(value);}
+  // Functional fleet replaces the decorative onboarding slider, never the source artwork.
+  // State comes only from the authenticated relay directory and explicit status calls.
+  function renderFleetPanel(){
+    const body=$('tp-fleet-body');
+    if(!body||typeof document.createElement!=='function')return;
+    body.replaceChildren();
+    const count=$('tp-fleet-count'),button=$('tp-fleet-action'),expires=$('tp-fleet-expiry');
+    if(count)count.textContent=tpDemo.session?String(live.devices.length)+' ACCOUNT RECORDS':'SIGN IN REQUIRED';
+    if(button){
+      button.textContent=tpDemo.session?'[ Refresh directory ]':'[ Sign in ]';
+      button.disabled=live.inFlight;
+    }
+    if(expires){
+      const n=Date.parse(live.expiresAt||'');
+      const remaining=Number.isFinite(n)?Math.max(0,Math.ceil((n-Date.now())/60000)):null;
+      expires.textContent=!tpDemo.session?'No active session':remaining===null?'Session expiry not reported':remaining===0?'Session expired':'Session expires in '+remaining+' min';
+    }
+    function message(value){
+      const span=document.createElement('span');
+      span.className='text-[11px] text-white/60';
+      span.textContent=value;
+      body.appendChild(span);
+    }
+    if(!tpDemo.session){message('Authenticate to load the account device directory.');return;}
+    if(live.directoryUnavailable){message('Directory unavailable. Refresh before trusting device status.');return;}
+    if(!live.devices.length){message('No account devices reported by the relay.');return;}
+    for(const d of live.devices){
+      const row=document.createElement('div');
+      row.className='flex items-center justify-between gap-2 text-[11px]';
+      const name=document.createElement('span');
+      name.className='text-white/90 font-medium';
+      name.textContent=String(d.deviceId);
+      const info=document.createElement('span');
+      info.className='text-white/60 text-right';
+      const status=d.revokedAt?'REVOKED':d.connectivity==='relay_connected'?'RELAY CONNECTED':d.connectivity==='relay_disconnected'?'DISCONNECTED':'NOT REPORTED';
+      const health=live.health.get(d.deviceId);
+      info.textContent=status+(health?' / '+health.label:'');
+      row.appendChild(name);row.appendChild(info);
+      if(!d.revokedAt&&d.connectivity!=='relay_disconnected'){
+        const action=document.createElement('button');
+        action.type='button';
+        action.className='mono-btn rounded-xl px-2 py-1 text-[10px]';
+        action.textContent='[ Status ]';
+        action.disabled=live.inFlight||live.mutationUncertain;
+        action.addEventListener('click',()=>{void window.portalDeviceStatus(d.deviceId);});
+        row.appendChild(action);
+      }
+      body.appendChild(row);
+    }
+  }
+  function installFunctionalHome(){
+    const artButton=$('zen-btn');
+    if(artButton&&typeof artButton.remove==='function')artButton.remove();
+    // Do not change the animated background. Remove only its click-to-hide interaction.
+    const artHit=document.querySelector?.('#portal-home [onclick="toggleZenMode()"]');
+    if(artHit){
+      artHit.removeAttribute?.('onclick');
+      artHit.removeAttribute?.('title');
+      artHit.classList?.remove?.('cursor-pointer');
+    }
+    const slider=$('capacity-slider');
+    const guide=slider?.closest?.('article.card-slot');
+    if(guide&&typeof document.createElement==='function'){
+      guide.setAttribute('data-tp-fleet','true');
+      const header=document.createElement('div');
+      header.className='flex items-center justify-between text-[10px] tracking-widest uppercase text-white/45';
+      const heading=document.createElement('span');heading.textContent='[04] Live fleet';
+      const count=document.createElement('span');count.id='tp-fleet-count';count.className='text-white/70';
+      header.appendChild(heading);header.appendChild(count);
+      const description=document.createElement('p');description.className='text-[11px] text-white/60';
+      description.textContent='Observed relay state. Device-local permissions remain final.';
+      const body=document.createElement('div');body.id='tp-fleet-body';body.className='space-y-2';
+      const footer=document.createElement('div');footer.className='flex items-center justify-between gap-2';
+      const action=document.createElement('button');action.id='tp-fleet-action';
+      action.type='button';action.className='mono-btn rounded-xl px-3 py-2 text-[11px]';
+      action.addEventListener('click',()=>{
+        if(tpDemo.session)window.refreshPortalDirectory();
+        else oldShowPortal.call(window,'auth');
+      });
+      const expiry=document.createElement('span');expiry.id='tp-fleet-expiry';
+      expiry.className='text-[10px] text-white/50 text-right';
+      footer.appendChild(action);footer.appendChild(expiry);
+      guide.replaceChildren(header,description,body,footer);
+    }
+    const consoleLog=$('mini-console-log');
+    if(consoleLog)consoleLog.textContent='';
+    renderFleetPanel();
+  }
+
+
   function clearLive(){
-    live.csrf=null;live.expiresAt=null;live.relayOrigin=null;live.devices=[];live.observedAt=null;live.mutationUncertain=false;
+    live.csrf=null;live.expiresAt=null;live.relayOrigin=null;live.devices=[];live.observedAt=null;live.mutationUncertain=false;live.directoryUnavailable=false;live.health.clear();
     tpDemo.session=false;tpDemo.devices=[];tpDemo.refreshAt=null;tpDemo.pendingRevokeId=null;
+    renderFleetPanel();
     setText('active-node-summary','SIGN IN REQUIRED');
     setText('mini-console-log','');
   }
@@ -37,7 +128,8 @@
     tpDemo.devices=payload.devices.map(d=>({id:d.deviceId,pairedAt:d.pairedAt,revokedAt:d.revokedAt,status:stateLabel(d),connectivity:d.connectivity}));
     tpDemo.refreshAt=new Date(payload.observedAt);
     setText('active-node-summary',`${payload.devices.length} DIRECTORY RECORDS`);
-    live.mutationUncertain=false;
+    live.mutationUncertain=false;live.directoryUnavailable=false;live.health.clear();
+    renderFleetPanel();
   }
   async function api(path,{method='GET',body=null,csrf=true}={}) {
     const controller=new AbortController(),tm=setTimeout(()=>controller.abort(),12000);
@@ -66,7 +158,7 @@
       const data=await api('/api/devices');hydrate(data);
       if(tpCurrentView!=='home')window.renderActivePortalPage();
       if(notify){toast('Directory refreshed from authenticated relay');log(`[#] ${live.devices.length} account device record(s).`);}
-    }catch(e){live.devices=[];tpDemo.devices=[];tpDemo.refreshAt=null;live.mutationUncertain=true;failure(e);}
+    }catch(e){live.devices=[];tpDemo.devices=[];tpDemo.refreshAt=null;live.mutationUncertain=true;live.directoryUnavailable=true;renderFleetPanel();failure(e);}
     finally{live.inFlight=false;}
   }
   function cardDevice(d,review=false){
@@ -185,6 +277,39 @@
   };
   window.tpDecideApproval=function(){toast('Real approval must be completed using authorized device infrastructure.');};
   window.tpVerifyChallenge=function(){toast('No browser challenge exists in this portal session.');};
+  window.portalDeviceStatus=async function(deviceId){
+    const device=live.devices.find(d=>d.deviceId===deviceId&&d.revokedAt===null);
+    if(!tpDemo.session||!device||device.connectivity==='relay_disconnected'){
+      log('[!] Device is not available to this signed-in account.');return;
+    }
+    if(live.inFlight||live.mutationUncertain){
+      log('[!] Refresh and verify the previous request before another device operation.');return;
+    }
+    live.inFlight=true;
+    renderFleetPanel();
+    try{
+      const payload=await api('/api/mcp/call',{method:'POST',body:{tool:'device',op:'status',device:deviceId,args:{}}});
+      const result=payload?.result;
+      if(result?.isError||result?.structuredContent?.error){
+        log('[!] Status was denied or unavailable for '+deviceId+'.');return;
+      }
+      const current=result?.structuredContent;
+      if(!current||typeof current!=='object'||typeof current.agent_version!=='string'){
+        log('[!] Device status response was not verified.');return;
+      }
+      const state=current.agent_liveness?.state;
+      const label=state==='ready'?'READY':state==='offline'?'OFFLINE':'AGENT RESPONDED';
+      live.health.set(deviceId,{label,observedAt:new Date().toISOString()});
+      log('[+] '+deviceId+' status checked: '+label+'.');
+    }catch(error){
+      failure(error,false);
+    }finally{
+      live.inFlight=false;renderFleetPanel();
+      if(tpCurrentView==='devices')window.renderActivePortalPage();
+    }
+  };
+
+
   window.submitMiniCommand=async function(event){
     event?.preventDefault();
     const input=$('mini-cmd-input');const raw=(input?.value||'').trim();if(input)input.value='';if(!raw)return;
@@ -196,7 +321,6 @@
     if(lower==='status'){log(tpDemo.session?`[#] Authenticated. ${live.devices.length} directory records at ${when(live.observedAt)}; no inferred agent health.`:'[!] Sign in to query the actual relay.');return;}
     if(lower==='clear'){$('mini-console-log').textContent='';return;}
     if(['theme','ivory','light','dark'].includes(lower)){if(lower==='theme'||lower==='ivory'||(lower==='light'&&!state.ivoryMode)||(lower==='dark'&&state.ivoryMode))oldToggleTheme.call(window);log('[+] Appearance preference updated.');return;}
-    if(['zen','peek'].includes(lower)){window.toggleZenMode();return;}
     if(!lower.startsWith('mcp ')){log('[?] Unknown command. Type help. Destructive commands require explicit MCP authority.');return;}
     if(!tpDemo.session){log('[!] Sign in before using MCP.');oldShowPortal.call(window,'auth');return;}
     const match=/^mcp\s+(device|files|process|browser|desktop|batch)\s+([a-z][a-z0-9_]{0,63})\s+(\S+)(?:\s+(\{[\s\S]*\}))?$/i.exec(raw);
@@ -215,8 +339,10 @@
   window.runQuickCmd=function(value){const input=$('mini-cmd-input');if(input)input.value=value;void window.submitMiniCommand({preventDefault(){}});};
   window.renderMinimalNodes();
   window.addEventListener('load',async()=>{
+    installFunctionalHome();
+    if(typeof window.setInterval==='function')window.setInterval(renderFleetPanel,30000);
     setText('active-node-summary','SIGN IN REQUIRED');
     try{const data=await api('/api/session');hydrate(data);window.renderMinimalNodes();if(tpCurrentView!=='home')window.renderActivePortalPage();log('[#] Recovered existing authenticated local session.');}
-    catch(e){if(e.status!==401){log('[!] Local portal service unavailable or session could not be checked.');}}
+    catch(e){if(e.status!==401){log('[!] Local portal service unavailable or session could not be checked.');}else{log('[#] Sign in to access the account device directory.');}}
   });
 })();
