@@ -64,27 +64,28 @@ function Get-WorkloadScopedSample {
     $workingKnown = $true
     $cpuKnown = $true
     $ioKnown = $true
-    foreach ($key in $owned.Keys) {
-        $p = $byPid[$key]
-        if ($null -eq $p.WorkingSetSize) { $workingKnown = $false }
-        else { $working += [double]$p.WorkingSetSize }
-        if ($null -eq $p.KernelModeTime -or $null -eq $p.UserModeTime) { $cpuKnown = $false }
-        else { $cpu += [double]$p.KernelModeTime + [double]$p.UserModeTime }
-        if ($null -eq $p.ReadTransferCount -or $null -eq $p.WriteTransferCount) { $ioKnown = $false }
-        else {
-            $read += [double]$p.ReadTransferCount
-            $write += [double]$p.WriteTransferCount
+    # WMI/CIM observation can throw while retrieving counters. Treat every
+    # observer error as unknown instead of printing the exception or succeeding.
+    try {
+        foreach ($key in $owned.Keys) {
+            $p = $byPid[$key]
+            if ($null -eq $p.WorkingSetSize) { $workingKnown = $false }
+            else { $working += [double]$p.WorkingSetSize }
+            if ($null -eq $p.KernelModeTime -or $null -eq $p.UserModeTime) { $cpuKnown = $false }
+            else { $cpu += [double]$p.KernelModeTime + [double]$p.UserModeTime }
+            if ($null -eq $p.ReadTransferCount -or $null -eq $p.WriteTransferCount) { $ioKnown = $false }
+            else {
+                $read += [double]$p.ReadTransferCount
+                $write += [double]$p.WriteTransferCount
+            }
         }
-    }
+    } catch { return $missing }
     return [pscustomobject]@{
         valid=$true; elapsed_ms=$ElapsedMilliseconds; process_count=$owned.Count;
         working_set_mib=$(if($workingKnown){[math]::Round($working / 1MB, 2)}else{$null});
         cpu_time_ms=$(if($cpuKnown){[math]::Round($cpu / 10000, 1)}else{$null});
         sampled_read_mib=$(if($ioKnown){[math]::Round($read / 1MB, 2)}else{$null});
-        sampled_write_mib=$(if($ioKnown){[math]::Round($write / 1MB, 2)}else{$null});
-        identities=@($owned.GetEnumerator() | ForEach-Object {
-            [pscustomobject]@{ pid=[int]$_.Key; created_utc=$_.Value }
-        })
+        sampled_write_mib=$(if($ioKnown){[math]::Round($write / 1MB, 2)}else{$null})
     }
 }
 
