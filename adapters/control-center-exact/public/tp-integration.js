@@ -24,7 +24,16 @@
 
   // Functional fleet replaces the decorative onboarding slider, never the source artwork.
   // State comes only from the authenticated relay directory and explicit status calls.
+  function renderConnectionPanel(){
+    const stateEl=$('tp-connection-status');
+    const observed=$('tp-connection-refreshed');
+    const action=$('tp-connection-action');
+    if(stateEl)stateEl.textContent=tpDemo.session?'AUTHENTICATED SESSION':'SIGN IN REQUIRED';
+    if(observed)observed.textContent=tpDemo.session?'Directory refreshed '+when(live.observedAt):'No authenticated directory observation.';
+    if(action)action.textContent=tpDemo.session?'[ Open Control Center ]':'[ Sign in ]';
+  }
   function renderFleetPanel(){
+    renderConnectionPanel();
     const body=$('tp-fleet-body');
     if(!body||typeof document.createElement!=='function')return;
     body.replaceChildren();
@@ -105,6 +114,32 @@
       expiry.className='text-[10px] text-white/50 text-right';
       footer.appendChild(action);footer.appendChild(expiry);
       guide.replaceChildren(header,description,body,footer);
+    }
+    // Replace purely illustrative percentage bars with authenticated session facts.
+    const marker=$('tel-hash');
+    const connection=marker?.closest?.('article.card-slot');
+    if(connection&&typeof document.createElement==='function'){
+      connection.setAttribute('data-tp-session','true');
+      const header=document.createElement('div');
+      header.className='flex items-center justify-between text-[10px] tracking-widest uppercase text-white/45';
+      header.textContent='[02] Authenticated connection';
+      const status=document.createElement('p');status.id='tp-connection-status';
+      status.className='text-sm font-semibold tracking-tight text-white';
+      const observed=document.createElement('p');observed.id='tp-connection-refreshed';
+      observed.className='text-[11px] text-white/60';
+      const explanation=document.createElement('p');
+      explanation.className='text-[11px] text-white/55';
+      explanation.textContent='Relay access and device-local permission are separate. No synthetic readiness percentages.';
+      const action=document.createElement('button');action.id='tp-connection-action';
+      action.type='button';action.className='mono-btn rounded-xl px-3 py-2 text-[11px]';
+      action.addEventListener('click',()=>oldShowPortal.call(window,tpDemo.session?'control':'auth'));
+      connection.replaceChildren(header,status,observed,explanation,action);
+    }
+    // Hero action goes to real controls when the owner already authenticated.
+    const homeAction=document.querySelector?.("#portal-home button[onclick=\"showPortalView('auth')\"]");
+    if(homeAction){
+      homeAction.removeAttribute?.('onclick');
+      homeAction.addEventListener('click',()=>oldShowPortal.call(window,tpDemo.session?'control':'auth'));
     }
     const consoleLog=$('mini-console-log');
     if(consoleLog)consoleLog.textContent='';

@@ -20,3 +20,11 @@ Security: existing authenticated account directory and manual MCP device.status 
 Leno to VAULTER administrator access uses an independent authorized SSH channel. Existing dedicated private key was already present; added Leno host alias vaulter-admin with strict host verification. VAULTER account is in enabled Administrators group with High Mandatory Level. No new SSH key, privilege grant, OAuth client or MCP policy change.
 
 Live UI-only rollout can use a hash-verified atomic script replacement with preserved backup and no process restart. Production authority changes remain separately gated.
+
+## Final functional-UI refinement (2026-10-24)
+- Replaced static Connection Architecture percentages (33/66/100) with authenticated session and last directory-refresh facts, or an explicit sign-in requirement.
+- Removed the useless hero sign-in detour when a session is already valid. Both hero and session-card buttons now open authenticated controls; signed-out users receive sign-in.
+- No original artwork or theme CSS changed. No new backend route, OAuth privilege, per-device grant or model-driven process command added.
+- New behavior first failed in an isolated test on the previous UI candidate, then all 3/3 new UI tests passed after implementation.
+- Live-compatible Control Center full suite: 23/23 pass. PR 57 stacked full suite: 33/34 pass, with the existing Windows pairing-client JSON error still present and unrelated to this UI diff.
+- Visual DOM examination in headless Edge through VAULTER SSH was unavailable; operator screenshot remains a separate visual gate.
