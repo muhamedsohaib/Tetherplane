@@ -557,7 +557,10 @@ fn core_stdio_status_survives_unavailable_browser_bridge_without_repairing() {
     }
 
     assert_eq!(responses[STATUS_ID]["status"], "success");
-    assert_eq!(responses[STATUS_ID]["data"]["policy_mode"], "background_only");
+    assert_eq!(
+        responses[STATUS_ID]["data"]["policy_mode"],
+        "background_only"
+    );
     assert_eq!(responses[CAPS_ID]["status"], "success");
     let providers = responses[CAPS_ID]["data"]["providers"].as_array().unwrap();
     let browser = providers
