@@ -13,7 +13,7 @@ function Get-WorkloadScopedSample {
     $missing = [pscustomobject]@{
         valid=$false; elapsed_ms=$ElapsedMilliseconds; process_count=$null;
         working_set_mib=$null; cpu_time_ms=$null; sampled_read_mib=$null;
-        sampled_write_mib=$null; identities=@()
+        sampled_write_mib=$null
     }
     if ($RootProcessId -le 0 -or $Processes.Count -gt 2048) { return $missing }
     $byPid = @{}
