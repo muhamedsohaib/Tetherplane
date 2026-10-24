@@ -42,6 +42,7 @@ Should ($sampleMissing.valid -eq $true -and $null -eq $sampleMissing.cpu_time_ms
 $broken = $root.PSObject.Copy()
 $broken.PSObject.Properties.Remove('WorkingSetSize')
 Add-Member -InputObject $broken -MemberType ScriptProperty -Name WorkingSetSize -Value { throw 'private-process-marker' }
+Should ($broken.PSObject.Properties['WorkingSetSize'].MemberType -eq [System.Management.Automation.PSMemberTypes]::ScriptProperty) 'Fixture failed to create a script-property getter'
 $observerError = Get-WorkloadScopedSample -Processes @($broken) -RootProcessId 20001 -RootStartedUtc $time -ElapsedMilliseconds 2000
 Should ($observerError.valid -eq $false) 'Throwing process observer falsely returned success'
 
