@@ -68,6 +68,10 @@ try {
             $sampleRows.Add($sample)
         } catch {
             $observerErrors++
+            # Preserve only fixed diagnostic categories. Never copy observer
+            # exception messages or paths into the evidence or CI output.
+            if ($_.Exception.Message -eq 'unexpected_descendant') { throw 'observer_scope' }
+            if ($_.Exception.Message -eq 'invalid_process_identity') { throw 'observer_identity' }
             throw 'observer_failed'
         }
         Start-Sleep -Milliseconds 300
@@ -88,6 +92,8 @@ try {
             'source_mismatch' { $failureStage = 'source' }
             'receipt_collision' { $failureStage = 'receipt' }
             'observer_failed' { $failureStage = 'observer' }
+            'observer_scope' { $failureStage = 'observer_scope' }
+            'observer_identity' { $failureStage = 'observer_identity' }
             'insufficient_observations' { $failureStage = 'observer' }
             'fixture_guard_expired' { $failureStage = 'guard' }
             'fixture_nonzero_exit' { $failureStage = 'fixture' }
@@ -137,6 +143,7 @@ try {
         ended_utc = $ended.ToString('o')
         process_started = $null -ne $childStarted
         root_identity_verified = [bool]$rootVerified
+        only_owned_fixture_process = [bool]$scopeExclusive
         samples = $sampleRows.Count
         observer_errors = $observerErrors
         unknown_metric_samples = $metricUnknown
@@ -154,7 +161,7 @@ try {
             $parsed = Get-Content -LiteralPath $receiptPath -Raw -ErrorAction Stop | ConvertFrom-Json -ErrorAction Stop
             $accepted = Test-WorkloadOutcome -Receipt $parsed -ExpectedRunId $runId -ExpectedSourceSha $expectedSha
             if (-not $accepted) {
-                Write-Output ('CDP_LIVE_SCOPE_VERIFIED=FAIL;STAGE=' + $receipt.failure_stage + ';SAMPLES=' + $receipt.samples + ';ROOT_VERIFIED=' + $receipt.root_identity_verified)
+                Write-Output ('CDP_LIVE_SCOPE_VERIFIED=FAIL;STAGE=' + $receipt.failure_stage + ';SAMPLES=' + $receipt.samples + ';ROOT_VERIFIED=' + $receipt.root_identity_verified + ';SCOPE_SINGLE=' + $receipt.only_owned_fixture_process)
                 exit 1
             }
             Write-Output ('CDP_LIVE_SCOPE_VERIFIED=PASS;SAMPLES=' + $sampleRows.Count)
