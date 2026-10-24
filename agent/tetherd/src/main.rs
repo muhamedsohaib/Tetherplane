@@ -9,7 +9,6 @@ mod stdio_rpc;
 
 use std::path::PathBuf;
 use std::sync::Arc;
-use std::time::Duration;
 
 use runtime::AgentRuntime;
 use tether_browser_provider::{BrowserBridgeConfig, BrowserProvider};
@@ -240,22 +239,23 @@ async fn main() {
         }
     };
 
+    // Browser-extension authentication is independent from the core device relay.
+    // A missing extension must never make device.status or other scoped providers
+    // unreachable; browser discovery and each browser invocation still authenticate.
+    if options.browser_bridge.is_some() && browser_token.is_none() {
+        eprintln!("configured browser bridge requires --browser-bridge-token-file");
+        std::process::exit(2);
+    }
     let browser_provider = if let Some(address) = options.browser_bridge {
-        match BrowserProvider::connect_with_retry(
-            BrowserBridgeConfig {
-                address,
-                token: browser_token,
-                timeout_ms: 2_000,
-            },
-            5,
-            Duration::from_millis(100),
-        )
-        .await
-        {
+        match BrowserProvider::configured(BrowserBridgeConfig {
+            address,
+            token: browser_token,
+            timeout_ms: 2_000,
+        }) {
             Ok(provider) => Some(Arc::new(provider)),
             Err(error) => {
-                eprintln!("browser bridge unavailable: {}", error.message);
-                std::process::exit(1);
+                eprintln!("invalid browser bridge setup: {}", error.message);
+                std::process::exit(2);
             }
         }
     } else {
