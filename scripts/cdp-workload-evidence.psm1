@@ -24,7 +24,11 @@ function Get-WorkloadScopedSample {
     foreach ($process in $Processes) {
         try {
             $id = [int]$process.ProcessId
-            if ($id -le 0 -or $byPid.ContainsKey([string]$id)) { return $missing }
+            # Win32_Process includes the system-idle pseudo process (PID 0).
+            # It cannot be the positive owned root or its descendant; ignore
+            # only this OS-defined record, but fail on negative/duplicate IDs.
+            if ($id -eq 0) { continue }
+            if ($id -lt 0 -or $byPid.ContainsKey([string]$id)) { return $missing }
             $byPid[[string]$id] = $process
         } catch { return $missing }
     }
