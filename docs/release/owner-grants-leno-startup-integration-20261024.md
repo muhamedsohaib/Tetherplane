@@ -12,6 +12,7 @@
 - Owner-managed grants remain **staged only** until the separately authenticated, explicitly configured Control Center owner identity enables enforcement with the exact confirmation phrase.
 - Grant key: exact paired device ID and pairing timestamp plus the authenticated OAuth client ID and remote principal ID, scoped to its account. Unconfigured identities must be denied when enforcement is active.
 - The grant presets are `blocked`, `observe`, `operate`, with typed owner confirmation, compare-and-swap revision and CSRF. `operate` remains subordinate to local agent policy. No new OAuth clients, scope expansion, permission wildcard or automatic grant.
+- Security review of inherited PR #50 found that default `operate` included unrestricted `process.run` and `process.input`; those can bypass capability-specific process controls and filesystem-root restrictions. This integration draft **excludes both** from the broad preset and adds direct/batch deny regressions. A separate shell permission, if ever provided, requires a separately reviewed explicit owner grant and safe execution boundary. No live agent policy changes.
 - A missing/unauthorized local browser extension must not prevent `tetherd` from connecting the independently scoped device core. `device.capabilities` rediscovers browser availability by bounded authenticated local handshake; browser invocation still checks the token and local policy.
 - No queued or timed-out mutation is replayed automatically. The existing six Compact MCP tools and four-device topology are unchanged.
 

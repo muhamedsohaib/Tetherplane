@@ -48,7 +48,8 @@ const OPERATE = new Set([
   ...OBSERVE,
   "filesystem.write", "filesystem.append", "filesystem.mkdir",
   "filesystem.move", "filesystem.patch",
-  "process.run", "process.input",
+  // Unrestricted shell commands can bypass per-capability and path restrictions.
+  // Do not grant shell execution through a broad "operate" preset.
   "browser.create_tab", "browser.navigate", "browser.close", "browser.act",
   "browser.wait", "browser.upload", "browser.checkpoint",
   "job.create", "job.checkpoint", "job.acquire_lease", "job.release_lease",

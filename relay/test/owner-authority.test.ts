@@ -82,14 +82,19 @@ test("batch child access cannot bypass read-only grant, nested calls and unknown
   assert.equal(f.auth.evaluate(chat,"Surface",f.paired.pairedAt,invocation("desktop.physical_pointer_move")).allowed,false);
 });
 
-test("operate grants are narrower than device policy and never allow privileged foreground control", async t => {
+test("operate grants exclude unrestricted shell and privileged foreground control", async t => {
   const f = await fixture(t);
   await f.auth.replaceGrants(owner, { revision: 0, grants: [{
     deviceId: "Surface", clientId: chat.clientId, principalId: chat.principalId, level: "operate",
   }] });
   await f.auth.setEnabled(owner, { revision: 1, enabled: true, confirmation: "ENFORCE DEVICE GRANTS" });
-  assert.equal(f.auth.evaluate(chat,"Surface",f.paired.pairedAt,invocation("process.run")).allowed,true);
+  assert.equal(f.auth.evaluate(chat,"Surface",f.paired.pairedAt,invocation("filesystem.write")).allowed,true);
+  assert.equal(f.auth.evaluate(chat,"Surface",f.paired.pairedAt,invocation("process.run")).allowed,false);
+  assert.equal(f.auth.evaluate(chat,"Surface",f.paired.pairedAt,invocation("process.input")).allowed,false);
   assert.equal(f.auth.evaluate(chat,"Surface",f.paired.pairedAt,invocation("process.terminate")).allowed,false);
+  assert.equal(f.auth.evaluate(chat,"Surface",f.paired.pairedAt,invocation("batch.execute",{operations:[{capability:"process.run"}]})).allowed,false);
+  assert.equal(f.auth.evaluate(chat,"Surface",f.paired.pairedAt,invocation("batch.execute",{operations:[{capability:"process.input"}]})).allowed,false);
+  assert.equal(f.auth.evaluate(chat,"Surface",f.paired.pairedAt,invocation("batch.execute",{operations:[{capability:"filesystem.write"}]})).allowed,true);
   assert.equal(f.auth.evaluate(chat,"Surface",f.paired.pairedAt,invocation("desktop.physical_pointer_move")).allowed,false);
   assert.equal(f.auth.evaluate(chat,"Surface",f.paired.pairedAt,invocation("batch.execute",{operations:[{capability:"process.run"},{capability:"process.terminate"}]})).allowed,false);
   const snap = f.auth.snapshot(owner);
