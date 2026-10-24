@@ -423,15 +423,26 @@ fn successful_browser_handshake_registers_real_provider_and_capabilities() {
 
     let listener = TcpListener::bind("127.0.0.1:0").unwrap();
     let address = listener.local_addr().unwrap().to_string();
+    let token_file = std::env::temp_dir().join(format!(
+        "tetherplane-browser-bridge-fixture-{}.token",
+        uuid::Uuid::new_v4()
+    ));
+    std::fs::write(&token_file, "isolated-browser-token").unwrap();
     let bridge = thread::spawn(move || {
-        for index in 0..2 {
+        let mut handshakes = 0;
+        let mut invocations = 0;
+        // stdio requests execute concurrently; Windows may deliver either
+        // browser status or capability discovery to the mock listener first.
+        for _ in 0..2 {
             let (mut stream, _) = listener.accept().unwrap();
             let mut line = String::new();
             BufReader::new(stream.try_clone().unwrap())
                 .read_line(&mut line)
                 .unwrap();
             let request: Value = serde_json::from_str(line.trim_end()).unwrap();
-            let response = if index == 0 {
+            assert_eq!(request["token"], "isolated-browser-token");
+            let response = if request["type"] == "handshake" {
+                handshakes += 1;
                 json!({
                     "request_id": "handshake",
                     "status": "success",
@@ -442,7 +453,9 @@ fn successful_browser_handshake_registers_real_provider_and_capabilities() {
                     "verification": "not_applicable"
                 })
             } else {
+                assert_eq!(request["type"], "invoke");
                 assert_eq!(request["capability"], "browser.status");
+                invocations += 1;
                 json!({
                     "request_id": request["request_id"],
                     "status": "success",
@@ -452,12 +465,16 @@ fn successful_browser_handshake_registers_real_provider_and_capabilities() {
             };
             writeln!(stream, "{}", serde_json::to_string(&response).unwrap()).unwrap();
         }
+        assert_eq!(handshakes, 1, "exactly one discovery handshake");
+        assert_eq!(invocations, 1, "exactly one browser status request");
     });
 
     let mut child = Command::new(env!("CARGO_BIN_EXE_tetherd"))
         .arg("--stdio-rpc")
         .arg("--browser-bridge")
         .arg(&address)
+        .arg("--browser-bridge-token-file")
+        .arg(&token_file)
         .stdin(Stdio::piped())
         .stdout(Stdio::piped())
         .stderr(Stdio::piped())
@@ -497,4 +514,71 @@ fn successful_browser_handshake_registers_real_provider_and_capabilities() {
 
     assert!(child.wait().unwrap().success());
     bridge.join().unwrap();
+    std::fs::remove_file(&token_file).unwrap();
+}
+
+#[test]
+fn core_stdio_status_survives_unavailable_browser_bridge_without_repairing() {
+    use std::net::TcpListener;
+
+    const STATUS_ID: &str = "00000000-0000-4000-8000-0000000000e1";
+    const CAPS_ID: &str = "00000000-0000-4000-8000-0000000000e2";
+
+    let reserved = TcpListener::bind("127.0.0.1:0").unwrap();
+    let unavailable = reserved.local_addr().unwrap().to_string();
+    drop(reserved);
+
+    let token_file = std::env::temp_dir().join(format!(
+        "tetherplane-browser-offline-fixture-{}.token",
+        uuid::Uuid::new_v4()
+    ));
+    std::fs::write(&token_file, "isolated-browser-token").unwrap();
+
+    let mut child = Command::new(env!("CARGO_BIN_EXE_tetherd"))
+        .arg("--stdio-rpc")
+        .arg("--browser-bridge")
+        .arg(&unavailable)
+        .arg("--browser-bridge-token-file")
+        .arg(&token_file)
+        .stdin(Stdio::piped())
+        .stdout(Stdio::piped())
+        .stderr(Stdio::piped())
+        .spawn()
+        .unwrap();
+
+    let status = device_status_invocation(STATUS_ID);
+    let mut caps = device_status_invocation(CAPS_ID);
+    caps["capability"] = json!("device.capabilities");
+
+    let mut stdin = child.stdin.take().unwrap();
+    writeln!(stdin, "{}", serde_json::to_string(&status).unwrap()).unwrap();
+    writeln!(stdin, "{}", serde_json::to_string(&caps).unwrap()).unwrap();
+    drop(stdin);
+
+    let mut responses = std::collections::BTreeMap::new();
+    let stdout = child.stdout.take().unwrap();
+    for line in BufReader::new(stdout).lines().take(2) {
+        let response: Value = serde_json::from_str(&line.unwrap()).unwrap();
+        responses.insert(
+            response["request_id"].as_str().unwrap().to_owned(),
+            response,
+        );
+    }
+
+    assert_eq!(responses[STATUS_ID]["status"], "success");
+    assert_eq!(
+        responses[STATUS_ID]["data"]["policy_mode"],
+        "background_only"
+    );
+    assert_eq!(responses[CAPS_ID]["status"], "success");
+    let providers = responses[CAPS_ID]["data"]["providers"].as_array().unwrap();
+    let browser = providers
+        .iter()
+        .find(|provider| provider["namespace"] == "browser")
+        .unwrap();
+    assert_eq!(browser["available"], false);
+    assert_eq!(browser["operations"], json!([]));
+
+    assert!(child.wait().unwrap().success());
+    std::fs::remove_file(&token_file).unwrap();
 }

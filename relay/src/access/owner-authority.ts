@@ -48,7 +48,8 @@ const OPERATE = new Set([
   ...OBSERVE,
   "filesystem.write", "filesystem.append", "filesystem.mkdir",
   "filesystem.move", "filesystem.patch",
-  "process.run", "process.input",
+  // Unrestricted shell commands can bypass per-capability and path restrictions.
+  // Do not grant shell execution through a broad "operate" preset.
   "browser.create_tab", "browser.navigate", "browser.close", "browser.act",
   "browser.wait", "browser.upload", "browser.checkpoint",
   "job.create", "job.checkpoint", "job.acquire_lease", "job.release_lease",
@@ -97,7 +98,8 @@ export class OwnerDeviceAuthority {
       let raw: string;
       try { raw = await readFile(authority.#stateFile, "utf8"); }
       catch (e) {
-        if ((e as NodeJS.ErrnoException).code === "ENOENT") return authority;
+        if ((e as NodeJS.ErrnoException).code === "ENOENT")
+          throw new Error("owner authority state file is missing; refusing legacy authorization fallback");
         throw e;
       }
       const parsed = JSON.parse(raw) as unknown;

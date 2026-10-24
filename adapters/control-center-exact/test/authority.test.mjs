@@ -2,7 +2,7 @@
 // OAuth endpoint, agent, user HTML, or external WebSocket dependency.
 import assert from "node:assert/strict";
 import { createServer } from "node:http";
-import { mkdtemp, rm } from "node:fs/promises";
+import { mkdtemp, rm, writeFile } from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
@@ -33,10 +33,16 @@ async function listener(t, authorityEnabled = true) {
     credentialHash: hashDeviceCredential("synthetic-non-production-credential-for-test"),
   });
   await registry.approvePairing({ accountId: owner.accountId, userCode: code.userCode });
+  const stateFile = path.join(folder, "owner-authority.json");
+  // Explicitly initialized isolated state is required once management is
+  // configured; a missing file must not silently restore legacy authority.
+  if (authorityEnabled) {
+    await writeFile(stateFile, JSON.stringify({
+      version: 1, revision: 0, enabled: false, grants: [],
+    }) + "\n", { mode: 0o600 });
+  }
   const authority = authorityEnabled
-    ? await OwnerDeviceAuthority.open({
-      owner, registry, stateFile: path.join(folder, "owner-authority.json"),
-    })
+    ? await OwnerDeviceAuthority.open({ owner, registry, stateFile })
     : null;
   const authenticator = new StaticClientAuthenticator([
     { ...owner, token: "synthetic-owner-control-token" },
