@@ -94,14 +94,11 @@ impl AgentRuntime {
                 .collect()
         });
 
-        let browser_operations = browser_provider
-            .as_ref()
-            .map(|provider| provider.operations().to_vec());
         router.register(Arc::new(DeviceProvider::new(
             principal_capabilities,
             job_available,
             audit_available,
-            browser_operations,
+            browser_provider.as_ref().map(Arc::clone),
             desktop_operations,
         )))?;
         router.register(Arc::new(FilesystemProvider::new()))?;
@@ -272,7 +269,7 @@ struct DeviceProvider {
     allowed_capabilities: Option<BTreeSet<String>>,
     job_available: bool,
     audit_available: bool,
-    browser_operations: Option<Vec<String>>,
+    browser_provider: Option<Arc<BrowserProvider>>,
     desktop_operations: Option<Vec<String>>,
 }
 
@@ -281,7 +278,7 @@ impl DeviceProvider {
         allowed_capabilities: Option<BTreeSet<String>>,
         job_available: bool,
         audit_available: bool,
-        browser_operations: Option<Vec<String>>,
+        browser_provider: Option<Arc<BrowserProvider>>,
         desktop_operations: Option<Vec<String>>,
     ) -> Self {
         Self {
@@ -289,7 +286,7 @@ impl DeviceProvider {
             allowed_capabilities,
             job_available,
             audit_available,
-            browser_operations,
+            browser_provider,
             desktop_operations,
         }
     }
@@ -304,7 +301,13 @@ impl DeviceProvider {
         })
     }
 
-    fn capabilities(&self) -> Value {
+    async fn capabilities(&self) -> Value {
+        // Each discovery is independently authenticated; never return stale browser
+        // availability after the extension disconnects or before it is paired.
+        let browser_operations = match &self.browser_provider {
+            Some(provider) => provider.discover_operations().await.ok(),
+            None => None,
+        };
         json!({
             "providers": [
                 { "namespace": "device", "available": true, "operations": self.operations("device", &["status", "capabilities"]) },
@@ -314,7 +317,7 @@ impl DeviceProvider {
                 { "namespace": "batch", "available": true, "operations": self.operations("batch", &["execute"]) },
                 { "namespace": "job", "available": self.job_available, "operations": if self.job_available { self.operations("job", &["create", "get", "checkpoint", "acquire_lease", "release_lease"]) } else { Vec::<String>::new() } },
                 { "namespace": "audit", "available": self.audit_available, "operations": if self.audit_available { self.operations("audit", &["read"]) } else { Vec::<String>::new() } },
-                { "namespace": "browser", "available": self.browser_operations.is_some(), "operations": self.browser_operations() },
+                { "namespace": "browser", "available": browser_operations.is_some(), "operations": self.browser_operations(browser_operations.as_deref()) },
                 { "namespace": "desktop", "available": self.desktop_operations.is_some(), "operations": self.desktop_operations() }
             ]
         })
@@ -332,9 +335,8 @@ impl DeviceProvider {
             .collect()
     }
 
-    fn browser_operations(&self) -> Vec<String> {
-        self.browser_operations
-            .as_ref()
+    fn browser_operations(&self, advertised: Option<&[String]>) -> Vec<String> {
+        advertised
             .into_iter()
             .flatten()
             .filter(|operation| {
@@ -378,7 +380,7 @@ impl CapabilityProvider for DeviceProvider {
 
         let data = match operation {
             "status" => self.status(),
-            "capabilities" => self.capabilities(),
+            "capabilities" => self.capabilities().await,
             _ => {
                 return Err(CapabilityError {
                     code: ErrorCode::CapabilityUnavailable,
@@ -696,5 +698,208 @@ mod lifecycle_tests {
         assert_eq!(provider.executions.load(Ordering::SeqCst), 0);
         assert_eq!(std::fs::read_to_string(marker).unwrap(), "once");
         std::fs::remove_dir_all(root).unwrap();
+    }
+}
+
+#[cfg(test)]
+mod browser_startup_tests {
+    use super::DeviceProvider;
+    use serde_json::{Value, json};
+    use std::collections::BTreeSet;
+    use std::sync::Arc;
+    use tether_browser_provider::{BrowserBridgeConfig, BrowserProvider};
+    use tether_core::{CapabilityProvider, ErrorCode, InvocationEnvelope};
+    use tokio::io::{AsyncBufReadExt, AsyncWriteExt, BufReader};
+    use tokio::net::TcpListener;
+    use tokio::time::{Duration, timeout};
+
+    fn invoke(capability: &str) -> InvocationEnvelope {
+        serde_json::from_value(json!({
+            "protocol_version": "1.0",
+            "request_id": uuid::Uuid::new_v4(),
+            "device_id": "isolated-browser-startup",
+            "principal_id": "operator:isolated-browser-test",
+            "job_id": null,
+            "capability": capability,
+            "arguments": {},
+            "actor": {"id":"browser-startup-test","kind":"ai_client"},
+            "session_id": null,
+            "response_mode": "compact",
+            "idempotency_key": null,
+            "preconditions": [],
+            "expectations": []
+        }))
+        .expect("valid isolated invocation")
+    }
+
+    async fn capabilities(provider: &DeviceProvider) -> Value {
+        provider
+            .execute(&invoke("device.capabilities"))
+            .await
+            .expect("device capability query succeeds")
+            .data
+    }
+
+    fn browser_entry(data: &Value) -> &Value {
+        data["providers"]
+            .as_array()
+            .expect("providers are present")
+            .iter()
+            .find(|provider| provider["namespace"] == "browser")
+            .expect("browser entry is present")
+    }
+
+    #[tokio::test]
+    async fn offline_browser_cannot_block_core_status_or_claim_availability() {
+        let unused_listener = TcpListener::bind("127.0.0.1:0")
+            .await
+            .expect("allocate isolated loopback port");
+        let address = unused_listener.local_addr().expect("loopback address");
+        drop(unused_listener);
+        let browser = Arc::new(
+            BrowserProvider::configured(BrowserBridgeConfig {
+                address: address.to_string(),
+                token: Some("isolated-test-token".into()),
+                timeout_ms: 200,
+            })
+            .expect("valid loopback configuration"),
+        );
+        let device = DeviceProvider::new(None, false, false, Some(browser), None);
+        let status = timeout(
+            Duration::from_secs(1),
+            device.execute(&invoke("device.status")),
+        )
+        .await
+        .expect("status must not wait for browser bridge")
+        .expect("status succeeds without browser extension");
+        assert_eq!(status.data["policy_mode"], "background_only");
+        let reported = capabilities(&device).await;
+        let advertised = browser_entry(&reported);
+        assert_eq!(advertised["available"], false);
+        assert_eq!(advertised["operations"], json!([]));
+    }
+
+    #[tokio::test]
+    async fn authenticated_bridge_reappears_without_agent_restart_and_scope_expansion() {
+        let unused_listener = TcpListener::bind("127.0.0.1:0")
+            .await
+            .expect("allocate isolated loopback port");
+        let address = unused_listener.local_addr().expect("loopback address");
+        drop(unused_listener);
+        let browser = Arc::new(
+            BrowserProvider::configured(BrowserBridgeConfig {
+                address: address.to_string(),
+                token: Some("isolated-test-token".into()),
+                timeout_ms: 200,
+            })
+            .expect("valid loopback configuration"),
+        );
+        let allowed = BTreeSet::from([
+            "device.status".to_owned(),
+            "device.capabilities".to_owned(),
+            "browser.status".to_owned(),
+        ]);
+        let device = DeviceProvider::new(Some(allowed), false, false, Some(browser), None);
+
+        assert_eq!(
+            browser_entry(&capabilities(&device).await)["available"],
+            false
+        );
+        let listener = TcpListener::bind(address)
+            .await
+            .expect("bring isolated bridge online");
+        let server = tokio::spawn(async move {
+            let (socket, _) = listener.accept().await.expect("handshake accepted");
+            let (read, mut write) = socket.into_split();
+            let mut reader = BufReader::new(read).lines();
+            let line = reader
+                .next_line()
+                .await
+                .expect("handshake read")
+                .expect("handshake request");
+            let request: Value = serde_json::from_str(&line).expect("handshake JSON");
+            assert_eq!(request["type"], "handshake");
+            assert_eq!(request["token"], "isolated-test-token");
+            write
+                .write_all(
+                    b"{\"status\":\"success\",\"data\":{\"operations\":[\"status\",\"navigate\"]}}\n",
+                )
+                .await
+                .expect("handshake response");
+        });
+        let online = capabilities(&device).await;
+        let advertised = browser_entry(&online);
+        assert_eq!(advertised["available"], true);
+        assert_eq!(advertised["operations"], json!(["status"]));
+        server.await.expect("isolated handshake server completed");
+        // The server is now gone; the same device may not advertise stale readiness.
+        assert_eq!(
+            browser_entry(&capabilities(&device).await)["available"],
+            false
+        );
+        assert_eq!(
+            device
+                .execute(&invoke("device.status"))
+                .await
+                .expect("device remains responsive")
+                .data["policy_mode"],
+            "background_only"
+        );
+    }
+
+    #[tokio::test]
+    async fn browser_authentication_denial_cannot_advertise_availability() {
+        let listener = TcpListener::bind("127.0.0.1:0")
+            .await
+            .expect("isolated loopback port");
+        let address = listener.local_addr().expect("listener address");
+        let browser = Arc::new(
+            BrowserProvider::configured(BrowserBridgeConfig {
+                address: address.to_string(),
+                token: Some("wrong-isolated-test-token".into()),
+                timeout_ms: 200,
+            })
+            .expect("valid loopback configuration"),
+        );
+        let device = DeviceProvider::new(None, false, false, Some(Arc::clone(&browser)), None);
+        let server = tokio::spawn(async move {
+            for _ in 0..2 {
+                let (socket, _) = listener.accept().await.expect("loopback request");
+                let (read, mut write) = socket.into_split();
+                let mut reader = BufReader::new(read).lines();
+                let request = reader.next_line().await.expect("request read");
+                assert!(request.is_some());
+                write
+                    .write_all(
+                        b"{\"status\":\"error\",\"error\":{\"code\":\"permission_denied\",\"message\":\"synthetic token rejection\"}}\n",
+                    )
+                    .await
+                    .expect("auth rejection response");
+            }
+        });
+
+        assert_eq!(
+            browser_entry(&capabilities(&device).await)["available"],
+            false
+        );
+        let rejected = browser.execute(&invoke("browser.status")).await;
+        assert!(matches!(
+            rejected.err().map(|error| error.code),
+            Some(ErrorCode::PermissionDenied)
+        ));
+        server.await.expect("auth-denial fixture completed");
+    }
+
+    #[test]
+    fn browser_configuration_rejects_non_loopback_before_any_network_call() {
+        let result = BrowserProvider::configured(BrowserBridgeConfig {
+            address: "0.0.0.0:17657".into(),
+            token: Some("synthetic-token".into()),
+            timeout_ms: 200,
+        });
+        assert!(matches!(
+            result.err().map(|error| error.code),
+            Some(ErrorCode::InvalidArguments)
+        ));
     }
 }
