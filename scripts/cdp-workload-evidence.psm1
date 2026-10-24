@@ -10,6 +10,10 @@ function Get-WorkloadScopedSample {
         [Parameter(Mandatory=$true)][datetime]$RootStartedUtc,
         [Parameter(Mandatory=$true)][int]$ElapsedMilliseconds
     )
+    # Property/script getters can emit non-terminating PowerShell errors.
+    # Promote them to terminating errors so observer failures are never mistaken
+    # for a clean metric sample.
+    $ErrorActionPreference = 'Stop'
     $missing = [pscustomobject]@{
         valid=$false; elapsed_ms=$ElapsedMilliseconds; process_count=$null;
         working_set_mib=$null; cpu_time_ms=$null; sampled_read_mib=$null;
