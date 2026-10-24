@@ -1,0 +1,9 @@
+# Tetherplane metallic plate alignment - internal acceptance (2026-10-25)
+
+Cause: the animated * highlight occupied the left interior hatch (r231..257,c134..192) rather than the solid metallic right # plate (r231..256,c206..265). The source glyph array contains 85 logo rows and has been preserved.
+
+Patch: deterministic, original-SHA-pinned tools/patch-plate-shine.mjs. Original proprietary HTML SHA256 36bef6cd23058fc90b0b38820fad8ac75655c89e326403160fa1e90405238a82. Generated corrected HTML SHA256 2c704f3206d634f77d06f65c7664598ba3c5813cb81a23140801e3b88a6582b1. The transformer alters only the moving-mask glyph selection, its tiny canvas bounds, wave progress/opacity and inline explanatory comments. All ASCII glyph data, layout, font/CSS, button language, and the dual light/dark transition are byte-identical.
+
+Evidence: initial TDD RED, then four focused GREEN tests for plate-only glyph selection, theme and geometry continuity, source integrity, and fail-closed source SHA enforcement. Independent Leno Edge headless screenshots for original and corrected dark/light at 1728x960 visually show that the original glow floats below the left arm and the corrected shine lies on the actual right metallic plate. QA images are in isolated Leno TEMP folder TetherplanePlateAlignmentQA-20261025. No human-owned browser tabs touched.
+
+Scope and rollback: Only the local installed Control Center index.html may be atomically swapped after hash verification and saving the original protected file to index.pre-plate-shine-20261025.html. No release or merge, no identity/OAuth, relay, grants, policies, services or user sessions changed. Confirm served page body hash, HTTP 200 readiness, original UI JS and backend hashes, and anonymous 401 responses. User real-browser visual acceptance remains separate.
