@@ -71,6 +71,30 @@ jobs:
       - name: Authored unsafe scan
         run: python scripts/check-no-unsafe.py
 
+      - name: Owner authority metadata-only verifier contract
+        if: runner.os == 'Windows'
+        shell: powershell
+        run: |
+          $tokens = $null
+          $parseErrors = $null
+          [System.Management.Automation.Language.Parser]::ParseFile('scripts/diagnostics/verify-owner-management-identity-readonly.ps1', [ref]$tokens, [ref]$parseErrors) | Out-Null
+          if ($parseErrors.Count -ne 0) { throw 'Owner metadata-only verifier must parse with Windows PowerShell 5.1' }
+          $work = Join-Path $env:RUNNER_TEMP 'owner-verifier-contract'
+          New-Item -ItemType Directory -Path $work -Force | Out-Null
+          $stateFile = Join-Path $work 'state.json'
+          $configFile = Join-Path $work 'owner.json'
+          Set-Content -LiteralPath $stateFile -Encoding UTF8 -Value '{"version":1,"revision":0,"enabled":false,"grants":[]}'
+          $cfg = @{ owner = @{ accountId = 'synthetic-account'; clientId = 'synthetic-owner-client'; principalId = 'human:synthetic' }; stateFile = $stateFile } | ConvertTo-Json -Depth 3
+          Set-Content -LiteralPath $configFile -Encoding UTF8 -Value $cfg
+          $receipt = @(./scripts/diagnostics/verify-owner-management-identity-readonly.ps1 -ExpectedExistingOwnerClientId 'synthetic-owner-client' -AuthorityConfigPath $configFile)
+          if ($receipt -notcontains 'OWNER_CONFIG_EXISTS=True') { throw 'Existing owner config presence not detected' }
+          if ($receipt -notcontains 'OWNER_CLIENT_MATCHES_RECORDED_EXISTING_ID=True') { throw 'Existing owner client match not detected' }
+          if ($receipt -notcontains 'OWNER_ACCOUNT_AND_PRINCIPAL_CONFIGURED=True') { throw 'Owner identity metadata not detected' }
+          if ($receipt -notcontains 'ENFORCEMENT_STATE=DISABLED') { throw 'Disabled synthetic grant state not detected' }
+          if ($receipt -notcontains 'OWNER_GRANT_COUNT=0') { throw 'Empty synthetic grants not detected' }
+          if (($receipt -join ' ') -match 'synthetic-owner-client|human:synthetic|synthetic-account') { throw 'Owner verifier leaked identity fields in receipt' }
+          Write-Output 'OWNER_READONLY_RECEIPT_CONTRACT=PASS'
+
       - name: Windows release binary
         if: runner.os == 'Windows'
         run: cargo build --release -p tetherd
