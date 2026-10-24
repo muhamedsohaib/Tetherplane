@@ -801,7 +801,10 @@ mod browser_startup_tests {
         ]);
         let device = DeviceProvider::new(Some(allowed), false, false, Some(browser), None);
 
-        assert_eq!(browser_entry(&capabilities(&device).await)["available"], false);
+        assert_eq!(
+            browser_entry(&capabilities(&device).await)["available"],
+            false
+        );
         let listener = TcpListener::bind(address)
             .await
             .expect("bring isolated bridge online");
@@ -830,7 +833,10 @@ mod browser_startup_tests {
         assert_eq!(advertised["operations"], json!(["status"]));
         server.await.expect("isolated handshake server completed");
         // The server is now gone; the same device may not advertise stale readiness.
-        assert_eq!(browser_entry(&capabilities(&device).await)["available"], false);
+        assert_eq!(
+            browser_entry(&capabilities(&device).await)["available"],
+            false
+        );
         assert_eq!(
             device
                 .execute(&invoke("device.status"))
@@ -872,7 +878,10 @@ mod browser_startup_tests {
             }
         });
 
-        assert_eq!(browser_entry(&capabilities(&device).await)["available"], false);
+        assert_eq!(
+            browser_entry(&capabilities(&device).await)["available"],
+            false
+        );
         let rejected = browser.execute(&invoke("browser.status")).await;
         assert!(matches!(
             rejected.err().map(|error| error.code),
