@@ -1,0 +1,28 @@
+name: CDP scoped evidence safety contracts
+
+on:
+  push:
+    paths:
+      - 'scripts/cdp-workload-evidence.psm1'
+      - 'tests/reliability/cdp-workload-evidence-contract.ps1'
+      - '.github/workflows/cdp-workload-evidence-contract.yml'
+  pull_request:
+    paths:
+      - 'scripts/cdp-workload-evidence.psm1'
+      - 'tests/reliability/cdp-workload-evidence-contract.ps1'
+      - '.github/workflows/cdp-workload-evidence-contract.yml'
+
+permissions:
+  contents: read
+
+jobs:
+  fail-closed-contract:
+    runs-on: windows-latest
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683
+        with:
+          persist-credentials: false
+      - name: Validate scoped process and receipt decisions
+        shell: pwsh
+        run: ./tests/reliability/cdp-workload-evidence-contract.ps1
