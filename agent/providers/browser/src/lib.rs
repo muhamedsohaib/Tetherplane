@@ -26,13 +26,20 @@ pub struct BrowserProvider {
 }
 
 impl BrowserProvider {
-    /// Connects to an authenticated local browser bridge and records its advertised operations.
+    /// Configures the loopback browser provider without requiring the extension to be online.
     ///
     /// # Errors
-    ///
-    /// Returns a capability error when the endpoint is invalid or non-loopback, the bridge cannot
-    /// be reached within the configured timeout, authentication fails, or the handshake is malformed.
-    pub async fn connect(config: BrowserBridgeConfig) -> Result<Self, CapabilityError> {
+    /// Rejects malformed and non-loopback endpoints; authentication is still required for
+    /// all subsequent discovery and invocation requests.
+    pub fn configured(config: BrowserBridgeConfig) -> Result<Self, CapabilityError> {
+        Self::validate_loopback(&config)?;
+        Ok(Self {
+            config,
+            operations: Vec::new(),
+        })
+    }
+
+    fn validate_loopback(config: &BrowserBridgeConfig) -> Result<(), CapabilityError> {
         if config.address.trim().is_empty() {
             return Err(invalid("browser bridge address must be non-empty"));
         }
@@ -43,6 +50,26 @@ impl BrowserProvider {
         if !address.ip().is_loopback() {
             return Err(invalid("browser bridge address must be loopback-only"));
         }
+        Ok(())
+    }
+
+    /// Rediscovers available operations via an authenticated, bounded loopback handshake.
+    /// A disconnected or unauthorized bridge reports no browser availability to device.capabilities.
+    ///
+    /// # Errors
+    /// Returns the actual transport or authentication error, without cached positive readiness.
+    pub async fn discover_operations(&self) -> Result<Vec<String>, CapabilityError> {
+        Ok(Self::connect(self.config.clone()).await?.operations)
+    }
+
+    /// Connects to an authenticated local browser bridge and records its advertised operations.
+    ///
+    /// # Errors
+    ///
+    /// Returns a capability error when the endpoint is invalid or non-loopback, the bridge cannot
+    /// be reached within the configured timeout, authentication fails, or the handshake is malformed.
+    pub async fn connect(config: BrowserBridgeConfig) -> Result<Self, CapabilityError> {
+        Self::validate_loopback(&config)?;
         let response = rpc_call(
             &config,
             json!({
