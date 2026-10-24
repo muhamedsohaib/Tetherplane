@@ -63,9 +63,9 @@
       name.textContent=String(d.deviceId);
       const info=document.createElement('span');
       info.className='text-white/60 text-right';
-      const status=d.revokedAt?'REVOKED':d.connectivity==='relay_connected'?'RELAY CONNECTED':d.connectivity==='relay_disconnected'?'DISCONNECTED':'NOT REPORTED';
+      const status=d.revokedAt?'REVOKED':d.connectivity==='relay_connected'?'RELAY CONNECTED':d.connectivity==='relay_disconnected'?'DISCONNECTED':'CHECK REQUIRED';
       const health=live.health.get(d.deviceId);
-      info.textContent=status+(health?' / '+health.label:'');
+      info.textContent=d.revokedAt?'REVOKED':(health?.label||status);
       row.appendChild(name);row.appendChild(info);
       if(!d.revokedAt&&d.connectivity!=='relay_disconnected'){
         const action=document.createElement('button');
@@ -326,7 +326,10 @@
       const payload=await api('/api/mcp/call',{method:'POST',body:{tool:'device',op:'status',device:deviceId,args:{}}});
       const result=payload?.result;
       if(result?.isError||result?.structuredContent?.error){
-        log('[!] Status was denied or unavailable for '+deviceId+'.');return;
+        const code=result?.structuredContent?.error?.code;
+        const label=code==='disconnected'?'DISCONNECTED':code==='permission_denied'?'DENIED':'UNAVAILABLE';
+        live.health.set(deviceId,{label,observedAt:new Date().toISOString()});
+        log('[!] '+deviceId+' status: '+label+'.');return;
       }
       const current=result?.structuredContent;
       if(!current||typeof current!=='object'||typeof current.agent_version!=='string'){
@@ -337,6 +340,10 @@
       live.health.set(deviceId,{label,observedAt:new Date().toISOString()});
       log('[+] '+deviceId+' status checked: '+label+'.');
     }catch(error){
+      if(error?.status!==401){
+        const label=error?.code==='disconnected'?'DISCONNECTED':error?.status===403?'DENIED':'UNAVAILABLE';
+        live.health.set(deviceId,{label,observedAt:new Date().toISOString()});
+      }
       failure(error,false);
     }finally{
       live.inFlight=false;renderFleetPanel();

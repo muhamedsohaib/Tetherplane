@@ -72,3 +72,31 @@ test('connection architecture no longer displays fabricated progress bars and ho
  p.cta.handlers.click();
  assert.equal(p.nav.at(-1),'auth');
 });
+
+
+test('unreported directory presence requires a manual check, and verified disconnection is shown',async()=>{
+ const extra={deviceId:'Probe',pairedAt:'2026-10-24T00:00:00Z',revokedAt:null,connectivity:'not_reported'};
+ data.devices.push(extra);
+ try {
+  const p=await setup();
+  assert.match(p.view(),/Probe\s+CHECK REQUIRED/i,'missing relay presence is not a claimed online state');
+  const originalFetch=p.ctx.fetch,requests=[];
+  p.ctx.fetch=async(path,opts)=>{
+    if(path==='/api/mcp/call'){
+      requests.push(JSON.parse(opts.body));
+      return response({result:{isError:true,structuredContent:{error:{code:'disconnected',message:'requested device is offline'}}}});
+    }
+    return originalFetch(path,opts);
+  };
+  assert.equal(requests.length,0,'no background status call during rendering');
+  await p.ctx.portalDeviceStatus('Probe');
+  assert.equal(requests.length,1,'explicit click triggers exactly one status request');
+  assert.equal(requests[0].tool,'device');
+  assert.equal(requests[0].op,'status');
+  assert.equal(requests[0].device,'Probe');
+  assert.match(p.view(),/Probe\s+DISCONNECTED/i,'confirmed disconnection is visible in fleet card');
+  assert.doesNotMatch(p.view(),/Probe\s+READY/i);
+ } finally {
+   data.devices.pop();
+ }
+});
