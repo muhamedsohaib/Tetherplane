@@ -19,6 +19,15 @@ $child = [pscustomobject]@{
 $sample = Get-WorkloadScopedSample -Processes @($root,$child) -RootProcessId 20001 -RootStartedUtc $time -ElapsedMilliseconds 2000
 Should ($sample.valid -eq $true -and $sample.process_count -eq 2) 'Correct tree rejected'
 Should ($sample.working_set_mib -eq 15) 'Resource aggregation incorrect'
+# Real Windows Win32_Process snapshots include pseudo PID 0. Unrelated idle
+# processes must not invalidate a fully bound positive process tree.
+$idle = [pscustomobject]@{
+    ProcessId=0; ParentProcessId=0; CreationDate=$time;
+    WorkingSetSize=0; KernelModeTime=0; UserModeTime=0;
+    ReadTransferCount=0; WriteTransferCount=0
+}
+$withIdle = Get-WorkloadScopedSample -Processes @($idle,$root,$child) -RootProcessId 20001 -RootStartedUtc $time -ElapsedMilliseconds 2000
+Should ($withIdle.valid -eq $true -and $withIdle.process_count -eq 2) 'Unrelated PID zero falsely invalidated the owned process tree'
 Should (-not ($sample.PSObject.Properties.Name -contains 'identities')) 'Successful observer exposed process identities'
 
 $reuse = Get-WorkloadScopedSample -Processes @($root,$child) -RootProcessId 20001 -RootStartedUtc $time.AddSeconds(-30) -ElapsedMilliseconds 2000

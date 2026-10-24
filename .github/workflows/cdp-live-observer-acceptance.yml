@@ -1,0 +1,41 @@
+name: CDP live observer acceptance (disposable CI only)
+
+on:
+  push:
+    paths:
+      - 'tests/reliability/cdp-live-observer-smoke.ps1'
+      - 'tests/reliability/fixtures/cdp-owned-idle.cjs'
+      - '.github/workflows/cdp-live-observer-acceptance.yml'
+      - 'scripts/cdp-workload-evidence.psm1'
+  pull_request:
+    paths:
+      - 'tests/reliability/cdp-live-observer-smoke.ps1'
+      - 'tests/reliability/fixtures/cdp-owned-idle.cjs'
+      - '.github/workflows/cdp-live-observer-acceptance.yml'
+      - 'scripts/cdp-workload-evidence.psm1'
+
+permissions:
+  contents: read
+
+jobs:
+  disposable-windows-observer:
+    runs-on: windows-latest
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683
+        with:
+          persist-credentials: false
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020
+        with:
+          node-version: '22'
+      - name: Prove real process-scope sampling and exact receipt validation
+        shell: pwsh
+        run: ./tests/reliability/cdp-live-observer-smoke.ps1 -EvidenceDirectory '${{ runner.temp }}/cdp-live-observer'
+      - name: Retain only sanitized run-scoped evidence
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: cdp-live-observer-${{ github.sha }}
+          path: ${{ runner.temp }}/cdp-live-observer/scoped-observer-*.json
+          if-no-files-found: error
+          retention-days: 14
