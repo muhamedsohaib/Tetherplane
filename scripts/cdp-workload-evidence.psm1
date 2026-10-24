@@ -73,6 +73,14 @@ function Get-WorkloadScopedSample {
     try {
         foreach ($key in $owned.Keys) {
             $p = $byPid[$key]
+            # ScriptProperty getters execute code and may fail without a
+            # catchable terminating error. They are never trusted as metrics.
+            foreach ($metric in @('WorkingSetSize', 'KernelModeTime', 'UserModeTime', 'ReadTransferCount', 'WriteTransferCount')) {
+                $property = $p.PSObject.Properties[$metric]
+                if ($null -ne $property -and $property.MemberType -eq [System.Management.Automation.PSMemberTypes]::ScriptProperty) {
+                    return $missing
+                }
+            }
             if ($null -eq $p.WorkingSetSize) { $workingKnown = $false }
             else { $working += [double]$p.WorkingSetSize }
             if ($null -eq $p.KernelModeTime -or $null -eq $p.UserModeTime) { $cpuKnown = $false }
