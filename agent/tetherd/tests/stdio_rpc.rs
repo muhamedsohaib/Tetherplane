@@ -429,7 +429,11 @@ fn successful_browser_handshake_registers_real_provider_and_capabilities() {
     ));
     std::fs::write(&token_file, "isolated-browser-token").unwrap();
     let bridge = thread::spawn(move || {
-        for index in 0..2 {
+        let mut handshakes = 0;
+        let mut invocations = 0;
+        // stdio requests execute concurrently; Windows may deliver either
+        // browser status or capability discovery to the mock listener first.
+        for _ in 0..2 {
             let (mut stream, _) = listener.accept().unwrap();
             let mut line = String::new();
             BufReader::new(stream.try_clone().unwrap())
@@ -437,7 +441,8 @@ fn successful_browser_handshake_registers_real_provider_and_capabilities() {
                 .unwrap();
             let request: Value = serde_json::from_str(line.trim_end()).unwrap();
             assert_eq!(request["token"], "isolated-browser-token");
-            let response = if index == 0 {
+            let response = if request["type"] == "handshake" {
+                handshakes += 1;
                 json!({
                     "request_id": "handshake",
                     "status": "success",
@@ -448,7 +453,9 @@ fn successful_browser_handshake_registers_real_provider_and_capabilities() {
                     "verification": "not_applicable"
                 })
             } else {
+                assert_eq!(request["type"], "invoke");
                 assert_eq!(request["capability"], "browser.status");
+                invocations += 1;
                 json!({
                     "request_id": request["request_id"],
                     "status": "success",
@@ -458,6 +465,8 @@ fn successful_browser_handshake_registers_real_provider_and_capabilities() {
             };
             writeln!(stream, "{}", serde_json::to_string(&response).unwrap()).unwrap();
         }
+        assert_eq!(handshakes, 1, "exactly one discovery handshake");
+        assert_eq!(invocations, 1, "exactly one browser status request");
     });
 
     let mut child = Command::new(env!("CARGO_BIN_EXE_tetherd"))
