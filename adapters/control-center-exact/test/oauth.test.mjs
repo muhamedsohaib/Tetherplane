@@ -144,3 +144,29 @@ test('OAuth mode serves the original document and extends behavior without chang
   const js=await (await fetch(p.origin+'/tp-integration.js')).text();assert.ok(js.includes('/api/oauth/start'));
   const original=await readFile(new URL('../public/tp-integration.js',import.meta.url),'utf8');assert.ok(js.startsWith(original));
 });
+
+test('cross-site OAuth callback redirect may navigate public root while API and origin protections remain intact', async t => {
+  const p = await setup(t);
+  const tx = await p.start();
+  const callback = await p.callback(tx);
+  assert.equal(callback.status, 303);
+  assert.equal(callback.headers.get('location'), '/');
+  const {request} = await import('node:http');
+  const navigation = {'sec-fetch-site':'cross-site','sec-fetch-mode':'navigate','sec-fetch-dest':'document'};
+  async function status(path, headers) {
+    const u = new URL(p.origin);
+    return await new Promise((resolve,reject) => {
+      const req = request({hostname:u.hostname, port:u.port, path, method:'GET', headers:{host:u.host,...headers}},res=>{
+        res.resume();
+        res.once('end',()=>resolve(res.statusCode));
+      });
+      req.once('error',reject);
+      req.end();
+    });
+  }
+  assert.equal(await status('/',navigation),200,'redirected top-level landing should render the public portal');
+  assert.equal(await status('/api/devices',navigation),403,'API must still deny cross-site navigation');
+  assert.equal(await status('/',{...navigation,'sec-fetch-mode':'cors'}),403,'cross-site subresource cannot use landing exception');
+  assert.equal(await status('/',{...navigation,origin:'https://untrusted.invalid'}),403,'foreign Origin must stay denied');
+  assert.equal(await status('/',{...navigation,host:'untrusted.invalid'}),403,'incorrect Host must stay denied');
+});
