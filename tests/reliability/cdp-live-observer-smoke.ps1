@@ -51,7 +51,9 @@ try {
     while ($sampleRows.Count -lt 12 -and $stopwatch.ElapsedMilliseconds -lt 6500) {
         if ($child.HasExited) { break }
         try {
-            $snapshot = @(Get-CimInstance -ClassName Win32_Process -ErrorAction Stop)
+            # Request only safe counters and process-tree metadata. Never read
+            # command lines, executable paths, owners or environment variables.
+            $snapshot = @(Get-CimInstance -ClassName Win32_Process -Property ProcessId,ParentProcessId,CreationDate,WorkingSetSize,KernelModeTime,UserModeTime,ReadTransferCount,WriteTransferCount -ErrorAction Stop)
             $sample = Get-WorkloadScopedSample -Processes $snapshot -RootProcessId $child.Id -RootStartedUtc $childStarted -ElapsedMilliseconds ([int]$stopwatch.ElapsedMilliseconds)
             if (-not $sample.valid) {
                 # A valid root may exit between the process-handle check and
@@ -110,7 +112,7 @@ try {
             if (-not $child.HasExited) {
                 $currentlyOwned = $false
                 if ($null -ne $childStarted) {
-                    $match = Get-CimInstance -ClassName Win32_Process -Filter ("ProcessId = " + [int]$child.Id) -ErrorAction Stop
+                    $match = Get-CimInstance -ClassName Win32_Process -Filter ("ProcessId = " + [int]$child.Id) -Property ProcessId,CreationDate -ErrorAction Stop
                     if ($null -ne $match) {
                         $birth = ([datetime]$match.CreationDate).ToUniversalTime()
                         $currentlyOwned = [math]::Abs(($birth - $childStarted).TotalMilliseconds) -le 1500
