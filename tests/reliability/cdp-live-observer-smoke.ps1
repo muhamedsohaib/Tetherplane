@@ -154,7 +154,7 @@ try {
             $parsed = Get-Content -LiteralPath $receiptPath -Raw -ErrorAction Stop | ConvertFrom-Json -ErrorAction Stop
             $accepted = Test-WorkloadOutcome -Receipt $parsed -ExpectedRunId $runId -ExpectedSourceSha $expectedSha
             if (-not $accepted) {
-                Write-Output 'CDP_LIVE_SCOPE_VERIFIED=FAIL'
+                Write-Output ('CDP_LIVE_SCOPE_VERIFIED=FAIL;STAGE=' + $receipt.failure_stage + ';SAMPLES=' + $receipt.samples + ';ROOT_VERIFIED=' + $receipt.root_identity_verified)
                 exit 1
             }
             Write-Output ('CDP_LIVE_SCOPE_VERIFIED=PASS;SAMPLES=' + $sampleRows.Count)
