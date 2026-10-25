@@ -85,6 +85,35 @@ test('unauthenticated authority API denied, and direct device authority discover
  assert.equal(r.body.authorityScope,'control_center_only');
  assert.equal(r.body.revision,0);
 });
+test('verified paired OAuth subject receives five-minute MAC-sealed enrollment proof without granting permissions',async()=>{
+  const noSession=await api('/api/authority/Leno/owner-proof','GET',null,{auth:false});
+  assert.equal(noSession.status,401);
+  const unpaired=await api('/api/authority/RTX/owner-proof');
+  assert.equal(unpaired.status,403);
+  assert.equal((await api('/api/authority/Leno/owner-proof','POST',{})).status,405);
+  const r=await api('/api/authority/Leno/owner-proof');
+  assert.equal(r.status,200);
+  assert.match(r.body.proof,/^[A-Za-z0-9_-]+\.[A-Za-z0-9_-]+$/);
+  const [encoded,signature]=r.body.proof.split('.');
+  const {createHmac,timingSafeEqual}=await import('node:crypto');
+  const payloadBytes=Buffer.from(encoded,'base64url');
+  const proof=JSON.parse(payloadBytes.toString('utf8'));
+  assert.equal(proof.schema,'tetherplane.controlcenter.owner-enrollment.v1');
+  assert.equal(proof.subject,'owner-sub');
+  assert.equal(proof.deviceId,'Leno');
+  assert.equal(proof.issuer,issuer);
+  assert.equal(proof.resource,resource);
+  assert.equal(Date.parse(proof.expiresAt)-Date.parse(proof.issuedAt),300000);
+  assert.equal(r.body.expiresAt,proof.expiresAt);
+  const hmac=createHmac('sha256',Buffer.alloc(32,4))
+    .update('tetherplane.owner-enrollment.v1').update(Buffer.from([0]))
+    .update(payloadBytes).digest();
+  const provided=Buffer.from(signature,'base64url');
+  assert.ok(timingSafeEqual(hmac,provided));
+  assert.doesNotMatch(JSON.stringify(r.body),/fake-signature|eyJhbGciOiJSUzI1NiJ9/);
+  const second=await api('/api/authority/Leno/owner-proof');
+  assert.notEqual(second.body.proof,r.body.proof,'proof must include fresh random nonce');
+});
 test('requires origin, CSRF, exact device confirmation, and persisted revision before changes',async()=>{
  const body={denied:['filesystem'],expectedRevision:0,confirmDeviceId:'Leno',reason:'Review restricted filesystem'};
  assert.equal((await api('/api/authority/Leno/change','POST',body,{csrf:false})).status,403);

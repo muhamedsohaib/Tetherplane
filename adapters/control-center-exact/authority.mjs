@@ -1,4 +1,4 @@
-import {createHash,createHmac,timingSafeEqual} from 'node:crypto';
+import {createHash,createHmac,timingSafeEqual,randomBytes} from 'node:crypto';
 import {readFileSync,openSync,writeSync,fsyncSync,closeSync} from 'node:fs';
 import {verifyAuditCheckpoint,advanceAuditCheckpoint,withAuthorityWriterLease,AuthorityWriterBusy} from './authority-audit.mjs';
 import {isAbsolute} from 'node:path';
@@ -140,6 +140,29 @@ export class AuthorityRegistry {
     if(!Array.isArray(devices)||!devices.some(d=>d.deviceId===deviceId&&d.revokedAt===null))
       fail(403,'device_not_paired','The device is not actively paired with this account.');
     return this.claimsVerified(token);
+  }
+  async ownerEnrollmentProof(token,deviceId){
+    // Existing relay first confirms the bearer, account, scope and pairing.
+    // The local Windows administrator must separately approve this short-lived
+    // HMAC-sealed proof before the owner can edit portal restrictions.
+    const actor=await this.checkedActor(token,deviceId);
+    const issuedAt=this.now();
+    const payload={
+      schema:'tetherplane.controlcenter.owner-enrollment.v1',
+      issuer:this.issuer,resource:this.resource,
+      subject:actor.sub,deviceId,
+      issuedAt:issuedAt.toISOString(),
+      expiresAt:new Date(issuedAt.getTime()+300000).toISOString(),
+      nonce:randomBytes(16).toString('base64url')
+    };
+    const data=Buffer.from(JSON.stringify(payload),'utf8');
+    const mac=createHmac('sha256',this.key)
+      .update('tetherplane.owner-enrollment.v1').update(Buffer.from([0]))
+      .update(data).digest();
+    return {
+      proof:data.toString('base64url')+'.'+mac.toString('base64url'),
+      expiresAt:payload.expiresAt,deviceId
+    };
   }
   async observe(token,deviceId){
     const actor=await this.checkedActor(token,deviceId);

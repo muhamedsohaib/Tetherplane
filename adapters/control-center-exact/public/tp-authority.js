@@ -46,6 +46,8 @@ async function api(path,method='GET',body){
 }
 function allowInput(){
  const enabled=state.current?.isOwner===true&&!state.busy;
+ const proofButton=$('tp-authority-copy-owner-proof');
+ if(proofButton)proofButton.disabled=!state.current||state.busy;
  for(const id of ['tp-authority-confirm','tp-authority-reason','tp-authority-apply',
    'tp-authority-rollback','tp-authority-target-revision',...GROUPS.map(x=>'tp-authority-deny-'+x)]){
   if($(id))$(id).disabled=!enabled;
@@ -76,6 +78,7 @@ function draw(){
  }
  for(const g of GROUPS)$('tp-authority-deny-'+g).checked=d.denied.includes(g);
  $('tp-authority-reason').value='';$('tp-authority-confirm').value='';
+ const proofField=$('tp-authority-proof');if(proofField){proofField.hidden=true;proofField.value='';}
  const roll=$('tp-authority-target-revision');roll.replaceChildren();
  for(const v of [{revision:0,action:'initial'},...d.audit]){
   if(v.revision>=d.revision)continue;
@@ -134,8 +137,29 @@ async function open(){
  }
 }
 function close(){
+ const proof=$('tp-authority-proof');if(proof){proof.value='';proof.hidden=true;}
  ++state.requestEpoch;
  $('tp-authority-modal').hidden=true;state.current=null;state.csrf='';state.busy=false;
+}
+async function copyOwnerProof(){
+ const d=state.current;if(!d||state.busy)return;
+ state.busy=true;allowInput();info('Verifying your existing OAuth account through the relay...');
+ try{
+  const r=await api('/api/authority/'+encodeURIComponent(d.deviceId)+'/owner-proof');
+  if(typeof r.proof!=='string'||!(/^[A-Za-z0-9_-]+\.[A-Za-z0-9_-]+$/).test(r.proof))
+   throw Error('Malformed identity proof');
+  const field=$('tp-authority-proof');
+  field.value=r.proof;field.hidden=false;
+  try{
+   if(!navigator.clipboard?.writeText)throw Error('Clipboard unavailable');
+   await navigator.clipboard.writeText(r.proof);
+   info('Verified owner proof copied. Paste ONLY into the elevated VAULTER enrollment prompt within 5 minutes.');
+  }catch{
+   field.focus();field.select();
+   info('Owner proof ready below. Press Ctrl+C to copy, then paste ONLY into the elevated VAULTER enrollment prompt within 5 minutes.');
+  }
+ }catch(e){info('Unable to prepare verified owner proof: '+e.message,true);}
+ finally{state.busy=false;allowInput();}
 }
 async function apply(action){
  const d=state.current;if(!d||!d.isOwner||state.busy)return;
@@ -205,6 +229,9 @@ function install(){
  }
  note('These controls cannot grant device-local privileges or bypass the authenticated agent.',control);
  const update=el('div','tp-auth-section',null,panel);
+ note('To enable restriction editing for this OAuth account, export a short-lived verified identity proof for the protected local administrator. This does not grant device capabilities.',update);
+ btn('[ Copy Verified Owner Proof ]',update,()=>{void copyOwnerProof();},'tp-authority-copy-owner-proof');
+ const proofField=el('input','tp-auth-input',null,update);proofField.id='tp-authority-proof';proofField.hidden=true;proofField.readOnly=true;proofField.setAttribute('aria-label','Verified identity proof for VAULTER administrator only');
  el('h3','text-sm font-bold','EXPLICIT OWNER CONFIRMATION',update);
  note('Enter the exact device ID and a reason. Never include passwords, credentials or access tokens.',update);
  const inputs=el('div','tp-auth-grid',null,update);
