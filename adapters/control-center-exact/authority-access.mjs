@@ -43,13 +43,28 @@ export function checkedProbe(probe,path){
   return {spec,args:probe==='filesystem_info'?{path}:
     probe==='process_echo'?{program:'cmd.exe',args:['/d','/c','echo TETHERPLANE_PORTAL_ACCESS_PROBE']}:{}};
 }
-export function classifyProbeReply(probe,result){
+export function classifyProbeReply(probe,result,expectedPath=null){
   const raw=result?.structuredContent;
   const code=raw?.error?.code||raw?.code||raw?.data?.error?.code;
   if(code==='permission_denied'||code==='portal_authority_denied')return 'denied';
-  if(result?.isError===true||raw?.status==='error'||!raw||typeof raw!=='object')return 'not_verified';
+  if(result?.isError===true||raw?.status==='error'||!raw||typeof raw!=='object'||Array.isArray(raw))
+    return 'not_verified';
   if(probe==='device_status'&&
     (typeof raw.agent_version!=='string'||typeof raw.policy_mode!=='string'))return 'not_verified';
+  if(probe==='filesystem_info'){
+    // A successful MCP transport call is not evidence that a particular file
+    // or folder was authorized. Confirm the real provider's response shape and
+    // that it refers to the exact path the owner selected.
+    const normalized=p=>p.toLowerCase().replaceAll('/','\\');
+    if(typeof expectedPath!=='string'||typeof raw.path!=='string'||
+       normalized(raw.path)!==normalized(expectedPath)||
+       !['file','directory','symlink'].includes(raw.type)||
+       !Number.isFinite(raw.size)||raw.size<0)return 'not_verified';
+  }
+  if(probe==='browser_status'){
+    if(typeof raw.available!=='boolean'||typeof raw.mode!=='string')return 'not_verified';
+    if(raw.available===false)return 'provider_unavailable';
+  }
   if(probe==='process_echo'&&
     (raw.exit_code!==0||typeof raw.stdout!=='string'||!raw.stdout.includes('TETHERPLANE_PORTAL_ACCESS_PROBE')))
     return 'not_verified';

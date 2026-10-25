@@ -42,6 +42,17 @@ test('only a successful exact tool result earns verified_allowed',()=>{
   assert.equal(classifyProbeReply('device_status',{isError:false,structuredContent:{ok:true}}),'not_verified');
   assert.equal(classifyProbeReply('filesystem_info',{isError:true,structuredContent:{error:{code:'permission_denied'}}}),'denied');
   assert.equal(classifyProbeReply('filesystem_info',{isError:true,structuredContent:{error:{code:'internal_error'}}}),'not_verified');
+  const requested='D:\\Work\\approved\\report.txt';
+  const validInfo={isError:false,structuredContent:{
+    path:requested,type:'file',size:123,modified_unix_ms:1792000000000}};
+  assert.equal(classifyProbeReply('filesystem_info',validInfo,requested),'verified_allowed');
+  assert.equal(classifyProbeReply('filesystem_info',validInfo,'D:\\Work\\private\\report.txt'),'not_verified',
+    'success on a different path must never be mistaken for a grant');
+  assert.equal(classifyProbeReply('filesystem_info',{isError:false,structuredContent:{}},requested),'not_verified',
+    'empty MCP reply is not permission evidence');
+  assert.equal(classifyProbeReply('browser_status',{isError:false,structuredContent:{available:true,mode:'background_only'} }),'verified_allowed');
+  assert.equal(classifyProbeReply('browser_status',{isError:false,structuredContent:{available:false,mode:'background_only'}}),'provider_unavailable');
+  assert.equal(classifyProbeReply('browser_status',{isError:false,structuredContent:{ok:true}}),'not_verified');
   assert.equal(classifyProbeReply('process_echo',{isError:false,structuredContent:{exit_code:0,stdout:'TETHERPLANE_PORTAL_ACCESS_PROBE\r\n'}}),'verified_allowed');
   assert.equal(classifyProbeReply('process_echo',{isError:false,structuredContent:{exit_code:1,stdout:''}}),'not_verified');
 });

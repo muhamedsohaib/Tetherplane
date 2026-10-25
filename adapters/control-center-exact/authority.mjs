@@ -209,7 +209,7 @@ export class AuthorityRegistry {
       return {...base,access:'portal_restricted',reason:'Control Center overlay blocks this operation.'};
     try{
       const result=await this.portal.mcpCall(token,spec.tool,spec.operation,deviceId,args);
-      const access=classifyProbeReply(probe,result);
+      const access=classifyProbeReply(probe,result,probe==='filesystem_info'?path:null);
       return {...base,access,reason:access==='verified_allowed'
         ?'Only this exact operation succeeded under this authenticated portal session.'
         :access==='denied'?'This operation was denied by the execution boundary.'
