@@ -124,3 +124,17 @@ test('rollback restores prior portal policy through authorized and audited API',
  const after=await api('/api/mcp/call','POST',{tool:'files',op:'read',device:'Leno',args:{path:'C:/workspace'}});
  assert.equal(after.status,200);
 });
+
+test('unexpected authority mutation failure never falsely confirms that no change was applied',async()=>{
+ const original=portal.authority.registry.change;
+ portal.authority.registry.change=async()=>{throw Error('synthetic interrupted response after possible write')};
+ try {
+   const r=await api('/api/authority/Leno/change','POST',
+     {denied:['filesystem'],expectedRevision:2,confirmDeviceId:'Leno',
+      reason:'Synthetic post-write response failure'});
+   assert.equal(r.status,503);
+   assert.equal(r.body.error.code,'authority_unavailable');
+   assert.match(r.body.error.message,/uncertain|verify|refresh/i);
+   assert.doesNotMatch(r.body.error.message,/No change was applied/i);
+ }finally{portal.authority.registry.change=original}
+});

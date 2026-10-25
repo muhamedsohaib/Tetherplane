@@ -82,7 +82,7 @@ export class AuthorityHttp {
       const safe=(e instanceof AuthorityError||Number.isInteger(e?.status)&&typeof e.code==='string');
       send(res,safe?e.status:503,{error:{
         code:safe?e.code:'authority_unavailable',
-        message:safe?e.message:'Device authority could not be verified. No change was applied.'
+        message:safe?e.message:'Authority outcome is uncertain. Refresh the verified audit before any further change.'
       }});
     }
   }

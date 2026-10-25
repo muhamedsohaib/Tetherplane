@@ -1,6 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import {mkdtempSync,rmSync,unlinkSync,writeFileSync,readFileSync,appendFileSync} from 'node:fs';
+import {mkdtempSync,rmSync,unlinkSync,writeFileSync,readFileSync,appendFileSync,openSync,closeSync,existsSync} from 'node:fs';
 import {createHmac} from 'node:crypto';
 import {tmpdir} from 'node:os';
 import {join} from 'node:path';
@@ -126,4 +126,27 @@ test('explicit first-use provisioning refuses to overwrite even partial storage'
     assert.throws(()=>provisionAuthorityAudit(f.config),/already exists/);
     assert.deepEqual(readFileSync(f.config.checkpointPath),original);
   }finally{f.cleanup();}
+});
+
+test('an existing writer lease blocks changes without mutating either audit file',async()=>{
+  const f=create();let lockFd;try{
+    provisionAuthorityAudit(f.config);
+    const first=new AuthorityRegistry(portal,f.config);
+    const journalBefore=readFileSync(f.config.journalPath);
+    const checkpointBefore=readFileSync(f.config.checkpointPath);
+    const lockPath=f.config.journalPath+'.writer.lock';
+    lockFd=openSync(lockPath,'wx');
+    await assert.rejects(()=>first.change({token,deviceId:'Leno',denied:['filesystem'],
+      expectedRevision:0,confirmDeviceId:'Leno',reason:'Test concurrent writer protection'}),
+      e=>e instanceof AuthorityError&&e.code==='authority_writer_busy');
+    assert.deepEqual(readFileSync(f.config.journalPath),journalBefore);
+    assert.deepEqual(readFileSync(f.config.checkpointPath),checkpointBefore);
+    assert.equal(existsSync(lockPath),true);
+    closeSync(lockFd);lockFd=undefined;unlinkSync(lockPath);
+    const result=await first.change({token,deviceId:'Leno',denied:['filesystem'],
+      expectedRevision:0,confirmDeviceId:'Leno',reason:'Acquire single writer lease after review'});
+    assert.equal(result.revision,1);
+    assert.equal(existsSync(lockPath),false);
+    assert.deepEqual(new AuthorityRegistry(portal,f.config).state(token,'Leno').denied,['filesystem']);
+  }finally{if(lockFd!==undefined)closeSync(lockFd);f.cleanup();}
 });

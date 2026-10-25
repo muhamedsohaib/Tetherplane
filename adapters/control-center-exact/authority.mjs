@@ -1,6 +1,6 @@
 import {createHash,createHmac,timingSafeEqual} from 'node:crypto';
 import {readFileSync,openSync,writeSync,fsyncSync,closeSync} from 'node:fs';
-import {verifyAuditCheckpoint,advanceAuditCheckpoint} from './authority-audit.mjs';
+import {verifyAuditCheckpoint,advanceAuditCheckpoint,withAuthorityWriterLease,AuthorityWriterBusy} from './authority-audit.mjs';
 import {isAbsolute} from 'node:path';
 
 export class AuthorityError extends Error {
@@ -170,6 +170,16 @@ export class AuthorityRegistry {
     };
   }
   write(actor,deviceId,denied,expectedRevision,reason,action){
+    try{
+      return withAuthorityWriterLease(this.path,()=>
+        this.writeHeld(actor,deviceId,denied,expectedRevision,reason,action));
+    }catch(e){
+      if(e instanceof AuthorityWriterBusy)
+        fail(503,'authority_writer_busy','Authority writer is busy or a stale lock requires owner review.');
+      throw e;
+    }
+  }
+  writeHeld(actor,deviceId,denied,expectedRevision,reason,action){
     validateRevision(expectedRevision);
     const run=this.replay(),key=actor.key+'\0'+deviceId;
     const old=run.states.get(key)||{revision:0,denied:[]};

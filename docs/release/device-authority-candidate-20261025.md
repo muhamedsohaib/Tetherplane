@@ -133,3 +133,42 @@ Neither production OAuth nor VAULTER service state was changed.
 The source-level journal-loss defect is now guarded; **operator-approved VAULTER provenance, on-disk audit ACL validation, independently measured crash recovery, trusted signing and real four-device Control Center acceptance remain open release gates.**
 
 **Isolated audit hardening commit:** `69c0c33c4466201aad97e675cde95fc04e8a85dc`. This changes no running service and is not a production release. The sanitized VAULTER receipt collector requires an authorized local operator to select the actual source root and the approved evidence-output directory; neither location has been verified through the limited connector.
+
+
+## Additional release-gate investigation — October 25, 2026
+
+**Source-only hardening (not deployed):** A deterministic RED test proved that a pre-existing audit writer lease did not block a second actor's write. The fix uses an exclusive journalPath plus ".writer.lock" lease, acquired before full journal replay, mutation append, checkpoint fsync and verification. Other writers fail with authority_writer_busy without changing the journal or checkpoint; a normal completed write removes its own lease. A stale lock after process crash deliberately requires review, never time-based or forced removal. This is one-host filesystem coordination, **not** independent evidence for distributed shared/network storage, Windows ACL security or unattended recovery.
+
+A second RED test showed that an unexpected HTTP failure could tell the owner "No change was applied" even if a write was durable but an acknowledgement failed. The generic 503 response now states that the outcome is uncertain and instructs a verified audit refresh before further mutation.
+
+**Verification:** Control Center Node **52/52 passed**, 0 failed/skipped, including both new RED/GREEN controls. Current HTML fingerprint remains 4e5a9de9bb4444b06522085a73268a8a8940664f27ff44e9bd76637791b6a9f8. Headless Edge simulated authority/restriction/rollback and stale-response behavior passed without live mutations. Release contract Node tests **48/51 passed with 3 platform-specific skips and no failures**. All four device.status routes returned Windows x86_64 agent 0.1.0, background_only; VAULTER deliberately denied browser.pages under its limited principal.
+
+### Windows onboarding acceptance — deliberately NOT counted as passing
+
+Existing onboarding PowerShell 5.1/Pester 3.4 suite was run on Leno without a release-built target/release/tetherd.exe. Outcome: **142 passed, 5 failed, 0 skipped**. This does **not** constitute native signed-package, clean-install or task lifecycle acceptance.
+
+The failures are discriminated:
+- 1 real-agent acceptance test requires exact worktree release-built tetherd.exe, which is absent.
+- 3 device task tests refuse registration/reuse on Leno because an existing Tetherplane agent/process/identity is present. These are correct **safety guards**, not evidence that a clean machine can install.
+- 1 Windows SIP/PE test needs an accessible embedded-Authenticode PowerShell executable. Independent read-only probe found Windows PowerShell's powershell.exe has **Valid/Catalog** signature; pwsh.exe returns **IOException: The file cannot be accessed by the system** on Leno. No protected executable was modified and no trust policy weakened.
+
+The Pester suite took ~333 seconds. Further on-device installation trials must occur on a **newly provisioned authorized disposable Windows machine/VM**, not on Surface, Leno, VAULTER or RTX with current production identities. A request to terminate that specific test runner through Tetherplane process.terminate was blocked by local approval_required, and no alternate termination technique was used. The suite subsequently exited with code 1. Afterward, Leno's authenticated device.status remained available.
+
+### Current constraints and release gate matrix
+
+| Gate | Status | Independent evidence still required |
+| --- | --- | --- |
+| Four existing agent routes | PASS for connector status only | Control Center OAuth session, each device's authorized/denied behavior via that panel |
+| Isolated portal authority Node suite | PASS 52/52 | Multi-process writer stress, production journal ACL and supported recovery |
+| Browser UI simulated acceptance | PASS on isolated Leno | Owner-approved real OAuth login/expiry and actual browser-to-relay read-only operations |
+| VAULTER port 8791 deployment | BLOCKED by intentionally limited principal | Owner-executed sanitized read-only listener and source/artwork fingerprint receipt |
+| Native Windows onboarding | 142/147 host-incompatible, not accepted | Clean machine/VM; exact-source built agent and independent install/upgrade/rollback |
+| Trusted Windows signing | NOT VERIFIED | Provider-approved code signing identity, thumbprint, timestamp and protected signing workflow |
+| Production identity/policy | UNCHANGED | Explicit authorization for any protected deployment or admin activation |
+| Artwork source version | UNRESOLVED | Owner decision between historical original and current private candidate SHA versions |
+
+Leno capacity measured during testing: ~0.75 GB free physical RAM and ~95 GB free C:; no Rust release build was started under this pressure. Surface showed ~7.2 GB RAM free, RTX ~23.6 GB, but both are already registered devices rather than clean installers. No available machine was assumed to be a disposable authorized canary.
+
+**Next human-controlled dependency:** Run the existing read-only collector locally on VAULTER under an authorized operator using its exact existing Control Center source root and a permitted receipt-output directory. Return only its sanitized metadata JSON. No process execution, identity mutation, authenticated browser login, or unsafe workaround was attempted through the restricted VAULTER principal.
+
+**Release decision remains NO-GO**, and this branch remains local until an approved source-sharing/review step. Passing synthetic tests or existing device.status is not a production release attestation.

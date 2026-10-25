@@ -110,3 +110,29 @@ export function advanceAuditCheckpoint({journalPath,checkpointPath,auditKey,coun
   }
   return true;
 }
+
+export class AuthorityWriterBusy extends Error {
+  constructor(){super('Another Control Center authority writer is active or a stale lock requires owner review.');}
+}
+// Lock acquisition is exclusive across local processes, and precedes replay+append+checkpoint.
+// A stale lock is never removed automatically after an unclean shutdown.
+export function withAuthorityWriterLease(journalPath,writeAction){
+  if(!validPath(journalPath)||typeof writeAction!=='function')
+    throw Error('Invalid authority writer lease parameters.');
+  const lockPath=journalPath+'.writer.lock';
+  let fd;
+  try{fd=openSync(lockPath,'wx',0o600);}
+  catch(e){
+    if(e?.code==='EEXIST')throw new AuthorityWriterBusy();
+    throw e;
+  }
+  try {
+    // An empty existing lockfile is sufficient for atomic exclusive-create.
+    // There is deliberately no PID-based force-unlock or time-based stale cleanup.
+    fsyncSync(fd);
+    return writeAction();
+  } finally {
+    try{closeSync(fd);}
+    finally{unlinkSync(lockPath);}
+  }
+}
