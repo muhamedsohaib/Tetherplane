@@ -1,8 +1,8 @@
-# V5 Control Center effective-access cutover — staged, not promoted
+# V5 Control Center effective-access cutover — production accepted
 Date: 2026-10-25 (Asia/Dubai)
 
 ## Current disposition
-Source at `09ea09b7ba5bbe66a23851ef6f3248c799050008` on `feature/device-permissions-truth-20261025` is prepared for a protected, owner-operated V5 VAULTER cutover. **Production is still the previously accepted V4 single-owner editor** (`6bad88c`). No control-center task, audit journal, OAuth client, relay scope, device identity or device-local permission has been changed in this preparation.
+**V5 was promoted and accepted on VAULTER.** See the decisive production acceptance receipt at the end of this record. Source at `09ea09b7ba5bbe66a23851ef6f3248c799050008` on `feature/device-permissions-truth-20261025` was prepared against the previously accepted V4 single-owner editor (`6bad88c`). The V4 status below describes the historical pre-promotion checkpoint, not current production.
 
 ## Precise source acceptance
 - 62/62 full Control Center Node tests PASS, including simulated OAuth, owner approval, deny/rollback, non-owner denial and session boundaries.
@@ -36,3 +36,39 @@ Source at `09ea09b7ba5bbe66a23851ef6f3248c799050008` on `feature/device-permissi
 **Separate RTX policy gate:** This UI can observe access and export review requests. It cannot grant agent-local permissions by itself; explicit local approval, protected profile/launcher verification, owned restart, exact path acceptance and rollback are still required. Browser provider may be unavailable. Never bypass connector policy or expand drive roots in response to an access denial.
 
 Do not merge a protected branch, publish a release tag, or alter production identity configuration without a separate explicit authorization.
+
+## Final production acceptance — 2026-10-25
+
+**Status: V5 VAULTER CONTROL CENTER ACCEPTED. This section supersedes only the earlier "staged, not promoted" / V4 production status statements, retained above as historical preparation records.**
+
+Owner-provided VAULTER operator transcript independently reported:
+```text
+VERIFIED_PRIVATE_V5_PACKAGE=YES
+PACKAGE_DIGESTS_VERIFIED=30
+ACCEPTED_OWNER_EDITOR_LISTENER_PID=13440
+EXISTING_OAUTH_IDENTITY_UNCHANGED=YES
+EXISTING_AUDIT_AND_CHECKPOINT=PASS
+EXISTING_AUDITED_RESTRICTIONS=0
+EXISTING_EDITOR_ALLOWLIST_PRESERVED=1
+V5_EFFECTIVE_ACCESS_INSPECT_READ_ONLY=PASS
+V5_LIVE_UNAUTHENTICATED_GATES=PASS
+V5_LIVE_PID=12516
+V5_LIVE_UNAUTHENTICATED_GATES=PASS
+V5_EFFECTIVE_ACCESS_CUTOVER_ACCEPTED=YES
+```
+
+The promotion revalidated the original 116,329-byte HTML hash `4e5a9de9bb4444b06522085a73268a8a8940664f27ff44e9bd76637791b6a9f8`, private font hash `18be452724bfdc236c074ca94a249a7f41a86752c7d04ab258ce9ed5651f6a7e`, and reported **60/60 Node tests passed**, no failures. The new managed listener PID **12516** was reported at the accepted cutover (not guaranteed to remain the current PID indefinitely).
+
+Operator-provided authenticated browser screenshots verified:
+- All four named device tabs were present (Leno, RTX, Surface, VAULTER) in the Device Authority UI. This alone does not establish contemporaneous successful status operations on all four via the portal.
+- RTX advertised providers were labeled **NOT VERIFIED**, browser **UNAVAILABLE** and desktop **NO OPERATIONS ADVERTISED**, instead of falsely showing blanket permissions.
+- The same existing verified OAuth account remained a portal policy editor. Five deny-only restriction checkboxes were displayed; zero additional portal restrictions and empty audit history were observed.
+- The **Request Device-local Permission Review** UI rendered and made clear that exporting a proposal does not grant a capability. No production proposal was applied.
+- An active `device.status` portal probe against RTX returned **VERIFIED ALLOWED — exact tested operation only**, with a live timestamp; no claim of other capabilities being authorized.
+- The operator typed `ACCEPT`; final unauthenticated access gates passed, then the script emitted **`V5_EFFECTIVE_ACCESS_CUTOVER_ACCEPTED=YES`**. This is the decisive protected deployment receipt. No rollback was requested.
+
+Independent post-acceptance Tetherplane connector `device.status` calls returned Windows x86_64 agent `0.1.0` and `background_only` for all four agents. Leno and Surface additionally reported `authenticated` transport and `ready` state; VAULTER and RTX did not expose those detailed liveness fields in the response. These are **agent route checks**, not a direct observation of the protected VAULTER Control Center process or the private portal audit files.
+
+**Phase disposition: V5 production effective-access visibility and review-only request workflow COMPLETE and ACCEPTED.** This is not permission-grant acceptance: no RTX principal, agent launch policy, allowed filesystem directory, browser capability, or protected relay scope was expanded. An exported proposal is not a privileged grant, and executing that proposal requires independent on-device approval and tested rollback. Do not redo this V5 cutover, reset its audit or change the four device identities to solve RTX policy denials.
+
+**Unfinished, separate gate:** RTX local-authorized permission transaction (exact principal policy root, protected ACL, local ownership, restart behavior, operation success, out-of-root denial and receipt-backed rollback), with no blanket permission grant or bypass. Further public signing/clean-install distribution and protected merge/release likewise remain unapproved.
