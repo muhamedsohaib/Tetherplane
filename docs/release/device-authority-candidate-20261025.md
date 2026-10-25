@@ -172,3 +172,35 @@ Leno capacity measured during testing: ~0.75 GB free physical RAM and ~95 GB fre
 **Next human-controlled dependency:** Run the existing read-only collector locally on VAULTER under an authorized operator using its exact existing Control Center source root and a permitted receipt-output directory. Return only its sanitized metadata JSON. No process execution, identity mutation, authenticated browser login, or unsafe workaround was attempted through the restricted VAULTER principal.
 
 **Release decision remains NO-GO**, and this branch remains local until an approved source-sharing/review step. Passing synthetic tests or existing device.status is not a production release attestation.
+
+
+## Actual VAULTER port-8791 receipt comparison — 2026-10-25
+
+**Evidence type:** The owner provided the JSON body of a locally executed, read-only deployment receipt. Captured 2026-10-25T04:26:13.2194190Z. Receipt path on VAULTER: C:\Users\muham\Desktop\vaulter-control-center-20261025-082608.json. Its independently reported SHA-256 was c7bbd4f41646f6588753d65b4e9b03543f46061244f6fd265f04a71718817298. This is a user-supplied receipt; the restricted connector cannot independently read the Desktop or deployment root. Do not treat the receipt as an attestation of the Node process's exact loaded JS.
+
+**Observed deployment:** C:\ProgramData\Tetherplane\ControlCenterReleases\20261025-approved-oauth, localhost listener 127.0.0.1:8791, PID 5016, node.exe started 2026-10-25T00:50:32.3712350Z. Node executable SHA-256 3602f2bb1a10f2cbab4c36886218a33c1ab3db87290e73b033c46c77147d0237; executable hash is not application source provenance.
+
+**Candidate:** Leno feature/device-authority-20261025, HEAD 79ca36acae62ec6174f522958634e1d61f964e93 at reconciliation. Its 10 source fingerprints were independently computed through read-only Get-FileHash.
+
+| Relative path | Deployed VAULTER | Leno candidate | Result |
+| --- | --- | --- | --- |
+| server.mjs | aa6bdab77879780aa5bf3164aba1a2b51d50df8b117fa74e68221d84cf7353b8 | bd41f7cf13544e637ab4d3b1bc521f6f902a4784f39db951569a913b98fad2ec | DIFFERENT |
+| oauth.mjs | 4e187df4a1e9fbcca934b21064544142801b0a67401761ee8cbf18d0d13a0e29 | 379750684abc302e4164fe07ac4191ec2ff42cf1b547d946f60d86741a622a17 | DIFFERENT |
+| authority.mjs | MISSING | b52bb4b5a2e82b1af4587d043e2bc5432b6ee2a923a8e25ab247b5b0175a5bbc | NOT DEPLOYED |
+| authority-http.mjs | MISSING | 8a56e6c6cf3e84c2a9571e6942a74a6f03f67f52223dc83ca376d5ac2fddc1d6 | NOT DEPLOYED |
+| authority-audit.mjs | MISSING | ecbc57518405796bbc10063da759fb85bc23fef3a3e77621da8e9ce3bbf10c85 | NOT DEPLOYED |
+| public/index.html | 4e5a9de9bb4444b06522085a73268a8a8940664f27ff44e9bd76637791b6a9f8 | SAME | EXACT BYTE MATCH (116329 bytes) |
+| public/tp-integration.js | 956e79fe108bcd16579211c54f663b042e07547fc6a61bfb91cb3da5d2735175 | 865090b34fc3ba74efe62f39db9884441662be75d18ba60892d1fac154212bcc | DIFFERENT |
+| public/tp-oauth.js | d6eed7795247417d13e472aba88c39076ab7883e042080aa1571b246b90a4195 | SAME | EXACT BYTE MATCH (90 bytes) |
+| public/tp-authority.js | MISSING | 6cd15a06d1b8cb25481d4d3b9cc959fc7fcae176de2270aaa6f24d534b3c4047 | NOT DEPLOYED |
+| tools/verify-original.mjs | MISSING | 8250f96e430c999c5fb602b15f2a77afb7d905a421bc8781ce0efc427c872b1a | NOT DEPLOYED |
+
+**Provenance search:** A read-only search of the 18 known Leno Tetherplane worktrees proved that VAULTER's oauth.mjs SHA matches multiple older integrated worktrees, including integration-release-audit-20261023 and vaulter-recovery-20261024. The deployed tp-integration.js SHA exactly matches the separately preserved TetherplaneDeviceAuthorityStage-20261025/public/tp-integration.js, allowing an exact local source comparison. The deployed server.mjs SHA did NOT match those 18 local worktrees. A subsequent Git-history search checked the five distinct committed server.mjs revisions (six commits) with both LF/CRLF transformations; it still found no match. The deployed server.mjs therefore requires owner-approved source review; the exact delta is UNKNOWN and must not be guessed.
+
+**Known source differences:** Candidate oauth.mjs adds the optional AuthorityHttp integration, authority routes, optional authority JS serving and --authority-config parsing. Candidate tp-integration.js adds uncertainty fencing and correct directory-unavailable and sign-out messaging, plus HTTPS OAuth URL portability. Those two diffs were independently examined against their hash-matched local baselines. The current VAULTER server.mjs cannot be safely overwritten with candidate code until its true contents have been reviewed and preserved.
+
+**Private font asset issue found and corrected in isolated candidate:** The identical owner HTML requests /tp-font.woff2, which was missing from the Leno feature worktree although its server exposes the route. The originally staged 40,404-byte private font was found at the earlier authorized staging location with SHA-256 18be452724bfdc236c074ca94a249a7f41a86752c7d04ab258ce9ed5651f6a7e and copied byte-identically to the isolated candidate. It is excluded from Git by public/.gitignore and must not be published without distribution-rights review. The manual visual verifier now pins both the original HTML and this asset. Headless Edge verified the real font HTTP route and original UI with synthetic authority behavior. **53/53 Node tests passed** and the isolated Edge test passed. These results do not certify that VAULTER's unlisted font asset is present or byte-identical.
+
+**Next minimal dependency:** Obtain the exact deployed, 20,808-byte server.mjs code through owner-authorized, source-only review. Do not export OAuth config, credentials, journal, private owner data, or process command lines. Compare the loaded production server's features with the known original version and preserve unrelated fleet-presence/OAuth fixes before any side-by-side stage. The audit/authority modules are intentionally not active in VAULTER's existing production release; no production change was attempted.
+
+**Still NO-GO:** Exact server source reconciliation, proper local ACL and recovery acceptance, owner-approved real Control Center OAuth flow, trusted signed Windows artifact, clean-install/rollback trial and multi-device independent acceptance remain release gates.

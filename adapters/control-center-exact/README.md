@@ -10,7 +10,7 @@ The **current owner-approved candidate HTML bytes** installed locally on Leno as
 
 **4e5a9de9bb4444b06522085a73268a8a8940664f27ff44e9bd76637791b6a9f8**
 
-The exact source HTML is **excluded from Git and distribution**. The installer, verifier and integration regression agree on that fingerprint. The server injects a separately loaded script in the HTTP response; it does not write to, regenerate, or normalize the HTML on disk. The ASCII illustration, shine, animation timings, theme transitions and original layout must not be edited.
+The exact source HTML and the original private font are **excluded from Git and distribution**. The local verification command pins the HTML above and the 40,404-byte private `public/tp-font.woff2` asset (SHA-256 `18be452724bfdc236c074ca94a249a7f41a86752c7d04ab258ce9ed5651f6a7e`). Both were recovered byte-for-byte from the previously approved local staging artifacts. Do not publish or substitute the font without verifying redistribution rights. The installer, verifier and integration regression agree on the HTML fingerprint. The server injects a separately loaded script in the HTTP response; it does not write to, regenerate, or normalize the HTML on disk. The ASCII illustration, shine, animation timings, theme transitions and original layout must not be edited.
 
 **Provenance caution:** The October 23 historical integration documentation names an older HTML fingerprint, **36bef6cd23058fc90b0b38820fad8ac75655c89e326403160fa1e90405238a82**. Another named Leno functional-copy reference also differs. These are distinct files: **no equivalence or silent upgrade is assumed**. Confirm the intended artwork and rights, and inspect VAULTER's existing on-disk source before any promotion.
 
@@ -21,7 +21,7 @@ Install the currently pinned owner-supplied HTML only if explicitly available an
 node .\tools\verify-original.mjs
 ~~~
 
-The installer refuses any wrong fingerprint and any attempt to overwrite a different existing HTML. It does not fetch or create artwork.
+The installer refuses any wrong fingerprint and any attempt to overwrite a different existing HTML. It does not fetch or create artwork. The font must be provisioned separately from authorized local artwork; `verify-original.mjs` fails if that private asset is missing or altered. Headless Edge also verifies the actual `GET /tp-font.woff2` response rather than accepting a CSS fallback.
 
 ## Runtime and configuration
 
@@ -75,6 +75,6 @@ Before any protected merge or VAULTER promotion:
 4. Provide a protected audit key/journal location, backup and recovery plan; independently check fail-closed behavior, file protection and journal-loss handling.
 5. Verify production-package provenance, trusted signing, clean install/upgrade/uninstall and operational rollback on an authorized Windows machine.
 
-**VAULTER read-only provenance helper:** `scripts/Collect-ControlCenterReadOnlyReceipt.ps1` accepts an explicitly selected existing portal source root and an explicitly approved absolute JSON output path. It hashes only whitelisted script/artwork files, reads listener/process metadata for port 8791, excludes OAuth config/credentials and process command lines, and refuses to overwrite receipts. It has only been tested on Leno; it has not been executed on VAULTER. Use it locally under an authorized operator and return only the sanitized receipt through the approved transfer path.
+**VAULTER read-only provenance helper:** `scripts/Collect-ControlCenterReadOnlyReceipt.ps1` accepts an explicitly selected existing portal source root and an explicitly approved absolute JSON output path. It hashes only whitelisted script/artwork files, reads listener/process metadata for port 8791, excludes OAuth config/credentials and process command lines, and refuses to overwrite receipts. Its smoke test was run on Leno, and an authorized VAULTER operator subsequently ran it on October 25, 2026 with a single loopback listener on port 8791 and ten file fingerprints. The user-supplied receipt has been reconciled with the candidate in the release handoff. It does not establish deployed JavaScript source identity solely from the Node executable checksum.
 
 Do not merge, deploy, change protected identity settings, or replace the running VAULTER listener without explicit approval.

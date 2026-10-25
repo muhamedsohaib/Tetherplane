@@ -4,6 +4,7 @@ No real OAuth credentials, device authorization, or production policy writes.
 Runs against the actual worktree JS and approved local HTML in headless Edge.
 """
 import base64
+from hashlib import sha256
 import json
 import os
 from pathlib import Path
@@ -61,6 +62,16 @@ with tempfile.TemporaryDirectory(prefix="TetherplaneAuthorityQA-") as td:
             else:
                 raise RuntimeError("Candidate server did not become healthy")
 
+            # The private approved artwork references this route. Verify the
+            # real HTTP response rather than relying on browser CSS fallback.
+            with urlopen(base_url + '/tp-font.woff2', timeout=5) as font_response:
+                font_bytes = font_response.read()
+                assert font_response.status == 200
+                assert 'font/woff2' in font_response.headers.get('content-type', '')
+                assert sha256(font_bytes).hexdigest() == (
+                    '18be452724bfdc236c074ca94a249a7f41a86752c7d04ab258ce9ed5651f6a7e'
+                )
+                print('PRIVATE_FONT_HTTP=PASS')
             with sync_playwright() as playwright:
                 browser = playwright.chromium.launch(
                     executable_path=str(EDGE), headless=True,
