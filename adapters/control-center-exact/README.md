@@ -1,35 +1,75 @@
-# Tetherplane exact Control Center: backend-only adapter (DRAFT)
+# Tetherplane exact Control Center — Device Authority candidate
 
-This package wires **the owner's original exact HTML** to the existing account-scoped Tetherplane relay and six compact MCP tool families. It does **not** redesign, rebuild, or redistribute that HTML. The user-supplied HTML (SHA-256 `36bef6cd23058fc90b0b38820fad8ac75655c89e326403160fa1e90405238a82`) is the immutable visual baseline; the external `tp-integration.js` is injected into served HTML at runtime, not written into the source file. The original ASCII glyphs, animation, themes, five-card layout and CSS must remain untouched.
+**Status (2026-10-25): isolated, unmerged source candidate. NOT DEPLOYED.**
 
-**Distribution hold:** this public code branch deliberately excludes `public/index.html`. Redistribution of the original artwork requires a separate decision. The included `test/fixture.html` is ONLY a contract-test fixture; it is not the product visual.
+This adapter serves the owner's existing five-card Control Center privately from numeric loopback, integrates it with the existing authenticated relay and provides an optional **Device Authority** panel. The panel is an additional **deny-only Control Center restriction overlay**, not a device-local permission editor, a grant of administrator rights, or an alternative identity provider. The device agent's policy and the existing OAuth/relay authorization remain final.
 
-## Install the exact owner-supplied frontend on Windows
+## Original owner artwork
 
-Prerequisites: Node.js 22+ and the exact original `Tetherplane_Product_UI_Exact_Portal(1).html` from the user's approved archive. From this package directory:
+The **current owner-approved candidate HTML bytes** installed locally on Leno as public/index.html have SHA-256:
 
-```powershell
-.\scripts\Install-ApprovedHtml.ps1 -SourceHtml 'C:\path\to\Tetherplane_Product_UI_Exact_Portal(1).html'
-npm run verify:artwork
-npm test
-node .\server.mjs --relay-url 'https://YOUR-EXISTING-RELAY-HOST'
-```
+**4e5a9de9bb4444b06522085a73268a8a8940664f27ff44e9bd76637791b6a9f8**
 
-Use the existing authorized HTTPS relay origin, **not** `/mcp` or a public `:10000`. Open `http://127.0.0.1:8790`. Listener is 127.0.0.1 only; do not forward it through a tunnel, reverse proxy or public server. The installer refuses to replace a divergent HTML file and checks SHA-256 before and after copying. Nothing is installed on any device or production relay.
+The exact source HTML is **excluded from Git and distribution**. The installer, verifier and integration regression agree on that fingerprint. The server injects a separately loaded script in the HTTP response; it does not write to, regenerate, or normalize the HTML on disk. The ASCII illustration, shine, animation timings, theme transitions and original layout must not be edited.
 
-## Live integration surface
+**Provenance caution:** The October 23 historical integration documentation names an older HTML fingerprint, **36bef6cd23058fc90b0b38820fad8ac75655c89e326403160fa1e90405238a82**. Another named Leno functional-copy reference also differs. These are distinct files: **no equivalence or silent upgrade is assumed**. Confirm the intended artwork and rights, and inspect VAULTER's existing on-disk source before any promotion.
 
-- Sign in using an **already-issued, account-scoped relay bearer credential**. Local 15-minute in-memory sessions use opaque HttpOnly SameSite=Strict cookies and same-origin CSRF checks. Do **not** extract ChatGPT tokens, paste secrets into the repository or register another OAuth client.
-- `GET /devices`: account-scoped directory. Pairing is NOT health, presence or permission evidence; unknown transport is `not_reported`.
-- `POST /pair/approve`: device-initiated hexadecimal `XXXX-XXXX` code plus owner confirmation; single-use and expiry enforced by existing relay.
-- `POST /devices/:id/revoke`: explicit typed ID; account ownership is checked before forwarding; device-local policy unaffected.
-- `POST /mcp`: the original six compact tool names only (`device`, `files`, `process`, `browser`, `desktop`, `batch`) via existing MCP negotiation. Local Policy Broker remains final authority, denies remain denials. The mini-console accepts `mcp device status Leno {}` (read-only). New MCP sessions are explicitly deleted after every call, including denials.
-- Refreshed, expired, invalid and uncertain mutations fail closed; never automatically retry a pairing/revocation/command whose outcome is unknown.
+Install the currently pinned owner-supplied HTML only if explicitly available and authorized:
 
-## Tests and acceptance gates
+~~~powershell
+.\scripts\Install-ApprovedHtml.ps1 -SourceHtml 'C:\path\to\approved-owner-page.html'
+node .\tools\verify-original.mjs
+~~~
 
-`npm test` runs synthetic HTTP security, CSRF, relay pairing/revocation, session expiry and MCP lifecycle tests. When the real HTML is present, the suite also checks its exact byte-level SHA-256. When absent, CI uses `test/fixture.html` **only** to exercise server semantics and injection; it cannot certify visual fidelity. On a machine carrying the approved HTML, also run `npm run verify:artwork`, visual browser QA and actual read-only device acceptance.
+The installer refuses any wrong fingerprint and any attempt to overwrite a different existing HTML. It does not fetch or create artwork.
 
-This is not yet distribution-ready. **Blocked:** approved browser OAuth/PKCE client and scopes for an actual portal account, independently verified device access on Vaulter/Leno/Surface/RTX, external security review, and artwork rights. A compatible relay access credential is a prerequisite for live browser usage. Do not merge or deploy under these open gates.
+## Runtime and configuration
 
-This package is isolated from the existing `adapters/control-center` draft and does not modify protected identity, relay, Rust agent, Windows packaging or user worktrees.
+Prerequisites: Node.js 22+, the privately supplied exact HTML and an already-authorized relay endpoint. The local listener binds **127.0.0.1 only**. Do not publicly expose this operator Control Center.
+
+Normal behavior (without authority configuration):
+
+~~~powershell
+node .\oauth.mjs --port 8790 --relay-url 'https://EXISTING-RELAY-ORIGIN' --oauth-config 'C:\protected\approved-oauth-client.json'
+~~~
+
+Optional Device Authority:
+
+~~~powershell
+node .\oauth.mjs --port 8790 --relay-url 'https://EXISTING-RELAY-ORIGIN' --oauth-config 'C:\protected\approved-oauth-client.json' --authority-config 'C:\protected\authority.json'
+~~~
+
+The OAuth configuration must refer to an **existing approved** client, issuer, exact resource, scope and loopback callback. The browser accepts only an HTTPS authorization destination from the server's already-validated issuer discovery; it contains no owner-specific hardcoded hostname. No new registration, scope expansion or replacement issuer is needed. The authority configuration requires:
+
+- journalPath: absolute path to private append-only JSONL audit data.
+- auditKey: separately generated 32-byte private HMAC key in base64, never committed or logged.
+- issuer and resource: the exact existing trusted issuer and relay MCP resource.
+- adminSubjects: explicit allowlist of already-validated OAuth subjects. An empty list makes the panel **read-only**, not administrator-by-default.
+
+The authority HTTP endpoints are GET /api/authority/:device and owner-confirmed POST /api/authority/:device/change and /rollback. POST requires an authenticated server-side session, exact same origin, CSRF, exact device confirmation, a reason and a non-stale revision. Pairing ownership is verified via the existing relay before observation or mutation. When a restriction is active, process, batch and non-observational device operations are conservatively denied through this Control Center. A restriction of filesystem operations also denies the Control Center browser tool to reduce cross-capability bypass. The local agent still evaluates all forwarded requests independently.
+
+**The authority overlay is not a fleet-wide device policy.** Other clients and agent-local policy are unaffected. Advertised capability discovery does not prove the current principal can invoke every operation.
+
+Keep the authority audit journal and key protected with operating-system permissions and backups. HMAC chaining detects modified/truncated journal entries; it does **not** by itself prevent removal of the entire journal across a service restart. Loss-of-journal recovery and secure local provisioning must be independently assessed before any production administrator activation.
+
+## Testing
+
+~~~powershell
+node --test test/*.test.mjs
+node .\tools\verify-original.mjs
+python .\test\browser-authority-qa.py
+~~~
+
+The Node tests use synthetic accounts, relay or HTTP fixtures and security boundaries. The optional Python test requires Playwright and Edge, starts a temporary loopback server with synthetic test-only key/configuration, exercises the current worktree panel, rollback, non-owner denial and out-of-order device responses, and terminates the test server. **It performs no real device policy change.** Tests cannot be represented as live production permission acceptance.
+
+## Release hold
+
+Before any protected merge or VAULTER promotion:
+
+1. Obtain authorized **read-only** hashes, runtime version and actual source provenance for the VAULTER port 8791 deployment; reconcile newer fleet presence, OAuth and integration code file by file. Do not bypass a denied remote capability.
+2. Confirm the precise owner HTML version and preserve the existing original artwork and rights.
+3. Validate actual authenticated Control Center sessions, expiry, correct denials, four-device discovery and clean rollback without unsafe live mutations.
+4. Provide a protected audit key/journal location, backup and recovery plan; independently check fail-closed behavior, file protection and journal-loss handling.
+5. Verify production-package provenance, trusted signing, clean install/upgrade/uninstall and operational rollback on an authorized Windows machine.
+
+Do not merge, deploy, change protected identity settings, or replace the running VAULTER listener without explicit approval.

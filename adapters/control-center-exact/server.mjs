@@ -1,4 +1,5 @@
 import { createServer } from 'node:http';
+import { AuthorityError } from './authority.mjs';
 import { readFile } from 'node:fs/promises';
 import { randomBytes, timingSafeEqual } from 'node:crypto';
 import { fileURLToPath } from 'node:url';
@@ -168,6 +169,13 @@ export class ExactPortal {
         res.writeHead(200,{'content-type':path==='/'?'text/html; charset=utf-8':'text/javascript; charset=utf-8'});
         res.end(req.method==='HEAD'?undefined:data);return;
       }
+      // Isolated UI stage: static local font only, no credential or authorization changes.
+      if(path==='/tp-font.woff2'){
+        if(req.method!=='GET'&&req.method!=='HEAD')throw err(405,'method_not_allowed','GET only.');
+        const font=await readFile(resolve(root,'public/tp-font.woff2'));
+        res.writeHead(200,{'content-type':'font/woff2','cache-control':'public, max-age=3600'});
+        res.end(req.method==='HEAD'?undefined:font);return;
+      }
       const revoke=/^\/api\/devices\/([A-Za-z0-9][A-Za-z0-9._-]{0,127})\/revoke$/.exec(path);
       const methods=path==='/api/session'?['GET','POST']:path==='/api/devices'?['GET']:[ '/api/logout','/api/pair/approve','/api/mcp/call'].includes(path)||revoke?['POST']:[];
       if(!methods.length)throw err(404,'not_found','Unknown endpoint.');
@@ -217,13 +225,17 @@ export class ExactPortal {
         const accountDevices=await this.directory(session.token); // account identity must still be valid
         if(body.device&&!accountDevices.some(d=>d.deviceId===body.device&&d.revokedAt===null))throw err(403,'permission_denied','Device is not paired to this account.');
         if(!this.sessions.has(id)||session.expires<=this.now())throw err(401,'authentication_required','Session expired before operation.');
+        if(this.authority){
+          if(!body.device)throw err(403,'portal_authority_denied','An explicit paired device is required.');
+          this.authority.enforceVerified(session.token,body.device,body.tool,body.op);
+        }
         const result=await this.mcpCall(session.token,body.tool,body.op,body.device||undefined,body.args);
         send(res,200,{result});return;
       }
       const devices=await this.directory(session.token);
       if(!this.sessions.has(id)||session.expires<=this.now())throw err(401,'authentication_required','Session expired before refresh.');
       send(res,200,this.view(session,devices));
-    }catch(e){if(e instanceof PortalError&&e.status===401&&sessionId)this.sessions.delete(sessionId);fail(res,e);}
+    }catch(e){if(e instanceof PortalError&&e.status===401&&sessionId)this.sessions.delete(sessionId);fail(res,e instanceof AuthorityError?err(e.status,e.code,e.message):e);}
   }
 }
 

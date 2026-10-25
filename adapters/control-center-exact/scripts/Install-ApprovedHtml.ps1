@@ -1,7 +1,7 @@
 [CmdletBinding()]
 param([Parameter(Mandatory=$true)][string]$SourceHtml)
 $ErrorActionPreference = 'Stop'
-$expected = '36bef6cd23058fc90b0b38820fad8ac75655c89e326403160fa1e90405238a82'
+$expected = '4e5a9de9bb4444b06522085a73268a8a8940664f27ff44e9bd76637791b6a9f8'
 $source = (Resolve-Path -LiteralPath $SourceHtml).Path
 $hash = (Get-FileHash -LiteralPath $source -Algorithm SHA256).Hash.ToLowerInvariant()
 if ($hash -ne $expected) { throw 'The source is not the approved original Tetherplane HTML. Nothing was copied.' }

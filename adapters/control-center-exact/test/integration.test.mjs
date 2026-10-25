@@ -48,7 +48,7 @@ async function login(){const r=await call('/api/session','POST',{token:'correct'
 
 test('runtime boot script preserves source HTML unchanged (visual hash enforced when owner asset exists)',async()=>{
   const src=await readFile(htmlTestUrl);
-  if(approvedHtmlPresent) assert.equal(createHash('sha256').update(src).digest('hex'),'36bef6cd23058fc90b0b38820fad8ac75655c89e326403160fa1e90405238a82');
+  if(approvedHtmlPresent) assert.equal(createHash('sha256').update(src).digest('hex'),'4e5a9de9bb4444b06522085a73268a8a8940664f27ff44e9bd76637791b6a9f8');
   const response=await fetch(origin);const html=await response.text();
   assert.ok(html.includes('<script src="/tp-integration.js" defer></script>'));
   assert.equal(html.replace('<script src="/tp-integration.js" defer></script>\n',''),src.toString('utf8'));

@@ -3,6 +3,7 @@ import { readFile } from 'node:fs/promises';
 import { fileURLToPath } from 'node:url';
 import { resolve } from 'node:path';
 import { ExactPortal } from './server.mjs';
+import { AuthorityHttp } from './authority-http.mjs';
 
 const TX_TTL = 300000;
 const CALLBACK = '/oauth/callback';
@@ -55,6 +56,7 @@ export class OAuthPortal extends ExactPortal {
   constructor(options={}) {
     super(options);
     this.oauth=validateConfig(options.oauth,this.relayOrigin);
+    this.authority=options.authority?new AuthorityHttp(this,options.authority):null;
     this.transactions=new Map();this.oauthTimers=new Map();this.closed=false;
   }
   async listen(port=8790) {
@@ -145,7 +147,7 @@ export class OAuthPortal extends ExactPortal {
   }
   async handle(req,res) {
     const raw=req.url||'';
-    const special=raw==='/tp-integration.js'||raw.startsWith('/api/oauth/')||raw.split('?')[0]===CALLBACK||(raw==='/api/session'&&req.method==='POST');
+    const special=raw==='/tp-integration.js'||raw.startsWith('/api/oauth/')||(this.authority&&raw.startsWith('/api/authority/'))||raw.split('?')[0]===CALLBACK||(raw==='/api/session'&&req.method==='POST');
     if(!special)return super.handle(req,res);
     oauthHeaders(res);
     try {
@@ -160,11 +162,13 @@ export class OAuthPortal extends ExactPortal {
       }
       if(req.headers['sec-fetch-site']==='cross-site'||(req.headers.origin&&req.headers.origin!==this.origin))throw new OAuthError(403,'origin_denied','Same-origin request required.');
       if(url.search)throw invalid();
+      if(raw.startsWith('/api/authority/'))return await this.authority.handle(req,res);
       if(raw==='/tp-integration.js') {
         if(!['GET','HEAD'].includes(req.method))throw new OAuthError(405,'method_not_allowed','GET only.');
         const original=await readFile(new URL('./public/tp-integration.js',import.meta.url));
         const oauth=await readFile(new URL('./public/tp-oauth.js',import.meta.url));
-        res.writeHead(200,{'content-type':'text/javascript; charset=utf-8'});res.end(req.method==='HEAD'?undefined:Buffer.concat([original,Buffer.from('\n'),oauth]));return;
+        const authority=this.authority?await readFile(new URL('./public/tp-authority.js',import.meta.url)):null;
+        res.writeHead(200,{'content-type':'text/javascript; charset=utf-8'});res.end(req.method==='HEAD'?undefined:Buffer.concat([original,Buffer.from('\n'),oauth,...(authority?[Buffer.from('\n'),authority]:[])]));return;
       }
       if(raw==='/api/oauth/config') {
         if(req.method!=='GET')throw new OAuthError(405,'method_not_allowed','GET only.');
@@ -189,16 +193,19 @@ export class OAuthPortal extends ExactPortal {
 if(process.argv[1]&&resolve(process.argv[1])===fileURLToPath(import.meta.url)) {
   let app;
   try {
-    const args=process.argv.slice(2);let relayUrl,configPath,port=8790;
+    const args=process.argv.slice(2);let relayUrl,configPath,authorityConfigPath,port=8790;
     for(let i=0;i<args.length;i++) {
       if(args[i]==='--relay-url')relayUrl=args[++i];
       else if(args[i]==='--oauth-config')configPath=args[++i];
       else if(args[i]==='--port')port=Number(args[++i]);
+      else if(args[i]==='--authority-config')authorityConfigPath=args[++i];
       else throw unavailable();
     }
     let oauth;
     if(configPath){const raw=await readFile(resolve(configPath));if(raw.length>16384)throw unavailable();oauth=JSON.parse(raw.toString('utf8'));}
-    app=new OAuthPortal({relayUrl,oauth});const origin=await app.listen(port);
+    let authority;
+    if(authorityConfigPath){const raw=await readFile(resolve(authorityConfigPath));if(raw.length>16384)throw unavailable();authority=JSON.parse(raw.toString('utf8'));}
+    app=new OAuthPortal({relayUrl,oauth,authority});const origin=await app.listen(port);
     console.log(`Control Center (local-only): ${origin}`);
     console.log(oauth?'OAuth configuration loaded; registered client approval and live acceptance remain operator gates.':'OAuth disabled: no approved configuration supplied.');
     for(const signal of ['SIGINT','SIGTERM'])process.on(signal,()=>{void app.close().finally(()=>process.exit(0));});
