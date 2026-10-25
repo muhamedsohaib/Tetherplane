@@ -80,7 +80,7 @@ Other application files (test, installer, README, verifier) were separately test
 
 1. **Deployed VAULTER provenance:** owner-authorized read-only report of port 8791 listener/PID, source/code SHA and private source HTML SHA, followed by exact file-by-file reconciliation. Do not request or export credentials or widen the remote principal.
 2. **Actual portal acceptance:** approved existing OAuth browser login, account session expiry, account/pairing isolation, real read-only allowed/denied operations and four-device directory/probe flow. Do not perform live permission edits just for testing.
-3. **Journal-loss threat:** HMAC replay detects changes to existing records, but deletion of the entire journal across a restart can remove the restriction overlay. Protect and back up both key and journal, define fresh-install/recovery rules and verify fail-closed behavior under journal loss before activating production admins.
+3. **Journal-loss and recovery:** The subsequent isolated source change uses an authenticated high-water checkpoint, refuses missing/erased/rolled-back journals, requires explicit offline first-use provisioning and tests matching backup restoration. Protect and back up journal, checkpoint and key; independently verify production ACLs, single-writer safety, interrupted-write recovery and operator procedures before activating production admins.
 4. **Release provenance:** independent new-head CI, trusted Windows signing, clean install/upgrade/uninstall, recovery/rollback and physical device acceptance not yet performed on this commit.
 5. **Approved art and distribution rights:** preserve the exact visual source and resolve older/candidate hash discrepancy before release.
 
@@ -96,4 +96,40 @@ A future operator-approved maintenance procedure should:
 4. Perform browser, session, permission-denial, journal integrity and four-device read-only acceptance. Explicitly mark any mock portions.
 5. Request separate authorization for protected production promotion. On failure, restore the recorded prior build, restart through the approved supervisor, and verify authenticated session/recovery and device visibility without overwriting identity state.
 
-**Single next action:** obtain the authorized VAULTER port-8791 sanitized source/asset/PID fingerprint receipt and reconcile it against commit 56fb772. Do not deploy while this evidence and journal-loss recovery remain missing.
+**Single next action:** obtain the authorized VAULTER port-8791 sanitized source/asset/PID fingerprint receipt and reconcile it against the current isolated branch. Do not deploy while this evidence, journal recovery operations and live device acceptance remain missing.
+
+
+## Continuation — 2026-10-25 source-only recovery hardening
+
+A new behavioral RED test suite reproduced **three** unrestricted-startup defects in the previous implementation: unprovisioned audit, deleted journal after confirmed restriction, and erased zero-length journal after confirmed restriction. These all returned unrestricted history rather than failing closed.
+
+The isolated fix adds:
+
+- authority-audit.mjs: an HMAC-authenticated high-water checkpoint (journal SHA-256 digest, record count and chain head), checked on every authority evaluation and startup.
+- tools/provision-authority-audit.mjs: explicit one-time offline journal+checkpoint creation from an existing private authority configuration, refusing overwrite or partial re-initialization.
+- authority.mjs: startup rejects absent/mismatched audit storage; a confirmed mutation appends and fsyncs the journal, advances the checkpoint through a temporary fsynced file and atomic rename, then replays the fully verified pair before returning a success receipt.
+- All synthetic fixtures and isolated Edge tests now explicitly provision their own disposable audit storage.
+- A read-only PowerShell collector that accepts owner-selected VAULTER portal root and output path, reports SHA-256 of a fixed allowlist of source/assets and port-8791 listener/process metadata, excludes command lines and secrets, and refuses overwrite. **NOT EXECUTED ON VAULTER.**
+
+The expanded recovery suite tests missing and erased journal, missing/both missing storage files, stale journal against newer checkpoint, matched backup restoration, checkpoint corruption, mismatched key, a valid appended journal event without checkpoint advance, and repeated provisioning refusal. A copy of the exact bytes of both journal and checkpoint is needed for restoration.
+
+The receipt collector was exercised **on Leno only**, targeting the isolated worktree and a test JSON output path. It reported 10 whitelisted files, no local port-8791 listener, excluded source-root/command-lines/credentials, and refused a second write to the same receipt. These are **Leno test results, not VAULTER observations**.
+
+**Residual risk:** An authorized OS-level actor controlling both files and the MAC key can still re-provision; operational ACLs, backups, trusted operator identity, cross-process writer coordination and review of restoration decisions are external safeguards. Checkpoint advancement is deliberately fail-closed on a partial transaction, which can block service until a verified matching pair is restored. Runtime changes are not proof of crash recovery readiness or deployment parity.
+
+Neither production OAuth nor VAULTER service state was changed.
+
+
+### Continuation verification result — isolated Leno worktree
+
+- **Node 50/50 passed**, zero failed/skipped, across eight test files.
+- **Headless Edge PASS:** current candidate UI loaded; simulated restriction, rollback, non-owner denial and out-of-order device response protection; local test server terminated; zero real policy edits.
+- **Visual SHA gate PASS:** private HTML SHA-256 4e5a9de9bb4444b06522085a73268a8a8940664f27ff44e9bd76637791b6a9f8, unchanged.
+- **New audit module syntax check PASS** and Git diff whitespace check PASS.
+- **Collector Windows PowerShell smoke PASS on Leno:** created only a new sanitized test JSON outside source; no listener on Leno port 8791; 10 whitelisted source hashes. Repeat run correctly refused overwrite. Did not run on VAULTER.
+- Browser test originally encountered a CSP-blocked JavaScript-evaluation wait helper; it was replaced with supported locator expectations, without modifying or weakening the application's CSP. Rerun passed.
+- The new release changes have **not** been pushed, merged, installed or deployed. Account identity, existing OAuth client/resource/scope and Windows service configuration remain untouched.
+
+The source-level journal-loss defect is now guarded; **operator-approved VAULTER provenance, on-disk audit ACL validation, independently measured crash recovery, trusted signing and real four-device Control Center acceptance remain open release gates.**
+
+**Isolated audit hardening commit:** `69c0c33c4466201aad97e675cde95fc04e8a85dc`. This changes no running service and is not a production release. The sanitized VAULTER receipt collector requires an authorized local operator to select the actual source root and the approved evidence-output directory; neither location has been verified through the limited connector.
