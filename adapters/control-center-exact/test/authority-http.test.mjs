@@ -5,6 +5,7 @@ import {mkdtempSync,rmSync} from 'node:fs';
 import {join} from 'node:path';
 import {tmpdir} from 'node:os';
 import {OAuthPortal} from '../oauth.mjs';
+import {provisionAuthorityAudit} from '../authority-audit.mjs';
 
 const issuer='https://issuer.test.invalid/';
 const resource='https://relay.test.invalid/mcp';
@@ -48,13 +49,13 @@ const relay=createServer(async(req,res)=>{
   json({error:'not found'},404);
 });
 await new Promise(ok=>relay.listen(0,'127.0.0.1',ok));
+const authority={journalPath:join(root,'audit.jsonl'),
+  checkpointPath:join(root,'checkpoint.json'),auditKey:Buffer.alloc(32,4).toString('base64'),
+  issuer,resource,adminSubjects:['owner-sub']};
+provisionAuthorityAudit(authority);
 const portal=new OAuthPortal({
   relayUrl:'http://127.0.0.1:'+relay.address().port,
-  authority:{
-    journalPath:join(root,'audit.jsonl'),
-    auditKey:Buffer.alloc(32,4).toString('base64'),
-    issuer,resource,adminSubjects:['owner-sub']
-  }
+  authority
 });
 const origin=await portal.listen(0);
 const cookie=portal.cookieName+'=approved';

@@ -4,6 +4,7 @@ import {mkdtempSync,readFileSync,writeFileSync,rmSync} from 'node:fs';
 import {tmpdir} from 'node:os';
 import {join} from 'node:path';
 import {AuthorityRegistry,AuthorityError} from '../authority.mjs';
+import {provisionAuthorityAudit} from '../authority-audit.mjs';
 
 const issuer='https://issuer.test.invalid/';
 const resource='https://relay.test.invalid/mcp';
@@ -39,8 +40,10 @@ function fixture() {
       ]}};
     }
   };
-  const config={journalPath:join(root,'authority.jsonl'),auditKey:Buffer.alloc(32,12).toString('base64'),
+  const config={journalPath:join(root,'authority.jsonl'),
+    checkpointPath:join(root,'checkpoint.json'),auditKey:Buffer.alloc(32,12).toString('base64'),
     issuer,resource,adminSubjects:['owner-approved-subject'],now:()=>new Date('2026-10-25T06:00:00Z')};
+  provisionAuthorityAudit(config);
   const registry=new AuthorityRegistry(portal,config);
   return {registry,root,admin,other,portal,calls,config,cleanup:()=>rmSync(root,{recursive:true,force:true})};
 }

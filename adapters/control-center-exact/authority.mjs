@@ -1,5 +1,6 @@
 import {createHash,createHmac,timingSafeEqual} from 'node:crypto';
-import {existsSync,readFileSync,openSync,writeSync,fsyncSync,closeSync} from 'node:fs';
+import {readFileSync,openSync,writeSync,fsyncSync,closeSync} from 'node:fs';
+import {verifyAuditCheckpoint,advanceAuditCheckpoint} from './authority-audit.mjs';
 import {isAbsolute} from 'node:path';
 
 export class AuthorityError extends Error {
@@ -63,10 +64,11 @@ function validJournalRecord(r){
 }
 
 export class AuthorityRegistry {
-  constructor(portal,{journalPath,auditKey,issuer,resource,adminSubjects=[],now=()=>new Date()}={}) {
+  constructor(portal,{journalPath,checkpointPath,auditKey,issuer,resource,adminSubjects=[],now=()=>new Date()}={}) {
     if(!portal||typeof portal.directory!=='function'||typeof portal.mcpCall!=='function')
       throw Error('Authority registry requires an existing authenticated portal.');
-    if(!isAbsolute(journalPath||'')||!/^https:\/\//.test(issuer||'')||
+    if(!isAbsolute(journalPath||'')||!isAbsolute(checkpointPath||'')||
+       journalPath.toLowerCase()===checkpointPath.toLowerCase()||!/^https:\/\//.test(issuer||'')||
        !/^https:\/\//.test(resource||'')||
        !Array.isArray(adminSubjects)||adminSubjects.some(x=>typeof x!=='string'||!x||x.length>256)||
        new Set(adminSubjects).size!==adminSubjects.length||typeof now!=='function')
@@ -75,6 +77,7 @@ export class AuthorityRegistry {
     if(key.length!==32)throw Error('A 256-bit private audit MAC key is required.');
     this.portal=portal;
     this.path=journalPath;
+    this.checkpointPath=checkpointPath;
     this.key=key;
     this.issuer=issuer;
     this.resource=resource;
@@ -85,7 +88,8 @@ export class AuthorityRegistry {
   }
   claimsVerified(token){return validatedClaims(token,this.issuer,this.resource,this.now);}
   replay(){
-    if(!existsSync(this.path))return {entries:[],states:new Map(),prev:'0'.repeat(64)};
+    // A missing or erased journal cannot silently remove an owner's restrictions.
+    // Initial state requires explicit offline provisioning with a MAC-bound checkpoint.
     let data;
     try{data=readFileSync(this.path);}catch{fail(503,'audit_integrity_failed','Cannot read the local authority audit.');}
     if(data.length>MAX_JOURNAL||data.length&&data.at(-1)!==10)
@@ -108,6 +112,10 @@ export class AuthorityRegistry {
       states.set(name,{revision:e.revision,denied:e.after});
       entries.push(e);prev=e.mac;
     }
+    try{
+      verifyAuditCheckpoint({journalPath:this.path,checkpointPath:this.checkpointPath,
+        auditKey:this.key,journal:data,count:entries.length,head:prev});
+    }catch{fail(503,'audit_integrity_failed','Audit checkpoint missing or mismatched; no authority actions allowed.');}
     return {entries,states,prev};
   }
   state(token,deviceId){
@@ -182,7 +190,12 @@ export class AuthorityRegistry {
       fsyncSync(fd);
     }catch{fail(503,'audit_write_failed','Policy was not confirmed; audit write failed.');}
     finally{if(fd!==undefined)try{closeSync(fd);}catch{}}
-    // Verify the durable audit before claiming that restriction took effect.
+    // Seal the exact new high-water mark. A crash before sealing fails closed
+    // on subsequent reads/restart instead of resetting privileges to allow.
+    try{
+      advanceAuditCheckpoint({journalPath:this.path,checkpointPath:this.checkpointPath,
+        auditKey:this.key,count:entry.seq,head:entry.mac});
+    }catch{fail(503,'audit_integrity_failed','Audit checkpoint was not durably confirmed.');}
     const confirmed=this.replay().states.get(key);
     if(!confirmed||confirmed.revision!==entry.revision||JSON.stringify(confirmed.denied)!==JSON.stringify(denied))
       fail(503,'audit_integrity_failed','Persisted restriction verification failed.');

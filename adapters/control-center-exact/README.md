@@ -42,15 +42,18 @@ node .\oauth.mjs --port 8790 --relay-url 'https://EXISTING-RELAY-ORIGIN' --oauth
 The OAuth configuration must refer to an **existing approved** client, issuer, exact resource, scope and loopback callback. The browser accepts only an HTTPS authorization destination from the server's already-validated issuer discovery; it contains no owner-specific hardcoded hostname. No new registration, scope expansion or replacement issuer is needed. The authority configuration requires:
 
 - journalPath: absolute path to private append-only JSONL audit data.
+- checkpointPath: different absolute path for a private MAC-authenticated history checkpoint.
 - auditKey: separately generated 32-byte private HMAC key in base64, never committed or logged.
 - issuer and resource: the exact existing trusted issuer and relay MCP resource.
 - adminSubjects: explicit allowlist of already-validated OAuth subjects. An empty list makes the panel **read-only**, not administrator-by-default.
+
+**First-use bootstrap (before starting the portal):** in a private, non-production directory with carefully protected configuration, execute `node tools/provision-authority-audit.mjs --authority-config C:\\protected\\authority.json`. This explicitly creates an empty journal and matching authenticated checkpoint. It refuses to overwrite even partially existing audit storage. The server does not auto-initialize or auto-reset missing audit history; it refuses to start with authority enabled until both files match. Never use the provisioning command to recover a lost production journal. Restore a verified matching journal/checkpoint pair from backup after a reviewed recovery decision.
 
 The authority HTTP endpoints are GET /api/authority/:device and owner-confirmed POST /api/authority/:device/change and /rollback. POST requires an authenticated server-side session, exact same origin, CSRF, exact device confirmation, a reason and a non-stale revision. Pairing ownership is verified via the existing relay before observation or mutation. When a restriction is active, process, batch and non-observational device operations are conservatively denied through this Control Center. A restriction of filesystem operations also denies the Control Center browser tool to reduce cross-capability bypass. The local agent still evaluates all forwarded requests independently.
 
 **The authority overlay is not a fleet-wide device policy.** Other clients and agent-local policy are unaffected. Advertised capability discovery does not prove the current principal can invoke every operation.
 
-Keep the authority audit journal and key protected with operating-system permissions and backups. HMAC chaining detects modified/truncated journal entries; it does **not** by itself prevent removal of the entire journal across a service restart. Loss-of-journal recovery and secure local provisioning must be independently assessed before any production administrator activation.
+Keep the authority audit journal, checkpoint and key protected with operating-system permissions and independently verifiable backups. The checkpoint binds the expected journal digest, record count and HMAC-chain head; missing, truncated or mismatched files now fail closed across process restarts, including after a crash between journal append and checkpoint advance. Restore only a matching verified pair. **Limit to one authorized writer:** interprocess serialization, filesystem ACLs, crash recovery and out-of-band backup restoration still require operational acceptance. A privileged actor controlling both files and the audit key remains outside this local tamper-evidence guarantee. Do not enable production administrators until those requirements are independently verified.
 
 ## Testing
 
@@ -71,5 +74,7 @@ Before any protected merge or VAULTER promotion:
 3. Validate actual authenticated Control Center sessions, expiry, correct denials, four-device discovery and clean rollback without unsafe live mutations.
 4. Provide a protected audit key/journal location, backup and recovery plan; independently check fail-closed behavior, file protection and journal-loss handling.
 5. Verify production-package provenance, trusted signing, clean install/upgrade/uninstall and operational rollback on an authorized Windows machine.
+
+**VAULTER read-only provenance helper:** `scripts/Collect-ControlCenterReadOnlyReceipt.ps1` accepts an explicitly selected existing portal source root and an explicitly approved absolute JSON output path. It hashes only whitelisted script/artwork files, reads listener/process metadata for port 8791, excludes OAuth config/credentials and process command lines, and refuses to overwrite receipts. It has only been tested on Leno; it has not been executed on VAULTER. Use it locally under an authorized operator and return only the sanitized receipt through the approved transfer path.
 
 Do not merge, deploy, change protected identity settings, or replace the running VAULTER listener without explicit approval.

@@ -13,7 +13,7 @@ import tempfile
 import time
 from urllib.request import urlopen
 
-from playwright.sync_api import sync_playwright
+from playwright.sync_api import sync_playwright, expect
 
 ROOT = Path(__file__).resolve().parents[1]
 EDGE = Path(r"C:\Program Files (x86)\Microsoft\Edge\Application\msedge.exe")
@@ -24,6 +24,7 @@ with tempfile.TemporaryDirectory(prefix="TetherplaneAuthorityQA-") as td:
     temp = Path(td)
     cfg = {
         "journalPath": str(temp / "audit.jsonl"),
+        "checkpointPath": str(temp / "checkpoint.json"),
         "auditKey": base64.b64encode(bytes(range(32))).decode("ascii"),
         "issuer": "https://relay.invalid/",
         "resource": "https://relay.invalid/mcp",
@@ -31,6 +32,9 @@ with tempfile.TemporaryDirectory(prefix="TetherplaneAuthorityQA-") as td:
     }
     config_path = temp / "authority-config.json"
     config_path.write_text(json.dumps(cfg), encoding="utf-8")
+    subprocess.run(["node", str(ROOT / "tools" / "provision-authority-audit.mjs"),
+                    "--authority-config", str(config_path)], check=True,
+                   cwd=ROOT, capture_output=True, text=True)
     with socket.socket() as sock:
         sock.bind(("127.0.0.1", 0))
         port = sock.getsockname()[1]
@@ -187,22 +191,19 @@ with tempfile.TemporaryDirectory(prefix="TetherplaneAuthorityQA-") as td:
                 page.get_by_text("Revision 2", exact=True).first.wait_for(timeout=7000)
                 assert actions["rollback"] == 1
                 page.locator("[data-authority-device='Surface']").click()
-                page.wait_for_function(
-                    "document.getElementById('tp-authority-device-title').textContent === 'Surface'",
-                    timeout=10000,
-                )
+                expect(page.locator('#tp-authority-device-title')).to_have_text('Surface',timeout=10000)
                 assert page.locator("#tp-authority-apply").is_disabled()
                 assert page.locator("#tp-authority-rollback").is_disabled()
                 # Force an out-of-order response after switching devices.
                 # An old device response must never replace the selected device's state.
                 page.evaluate("window.__holdSurface = true")
                 page.locator("[data-authority-device='Surface']").evaluate("(el) => el.click()")
-                page.wait_for_function("Boolean(window.__releaseSurface)", timeout=7000)
+                deadline = time.monotonic() + 7
+                while not page.evaluate('Boolean(window.__releaseSurface)') and time.monotonic() < deadline:
+                    page.wait_for_timeout(80)
+                assert page.evaluate('Boolean(window.__releaseSurface)'), 'The held Surface response was not intercepted'
                 page.locator("[data-authority-device='Leno']").evaluate("(el) => el.click()")
-                page.wait_for_function(
-                    "document.getElementById('tp-authority-device-title').textContent === 'Leno'",
-                    timeout=7000,
-                )
+                expect(page.locator('#tp-authority-device-title')).to_have_text('Leno',timeout=7000)
                 page.evaluate("window.__releaseSurface()")
                 page.wait_for_timeout(350)
                 assert page.locator("#tp-authority-device-title").inner_text() == "Leno", (
