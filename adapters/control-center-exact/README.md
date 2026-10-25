@@ -1,6 +1,6 @@
 # Tetherplane exact Control Center — Device Authority candidate
 
-**Status (2026-10-25): owner-authorized VAULTER production cutover ACCEPTED in read-only Device Authority mode. Feature branch remains unmerged; public signed release NOT published.**
+**Status (2026-10-25): owner-authorized VAULTER production Device Authority editor activation ACCEPTED for exactly one relay-verified OAuth subject. Original read-only cutover was accepted first; owner enrollment subsequently accepted with `VERIFIED_OWNER_EDITOR_ACCEPTED=YES`. Feature branch remains unmerged; public signed release NOT published.**
 
 This adapter serves the owner's existing five-card Control Center privately from numeric loopback, integrates it with the existing authenticated relay and provides an optional **Device Authority** panel. The panel is an additional **deny-only Control Center restriction overlay**, not a device-local permission editor, a grant of administrator rights, or an alternative identity provider. The device agent's policy and the existing OAuth/relay authorization remain final.
 
@@ -68,7 +68,7 @@ The Node tests use synthetic accounts, relay or HTTP fixtures and security bound
 
 ## Post-cutover release gates
 
-The protected read-only VAULTER promotion is accepted; before privileged authority enablement, protected merge or public distribution:
+VAULTER's protected read-only promotion and the subsequent verified-owner editor enablement are accepted. Before testing live restriction mutations, protected merge or public distribution:
 
 1. **Source reconciliation complete 2026-10-25.** VAULTER's 20,808-byte server is exactly reconstructed by reversing only the authority hook; recovered OAuth and integration source hashes match the production receipt. The permanent `deployed-base-parity.test.mjs` protects this baseline. Before deployment, reconfirm the production hashes; do not bypass any remote principal restriction.
 2. Confirm the precise owner HTML version and preserve the existing original artwork and rights.

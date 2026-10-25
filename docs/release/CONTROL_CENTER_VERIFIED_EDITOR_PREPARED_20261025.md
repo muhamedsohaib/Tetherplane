@@ -31,5 +31,47 @@ Owner explicitly authorized enabling the five existing audited **Control Center 
 4. Same task restarts and must pass loopback gates; owner signs in again to confirm five restriction checkboxes and confirmation inputs are enabled. User types `ACCEPT` only after live acceptance. No real restrictions are applied by this installation.
 5. On rejection or error, V4 attempts to restore the exact V3 action and empty-editor config, then verifies the original read-only listener. Preserve the previous journal/checkpoint/key and all evidence; never delete uncertain protected state.
 
-## Current gate
-**Code verified, private package prepared, VAULTER owner editor NOT YET ENABLED.** Production VAULTER continues the previously accepted V3 read-only version until operator runs and accepts the protected enrollment. No GitHub push/merge, no signing/release changes.
+## Historical pre-promotion gate (superseded by acceptance below)
+**At the earlier staging checkpoint: code verified, private package prepared, VAULTER owner editor NOT YET ENABLED.** Production VAULTER continues the previously accepted V3 read-only version until operator runs and accepts the protected enrollment. No GitHub push/merge, no signing/release changes.
+
+## Accepted production outcome — 2026-10-25 (supersedes the preceding staging status)
+
+**Status: VAULTER VERIFIED OWNER EDITOR ACTIVATED AND ACCEPTED.** The earlier `NOT YET live` wording above records the state *before* this approved promotion, not the current state.
+
+The owner provided the complete, terminal VAULTER PowerShell receipt from the corrected V4.1 operator script. Exact decisive markers:
+
+```text
+VERIFIED_PRIVATE_V4_PACKAGE=YES
+PACKAGE_DIGESTS_VERIFIED=28
+ACCEPTED_READ_ONLY_LISTENER_PID=2984
+EXISTING_OAUTH_IDENTITY_UNCHANGED=YES
+PRESERVED_AUDIT_AND_CHECKPOINT=PASS
+EXISTING_ADMIN_ALLOWLIST_EMPTY=YES
+V4_EDITOR_PREFLIGHT_READ_ONLY=PASS
+V4_LOOPBACK_UNAUTHENTICATED_GATES=PASS
+RELAY_VERIFIED_OWNER_PROOF=PASS
+OWNER_PROOF_BOUND_DEVICE=Leno
+VERIFIED_OAUTH_SUBJECT_FINGERPRINT=9e0355437f81b65e
+EXACTLY_ONE_VERIFIED_EDITOR_CONFIGURED=YES
+V4_LOOPBACK_UNAUTHENTICATED_GATES=PASS
+EDITOR_SERVICE_PID=13440
+V4_LOOPBACK_UNAUTHENTICATED_GATES=PASS
+VERIFIED_OWNER_EDITOR_ACCEPTED=YES
+```
+
+Acceptance-specific evidence:
+- Source candidate: `6bad88c`; exact private ZIP SHA-256: `120656749365b62b1fa13b797022128047bf94ac45e9c6f7068c97e2b198335b`.
+- All 53 packaged Node tests passed (0 failed, skipped, cancelled); Leno's full repository suite previously passed 55/55 and synthetic Edge QA passed. The managed Control Center restarted as PID 13440 at operator acceptance.
+- The operator submitted `READY` after copying a five-minute, signed relay-verified OAuth owner proof; cryptographic enrollment returned `PASS` with device bound to Leno. Only a subject **fingerprint**, not the full OAuth subject, access token, audit MAC key or proof, is stored in this document.
+- The operator explicitly entered `ENROLL`; exactly one verified subject was configured. After restarting and signing in again, screenshots showed **"Verified OAuth subject approved as portal policy editor"**, five enabled restriction checkboxes, available exact device ID/reason inputs, Apply Restrictions and revision rollback controls. The audited history displayed no changes, as expected.
+- The operator explicitly typed `ACCEPT` at the final acceptance prompt; `VERIFIED_OWNER_EDITOR_ACCEPTED=YES` was printed after the final unauthenticated loopback gate.
+- Independent read-only Tetherplane status calls *after* operator acceptance: Surface and Leno agent 0.1.0 reported Windows x86_64 / background_only / authenticated / ready; VAULTER agent 0.1.0 reported Windows x86_64 / background_only and responded. The RTX status query in the same pass was blocked by connector safety checks, **not** counted as independently verified in that pass. Earlier RTX device status checks and the previous live four-device browser directory acceptance were recorded separately.
+- No production restrictions were applied or rolled back during enrollment; **live mutation, denial and recovery behavior remain a separate acceptance gate** from the editor-UI activation. This acceptance proves the authenticated owner editor controls are active and the operator approved the cutover; it does not prove permission grants to agents.
+
+Post-acceptance operating boundaries:
+- Exactly one existing verified OAuth account may modify only **Control Center** deny/revert overlays. Native device policy, existing relay scope, OAuth client and issuer were not expanded or replaced.
+- Preserve `C:\ProgramData\Tetherplane\ControlCenterPrivate\authority-5bbea29` audit journal/checkpoint/key, the prior read-only candidate and prior task-action rollback evidence. Do not reset or reprovision audit state.
+- Do not display, log, chat, publish or commit the private OAuth subject, owner proof, access token, audit MAC key, owner HTML or font.
+- Public GitHub promotion/merge, signed Windows installer, clean-machine onboarding, sustained cross-device recovery and live restriction mutation tests are distinct unfinished release-wide gates. **No protected merge or public release is authorized by this acceptance.**
+
+**Disposition: the Device Authority verified-owner editor activation is complete.**
