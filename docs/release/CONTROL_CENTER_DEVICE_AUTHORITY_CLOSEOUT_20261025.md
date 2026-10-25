@@ -67,3 +67,26 @@ Reference production root:
 C:\ProgramData\Tetherplane\ControlCenterReleases\20261025-approved-oauth
 
 The privacy-sensitive original HTML and WOFF2 font must be provisioned only through an authorized local channel. The release manifest must verify them but must not publish their bytes.
+
+
+## 7. Final independent acceptance stage and private transfer kit
+
+Implementation/test commit: 5bbea29 (feature/device-authority-20261025).
+
+The independent 28-file local stage was created from the committed adapter at:
+C:\Users\Sohaib\AppData\Local\Temp\Tetherplane-ControlCenter-Final-5bbea29-20261025
+
+Acceptance manifest SHA-256:
+038f2807d3c16016eae8026e6f3f472072af3cb21cb2598a5f65c1e99c693bfb
+
+Independent stage test command npm run test:standalone passed 52/52 with no failures/skips. The independent stage's npm run test:browser passed the actual Edge frontend, synthetic change/rollback, non-owner denial, delayed response race and exact font HTTP route; zero real policy mutations; temporary test server terminated successfully.
+
+A private local transfer ZIP was created with 28 staged files and the acceptance manifest (29 verified ZIP entries; ZIP integrity test passed) at:
+C:\Users\Sohaib\AppData\Local\Temp\Tetherplane-ControlCenter-5bbea29-private-canary.zip
+
+ZIP SHA-256:
+08cd54d28ce2ad5ee2afc7c3496b684f5e5ced7fbd17a65a9b0fdbf424b3de4c
+
+ZIP bytes: 126027. This ZIP includes original owner-private HTML and font. It is LOCAL-ONLY for an authorized operator, NOT a public downloadable release, and must not be pushed to GitHub.
+
+This completes source reconciliation, reproducible adapter tests and candidate packaging. It does NOT authorize a production cutover or satisfy independently tested real OAuth, OS ACL/rollback, and approved-signer gates. The current production listener and four-device identities remain untouched.
