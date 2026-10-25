@@ -173,6 +173,11 @@ test('only enrolled owners prepare explicit, non-executing local device permissi
   portal.authority.registry.adminSubjects.delete('owner-sub');
   try{
     assert.equal((await api('/api/authority/Leno/local-request','POST',body)).status,403);
+    const before=toolCalls;
+    const denied=await api('/api/authority/Leno/probe','POST',{probe:'process_echo',path:''});
+    assert.equal(denied.status,403,'non-editor must not execute active probes');
+    assert.equal(denied.body.error.code,'owner_approval_required');
+    assert.equal(toolCalls,before,'non-editor probe must not call an agent');
   }finally{portal.authority.registry.adminSubjects.add('owner-sub');}
   assert.equal((await api('/api/authority/Leno')).body.revision,0);
 });

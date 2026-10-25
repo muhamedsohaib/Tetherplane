@@ -194,7 +194,9 @@ export class AuthorityRegistry {
     };
   }
   async verifyAccess(token,deviceId,probe,path){
-    await this.checkedActor(token,deviceId);
+    const actor=await this.checkedActor(token,deviceId);
+    if(!this.adminSubjects.has(actor.sub))
+      fail(403,'owner_approval_required','Only the verified owner may run active access checks.');
     let spec,args;
     try{({spec,args}=checkedProbe(probe,path));}
     catch(e){fail(400,'invalid_access_probe',e.message);}
