@@ -3,43 +3,32 @@ import assert from 'node:assert/strict';
 import {readFile} from 'node:fs/promises';
 import {createHash} from 'node:crypto';
 
-// Production receipt verified by the owner, 2026-10-25. This is a compatibility
-// fingerprint, not a deployed-secret or a replacement for live acceptance.
-// The reference server itself stays out of the repository.
+// Owner-confirmed VAULTER production source SHA. Original deployed server uses
+// CRLF. Git's Windows checkout may convert the five LF-only authority insertions
+// to CRLF. Normalize ONLY line endings, reverse exactly three known authority
+// edits, then reconstruct the original CRLF bytes for an exact SHA-256 match.
 const deployedSha='aa6bdab77879780aa5bf3164aba1a2b51d50df8b117fa74e68221d84cf7353b8';
 const sha=bytes=>createHash('sha256').update(bytes).digest('hex');
 
-test('reversing only the Device Authority hook reconstructs the exact deployed VAULTER server',async()=>{
-  let bytes=await readFile(new URL('../server.mjs',import.meta.url));
+test('reverting only the Device Authority hook reconstructs exact deployed VAULTER bytes after Windows checkout',async()=>{
+  let source=(await readFile(new URL('../server.mjs',import.meta.url))).toString('utf8').replace(/\r\n/g,'\n');
   const changes=[
-    [
-      Buffer.from("import { AuthorityError } from './authority.mjs';\r\n"),
-      Buffer.alloc(0)
-    ],
-    [
-      Buffer.from("        if(this.authority){\n"+
-        "          if(!body.device)throw err(403,'portal_authority_denied','An explicit paired device is required.');\n"+
-        "          this.authority.enforceVerified(session.token,body.device,body.tool,body.op);\n"+
-        "        }\n"),
-      Buffer.alloc(0)
-    ],
-    [
-      Buffer.from('fail(res,e instanceof AuthorityError?err(e.status,e.code,e.message):e);'),
-      Buffer.from('fail(res,e);')
-    ],
-    [
-      Buffer.from("import { createServer } from 'node:http';\n"),
-      Buffer.from("import { createServer } from 'node:http';\r\n")
-    ]
+    ["import { AuthorityError } from './authority.mjs';\n",''],
+    ["        if(this.authority){\n"+
+      "          if(!body.device)throw err(403,'portal_authority_denied','An explicit paired device is required.');\n"+
+      "          this.authority.enforceVerified(session.token,body.device,body.tool,body.op);\n"+
+      "        }\n",''],
+    ['fail(res,e instanceof AuthorityError?err(e.status,e.code,e.message):e);','fail(res,e);']
   ];
-  for(const [oldBytes,newBytes] of changes){
-    const position=bytes.indexOf(oldBytes);
-    assert.notEqual(position,-1,'expected single minimal authority change missing');
-    assert.equal(bytes.indexOf(oldBytes,position+oldBytes.length),-1,
-      'ambiguous authority change: refusing to certify deployed-source parity');
-    bytes=Buffer.concat([bytes.subarray(0,position),newBytes,bytes.subarray(position+oldBytes.length)]);
+  for(const [oldText,newText] of changes){
+    const first=source.indexOf(oldText);
+    assert.notEqual(first,-1,'required authority-only change missing');
+    assert.equal(source.indexOf(oldText,first+oldText.length),-1,
+      'ambiguous authority edit; unable to certify production-source parity');
+    source=source.slice(0,first)+newText+source.slice(first+oldText.length);
   }
-  assert.equal(bytes.length,20808,'deployed source length differs');
-  assert.equal(sha(bytes),deployedSha,
-    'production source drift: reconcile the actual deployed base before release');
+  const reconstructed=Buffer.from(source.replace(/\n/g,'\r\n'),'utf8');
+  assert.equal(reconstructed.length,20808,'production source byte count changed');
+  assert.equal(sha(reconstructed),deployedSha,
+    'production source drift: reviewed VAULTER base no longer reconstructs exactly');
 });

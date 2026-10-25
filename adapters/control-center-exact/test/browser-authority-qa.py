@@ -77,7 +77,7 @@ with tempfile.TemporaryDirectory(prefix="TetherplaneAuthorityQA-") as td:
                     executable_path=str(EDGE), headless=True,
                     args=["--disable-extensions", "--disable-background-networking", "--no-first-run"]
                 )
-                context = browser.new_context(viewport={"width": 1728, "height": 960})
+                context = browser.new_context(viewport={"width": 1728, "height": 960}, accept_downloads=True)
                 page = context.new_page()
                 page.add_init_script("""
                     window.__holdSurface = false;
@@ -124,7 +124,7 @@ with tempfile.TemporaryDirectory(prefix="TetherplaneAuthorityQA-") as td:
                         {"namespace": "batch", "available": True, "operations": ["execute"]},
                     ],
                 }
-                actions = {"change": 0, "rollback": 0}
+                actions = {"change": 0, "rollback": 0, "probe": 0, "localRequest": 0}
                 requests = []
 
                 def intercept(route):
@@ -140,6 +140,39 @@ with tempfile.TemporaryDirectory(prefix="TetherplaneAuthorityQA-") as td:
                         surface = {**observed, "deviceId": "Surface", "isOwner": False,
                                    "revision": 0, "denied": [], "audit": []}
                         route.fulfill(status=200, content_type="application/json", body=json.dumps(surface))
+                        return
+                    if url.endswith("/api/authority/Leno/probe") and request.method == "POST":
+                        payload = request.post_data_json
+                        assert request.headers.get("x-csrf-token") == "synthetic-csrf"
+                        assert payload["probe"] in ("device_status", "process_echo")
+                        actions["probe"] += 1
+                        route.fulfill(status=200, content_type="application/json", body=json.dumps({
+                            "deviceId": "Leno", "probe": payload["probe"],
+                            "capability": "device.status" if payload["probe"] == "device_status" else "process.run",
+                            "access": "verified_allowed", "scope": "this_portal_oauth_session",
+                            "observedAt": "2026-10-25T07:00:00Z",
+                            "reason": "Synthetic exact operation succeeded"
+                        }))
+                        return
+                    if url.endswith("/api/authority/Leno/local-request") and request.method == "POST":
+                        payload = request.post_data_json
+                        assert payload["confirmDeviceId"] == "Leno"
+                        assert payload["intent"] == "grant"
+                        assert payload["capability"] == "filesystem.read"
+                        assert payload["directory"] == r"D:\Work\approved"
+                        actions["localRequest"] += 1
+                        route.fulfill(status=200, content_type="application/json", body=json.dumps({
+                            "schema": "tetherplane.device_local_review_request.v1",
+                            "deviceId": "Leno", "intent": "grant",
+                            "capability": "filesystem.read", "directory": payload["directory"],
+                            "reason": payload["reason"], "requestId": "synthetic01",
+                            "ownerFingerprint": "synthetic",
+                            "createdAt": "2026-10-25T07:00:00Z",
+                            "expiresAt": "2026-10-26T07:00:00Z",
+                            "requiresLocalOperator": True, "remotelyApplied": False,
+                            "cryptographicDeviceApproval": False,
+                            "warning": "Review only"
+                        }))
                         return
                     if url.endswith("/api/authority/Leno/change") and request.method == "POST":
                         assert request.headers.get("x-csrf-token") == "synthetic-csrf"
@@ -189,6 +222,24 @@ with tempfile.TemporaryDirectory(prefix="TetherplaneAuthorityQA-") as td:
                 page.get_by_text("filesystem", exact=True).first.wait_for(timeout=7000)
                 assert "agent_device.capabilities" in page.locator("#tp-authority-source").inner_text()
                 assert "not a device-local policy edit" in page.locator("#tp-authority-boundary").inner_text().lower()
+                assert "NOT VERIFIED" in page.locator("#tp-authority-capabilities").inner_text()
+                assert page.locator("#tp-authority-copy-owner-proof").is_hidden()
+                page.locator("#tp-authority-probe-device_status").click()
+                expect(page.locator("#tp-authority-access-results")).to_contain_text("VERIFIED ALLOWED", timeout=6000)
+                page.locator("#tp-authority-probe-process_echo").click()
+                expect(page.locator("#tp-authority-access-results")).to_contain_text("process.run", timeout=6000)
+                assert actions["probe"] == 2
+                page.locator("#tp-authority-request-action").select_option("grant")
+                page.locator("#tp-authority-request-capability").select_option("filesystem.read")
+                page.locator("#tp-authority-request-directory").fill(r"D:\Work\approved")
+                page.locator("#tp-authority-confirm").fill("Leno")
+                page.locator("#tp-authority-reason").fill("Synthetic local operator review request")
+                with page.expect_download(timeout=6000) as download_info:
+                    page.locator("#tp-authority-request-export").click()
+                download = download_info.value
+                assert download.suggested_filename.startswith("tetherplane-local-approval-Leno-")
+                assert actions["localRequest"] == 1
+                assert "No permission was changed" in page.locator("#tp-authority-message").inner_text()
                 page.locator("#tp-authority-deny-filesystem").check()
                 page.locator("#tp-authority-confirm").fill("Leno")
                 page.locator("#tp-authority-reason").fill("Isolated browser test restriction")

@@ -7,7 +7,7 @@
   "scripts": {
     "start": "node server.mjs",
     "test": "node --test test/*.test.mjs",
-    "test:standalone": "node --test test/artwork-provenance.test.mjs test/audit-recovery.test.mjs test/authority-http.test.mjs test/authority.test.mjs test/deployed-base-parity.test.mjs test/integration.test.mjs test/oauth.test.mjs test/ui-state.test.mjs",
+    "test:standalone": "node --test test/authority-access.test.mjs test/artwork-provenance.test.mjs test/audit-recovery.test.mjs test/authority-http.test.mjs test/authority.test.mjs test/deployed-base-parity.test.mjs test/integration.test.mjs test/oauth.test.mjs test/ui-state.test.mjs",
     "test:browser": "python test/browser-authority-qa.py",
     "verify:artwork": "node tools/verify-original.mjs"
   }

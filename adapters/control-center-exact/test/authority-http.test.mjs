@@ -38,11 +38,21 @@ const relay=createServer(async(req,res)=>{
       if(p.name==='device'&&p.arguments.op==='capabilities'){
         return json({jsonrpc:'2.0',id:2,result:{isError:false,structuredContent:{providers:[
           {namespace:'device',available:true,operations:['status','capabilities']},
-          {namespace:'filesystem',available:true,operations:['read','write']},
+          {namespace:'filesystem',available:true,operations:['read','write','info']},
           {namespace:'process',available:true,operations:['run']},
+          {namespace:'desktop',available:true,operations:[]},
           {namespace:'browser',available:false,operations:[]}
         ]}}});
       }
+      if(p.name==='device'&&p.arguments.op==='status')
+        return json({jsonrpc:'2.0',id:2,result:{isError:false,structuredContent:{
+          agent_version:'0.1.0',policy_mode:'background_only'}}});
+      if(p.name==='files'&&p.arguments.op==='info')
+        return json({jsonrpc:'2.0',id:2,result:{isError:true,structuredContent:{
+          error:{code:'permission_denied',message:'path outside approved directories'}}}});
+      if(p.name==='process'&&p.arguments.op==='run')
+        return json({jsonrpc:'2.0',id:2,result:{isError:false,structuredContent:{
+          exit_code:0,stdout:'TETHERPLANE_PORTAL_ACCESS_PROBE'}}});
       return json({jsonrpc:'2.0',id:2,result:{isError:false,structuredContent:{ok:true}}});
     }
   }
@@ -84,6 +94,9 @@ test('unauthenticated authority API denied, and direct device authority discover
  assert.equal(r.body.agentPolicyModifiable,false);
  assert.equal(r.body.authorityScope,'control_center_only');
  assert.equal(r.body.revision,0);
+ assert.equal(r.body.effectiveAccess.find(x=>x.namespace==='filesystem').access,'not_verified');
+ assert.equal(r.body.effectiveAccess.find(x=>x.namespace==='browser').access,'provider_unavailable');
+ assert.ok(r.body.effectiveAccess.every(x=>x.access!=='verified_allowed'));
 });
 test('verified paired OAuth subject receives five-minute MAC-sealed enrollment proof without granting permissions',async()=>{
   const noSession=await api('/api/authority/Leno/owner-proof','GET',null,{auth:false});
@@ -114,6 +127,55 @@ test('verified paired OAuth subject receives five-minute MAC-sealed enrollment p
   const second=await api('/api/authority/Leno/owner-proof');
   assert.notEqual(second.body.proof,r.body.proof,'proof must include fresh random nonce');
 });
+test('permission probes reflect the actual authenticated portal operation without changing policy',async()=>{
+  const request={probe:'device_status',path:''};
+  assert.equal((await api('/api/authority/Leno/probe','POST',request,{auth:false})).status,401);
+  assert.equal((await api('/api/authority/Leno/probe','POST',request,{csrf:false})).status,403);
+  assert.equal((await api('/api/authority/Leno/probe','POST',request,{origin:false})).status,403);
+  assert.equal((await api('/api/authority/RTX/probe','POST',request)).status,403);
+  assert.equal((await api('/api/authority/Leno/probe','POST',{probe:'desktop_snapshot',path:''})).status,400);
+  const good=await api('/api/authority/Leno/probe','POST',request);
+  assert.equal(good.status,200);assert.equal(good.body.access,'verified_allowed');
+  assert.equal(good.body.capability,'device.status');
+  assert.equal(good.body.scope,'this_portal_oauth_session');
+  const notSupported=await api('/api/authority/Leno/probe','POST',{probe:'browser_status',path:''});
+  assert.equal(notSupported.status,200);
+  assert.equal(notSupported.body.access,'provider_unavailable');
+  const blocked=await api('/api/authority/Leno/probe','POST',{probe:'filesystem_info',path:'D:\\Work\\Report.txt'});
+  assert.equal(blocked.status,200);assert.equal(blocked.body.access,'denied');
+  const echo=await api('/api/authority/Leno/probe','POST',{probe:'process_echo',path:''});
+  assert.equal(echo.status,200);assert.equal(echo.body.access,'verified_allowed');
+  assert.equal((await api('/api/authority/Leno')).body.revision,0);
+});
+test('only enrolled owners prepare explicit, non-executing local device permission proposals',async()=>{
+  const body={intent:'grant',capability:'filesystem.read',directory:'D:\\Work\\approved',
+    reason:'Grant limited project workspace access',confirmDeviceId:'Leno'};
+  assert.equal((await api('/api/authority/Leno/local-request','POST',body,{csrf:false})).status,403);
+  assert.equal((await api('/api/authority/RTX/local-request','POST',body)).status,403);
+  assert.equal((await api('/api/authority/Leno/local-request','POST',{...body,confirmDeviceId:'VAULTER'})).status,400);
+  assert.equal((await api('/api/authority/Leno/local-request','POST',{...body,directory:'D:\\'})).status,400);
+  const r=await api('/api/authority/Leno/local-request','POST',body);
+  assert.equal(r.status,200);
+  assert.equal(r.body.deviceId,'Leno');
+  assert.equal(r.body.remotelyApplied,false);
+  assert.equal(r.body.requiresLocalOperator,true);
+  assert.equal(r.body.cryptographicDeviceApproval,false);
+  assert.equal(r.body.schema,'tetherplane.device_local_review_request.v1');
+  assert.equal(r.body.capability,'filesystem.read');
+  assert.equal(r.body.advertisedByAgent,true);
+  const notAdvertised=await api('/api/authority/Leno/local-request','POST',
+    {...body,capability:'desktop.snapshot',directory:''});
+  assert.equal(notAdvertised.status,200);
+  assert.equal(notAdvertised.body.advertisedByAgent,false);
+  assert.equal(notAdvertised.body.remotelyApplied,false);
+  assert.doesNotMatch(JSON.stringify(r.body),/fake-signature|owner-sub/);
+  assert.equal(Date.parse(r.body.expiresAt)-Date.parse(r.body.createdAt),86400000);
+  portal.authority.registry.adminSubjects.delete('owner-sub');
+  try{
+    assert.equal((await api('/api/authority/Leno/local-request','POST',body)).status,403);
+  }finally{portal.authority.registry.adminSubjects.add('owner-sub');}
+  assert.equal((await api('/api/authority/Leno')).body.revision,0);
+});
 test('requires origin, CSRF, exact device confirmation, and persisted revision before changes',async()=>{
  const body={denied:['filesystem'],expectedRevision:0,confirmDeviceId:'Leno',reason:'Review restricted filesystem'};
  assert.equal((await api('/api/authority/Leno/change','POST',body,{csrf:false})).status,403);
@@ -123,6 +185,13 @@ test('requires origin, CSRF, exact device confirmation, and persisted revision b
  assert.equal(changed.status,200);
  assert.equal(changed.body.revision,1);
  assert.deepEqual(changed.body.denied,['filesystem']);
+ const before=toolCalls;
+ const disabled=await api('/api/authority/Leno/probe','POST',{probe:'process_echo',path:''});
+ assert.equal(disabled.status,200);
+ assert.equal(disabled.body.access,'portal_restricted');
+ assert.equal(toolCalls,before+1,'only advertised capability discovery is forwarded; no process.run probe is executed');
+ const inventory=await api('/api/authority/Leno');
+ assert.equal(inventory.body.effectiveAccess.find(x=>x.namespace==='process').access,'portal_restricted');
  const stale=await api('/api/authority/Leno/change','POST',{...body,denied:[],reason:'Try stale revision state'});
  assert.equal(stale.status,409);
  assert.equal(stale.body.error.code,'revision_conflict');

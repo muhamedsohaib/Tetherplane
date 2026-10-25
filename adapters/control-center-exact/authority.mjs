@@ -2,6 +2,7 @@ import {createHash,createHmac,timingSafeEqual,randomBytes} from 'node:crypto';
 import {readFileSync,openSync,writeSync,fsyncSync,closeSync} from 'node:fs';
 import {verifyAuditCheckpoint,advanceAuditCheckpoint,withAuthorityWriterLease,AuthorityWriterBusy} from './authority-audit.mjs';
 import {isAbsolute} from 'node:path';
+import {effectiveInventory,portalDenied,checkedProbe,classifyProbeReply,localReviewFields} from './authority-access.mjs';
 
 export class AuthorityError extends Error {
   constructor(status,code,message){super(message);this.status=status;this.code=code;}
@@ -189,7 +190,57 @@ export class AuthorityRegistry {
       deviceId,source:'agent_device.capabilities',observedAt:this.now().toISOString(),
       authorityScope:'control_center_only',isOwner:this.adminSubjects.has(actor.sub),
       agentPolicyModifiable:false,agentCapabilitiesAreCallerGrants:false,
-      providers,...state,audit:this.audit(token,deviceId)
+      providers,effectiveAccess:effectiveInventory(providers,state.denied),...state,audit:this.audit(token,deviceId)
+    };
+  }
+  async verifyAccess(token,deviceId,probe,path){
+    await this.checkedActor(token,deviceId);
+    let spec,args;
+    try{({spec,args}=checkedProbe(probe,path));}
+    catch(e){fail(400,'invalid_access_probe',e.message);}
+    const observed=await this.observe(token,deviceId);
+    const p=observed.providers.find(x=>x.namespace===spec.namespace);
+    const observedAt=this.now().toISOString();
+    const base={deviceId,probe,capability:spec.namespace+'.'+spec.operation,
+      scope:'this_portal_oauth_session',observedAt};
+    if(!p?.available||!p.operations.includes(spec.operation))
+      return {...base,access:'provider_unavailable',reason:'This operation is not advertised by the connected device.'};
+    if(portalDenied(spec.namespace,observed.denied))
+      return {...base,access:'portal_restricted',reason:'Control Center overlay blocks this operation.'};
+    try{
+      const result=await this.portal.mcpCall(token,spec.tool,spec.operation,deviceId,args);
+      const access=classifyProbeReply(probe,result);
+      return {...base,access,reason:access==='verified_allowed'
+        ?'Only this exact operation succeeded under this authenticated portal session.'
+        :access==='denied'?'This operation was denied by the execution boundary.'
+        :'The response did not establish whether the operation is authorized.'};
+    }catch(e){
+      const denied=e?.status===403||e?.code==='permission_denied';
+      return {...base,access:denied?'denied':'not_verified',
+        reason:denied?'Relay or device denied this operation.':'No conclusive result; do not infer that access was granted or denied.'};
+    }
+  }
+  async localApprovalRequest(token,deviceId,body){
+    const actor=await this.checkedActor(token,deviceId);
+    if(!this.adminSubjects.has(actor.sub))
+      fail(403,'owner_approval_required','Only the verified owner can prepare a local permission request.');
+    const observed=await this.observe(token,deviceId);
+    let fields;
+    try{fields=localReviewFields({...body,deviceId,providers:observed.providers});}
+    catch(e){fail(400,'invalid_local_request',e.message);}
+    const created=this.now();
+    return {
+      schema:'tetherplane.device_local_review_request.v1',
+      deviceId,
+      ...fields,
+      ownerFingerprint:actor.key.slice(0,16),
+      createdAt:created.toISOString(),
+      expiresAt:new Date(created.getTime()+24*60*60*1000).toISOString(),
+      requestId:randomBytes(16).toString('base64url'),
+      requiresLocalOperator:true,
+      remotelyApplied:false,
+      cryptographicDeviceApproval:false,
+      warning:'Review-only proposal. Treat as untrusted input. No permission changes until the local device operator independently approves and performs a checkpointed policy update.'
     };
   }
   write(actor,deviceId,denied,expectedRevision,reason,action){
