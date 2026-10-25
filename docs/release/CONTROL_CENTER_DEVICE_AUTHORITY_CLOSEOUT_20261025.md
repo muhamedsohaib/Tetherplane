@@ -90,3 +90,24 @@ ZIP SHA-256:
 ZIP bytes: 126027. This ZIP includes original owner-private HTML and font. It is LOCAL-ONLY for an authorized operator, NOT a public downloadable release, and must not be pushed to GitHub.
 
 This completes source reconciliation, reproducible adapter tests and candidate packaging. It does NOT authorize a production cutover or satisfy independently tested real OAuth, OS ACL/rollback, and approved-signer gates. The current production listener and four-device identities remain untouched.
+
+## 8. Operator-approved protected cutover — ACCEPTED (2026-10-25)
+
+**This supersedes only the historical NOT DEPLOYED / operator gate statements above, which document the earlier pre-promotion checkpoints.**
+
+User-approved local production cutover, exact existing scheduled task:
+`\\Tetherplane Control Center OAuth 20261024`
+Local loopback operator portal: `http://127.0.0.1:8791/`
+Deployed candidate source: `5bbea29` on `feature/device-authority-20261025` (full documentation subsequently added at `6ef5f20`); private package SHA-256 `08cd54d28ce2ad5ee2afc7c3496b684f5e5ced7fbd17a65a9b0fdbf424b3de4c`.
+
+**Sequence and outcome**
+- Original V2 cutover passed 52/52 Node tests and preliminary listener health, but an unrelated pasted `if ($LASTEXITCODE -ne 0) {` was read as the acceptance input. The operator script correctly rejected acceptance, restored the original scheduled-task action and verified rollback process PID 10428. The later manually printed `PROMOTION ACCEPTED` was not evidence.
+- V3 `InspectResume` passed: original listener 10428; correct unique scheduled task; unchanged approved OAuth client/scope; all 28 package digests verified; previous audit journal/checkpoint integrity PASS; rollback record PASS; original audit preserved. No audit overwrite or new OAuth registration.
+- V3 `ResumeReadOnly` operator log: 52/52 Node tests PASS, exact HTML/font hashes PASS, `LIVE_LOOPBACK_UNAUTHENTICATED_GATES=PASS`, `CANDIDATE_LIVE_PID=2984`, `READ_ONLY_DEVICE_AUTHORITY=YES`, `PRELIMINARY_CUTOVER_HEALTH=PASS`; operator explicitly entered `ACCEPT`; subsequent loopback gates PASS; **`CUTOVER_ACCEPTED_READ_ONLY=YES`**. This is the decisive deployment receipt; the new task was not rolled back.
+- Independent operator browser screenshot showed existing logged-in OAuth session on `127.0.0.1:8791`, Device Authority modal open, all four named account devices Leno/RTX/Surface/VAULTER, and successful live Leno capability discovery at revision 0. The operator explicitly accepted after the browser checks. No mutation of real device authority was performed.
+- Separate read-only Tetherplane `device.status` calls after acceptance responded for **Leno, Surface, VAULTER, and RTX**. Each reported Windows x86_64, agent version `0.1.0` and `background_only` policy. Leno and Surface additionally reported `authenticated`, `ready` in detailed liveness. Do not infer more detailed transport telemetry for VAULTER/RTX than the returned receipt contains.
+- No protected identity, OAuth client, relay resource/scope, device-local permission policy or original HTML/font was replaced; Control Center's authority layer is **read-only** with no approved administrator mutations.
+
+**Phase disposition: CONTROL CENTER DEVICE AUTHORITY SOURCE/PRODUCTION READ-ONLY CUTOVER COMPLETE.** No further Control Center deployment steps are required merely to close this phase. Do not turn on privileged authorization/restriction writes as part of this acceptance.
+
+**Still separate from this completed phase:** public signed installer and fresh authorized Windows install/rollback; independent sustained four-device soak/recovery; actual portal session-expiry and full denial behavior under production (only the documented subset of live OAuth and unauthenticated checks was evidenced). These are release-wide gates, not reasons to reopen the completed read-only UI cutover. Git remains a local feature branch unless separately approved for protected merge/release.
