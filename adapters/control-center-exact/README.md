@@ -58,9 +58,10 @@ Keep the authority audit journal, checkpoint and key protected with operating-sy
 ## Testing
 
 ~~~powershell
-node --test test/*.test.mjs
-node .\tools\verify-original.mjs
-python .\test\browser-authority-qa.py
+npm test                         # Full repository-aware suite
+npm run test:standalone          # Self-contained adapter tests
+npm run test:browser             # Synthetic Edge browser acceptance
+npm run verify:artwork           # Private HTML and WOFF2 hashes
 ~~~
 
 The Node tests use synthetic accounts, relay or HTTP fixtures and security boundaries. The optional Python test requires Playwright and Edge, starts a temporary loopback server with synthetic test-only key/configuration, exercises the current worktree panel, rollback, non-owner denial and out-of-order device responses, and terminates the test server. **It performs no real device policy change.** Tests cannot be represented as live production permission acceptance.
@@ -69,7 +70,7 @@ The Node tests use synthetic accounts, relay or HTTP fixtures and security bound
 
 Before any protected merge or VAULTER promotion:
 
-1. Obtain authorized **read-only** hashes, runtime version and actual source provenance for the VAULTER port 8791 deployment; reconcile newer fleet presence, OAuth and integration code file by file. Do not bypass a denied remote capability.
+1. **Source reconciliation complete 2026-10-25.** VAULTER's 20,808-byte server is exactly reconstructed by reversing only the authority hook; recovered OAuth and integration source hashes match the production receipt. The permanent `deployed-base-parity.test.mjs` protects this baseline. Before deployment, reconfirm the production hashes; do not bypass any remote principal restriction.
 2. Confirm the precise owner HTML version and preserve the existing original artwork and rights.
 3. Validate actual authenticated Control Center sessions, expiry, correct denials, four-device discovery and clean rollback without unsafe live mutations.
 4. Provide a protected audit key/journal location, backup and recovery plan; independently check fail-closed behavior, file protection and journal-loss handling.
@@ -77,4 +78,4 @@ Before any protected merge or VAULTER promotion:
 
 **VAULTER read-only provenance helper:** `scripts/Collect-ControlCenterReadOnlyReceipt.ps1` accepts an explicitly selected existing portal source root and an explicitly approved absolute JSON output path. It hashes only whitelisted script/artwork files, reads listener/process metadata for port 8791, excludes OAuth config/credentials and process command lines, and refuses to overwrite receipts. Its smoke test was run on Leno, and an authorized VAULTER operator subsequently ran it on October 25, 2026 with a single loopback listener on port 8791 and ten file fingerprints. The user-supplied receipt has been reconciled with the candidate in the release handoff. It does not establish deployed JavaScript source identity solely from the Node executable checksum.
 
-Do not merge, deploy, change protected identity settings, or replace the running VAULTER listener without explicit approval.
+The concise verified closeout and production-promotion gate are recorded in `../../docs/release/CONTROL_CENTER_DEVICE_AUTHORITY_CLOSEOUT_20261025.md` from the repository root. Do not merge, deploy, change protected identity settings, or replace the running VAULTER listener without explicit approval.
