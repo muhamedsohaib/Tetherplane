@@ -1,0 +1,37 @@
+<?xml version="1.0" encoding="utf-8"?>
+<Package xmlns="http://schemas.microsoft.com/appx/manifest/foundation/windows10"
+         xmlns:uap="http://schemas.microsoft.com/appx/manifest/uap/windows10"
+         xmlns:uap10="http://schemas.microsoft.com/appx/manifest/uap/windows10/10"
+         xmlns:rescap="http://schemas.microsoft.com/appx/manifest/foundation/windows10/restrictedcapabilities"
+         IgnorableNamespaces="uap uap10 rescap">
+  <!-- DEVELOPMENT FEASIBILITY ONLY. Not a Store publisher identity or production installer. -->
+  <Identity Name="Tetherplane.MsixFeasibility.DevOnly"
+            Publisher="CN=Tetherplane MSIX Development Probe"
+            Version="0.1.0.0"
+            ProcessorArchitecture="x64" />
+  <Properties>
+    <DisplayName>Tetherplane MSIX Feasibility (DEV ONLY)</DisplayName>
+    <PublisherDisplayName>Tetherplane MSIX Development Probe</PublisherDisplayName>
+    <Description>Ephemeral Windows package-identity experiment; not for distribution</Description>
+    <Logo>Assets\Logo50.png</Logo>
+  </Properties>
+  <Resources>
+    <Resource Language="en-us" />
+  </Resources>
+  <Dependencies>
+    <TargetDeviceFamily Name="Windows.Desktop" MinVersion="10.0.19041.0" MaxVersionTested="10.0.26100.0" />
+  </Dependencies>
+  <Applications>
+    <Application Id="Probe" Executable="bin\tetherd.exe"
+                 uap10:RuntimeBehavior="packagedClassicApp" uap10:TrustLevel="mediumIL">
+      <uap:VisualElements DisplayName="Tetherplane MSIX Probe (DEV ONLY)"
+                          Description="Feasibility only; does not establish an agent connection"
+                          Square150x150Logo="Assets\Logo150.png"
+                          Square44x44Logo="Assets\Logo44.png"
+                          BackgroundColor="#20252A" />
+    </Application>
+  </Applications>
+  <Capabilities>
+    <rescap:Capability Name="runFullTrust" />
+  </Capabilities>
+</Package>
