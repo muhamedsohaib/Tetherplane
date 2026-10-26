@@ -19,6 +19,9 @@ jobs:
       - name: Enforce fail-closed public release policy
         run: node --test tests/release/windows-main-publication-block.test.mjs
 
+      - name: Enforce cold-install safety contract
+        run: node --test tests/release/windows-clean-install-contract.test.mjs
+
   quality:
     strategy:
       fail-fast: false
@@ -28,6 +31,20 @@ jobs:
 
     steps:
       - uses: actions/checkout@v4
+
+      - name: Windows cold installer preflight (synthetic fixture; nonrelease)
+        if: runner.os == 'Windows' && github.event_name == 'pull_request' && github.event.pull_request.head.repo.full_name == github.repository
+        shell: powershell
+        run: ./tests/release/windows-clean-install-preflight.ps1 -ReportPath (Join-Path $env:RUNNER_TEMP 'tetherplane-clean-install-report.json')
+
+      - name: Upload cold-install safety evidence (JSON only)
+        if: always() && runner.os == 'Windows' && github.event_name == 'pull_request' && github.event.pull_request.head.repo.full_name == github.repository
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        with:
+          name: tetherplane-clean-install-preflight-${{ github.run_id }}-${{ github.run_attempt }}
+          path: ${{ runner.temp }}/tetherplane-clean-install-report.json
+          if-no-files-found: warn
+          retention-days: 7
 
       - name: Install Rust toolchain
         uses: dtolnay/rust-toolchain@stable
