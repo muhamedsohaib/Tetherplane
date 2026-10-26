@@ -1,0 +1,47 @@
+name: MSIX feasibility probe (nonrelease)
+
+# Isolated disposable runner experiment. No production signing, Store submission,
+# public package upload, agent execution, device pairing or scheduled task.
+on:
+  pull_request:
+    paths:
+      - ".github/workflows/msix-feasibility.yml"
+      - "packaging/msix-feasibility/**"
+      - "scripts/msix/**"
+      - "tests/release/msix-feasibility-contract.test.mjs"
+      - "tests/release/msix-powershell-env.test.mjs"
+
+permissions:
+  contents: read
+
+jobs:
+  msix-dev-probe:
+    if: ${{ github.event.pull_request.head.repo.full_name == github.repository && startsWith(github.head_ref, 'feature/msix-feasibility-') }}
+    runs-on: windows-latest
+    timeout-minutes: 20
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
+        with:
+          persist-credentials: false
+      - uses: dtolnay/rust-toolchain@b725eda525362e7cf34af9a7243cac1e3f01a7ec # stable
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4.4.0
+        with:
+          node-version: 22
+      - name: Check MSIX nonrelease source contract
+        run: node --test tests/release/msix-feasibility-contract.test.mjs tests/release/msix-powershell-env.test.mjs
+      - name: Preflight child PowerShell and Windows SDK prerequisites (read-only)
+        run: node scripts/msix/ci-prerequisites.mjs
+      - name: Build reviewed native binary from this PR
+        run: cargo build --release --locked -p tetherd
+      - name: Bounded MSIX package/sign/install/remove probe (data-only)
+        run: node scripts/msix/run-bounded-probe.mjs
+      - name: Upload only data-only feasibility evidence (no MSIX or private keys)
+        if: always()
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        with:
+          name: msix-feasibility-report-${{ github.run_id }}-${{ github.run_attempt }}
+          path: ${{ runner.temp }}/tetherplane-msix-probe-report.json
+          if-no-files-found: warn
+          retention-days: 7
