@@ -28,7 +28,7 @@ function assertNonPublishingWorkflow(w) {
   assert.match(w, /runs-on: windows-latest/);
   assert.match(w, /github\.event\.pull_request\.head\.repo\.full_name == github\.repository/);
   assert.match(w, /startsWith\(github\.head_ref, 'feature\/msix-feasibility-'\)/);
-  assert.match(w, /node --test tests\/release\/msix-feasibility-contract\.test\.mjs/);
+  assert.match(w, /node --test tests\/release\/msix-feasibility-contract\.test\.mjs tests\/release\/msix-powershell-env\.test\.mjs/);
   assert.match(w, /cargo build --release --locked -p tetherd/);
   assert.match(w, /run: node scripts\/msix\/run-bounded-probe\.mjs/);
   assert.match(w, /run: node scripts\/msix\/ci-prerequisites\.mjs/);
@@ -84,6 +84,7 @@ test("packaging script is isolated, tests install/removal, and never publishes",
 test("read-only preflight checks Windows prerequisites in a bounded child PowerShell", () => {
   assert.match(preflight, /GITHUB_HEAD_REF\?\.startsWith/);
   assert.match(preflight, /spawnSync\(/);
+  assert.match(preflight, /env: windowsPowerShell51Environment\(environment\)/);
   assert.match(preflight, /Get-Command -Name/);
   assert.match(preflight, /Import-Module Microsoft\.PowerShell\.Security -ErrorAction Stop/);
   assert.match(preflight, /Get-PSDrive -Name Cert -ErrorAction SilentlyContinue/);
@@ -95,6 +96,7 @@ test("read-only preflight checks Windows prerequisites in a bounded child PowerS
 test("wrapper enforces bounded child execution and only the JSON report", () => {
   assert.match(bounded, /timeout: timeoutMs/);
   assert.match(bounded, /const timeoutMs = 120_000/);
+  assert.match(bounded, /env: windowsPowerShell51Environment\(environment\)/);
   assert.match(bounded, /spawn\(/);
   assert.match(bounded, /powershell\.exe/);
   assert.match(bounded, /MSIX_PROBE_NO_GO/);

@@ -1,6 +1,7 @@
 import { spawn } from "node:child_process";
 import { readFileSync } from "node:fs";
 import { join } from "node:path";
+import { windowsPowerShell51Environment } from "./windows-powershell-env.mjs";
 
 const environment = process.env;
 const permitted =
@@ -33,6 +34,7 @@ if (!permitted) {
       windowsHide: true,
       timeout: timeoutMs,
       killSignal: "SIGKILL",
+      env: windowsPowerShell51Environment(environment),
     },
   );
 

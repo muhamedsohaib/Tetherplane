@@ -1,4 +1,5 @@
 import { spawnSync } from "node:child_process";
+import { windowsPowerShell51Environment } from "./windows-powershell-env.mjs";
 
 const environment = process.env;
 const permitted =
@@ -28,7 +29,7 @@ if (!permitted) {
   const result = spawnSync(
     "powershell.exe",
     ["-NoProfile", "-NonInteractive", "-Command", powerShell],
-    { encoding: "utf8", windowsHide: true, shell: false, timeout: 20_000 },
+    { encoding: "utf8", windowsHide: true, shell: false, timeout: 20_000, env: windowsPowerShell51Environment(environment) },
   );
 
   if (result.stdout) process.stdout.write(result.stdout);
