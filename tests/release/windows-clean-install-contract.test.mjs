@@ -12,6 +12,7 @@ const probe = read("tests/release/windows-clean-install-preflight.ps1");
 const workflow = read(".github/workflows/ci.yml");
 const packageSmoke = read("tests/release/windows-package-smoke.ps1");
 const launcherHandshake = read("tests/release/windows-launcher-handshake.mjs");
+const launcherEnvRegression = read("adapters/compact-mcp/windows-powershell-launcher-env.test.mjs");
 
 function assertSafeInstaller(source) {
   assert.match(source, /install prefix and state directory must not overlap/);
@@ -33,11 +34,21 @@ function assertSafeWorkflow(source) {
   assert.match(source, /github\.event_name == 'pull_request'/);
   assert.equal((source.match(/github\.event\.pull_request\.head\.repo\.full_name == github\.repository/g) || []).length, 2, "Both execution and artifact upload require a same-repository pull request");
   assert.match(source, /tetherplane-clean-install-report\.json/);
+  assert.match(source, /Windows packaged PowerShell stdio regression \(synthetic fixture\)/);
+  assert.match(source, /node --test adapters\/compact-mcp\/windows-powershell-launcher-env\.test\.mjs/);
   assert.doesNotMatch(source, /contents: write|gh release create|Store publish|New-SelfSignedCertificate/);
 }
 
 test("Compact MCP launcher declares parameters before executing statements", () => {
   assert.match(launcher, /^param\(\n\s+\[Parameter\(ValueFromRemainingArguments = \$true\)\]/);
+});
+
+test("PowerShell MCP launcher uses full-duplex native execution under filtered SDK environment", () => {
+  assert.match(launcher, /Start-Process -FilePath \$nodeExecutable/);
+  assert.match(launcher, /-NoNewWindow -Wait -PassThru/);
+  assert.match(launcher, /Quote-NativeArgument/);
+  assert.match(launcherEnvRegression, /historical launcher fails under the restricted MCP SDK environment/);
+  assert.match(launcherEnvRegression, /actual installed PowerShell launcher transports six MCP tools/);
 });
 
 test("installer rejects destructive replacement and validates before copying", () => {

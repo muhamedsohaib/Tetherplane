@@ -93,6 +93,10 @@ jobs:
       - name: Authored unsafe scan
         run: python scripts/check-no-unsafe.py
 
+      - name: Windows packaged PowerShell stdio regression (synthetic fixture)
+        if: runner.os == 'Windows'
+        run: node --test adapters/compact-mcp/windows-powershell-launcher-env.test.mjs
+
       - name: Windows release binary
         if: runner.os == 'Windows'
         run: cargo build --release -p tetherd
