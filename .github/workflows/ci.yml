@@ -33,6 +33,9 @@ jobs:
         with:
           node-version: 22
 
+      - name: Enforce fail-closed public release policy
+        run: node --test tests/release/windows-main-publication-block.test.mjs
+
       - name: Enable Corepack
         run: corepack enable
 
