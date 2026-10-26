@@ -30,6 +30,8 @@ jobs:
           node-version: 22
       - name: Check MSIX nonrelease source contract
         run: node --test tests/release/msix-feasibility-contract.test.mjs
+      - name: Preflight child PowerShell and Windows SDK prerequisites (read-only)
+        run: node scripts/msix/ci-prerequisites.mjs
       - name: Build reviewed native binary from this PR
         run: cargo build --release --locked -p tetherd
       - name: Bounded MSIX package/sign/install/remove probe (data-only)

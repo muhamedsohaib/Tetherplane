@@ -40,6 +40,20 @@ $ownedCertificate = $null
 $installedFullName = $null
 $failed = $null
 
+# Windows PowerShell subprocesses on hosted runners may not auto-load the
+# Microsoft.PowerShell.Utility module. Hash using standard .NET APIs instead.
+function Get-Sha256Hex {
+    param([Parameter(Mandatory = $true)][string]$Path)
+    $stream = [IO.File]::OpenRead($Path)
+    $sha = [System.Security.Cryptography.SHA256]::Create()
+    try {
+        return [BitConverter]::ToString($sha.ComputeHash($stream)).Replace('-', '').ToLowerInvariant()
+    } finally {
+        $sha.Dispose()
+        $stream.Dispose()
+    }
+}
+
 # Persist each checkpoint BEFORE invoking the next operation that could hang.
 # The watchdog can terminate this ephemeral process without losing the last phase.
 function Save-MsixPhase {
@@ -75,7 +89,7 @@ try {
         $sourceInfo.Name -cne 'tetherd.exe') {
         throw 'Only a compiled Windows tetherd.exe can be packaged by this probe.'
     }
-    $report.agent_binary_sha256 = (Get-FileHash -LiteralPath $source -Algorithm SHA256).Hash.ToLowerInvariant()
+    $report.agent_binary_sha256 = (Get-Sha256Hex -Path $source)
 
     $repo = (Resolve-Path -LiteralPath (Join-Path $PSScriptRoot '..\..')).Path
     $manifestFile = Join-Path $repo 'packaging\msix-feasibility\AppxManifest.xml'
@@ -133,13 +147,13 @@ try {
     & $makeAppx pack /d $payload /p $packageFile
     if ($LASTEXITCODE -ne 0) { throw "MakeAppx pack failed: $LASTEXITCODE" }
     $report.package_pack = 'PASS'
-    $report.package_sha256 = (Get-FileHash -LiteralPath $packageFile -Algorithm SHA256).Hash.ToLowerInvariant()
+    $report.package_sha256 = (Get-Sha256Hex -Path $packageFile)
 
     $unpacked = Join-Path $scratch 'unpacked'
     Save-MsixPhase 'makeappx_unpack_started'
     & $makeAppx unpack /p $packageFile /d $unpacked
     if ($LASTEXITCODE -ne 0) { throw "MakeAppx unpack failed: $LASTEXITCODE" }
-    $extractedHash = (Get-FileHash -LiteralPath (Join-Path $unpacked 'bin\tetherd.exe') -Algorithm SHA256).Hash.ToLowerInvariant()
+    $extractedHash = (Get-Sha256Hex -Path (Join-Path $unpacked 'bin\tetherd.exe'))
     if ($extractedHash -cne $report.agent_binary_sha256) {
         throw 'Extracted MSIX binary does not match the reviewed compiled executable.'
     }

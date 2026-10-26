@@ -6,6 +6,7 @@ const manifest = readFileSync(new URL("../../packaging/msix-feasibility/AppxMani
 const runner = readFileSync(new URL("../../scripts/msix/Test-TetherplaneMsixFeasibility.ps1", import.meta.url), "utf8").replace(/\r\n/g, "\n");
 const workflow = readFileSync(new URL("../../.github/workflows/msix-feasibility.yml", import.meta.url), "utf8").replace(/\r\n/g, "\n");
 const bounded = readFileSync(new URL("../../scripts/msix/run-bounded-probe.mjs", import.meta.url), "utf8").replace(/\r\n/g, "\n");
+const preflight = readFileSync(new URL("../../scripts/msix/ci-prerequisites.mjs", import.meta.url), "utf8").replace(/\r\n/g, "\n");
 
 function assertSafeManifest(m) {
   assert.match(m, /Name="Tetherplane\.MsixFeasibility\.DevOnly"/);
@@ -30,6 +31,7 @@ function assertNonPublishingWorkflow(w) {
   assert.match(w, /node --test tests\/release\/msix-feasibility-contract\.test\.mjs/);
   assert.match(w, /cargo build --release --locked -p tetherd/);
   assert.match(w, /run: node scripts\/msix\/run-bounded-probe\.mjs/);
+  assert.match(w, /run: node scripts\/msix\/ci-prerequisites\.mjs/);
   assert.match(w, /timeout-minutes: 20/);
   assert.match(w, /path: \$\{\{ runner\.temp \}\}\/tetherplane-msix-probe-report\.json/);
   assert.doesNotMatch(w, /gh release create|vercel deploy|winget publish|store publish|signtool\.exe.*\/f|TETHERPLANE_SIGNING_READY|contents: write/i);
@@ -53,6 +55,9 @@ function assertEphemeralRunner(s) {
   assert.match(s, /Remove-AppxPackage -Package \$installedFullName/);
   assert.match(s, /certificate_cleanup/);
   assert.match(s, /function Save-MsixPhase/);
+  assert.match(s, /function Get-Sha256Hex/);
+  assert.match(s, /SHA256\]::Create\(\)/);
+  assert.doesNotMatch(s, /Get-FileHash\b/, "Avoid module-dependent hashing in isolated CI PowerShell subprocess");
   assert.match(s, /Save-MsixPhase 'self_signed_cert_creation_started'/);
   assert.match(s, /Save-MsixPhase 'localmachine_trustedpeople_import_started'/);
   assert.match(s, /Save-MsixPhase 'add_appx_started'/);
@@ -72,6 +77,15 @@ test("workflow is restricted to unprivileged PR on ephemeral hosted Windows", ()
 
 test("packaging script is isolated, tests install/removal, and never publishes", () => {
   assertEphemeralRunner(runner);
+});
+
+test("read-only preflight checks Windows prerequisites in a bounded child PowerShell", () => {
+  assert.match(preflight, /GITHUB_HEAD_REF\?\.startsWith/);
+  assert.match(preflight, /spawnSync\(/);
+  assert.match(preflight, /Get-Command -Name/);
+  assert.match(preflight, /timeout: 20_000/);
+  assert.match(preflight, /MSIX_HOSTED_PREREQUISITES_NO_GO/);
+  assert.doesNotMatch(preflight, /New-SelfSignedCertificate\s+@|Import-Certificate\s+-|Add-AppxPackage\s+-|Remove-AppxPackage\s+-/);
 });
 
 test("wrapper enforces bounded child execution and only the JSON report", () => {
@@ -97,6 +111,7 @@ test("negative controls reject publisher, auto-start and publication weakening",
   const weakenedWorkflows = [
     workflow.replace("  contents: read", "  contents: write"),
     workflow.replace("on:\n  pull_request:", "on:\n  push:\n  pull_request:"),
+    workflow.replace("run: node scripts/msix/ci-prerequisites.mjs", "run: echo skipped"),
     workflow.replace("github.event.pull_request.head.repo.full_name == github.repository", "true"),
     workflow.replace("path: ${{ runner.temp }}/tetherplane-msix-probe-report.json", "path: ${{ runner.temp }}/Tetherplane.MsixProbe.DevOnly.msix"),
   ];
@@ -108,6 +123,7 @@ test("negative controls reject publisher, auto-start and publication weakening",
     runner.replace("RUNNER_ENVIRONMENT -cne 'github-hosted'", "RUNNER_ENVIRONMENT -cne 'local'"),
     runner.replace("Add-AppxPackage -Path $packageFile", "Start-Process $source; Add-AppxPackage -Path $packageFile"),
     runner.replace("'Cert:\\LocalMachine\\TrustedPeople'", "'Cert:\\LocalMachine\\Root'"),
+    runner.replace("(Get-Sha256Hex -Path $source)", "(Get-FileHash -LiteralPath $source)")
   ];
   for (const weak of weakenedRunners) {
     assert.notEqual(weak, runner);

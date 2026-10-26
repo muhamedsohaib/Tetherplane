@@ -77,3 +77,16 @@ Hosted CI uploads only JSON: runner, source SHA, source executable and package S
 - The MSIX workflow job timeout is reduced from 45 to 20 minutes. Only the JSON report may be uploaded. No production OAuth, device, Windows Scheduled Task, Store identity or release rule changes are made.
 - Leno checks: Node contracts **5/5**, existing unsigned-publication guard **4/4**, PowerShell parser **0 errors**, JavaScript syntax PASS, locally executed wrapper **exit 1 / explicit denial**. These results do not prove the hosted MSIX can install or run Tetherplane.
 - Source references: [Microsoft MSIX signing guidance](https://learn.microsoft.com/en-us/windows/msix/package/sign-msix-package-guide); [Microsoft MSIX troubleshooting — untrusted certificate](https://learn.microsoft.com/en-us/windows/msix/msix-troubleshooting-guide).
+
+## Bounded run result — GitHub's child PowerShell command resolution
+
+- GitHub Actions [run 40295629684](https://github.com/muhamedsohaib/Tetherplane/actions/runs/40295629684) built the native release binary, started the bounded PowerShell child process, and persisted a JSON failure report. The child passed its runner guard, then failed before MakeAppx packaging with: **`Get-FileHash` is not recognized**. The earlier direct CI PowerShell step had resolved that cmdlet, so this is a difference in child PowerShell initialization/available modules.
+- Evidence downloaded to Leno: `MSIX_Run_40295629684/tetherplane-msix-probe-report.json`. Fields: `package_pack=NOT_RUN`, `add_appx=NOT_RUN`, `certificate_cleanup=NOT_CREATED`, `disposition=NO-GO`.
+- Narrow corrective change: compute SHA-256 with `System.Security.Cryptography.SHA256` against file streams (with disposal), independent of PowerShell module autoload. All existing byte-for-byte comparisons remain mandatory. No signature, acceptance or distribution checks are bypassed.
+- The new source contract prohibits reintroducing `Get-FileHash` in this standalone PowerShell subprocess.
+
+## Fail-fast Windows host prerequisite check
+
+- Added a read-only `ci-prerequisites.mjs` step **before** `cargo build --release`. It invokes the same noninteractive child `powershell.exe` mode as the bounded integration probe and verifies the PKI, Appx, certificate, JSON and Windows SDK prerequisites.
+- The child check is capped at **20 seconds** and never creates a certificate, modifies a trust store, installs an MSIX, pairs a device or launches an agent.
+- This prevents repeated expensive Rust builds when a required child PowerShell command is unavailable. Hosted preflight PASS is not a substitute for an actual MSIX installation or Store certification.
