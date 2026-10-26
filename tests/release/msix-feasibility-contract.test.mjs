@@ -2,9 +2,9 @@ import assert from "node:assert/strict";
 import { readFileSync } from "node:fs";
 import test from "node:test";
 
-const manifest = readFileSync(new URL("../../packaging/msix-feasibility/AppxManifest.xml", import.meta.url), "utf8");
-const runner = readFileSync(new URL("../../scripts/msix/Test-TetherplaneMsixFeasibility.ps1", import.meta.url), "utf8");
-const workflow = readFileSync(new URL("../../.github/workflows/msix-feasibility.yml", import.meta.url), "utf8");
+const manifest = readFileSync(new URL("../../packaging/msix-feasibility/AppxManifest.xml", import.meta.url), "utf8").replace(/\r\n/g, "\n");
+const runner = readFileSync(new URL("../../scripts/msix/Test-TetherplaneMsixFeasibility.ps1", import.meta.url), "utf8").replace(/\r\n/g, "\n");
+const workflow = readFileSync(new URL("../../.github/workflows/msix-feasibility.yml", import.meta.url), "utf8").replace(/\r\n/g, "\n");
 
 function assertSafeManifest(m) {
   assert.match(m, /Name="Tetherplane\.MsixFeasibility\.DevOnly"/);

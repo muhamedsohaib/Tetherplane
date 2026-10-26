@@ -54,3 +54,9 @@ Hosted CI uploads only JSON: runner, source SHA, source executable and package S
 - [Microsoft — MakeAppx pack and unpack](https://learn.microsoft.com/en-us/windows/msix/package/create-app-package-with-makeappx-tool)
 
 **Release decision:** NO-GO until Store eligibility, an end-to-end authorized clean installation, exact functionality, device denials, upgrade/rollback and independent publisher checks are complete.
+
+## Hosted CI observation — first run
+
+- GitHub Actions run `40289595837` failed at the Node source-contract test, **before the Rust build, MakeAppx packing, certificate creation or Appx installation steps**.
+- Direct job logs identified Windows CRLF checkout of the YAML workflow; the test incorrectly required LF-only input. The manifest and runner-script text are now normalized to LF in the Node test harness before matching, like the repository's established release-policy tests.
+- This was a **test portability bug**, not evidence that MSIX packaging succeeded or failed. A new hosted run is required for the actual MSIX verdict.
