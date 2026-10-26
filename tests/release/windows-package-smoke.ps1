@@ -133,6 +133,16 @@ try {
         throw "installed six-tool smoke failed with exit code $LASTEXITCODE"
     }
 
+    # The existing smoke bypasses the user's PowerShell entrypoint. Also
+    # launch that installed entrypoint and complete a real MCP handshake.
+    # Both transports use only the ephemeral CI package and test-owned paths.
+    $launcherSmoke = Join-Path $install "adapters\compact-mcp\windows-launcher-handshake.mjs"
+    Copy-Item -LiteralPath (Join-Path $repo "tests\release\windows-launcher-handshake.mjs") -Destination $launcherSmoke
+    & node $launcherSmoke --launcher (Join-Path $install "launch\tetherplane-mcp.ps1") --allow $allow --state-dir $state
+    if ($LASTEXITCODE -ne 0) {
+        throw "packaged PowerShell MCP launcher handshake failed with exit code $LASTEXITCODE"
+    }
+
     $sentinel = Join-Path $state "preserve-me.txt"
     Set-Content -LiteralPath $sentinel -Value "preserve" -NoNewline
 

@@ -10,6 +10,8 @@ const installer = read("scripts/install-windows.ps1");
 const launcher = read("packaging/windows/tetherplane-mcp.ps1");
 const probe = read("tests/release/windows-clean-install-preflight.ps1");
 const workflow = read(".github/workflows/ci.yml");
+const packageSmoke = read("tests/release/windows-package-smoke.ps1");
+const launcherHandshake = read("tests/release/windows-launcher-handshake.mjs");
 
 function assertSafeInstaller(source) {
   assert.match(source, /install prefix and state directory must not overlap/);
@@ -53,6 +55,19 @@ test("cold-install probe runs only in disposable pull-request Windows CI", () =>
   assert.match(probe, /tetherplane-cold-preflight-/);
   assert.doesNotMatch(probe, /Start-ScheduledTask|New-ScheduledTaskAction|Set-ItemProperty|Export-PfxCertificate|Invoke-WebRequest/i);
   assertSafeWorkflow(workflow);
+});
+
+test("packaged PowerShell entrypoint completes a real local MCP handshake in Windows CI", () => {
+  assert.match(packageSmoke, /windows-launcher-handshake\.mjs/);
+  assert.match(packageSmoke, /packaged PowerShell MCP launcher handshake failed/);
+  assert.match(packageSmoke, /& node \$launcherSmoke --launcher/);
+  assert.match(launcherHandshake, /new StdioClientTransport\(/);
+  assert.match(launcherHandshake, /command: "powershell\.exe"/);
+  assert.match(launcherHandshake, /await bounded\(client\.connect\(transport\), 20000\)/);
+  assert.match(launcherHandshake, /await bounded\(client\.listTools\(\), 15000\)/);
+  assert.match(launcherHandshake, /WINDOWS_PACKAGED_POWERSHELL_MCP_HANDSHAKE_PASS/);
+  assert.match(launcherHandshake, /RUNNER_ENVIRONMENT !== "github-hosted"/);
+  assert.doesNotMatch(launcherHandshake, /Invoke-WebRequest|New-SelfSignedCertificate|Register-ScheduledTask|gh release create/);
 });
 
 test("negative controls detect unsafe replacement, invalid launcher, and unrestricted CI", () => {

@@ -45,3 +45,11 @@ Even if this regression is all green, it proves an isolated **synthetic cold-fil
 For recording: **do not start the clean-install demo yet**. Prepare an explicitly authorized disposable Windows 11 machine and test publisher/identity strategy. Preserve raw video of the very first real installation attempt, including any failure; do not claim a synthetic CI smoke is new-machine acceptance.
 
 **Release gate remains NO-GO.**
+
+## Additional first-command reliability gate (separate from OAuth)
+
+The existing real-binary Windows package smoke launched Node directly and listed six MCP tools, bypassing the user's `launch\\tetherplane-mcp.ps1` entrypoint. A user can therefore receive a broken PowerShell command despite a green six-tool CI smoke.
+
+An additional **disposable-runner-only** `tests/release/windows-launcher-handshake.mjs` is copied into the temporary installed Compact MCP adapter. It launches `powershell.exe -NoProfile -NonInteractive -File <installed launcher>` with a test-owned allowed directory and state path, completes a bounded MCP handshake, lists exactly six tools, then closes the transport. Timeouts are explicit (20 seconds to connect, 15 seconds to list). It does not pair with production OAuth, register tasks, or contact a public relay. A Windows package smoke failure here blocks release.
+
+**Pending CI:** The new launcher handshake must pass on the GitHub-hosted Windows image. Parsing and source contracts alone do not prove that this Windows command works for a real user.
