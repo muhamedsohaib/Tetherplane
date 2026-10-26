@@ -47,17 +47,44 @@ test("main tag workflow cannot build or publish an unsigned Windows package", ()
   assertUnsignedReleaseDisabled(release);
 });
 
-test("push and pull-request CI must execute the publication guard", () => {
-  assert.match(ci, /^on:\n  push:\s*\n  pull_request:\s*$/m);
-  const expected = [
-    "      - name: Enforce fail-closed public release policy",
-    "        run: node --test tests/release/windows-main-publication-block.test.mjs",
-  ].join("\n");
-  assert.ok(ci.includes(expected), "publication guard is required in CI");
-  const start = ci.indexOf("      - name: Enforce fail-closed public release policy");
-  const next = ci.indexOf("\n      - ", start + 1);
-  const step = ci.slice(start, next === -1 ? undefined : next);
-  assert.doesNotMatch(step, /^        (?:if|continue-on-error):/m, "CI must not skip or ignore release guard");
+function assertIndependentPolicyCI(source) {
+  assert.match(source, /^on:\n  push:\s*\n  pull_request:\s*$/m);
+  const policy = source.split(/^  release-policy:\n/m)[1]?.split(/^  quality:\n/m)[0];
+  assert.ok(policy, "dedicated release-policy job must be independent of quality");
+  assert.match(policy, /^    runs-on: ubuntu-latest$/m);
+  assert.match(policy, /^    permissions:\n      contents: read$/m);
+  assert.doesNotMatch(policy, /^    (?:if|needs|continue-on-error|environment|env):/m,
+    "release-policy job cannot be skipped, depend on quality, or ignore failure");
+  assert.match(policy, /^      - uses: actions\/checkout@[0-9a-f]{40} /m);
+  assert.match(policy, /^      - uses: actions\/setup-node@[0-9a-f]{40} /m);
+  assert.match(policy, /^          persist-credentials: false$/m);
+  assert.match(policy, /^          node-version: 22$/m);
+  assert.match(policy, /^      - name: Enforce fail-closed public release policy\n        run: node --test tests\/release\/windows-main-publication-block\.test\.mjs$/m);
+  assert.doesNotMatch(policy, /^        (?:if|continue-on-error|env):/m,
+    "policy test step cannot be bypassed");
+}
+
+test("push and pull-request CI executes the independent release-policy job", () => {
+  assertIndependentPolicyCI(ci);
+});
+
+test("CI policy isolation rejects skipped, dependent, and ignored-failure jobs", () => {
+  const weakenings = [
+    (s) => s.replace("  release-policy:\n", "  release-policy:\n    if: false\n"),
+    (s) => s.replace("  release-policy:\n", "  release-policy:\n    needs: quality\n"),
+    (s) => s.replace("  release-policy:\n", "  release-policy:\n    continue-on-error: true\n"),
+    (s) => s.replace("      - name: Enforce fail-closed public release policy\n",
+      "      - name: Enforce fail-closed public release policy\n        if: false\n"),
+    (s) => s.replace("run: node --test tests/release/windows-main-publication-block.test.mjs",
+      "run: echo skipped-source-check"),
+    (s) => s.replace("      contents: read", "      contents: write"),
+  ];
+  for (const mutate of weakenings) {
+    const weakened = mutate(ci);
+    assert.notEqual(weakened, ci, "CI mutation must change source");
+    assert.throws(() => assertIndependentPolicyCI(weakened),
+      "independent policy check must reject weakened CI");
+  }
 });
 
 test("source contract rejects valid-YAML skip and ignored-failure mutations", () => {
