@@ -55,6 +55,8 @@ function assertEphemeralRunner(s) {
   assert.match(s, /Remove-AppxPackage -Package \$installedFullName/);
   assert.match(s, /certificate_cleanup/);
   assert.match(s, /function Save-MsixPhase/);
+  assert.match(s, /Import-Module Microsoft\.PowerShell\.Security -ErrorAction Stop/);
+  assert.match(s, /Get-PSDrive -Name Cert -ErrorAction SilentlyContinue/);
   assert.match(s, /function Get-Sha256Hex/);
   assert.match(s, /SHA256\]::Create\(\)/);
   assert.doesNotMatch(s, /Get-FileHash\b/, "Avoid module-dependent hashing in isolated CI PowerShell subprocess");
@@ -83,6 +85,8 @@ test("read-only preflight checks Windows prerequisites in a bounded child PowerS
   assert.match(preflight, /GITHUB_HEAD_REF\?\.startsWith/);
   assert.match(preflight, /spawnSync\(/);
   assert.match(preflight, /Get-Command -Name/);
+  assert.match(preflight, /Import-Module Microsoft\.PowerShell\.Security -ErrorAction Stop/);
+  assert.match(preflight, /Get-PSDrive -Name Cert -ErrorAction SilentlyContinue/);
   assert.match(preflight, /timeout: 20_000/);
   assert.match(preflight, /MSIX_HOSTED_PREREQUISITES_NO_GO/);
   assert.doesNotMatch(preflight, /New-SelfSignedCertificate\s+@|Import-Certificate\s+-|Add-AppxPackage\s+-|Remove-AppxPackage\s+-/);
@@ -123,7 +127,8 @@ test("negative controls reject publisher, auto-start and publication weakening",
     runner.replace("RUNNER_ENVIRONMENT -cne 'github-hosted'", "RUNNER_ENVIRONMENT -cne 'local'"),
     runner.replace("Add-AppxPackage -Path $packageFile", "Start-Process $source; Add-AppxPackage -Path $packageFile"),
     runner.replace("'Cert:\\LocalMachine\\TrustedPeople'", "'Cert:\\LocalMachine\\Root'"),
-    runner.replace("(Get-Sha256Hex -Path $source)", "(Get-FileHash -LiteralPath $source)")
+    runner.replace("(Get-Sha256Hex -Path $source)", "(Get-FileHash -LiteralPath $source)"),
+    runner.replace("Import-Module Microsoft.PowerShell.Security -ErrorAction Stop", "Write-Output 'skip certificate provider'"),
   ];
   for (const weak of weakenedRunners) {
     assert.notEqual(weak, runner);

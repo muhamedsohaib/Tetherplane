@@ -90,3 +90,10 @@ Hosted CI uploads only JSON: runner, source SHA, source executable and package S
 - Added a read-only `ci-prerequisites.mjs` step **before** `cargo build --release`. It invokes the same noninteractive child `powershell.exe` mode as the bounded integration probe and verifies the PKI, Appx, certificate, JSON and Windows SDK prerequisites.
 - The child check is capped at **20 seconds** and never creates a certificate, modifies a trust store, installs an MSIX, pairs a device or launches an agent.
 - This prevents repeated expensive Rust builds when a required child PowerShell command is unavailable. Hosted preflight PASS is not a substitute for an actual MSIX installation or Store certification.
+
+## Hosted run #5 — certificate provider drive missing in child
+
+- GitHub [run 40296809788](https://github.com/muhamedsohaib/Tetherplane/actions/runs/40296809788): read-only hosted preflight PASS, native release build PASS, MSIX MakeAppx pack/unpack and binary hash PASS. The signing subprocess then failed immediately at `New-SelfSignedCertificate` with **`Cannot find drive. A drive with the name 'Cert' does not exist.`**
+- Downloaded data-only evidence: `MSIX_Run_40296809788/tetherplane-msix-probe-report.json`. `package_pack=PASS`, `package_unpack_integrity=PASS`, `dev_package_signature=NOT_RUN`, `add_appx=NOT_RUN`, `certificate_cleanup=NOT_CREATED`. No signature or installation claim is supported.
+- Corrective preflight and runner initialization: explicitly `Import-Module Microsoft.PowerShell.Security` and assert `Get-PSDrive -Name Cert` before invoking any cryptographic commands. Fail closed if the provider remains unavailable.
+- Microsoft's PowerShell provider documentation confirms `Cert:` is a provider drive and that module imports can load providers: [about_Providers](https://learn.microsoft.com/en-us/powershell/module/microsoft.powershell.core/about/about_Providers), [about_Certificate_Provider](https://learn.microsoft.com/en-us/powershell/module/microsoft.powershell.security/about/about_certificate_provider).

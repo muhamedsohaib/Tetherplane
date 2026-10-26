@@ -83,6 +83,14 @@ try {
     }
 
     Save-MsixPhase 'guard_passed'
+    # Explicitly load the built-in Certificate provider in noninteractive
+    # child PowerShell. A resolved PKI cmdlet does not guarantee Cert: exists.
+    Save-MsixPhase 'certificate_provider_check_started'
+    Import-Module Microsoft.PowerShell.Security -ErrorAction Stop
+    if ($null -eq (Get-PSDrive -Name Cert -ErrorAction SilentlyContinue)) {
+        throw 'CERTIFICATE_PROVIDER_UNAVAILABLE: Cert: PSDrive was not created by the Security module'
+    }
+    Save-MsixPhase 'certificate_provider_ready'
     $source = (Resolve-Path -LiteralPath $AgentBinary).Path
     $sourceInfo = Get-Item -LiteralPath $source
     if ($sourceInfo.Length -lt 100000 -or $sourceInfo.Extension -ine '.exe' -or

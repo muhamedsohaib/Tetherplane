@@ -14,6 +14,8 @@ if (!permitted) {
 } else {
   const powerShell = [
     "$ErrorActionPreference='Stop'",
+    "Import-Module Microsoft.PowerShell.Security -ErrorAction Stop",
+    "if($null -eq (Get-PSDrive -Name Cert -ErrorAction SilentlyContinue)){throw 'CERT_PS_DRIVE_MISSING'}",
     "$required=@('New-SelfSignedCertificate','Export-Certificate','Import-Certificate','Get-AppxPackage','Add-AppxPackage','Remove-AppxPackage','ConvertTo-Json')",
     "foreach($name in $required){if($null -eq (Get-Command -Name $name -ErrorAction SilentlyContinue)){throw ('MISSING_REQUIRED_CMDLET: '+$name)}}",
     "$sdkRoot=Join-Path ([Environment]::GetFolderPath('ProgramFilesX86')) 'Windows Kits\\10\\bin'",
