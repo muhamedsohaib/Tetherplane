@@ -17,7 +17,7 @@ jobs:
   msix-dev-probe:
     if: ${{ github.event.pull_request.head.repo.full_name == github.repository && startsWith(github.head_ref, 'feature/msix-feasibility-') }}
     runs-on: windows-latest
-    timeout-minutes: 45
+    timeout-minutes: 20
     permissions:
       contents: read
     steps:
@@ -32,14 +32,8 @@ jobs:
         run: node --test tests/release/msix-feasibility-contract.test.mjs
       - name: Build reviewed native binary from this PR
         run: cargo build --release --locked -p tetherd
-      - name: Package and attempt install/uninstall on ephemeral hosted runner
-        shell: powershell
-        run: |
-          $ErrorActionPreference = 'Stop'
-          & ./scripts/msix/Test-TetherplaneMsixFeasibility.ps1 `
-            -AgentBinary 'target/release/tetherd.exe' `
-            -ReportPath (Join-Path $env:RUNNER_TEMP 'tetherplane-msix-probe-report.json')
-          if ($LASTEXITCODE -ne 0) { throw "MSIX feasibility run failed ($LASTEXITCODE)" }
+      - name: Bounded MSIX package/sign/install/remove probe (data-only)
+        run: node scripts/msix/run-bounded-probe.mjs
       - name: Upload only data-only feasibility evidence (no MSIX or private keys)
         if: always()
         uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4

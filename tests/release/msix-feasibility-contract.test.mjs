@@ -5,6 +5,7 @@ import test from "node:test";
 const manifest = readFileSync(new URL("../../packaging/msix-feasibility/AppxManifest.xml", import.meta.url), "utf8").replace(/\r\n/g, "\n");
 const runner = readFileSync(new URL("../../scripts/msix/Test-TetherplaneMsixFeasibility.ps1", import.meta.url), "utf8").replace(/\r\n/g, "\n");
 const workflow = readFileSync(new URL("../../.github/workflows/msix-feasibility.yml", import.meta.url), "utf8").replace(/\r\n/g, "\n");
+const bounded = readFileSync(new URL("../../scripts/msix/run-bounded-probe.mjs", import.meta.url), "utf8").replace(/\r\n/g, "\n");
 
 function assertSafeManifest(m) {
   assert.match(m, /Name="Tetherplane\.MsixFeasibility\.DevOnly"/);
@@ -28,6 +29,8 @@ function assertNonPublishingWorkflow(w) {
   assert.match(w, /startsWith\(github\.head_ref, 'feature\/msix-feasibility-'\)/);
   assert.match(w, /node --test tests\/release\/msix-feasibility-contract\.test\.mjs/);
   assert.match(w, /cargo build --release --locked -p tetherd/);
+  assert.match(w, /run: node scripts\/msix\/run-bounded-probe\.mjs/);
+  assert.match(w, /timeout-minutes: 20/);
   assert.match(w, /path: \$\{\{ runner\.temp \}\}\/tetherplane-msix-probe-report\.json/);
   assert.doesNotMatch(w, /gh release create|vercel deploy|winget publish|store publish|signtool\.exe.*\/f|TETHERPLANE_SIGNING_READY|contents: write/i);
   assert.doesNotMatch(w, /(?:path|upload):\s*.*\.(?:exe|msix|pfx|cer)\b/i,
@@ -41,12 +44,18 @@ function assertEphemeralRunner(s) {
   assert.match(s, /GITHUB_HEAD_REF\.StartsWith\('feature\/msix-feasibility-'\)/);
   assert.match(s, /Join-Path \$env:RUNNER_TEMP/);
   assert.match(s, /New-SelfSignedCertificate @certParams/);
-  assert.match(s, /Import-Certificate -FilePath \$publicCertificateFile -CertStoreLocation 'Cert:\\CurrentUser\\Root'/);
-  assert.match(s, /'Cert:\\CurrentUser\\Root', 'Cert:\\CurrentUser\\My'/);
+  assert.match(s, /Import-Certificate -FilePath \$publicCertificateFile -CertStoreLocation 'Cert:\\LocalMachine\\TrustedPeople'/);
+  assert.match(s, /'Cert:\\LocalMachine\\TrustedPeople', 'Cert:\\CurrentUser\\My'/);
+  assert.doesNotMatch(s, /Cert:\\(?:CurrentUser|LocalMachine)\\Root/,
+    "A self-signed probe must never broaden root certificate trust");
   assert.match(s, /Get-AppxPackage/);
   assert.match(s, /Add-AppxPackage -Path \$packageFile/);
   assert.match(s, /Remove-AppxPackage -Package \$installedFullName/);
   assert.match(s, /certificate_cleanup/);
+  assert.match(s, /function Save-MsixPhase/);
+  assert.match(s, /Save-MsixPhase 'self_signed_cert_creation_started'/);
+  assert.match(s, /Save-MsixPhase 'localmachine_trustedpeople_import_started'/);
+  assert.match(s, /Save-MsixPhase 'add_appx_started'/);
   assert.match(s, /no_device_pairing = \$true/);
   assert.match(s, /agent_activated = \$false/);
   assert.doesNotMatch(s, /Register-ScheduledTask|Unregister-ScheduledTask|gh release create|Invoke-WebRequest|Invoke-RestMethod|Start-Process|Export-PfxCertificate/,
@@ -63,6 +72,16 @@ test("workflow is restricted to unprivileged PR on ephemeral hosted Windows", ()
 
 test("packaging script is isolated, tests install/removal, and never publishes", () => {
   assertEphemeralRunner(runner);
+});
+
+test("wrapper enforces bounded child execution and only the JSON report", () => {
+  assert.match(bounded, /timeout: timeoutMs/);
+  assert.match(bounded, /const timeoutMs = 120_000/);
+  assert.match(bounded, /spawn\(/);
+  assert.match(bounded, /powershell\.exe/);
+  assert.match(bounded, /MSIX_PROBE_NO_GO/);
+  assert.match(bounded, /GITHUB_HEAD_REF\?\.startsWith/);
+  assert.doesNotMatch(bounded, /gh release|Store publish|Export-Pfx|https?:\/\//i);
 });
 
 test("negative controls reject publisher, auto-start and publication weakening", () => {
@@ -88,6 +107,7 @@ test("negative controls reject publisher, auto-start and publication weakening",
   const weakenedRunners = [
     runner.replace("RUNNER_ENVIRONMENT -cne 'github-hosted'", "RUNNER_ENVIRONMENT -cne 'local'"),
     runner.replace("Add-AppxPackage -Path $packageFile", "Start-Process $source; Add-AppxPackage -Path $packageFile"),
+    runner.replace("'Cert:\\LocalMachine\\TrustedPeople'", "'Cert:\\LocalMachine\\Root'"),
   ];
   for (const weak of weakenedRunners) {
     assert.notEqual(weak, runner);

@@ -29,6 +29,9 @@ $report = [ordered]@{
     certificate_cleanup = 'NOT_RUN'
     agent_binary_sha256 = $null
     package_sha256 = $null
+    trust_store_scope = 'LocalMachine/TrustedPeople (ephemeral runner only)'
+    last_phase = 'NOT_STARTED'
+    updated_utc = $null
     error = $null
     disposition = 'NO-GO'
 }
@@ -36,6 +39,20 @@ $report = [ordered]@{
 $ownedCertificate = $null
 $installedFullName = $null
 $failed = $null
+
+# Persist each checkpoint BEFORE invoking the next operation that could hang.
+# The watchdog can terminate this ephemeral process without losing the last phase.
+function Save-MsixPhase {
+    param([Parameter(Mandatory = $true)][string]$Name)
+    $script:report.last_phase = $Name
+    $script:report.updated_utc = [DateTime]::UtcNow.ToString('o')
+    [IO.File]::WriteAllText(
+        [IO.Path]::GetFullPath($ReportPath),
+        ($script:report | ConvertTo-Json -Depth 5),
+        [System.Text.UTF8Encoding]::new($false)
+    )
+    Write-Output ("MSIX_PHASE=" + $Name)
+}
 
 try {
     if ($env:GITHUB_ACTIONS -cne 'true' -or
@@ -51,6 +68,7 @@ try {
         throw 'A trusted ephemeral runner temporary directory is required.'
     }
 
+    Save-MsixPhase 'guard_passed'
     $source = (Resolve-Path -LiteralPath $AgentBinary).Path
     $sourceInfo = Get-Item -LiteralPath $source
     if ($sourceInfo.Length -lt 100000 -or $sourceInfo.Extension -ine '.exe' -or
@@ -78,6 +96,7 @@ try {
         throw 'Matching Windows SDK x64 SignTool.exe is unavailable.'
     }
 
+    Save-MsixPhase 'sdk_tools_verified'
     $scratch = Join-Path $env:RUNNER_TEMP ('tetherplane-msix-feasibility-' + $env:GITHUB_RUN_ID + '-' + $env:GITHUB_RUN_ATTEMPT)
     if (Test-Path -LiteralPath $scratch) { throw 'Refusing to reuse an existing scratch directory.' }
     $payload = Join-Path $scratch 'payload'
@@ -110,12 +129,14 @@ try {
     }
 
     $packageFile = Join-Path $scratch 'Tetherplane.MsixProbe.DevOnly.msix'
+    Save-MsixPhase 'makeappx_pack_started'
     & $makeAppx pack /d $payload /p $packageFile
     if ($LASTEXITCODE -ne 0) { throw "MakeAppx pack failed: $LASTEXITCODE" }
     $report.package_pack = 'PASS'
     $report.package_sha256 = (Get-FileHash -LiteralPath $packageFile -Algorithm SHA256).Hash.ToLowerInvariant()
 
     $unpacked = Join-Path $scratch 'unpacked'
+    Save-MsixPhase 'makeappx_unpack_started'
     & $makeAppx unpack /p $packageFile /d $unpacked
     if ($LASTEXITCODE -ne 0) { throw "MakeAppx unpack failed: $LASTEXITCODE" }
     $extractedHash = (Get-FileHash -LiteralPath (Join-Path $unpacked 'bin\tetherd.exe') -Algorithm SHA256).Hash.ToLowerInvariant()
@@ -135,38 +156,50 @@ try {
         HashAlgorithm = 'SHA256'
         NotAfter = (Get-Date).AddDays(1)
     }
+    Save-MsixPhase 'self_signed_cert_creation_started'
     $ownedCertificate = New-SelfSignedCertificate @certParams
+    Save-MsixPhase 'self_signed_cert_created'
     $publicCertificateFile = Join-Path $scratch 'dev-only-public.cer'
     [void](Export-Certificate -Cert $ownedCertificate -FilePath $publicCertificateFile)
-    [void](Import-Certificate -FilePath $publicCertificateFile -CertStoreLocation 'Cert:\CurrentUser\TrustedPeople')
-    # SignTool /pa requires a trusted chain root; trust this dev cert only
-    # in this one disposable runner user store, and remove it in finally.
-    [void](Import-Certificate -FilePath $publicCertificateFile -CertStoreLocation 'Cert:\CurrentUser\Root')
+    # Microsoft's MSIX development guidance uses LocalMachine/TrustedPeople.
+    # Never add a transient development certificate to the broad Root trust store.
+    # This code runs ONLY on an ephemeral, GitHub-hosted Windows runner.
+    Save-MsixPhase 'localmachine_trustedpeople_import_started'
+    [void](Import-Certificate -FilePath $publicCertificateFile -CertStoreLocation 'Cert:\LocalMachine\TrustedPeople')
+    Save-MsixPhase 'localmachine_trustedpeople_import_done'
 
+    Save-MsixPhase 'signtool_sign_started'
     & $signTool sign /fd SHA256 /sha1 $ownedCertificate.Thumbprint /s My $packageFile
     if ($LASTEXITCODE -ne 0) { throw "SignTool ephemeral sign failed: $LASTEXITCODE" }
+    Save-MsixPhase 'signtool_verify_started'
     & $signTool verify /pa /v $packageFile
     if ($LASTEXITCODE -ne 0) { throw "SignTool ephemeral verify failed: $LASTEXITCODE" }
     $report.dev_package_signature = 'PASS'
+    Save-MsixPhase 'signtool_verify_passed'
 
     $prior = @(Get-AppxPackage -Name $report.package_identity -ErrorAction Stop)
     if ($prior.Count -gt 0) { throw 'Package identity already installed; refusing overwrite.' }
     # No activation, networking, OAuth, startup extension or scheduled task.
+    Save-MsixPhase 'add_appx_started'
     Add-AppxPackage -Path $packageFile -ErrorAction Stop
     $installed = @(Get-AppxPackage -Name $report.package_identity -ErrorAction Stop)
     if ($installed.Count -ne 1) { throw 'MSIX did not register exactly one package identity.' }
     $installedFullName = $installed[0].PackageFullName
     $report.add_appx = 'PASS'
+    Save-MsixPhase 'add_appx_passed'
 
+    Save-MsixPhase 'remove_appx_started'
     Remove-AppxPackage -Package $installedFullName -ErrorAction Stop
     $installedFullName = $null
     $remaining = @(Get-AppxPackage -Name $report.package_identity -ErrorAction Stop)
     if ($remaining.Count -ne 0) { throw 'MSIX identity remains installed after removal.' }
     $report.remove_appx = 'PASS'
     $report.disposition = 'PACKAGE_INSTALL_REMOVE_PASS; STORE/OAUTH/STARTUP NOT TESTED'
+    Save-MsixPhase 'install_remove_complete'
 } catch {
     $failed = $_.Exception.Message
     $report.error = $failed
+    Save-MsixPhase 'failed'
 } finally {
     if ($null -ne $installedFullName) {
         try {
@@ -180,7 +213,7 @@ try {
     if ($null -ne $ownedCertificate) {
         $thumbprint = $ownedCertificate.Thumbprint
         $cleanupErrors = @()
-        foreach ($store in @('Cert:\CurrentUser\TrustedPeople', 'Cert:\CurrentUser\Root', 'Cert:\CurrentUser\My')) {
+        foreach ($store in @('Cert:\LocalMachine\TrustedPeople', 'Cert:\CurrentUser\My')) {
             try {
                 $item = Join-Path $store $thumbprint
                 if (Test-Path -LiteralPath $item) { Remove-Item -LiteralPath $item -Force -ErrorAction Stop }
