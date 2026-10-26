@@ -60,3 +60,10 @@ Hosted CI uploads only JSON: runner, source SHA, source executable and package S
 - GitHub Actions run `40289595837` failed at the Node source-contract test, **before the Rust build, MakeAppx packing, certificate creation or Appx installation steps**.
 - Direct job logs identified Windows CRLF checkout of the YAML workflow; the test incorrectly required LF-only input. The manifest and runner-script text are now normalized to LF in the Node test harness before matching, like the repository's established release-policy tests.
 - This was a **test portability bug**, not evidence that MSIX packaging succeeded or failed. A new hosted run is required for the actual MSIX verdict.
+
+## Hosted CI second run — package success, self-signed trust boundary
+
+- GitHub Actions [run 40289987626](https://github.com/muhamedsohaib/Tetherplane/actions/runs/40289987626) passed native Rust release build, MakeAppx semantic packaging, MakeAppx unpack, and binary byte-integrity check. SignTool applied the temporary development signature.
+- **Failed boundary:** `signtool verify /pa /v` reported that the self-signed developer certificate chain terminated in an untrusted root. The package was **not** installed; this is a development-only trust setup issue, not public signing success.
+- Corrective isolated change: install the **public-only** generated development certificate into `CurrentUser\Root` as well as `CurrentUser\TrustedPeople` in the GitHub-hosted disposable runner, then remove it from both stores and `CurrentUser\My` in the existing `finally` cleanup. This is prohibited on production devices by the runner guard.
+- **Never** transfer that development trust root or private key to a real user computer or treat the self-signed probe as a commercial signature. Re-run hosted CI to verify whether registration/removal is supported by the runner.

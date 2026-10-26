@@ -139,6 +139,9 @@ try {
     $publicCertificateFile = Join-Path $scratch 'dev-only-public.cer'
     [void](Export-Certificate -Cert $ownedCertificate -FilePath $publicCertificateFile)
     [void](Import-Certificate -FilePath $publicCertificateFile -CertStoreLocation 'Cert:\CurrentUser\TrustedPeople')
+    # SignTool /pa requires a trusted chain root; trust this dev cert only
+    # in this one disposable runner user store, and remove it in finally.
+    [void](Import-Certificate -FilePath $publicCertificateFile -CertStoreLocation 'Cert:\CurrentUser\Root')
 
     & $signTool sign /fd SHA256 /sha1 $ownedCertificate.Thumbprint /s My $packageFile
     if ($LASTEXITCODE -ne 0) { throw "SignTool ephemeral sign failed: $LASTEXITCODE" }
@@ -177,7 +180,7 @@ try {
     if ($null -ne $ownedCertificate) {
         $thumbprint = $ownedCertificate.Thumbprint
         $cleanupErrors = @()
-        foreach ($store in @('Cert:\CurrentUser\TrustedPeople', 'Cert:\CurrentUser\My')) {
+        foreach ($store in @('Cert:\CurrentUser\TrustedPeople', 'Cert:\CurrentUser\Root', 'Cert:\CurrentUser\My')) {
             try {
                 $item = Join-Path $store $thumbprint
                 if (Test-Path -LiteralPath $item) { Remove-Item -LiteralPath $item -Force -ErrorAction Stop }

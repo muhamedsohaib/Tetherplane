@@ -41,6 +41,8 @@ function assertEphemeralRunner(s) {
   assert.match(s, /GITHUB_HEAD_REF\.StartsWith\('feature\/msix-feasibility-'\)/);
   assert.match(s, /Join-Path \$env:RUNNER_TEMP/);
   assert.match(s, /New-SelfSignedCertificate @certParams/);
+  assert.match(s, /Import-Certificate -FilePath \$publicCertificateFile -CertStoreLocation 'Cert:\\CurrentUser\\Root'/);
+  assert.match(s, /'Cert:\\CurrentUser\\Root', 'Cert:\\CurrentUser\\My'/);
   assert.match(s, /Get-AppxPackage/);
   assert.match(s, /Add-AppxPackage -Path \$packageFile/);
   assert.match(s, /Remove-AppxPackage -Package \$installedFullName/);
