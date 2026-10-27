@@ -1,5 +1,6 @@
 import { createServer } from "node:http";
 import { randomBytes, createHash, timingSafeEqual } from "node:crypto";
+import { request as httpsRequest } from "node:https";
 import { readFile, writeFile, mkdir, stat, unlink } from "node:fs/promises";
 import { spawn } from "node:child_process";
 import { fileURLToPath } from "node:url";
@@ -85,6 +86,73 @@ export async function requestPairing(config, options = {}) {
   return { userCode: body.userCode, expiresAt: body.expiresAt };
 }
 
+
+/**
+ * Confirm that the existing relay approved the *exact* new device credential.
+ * HTTP 101 is insufficient: verify the RFC6455 server accept proof too.
+ * The credential is sent only in a TLS-protected Device header, never a URL
+ * or local HTTP response. This does not modify OAuth or relay endpoints.
+ */
+export async function probeApprovedDevice(config, options = {}) {
+  const endpoint = new URL(validateRelayUrl(config.relayUrl));
+  const deviceId = validateDeviceId(config.deviceId);
+  const secret = config.secret;
+  if (typeof secret !== "string" || secret.length < 32) {
+    throw new Error("New device credential is invalid.");
+  }
+  endpoint.protocol = "https:";
+  const key = randomBytes(16).toString("base64");
+  const accept = createHash("sha1")
+    .update(key + "258EAFA5-E914-47DA-95CA-C5AB0DC85B11")
+    .digest("base64");
+  const requestImpl = options.requestImpl || httpsRequest;
+  return new Promise((resolveApproval, rejectApproval) => {
+    let completed = false;
+    const finish = (ok) => {
+      if (completed) return;
+      completed = true;
+      if (ok) resolveApproval(true);
+      else rejectApproval(new Error("Relay has not confirmed owner approval. Approve the code and try again."));
+    };
+    let req;
+    try {
+      req = requestImpl(endpoint, {
+        method: "GET",
+        agent: false,
+        timeout: 8_000,
+        headers: {
+          "connection": "Upgrade",
+          "upgrade": "websocket",
+          "sec-websocket-key": key,
+          "sec-websocket-version": "13",
+          "x-tetherplane-device-id": deviceId,
+          "authorization": "Device " + secret
+        }
+      });
+      req.once("upgrade", (response, socket) => {
+        try {
+          const acceptHeader = response.headers["sec-websocket-accept"];
+          const protocol = response.headers.upgrade;
+          finish(response.statusCode === 101 && acceptHeader === accept &&
+            typeof protocol === "string" && protocol.toLowerCase() === "websocket");
+        } finally {
+          socket.destroy();
+        }
+      });
+      req.once("response", response => {
+        response.resume();
+        finish(false);
+      });
+      req.once("timeout", () => req.destroy(new Error("Timed out verifying device approval")));
+      req.once("error", () => finish(false));
+      req.end();
+    } catch {
+      req?.destroy();
+      finish(false);
+    }
+  });
+}
+
 export async function readSavedConfig(stateRoot) {
   let saved;
   try { saved = JSON.parse(await readFile(join(stateRoot, "device.json"), "utf8")); }
@@ -131,6 +199,7 @@ export async function createWizard(options = {}) {
   const readAssets = options.readAssets || readFile;
   const spawnAgent = options.spawnAgent || spawn;
   const fetchImpl = options.fetchImpl || fetch;
+  const approvalProbe = options.approvalProbe || probeApprovedDevice;
   const token = randomBytes(32).toString("base64url");
   const current = { pending: null, agent: null, status: "idle", lastError: null, stopRequested: false };
   let saved = await readSavedConfig(stateRoot);
@@ -185,6 +254,18 @@ export async function createWizard(options = {}) {
         if (saved) config = saved;
         else {
           if (!current.pending) throw new Error("Request and approve a pairing code first.");
+          if (Date.now() >= current.pending.expiresAt) throw new Error("Pairing code expired; request another code.");
+          // Do not persist credentials based on the user's button click alone.
+          // A valid, authenticated WSS upgrade proves the relay accepted this
+          // exact device ID and credential following owner approval.
+          current.status = "verifying_owner_approval";
+          try {
+            const accepted = await approvalProbe(current.pending);
+            if (accepted !== true) throw new Error("Relay approval has not been verified.");
+          } catch {
+            current.status = "awaiting_owner_approval";
+            throw new Error("Relay has not confirmed owner approval. Approve the code and try again.");
+          }
           await persistApprovedConfig(stateRoot, current.pending);
           config = { deviceId: current.pending.deviceId, relayUrl: current.pending.relayUrl, allowRoot: current.pending.allowRoot };
           saved = { version: 1, ...config };

@@ -1,12 +1,13 @@
 import assert from "node:assert/strict";
 import { EventEmitter } from "node:events";
+import { createHash } from "node:crypto";
 import { mkdtemp, mkdir, readFile, stat, writeFile, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import test from "node:test";
 import {
   validateRelayUrl, validateDeviceId, validateAllowedRoot, agentArgs,
-  requestPairing, readSavedConfig, persistApprovedConfig, createWizard
+  requestPairing, readSavedConfig, persistApprovedConfig, createWizard, probeApprovedDevice
 } from "../../packaging/msix-store-runtime/app/runtime-app.mjs";
 
 const paired = { pairingId: "synthetic-pair", userCode: "ABCD-1234", expiresAt: new Date(Date.now() + 600000).toISOString() };
@@ -131,6 +132,7 @@ test("explicit user pairing flow preserves credential secrecy and does not asser
   const calls=[], spawns=[];
   const wizard=await createWizard({
     stateRoot:f.stateRoot,packageRoot:f.packageRoot,fetchImpl:mockFetch(calls),
+    approvalProbe: async () => true,
     spawnAgent:(exe,args,opts)=>{spawns.push({exe,args,opts});return stubAgent();}
   });
   t.after(()=>wizard.close());
@@ -197,6 +199,7 @@ test("new pairing becomes a saved identity immediately; stop and restart do not 
   const wizard = await createWizard({
     stateRoot: f.stateRoot, packageRoot: f.packageRoot,
     fetchImpl: mockFetch(pairingCalls),
+    approvalProbe: async () => true,
     spawnAgent: (exe,args) => { const p=stubAgent(); processes.push({ p, args }); return p; }
   });
   t.after(() => wizard.close());
@@ -264,4 +267,69 @@ test("an expired unapproved challenge can be retried without persisting or repla
   assert.equal(calls.length,2);
   assert.notEqual(calls[0].body.credentialHash,calls[1].body.credentialHash);
   await assert.rejects(()=>stat(f.stateRoot),{code:"ENOENT"});
+});
+
+
+test("relay owner approval must be verified before saving a new identity or starting an agent",async t=>{
+  const f=await fixture(t);
+  let approved=false;
+  let attempts=0;
+  let spawns=0;
+  const wizard=await createWizard({
+    stateRoot:f.stateRoot, packageRoot:f.packageRoot, fetchImpl:mockFetch([]),
+    approvalProbe: async () => { attempts++; return approved; },
+    spawnAgent:()=>{spawns++;return stubAgent();}
+  });
+  t.after(()=>wizard.close());
+  assert.equal((await request(wizard,"/api/pair","POST",{
+    deviceId:"tp-verify-first",relayUrl:goodRelay(),allowRoot:f.allowRoot
+  })).status,200);
+  const early=await request(wizard,"/api/start","POST",{confirmation:"I APPROVED THIS DEVICE"});
+  assert.equal(early.status,400);
+  assert.equal((await request(wizard,"/api/status")).status,200);
+  assert.equal((await (await request(wizard,"/api/status")).json()).hasSavedIdentity,false);
+  assert.equal(spawns,0);
+  await assert.rejects(()=>stat(f.stateRoot),{code:"ENOENT"});
+  approved=true;
+  assert.equal((await request(wizard,"/api/start","POST",{confirmation:"I APPROVED THIS DEVICE"})).status,200);
+  assert.equal(attempts,2);
+  assert.equal(spawns,1);
+  assert.equal((await (await request(wizard,"/api/status")).json()).hasSavedIdentity,true);
+});
+
+test("WSS approval probe checks the exact RFC6455 challenge, never accepts a fake HTTP upgrade",async()=>{
+  const config={deviceId:"tp-probe",relayUrl:goodRelay(),secret:"synthetic-credential-12345678901234567890"};
+  const seen=[];
+  const fakeRequest=(mode)=>(url,options)=>{
+    seen.push({scheme:url.protocol,path:url.pathname,method:options.method,headers:options.headers});
+    const req=new EventEmitter();
+    req.end=()=>{
+      queueMicrotask(()=>{
+        if(mode==="denied"){
+          const res=new EventEmitter();res.statusCode=401;res.resume=()=>{};
+          req.emit("response",res);
+        } else {
+          const key=options.headers["sec-websocket-key"];
+          const expected=createHash("sha1").update(key+"258EAFA5-E914-47DA-95CA-C5AB0DC85B11").digest("base64");
+          req.emit("upgrade",{statusCode:101,headers:{
+            "sec-websocket-accept":mode==="valid"?expected:"invalid",
+            upgrade:"websocket"
+          }},{destroy(){}},Buffer.alloc(0));
+        }
+      });
+    };
+    req.destroy=()=>{};
+    return req;
+  };
+  await assert.rejects(()=>probeApprovedDevice(config,{requestImpl:fakeRequest("denied")}));
+  await assert.rejects(()=>probeApprovedDevice(config,{requestImpl:fakeRequest("forged")}));
+  assert.equal(await probeApprovedDevice(config,{requestImpl:fakeRequest("valid")}),true);
+  assert.equal(seen.length,3);
+  for(const sample of seen){
+    assert.equal(sample.scheme,"https:");
+    assert.equal(sample.path,"/device");
+    assert.equal(sample.method,"GET");
+    assert.equal(sample.headers.authorization,"Device "+config.secret);
+    assert.equal(sample.headers["x-tetherplane-device-id"],"tp-probe");
+  }
 });

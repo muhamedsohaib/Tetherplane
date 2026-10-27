@@ -133,3 +133,14 @@ test("actual compiled agent and relay acceptance must be CI-gated, account-scope
   assert.match(realRelay,/client\.listTools|owner\.listTools/);
   assert.doesNotMatch(realRelay,/Invoke-WebRequest|Register-ScheduledTask|Tetherplane Leno Canary/);
 });
+
+test("new device identity is never persisted on button-click without relay-authenticated WSS upgrade",()=>{
+  const source=txt("packaging/msix-store-runtime/app/runtime-app.mjs");
+  assert.match(source,/probeApprovedDevice\(config, options/);
+  assert.match(source,/httpsRequest/);
+  assert.match(source,/sec-websocket-accept/);
+  assert.match(source,/approvalProbe\(current\.pending\)/);
+  assert.match(source,/await approvalProbe\(current\.pending\)/);
+  assert.match(source,/persistApprovedConfig\(stateRoot, current\.pending\)/);
+  assert.doesNotMatch(source,/rejectUnauthorized:\s*false/);
+});

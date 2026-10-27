@@ -26,8 +26,9 @@ const eligible = process.env.GITHUB_ACTIONS === "true" &&
   process.env.RUNNER_ENVIRONMENT === "github-hosted" &&
   process.env.GITHUB_HEAD_REF?.startsWith("feature/msix-store-runtime-");
 
-function safeJson(response) {
-  return response.json();
+async function safeJson(response) {
+  const body = await response.text();
+  return body.length === 0 ? {} : JSON.parse(body);
 }
 
 async function until(predicate, label, timeout = 9_000) {
