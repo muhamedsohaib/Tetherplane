@@ -44,8 +44,14 @@ test("Compact MCP launcher declares parameters before executing statements", () 
 });
 
 test("PowerShell MCP launcher uses full-duplex native execution under filtered SDK environment", () => {
-  assert.match(launcher, /Start-Process -FilePath \$nodeExecutable/);
-  assert.match(launcher, /-NoNewWindow -Wait -PassThru/);
+  assert.match(launcher, /New-Object System.Diagnostics.ProcessStartInfo/);
+  assert.match(launcher, /\$startInfo.UseShellExecute = \$false/);
+  assert.match(launcher, /RedirectStandardInput = \$true/);
+  assert.match(launcher, /RedirectStandardOutput = \$true/);
+  assert.match(launcher, /RedirectStandardError = \$true/);
+  assert.match(launcher, /\[Console\]::OpenStandardInput\(\)/);
+  assert.match(launcher, /\[Console\]::OpenStandardOutput\(\)/);
+  assert.match(launcher, /CopyToAsync\(/);
   assert.match(launcher, /Quote-NativeArgument/);
   assert.match(launcherEnvRegression, /historical launcher fails under the restricted MCP SDK environment/);
   assert.match(launcherEnvRegression, /actual installed PowerShell launcher transports six MCP tools/);

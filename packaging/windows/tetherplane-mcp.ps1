@@ -46,12 +46,11 @@ if ((Test-Path -LiteralPath $config -PathType Leaf) -and ($RemainingArgs -notcon
 }
 $forward += $RemainingArgs
 
-# Use a native child that inherits the MCP transport's stdin/stdout handles.
-# PowerShell's call operator can fail to launch an executable when a stdio
-# client's restricted environment omits PATHEXT. Start-Process -NoNewWindow
-# avoids that command-discovery path and keeps the full-duplex stdio handles.
-# Explicit CRT argv quoting prevents spaces and trailing backslashes in paths
-# from changing which arguments are sent to the installed MCP server.
+# Connect native child stdio with explicit binary streams. Inheriting console
+# handles via Start-Process -NoNewWindow differs between interactive Windows
+# sessions and hosted CI; MCP requires three real, persistent pipes.
+# UseShellExecute=false and redirection are local to this child only.
+# Explicit CRT argv quoting preserves spaces and trailing backslashes.
 function Quote-NativeArgument([string]$Value) {
     if ($Value.Length -gt 0 -and $Value -notmatch '[\s"]') {
         return $Value
@@ -86,5 +85,48 @@ function Quote-NativeArgument([string]$Value) {
 
 $nativeArgs = @($server, "--tetherd", $tetherd) + $forward
 $argumentLine = (@($nativeArgs) | ForEach-Object { Quote-NativeArgument ([string]$_) }) -join " "
-$nativeProcess = Start-Process -FilePath $nodeExecutable -ArgumentList $argumentLine -NoNewWindow -Wait -PassThru
-exit $nativeProcess.ExitCode
+
+$startInfo = New-Object System.Diagnostics.ProcessStartInfo
+$startInfo.FileName = $nodeExecutable
+$startInfo.Arguments = $argumentLine
+$startInfo.UseShellExecute = $false
+$startInfo.CreateNoWindow = $true
+$startInfo.RedirectStandardInput = $true
+$startInfo.RedirectStandardOutput = $true
+$startInfo.RedirectStandardError = $true
+$nativeProcess = New-Object System.Diagnostics.Process
+$nativeProcess.StartInfo = $startInfo
+try {
+    if (-not $nativeProcess.Start()) {
+        throw "failed to start installed Compact MCP server"
+    }
+
+    # Copy outgoing MCP bytes on CLR thread-pool tasks. No PowerShell pipeline
+    # parsing or text encoding ever touches the JSON-RPC stdio frames.
+    $output = [Console]::OpenStandardOutput()
+    $errors = [Console]::OpenStandardError()
+    $outputTask = $nativeProcess.StandardOutput.BaseStream.CopyToAsync($output)
+    $errorsTask = $nativeProcess.StandardError.BaseStream.CopyToAsync($errors)
+
+    # The foreground read exits only on actual MCP client stdin EOF. This
+    # preserves a live, bidirectional connection for sequential requests.
+    $sourceStream = [Console]::OpenStandardInput()
+    $buffer = New-Object byte[] 8192
+    try {
+        while (($count = $sourceStream.Read($buffer, 0, $buffer.Length)) -gt 0) {
+            $nativeProcess.StandardInput.BaseStream.Write($buffer, 0, $count)
+            $nativeProcess.StandardInput.BaseStream.Flush()
+        }
+    }
+    finally {
+        $nativeProcess.StandardInput.Close()
+    }
+
+    $nativeProcess.WaitForExit()
+    $outputTask.GetAwaiter().GetResult()
+    $errorsTask.GetAwaiter().GetResult()
+    exit $nativeProcess.ExitCode
+}
+finally {
+    $nativeProcess.Dispose()
+}

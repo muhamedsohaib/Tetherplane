@@ -31,3 +31,11 @@ Leno cannot locally compile the Windows Rust release executable because the MSVC
 The Windows CI workflow now contains an early synthetic PowerShell SDK regression before `cargo build --release`; the existing real packaged launcher handshake remains a **mandatory separate gate**. A passing synthetic fixture is not a substitute for signed package installation, clean first-user OAuth enrollment, actual API operations, restart/rollback, and four-device authenticated/denied acceptance.
 
 **Decision: release NO-GO until exact-head hosted Windows CI and complete clean-install acceptance pass.** Do not merge/publish protected changes without approval.
+
+
+## Hosted-runner negative control and second candidate (2026-10-27)
+
+- Exact commit `9f07f1e29864898b8452b89764c6598385df06f4` failed both hosted Windows CI runs at **Windows packaged PowerShell stdio regression (synthetic fixture)**. Its positive test timed out at 7 seconds with no stderr; the original real package smoke did **not run**. Ubuntu and release-policy jobs passed.
+- The first `Start-Process -NoNewWindow` fix was therefore *not* portable enough. This revision replaces implicit Windows console handle inheritance with explicit `System.Diagnostics.ProcessStartInfo` redirection of stdin, stdout, and stderr, using binary stream forwarding. `UseShellExecute=false`, `CreateNoWindow=true` and absolute Node resolution avoid shell discovery and window activation.
+- On Leno, before it went offline, this exact explicit-pipe launcher passed the real MCP SDK synthetic test **3/3**, and the modified release contracts passed **6/6**. These are local claims, not hosted or production acceptance.
+- Exact-head Windows CI with the new code remains mandatory, followed by the existing full compiled package and authenticated new-device trials. No live devices, permissions, OAuth registrations or protected branches should be modified.
