@@ -45,6 +45,14 @@ jobs:
       - uses: dtolnay/rust-toolchain@b725eda525362e7cf34af9a7243cac1e3f01a7ec # stable
       - name: Ensure package is a disposable development probe
         run: node --test tests/release/msix-store-runtime.test.mjs tests/release/msix-store-runtime-contract.test.mjs
+      - name: Validate signed Node runtime and licensing before packaging
+        shell: pwsh
+        run: |
+          $nodeExe = node -p "process.execPath"
+          if (-not (Test-Path -LiteralPath $nodeExe -PathType Leaf)) { throw "Node binary unavailable" }
+          $signature = Get-AuthenticodeSignature -FilePath $nodeExe
+          if ([string]$signature.Status -ne "Valid") { throw "Bundled Node runtime lacks a trusted signature" }
+          if (-not (Test-Path -LiteralPath (Join-Path (Split-Path -Parent $nodeExe) "LICENSE"))) { throw "Node runtime license missing" }
       - name: Verify Windows SDK and certificate provider before expensive compilation
         run: node scripts/msix-store/ci-prerequisites.mjs
       - name: Enable pinned pnpm workspace dependencies
@@ -53,7 +61,7 @@ jobs:
           corepack enable
           corepack prepare pnpm@10.34.5 --activate
           pnpm install --frozen-lockfile
-          pnpm --filter @tetherplane/compact-mcp build
+          pnpm -r build
       - name: Create isolated production Compact MCP dependency tree
         shell: pwsh
         run: |
