@@ -26,7 +26,7 @@ The CI test MSIX was temporarily signed with a synthetic development certificate
 Microsoft's current guidance:
 - Both Individual and Company accounts can be registered through the current free onboarding experience; eligibility and verification are determined by Microsoft.
 - An **Individual** account publishes under a legal person's name; Microsoft's guidance describes this path for work *not related to a business, trade or profession*.
-- A **Company** account publishes under an established legally registered business entity. A brand name alone is not evidence of such registration.
+- A **Company** account is Microsoft's stated path for independent developers/freelancers distributing apps in relation to their trade or profession, as well as registered organizations. Publisher business verification requires appropriate official business evidence (such as a license/registration or DUNS number) and a suitable organization-domain work email. A brand name alone is not verification of a legal entity.
 - Changing an existing Individual Partner Center developer account into a Company account is **not supported**. Do not enroll the wrong irreversible publisher type merely to make the package pass.
 - Do not put legal identity documents, private account email, ID numbers, payment details or screenshots containing PII into this public repository.
 
