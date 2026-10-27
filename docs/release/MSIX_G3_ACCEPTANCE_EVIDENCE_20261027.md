@@ -49,3 +49,9 @@ Run only on a **new authorized** Windows 11 client (not existing Leno, Surface, 
 - Existing draft Windows PowerShell MCP work in PR #61 remains a separate release integration boundary.
 
 **Decision rule:** Green hosted CI establishes development feasibility, **not** permission to merge, publish, grant privileges or migrate an existing device. Require actual clean-install and owner acceptance evidence plus explicit owner approval before a protected release.
+
+
+## Smart App Control source-code trust risk (additional preflight)
+Microsoft Store signing attests the **MSIX package**, but an installed Tetherplane operation launches a *separate* native Rust `tetherd.exe` and bundled Node runtime. The hosted test already confirms Node's valid Authenticode signature; it did **not** check the Rust executable's independent Authenticode status. Microsoft advises evaluating **all** loaded app binaries and scripts under Smart App Control, not only the outer package. Therefore Store certification is not sufficient evidence that a previously SAC-blocked native agent will work on a clean Windows 11 computer. Sources: https://learn.microsoft.com/en-us/windows/apps/develop/smart-app-control/test-your-app-with-smart-app-control and https://learn.microsoft.com/en-us/windows/apps/develop/smart-app-control/code-signing-for-smart-app-control .
+
+The disposable MSIX report now records the exact native PE's `Get-AuthenticodeSignature` status alongside the signed Node status and retains `smart_app_control_enforcement_test = NOT_RUN`. If the Rust binary is unsigned or otherwise untrusted, do not claim a Store MSIX wrapper fixes the SAC error. Require Microsoft-signed Store private flight, actual SAC **On** evidence, full tool-operation test and relevant CodeIntegrity 3077 block checks. Do **not** change users' SAC setting, enroll new OAuth clients, or sign arbitrary artifacts with unapproved credentials.

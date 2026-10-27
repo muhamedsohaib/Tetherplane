@@ -154,3 +154,13 @@ test("expired challenge preserves previously approved pairing and allows explici
   assert.match(client,/If you already approved it, choose Start/);
   assert.doesNotMatch(app,/current\.pending = null;\s*current\.status = "pairing_expired"/);
 });
+
+test("MSIX reports native PE Authenticode state separately from signed package, without claiming SAC approval",()=>{
+  assert.match(script,/agent_binary_authenticode_status = 'NOT_CHECKED'/);
+  assert.match(script,/Get-AuthenticodeSignature -FilePath \$source/);
+  assert.match(script,/smart_app_control_enforcement_test = 'NOT_RUN'/);
+  assert.match(script,/inner_binary_trust_release_gate = 'UNVERIFIED'/);
+  assert.match(script,/NATIVE_BINARY_SIGNATURE_NOT_VERIFIED/);
+  assert.match(script,/PENDING_REAL_SAC_ON_ACCEPTANCE/);
+  assert.doesNotMatch(script,/(?:citool\.exe\s+-r|Set-MpPreference|VerifiedAndReputablePolicyState.*Set-ItemProperty|reg add.*CodeIntegrity)/i);
+});

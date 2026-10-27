@@ -33,6 +33,10 @@ $report = [ordered]@{
     remove_appx = 'NOT_RUN'
     certificate_cleanup = 'NOT_RUN'
     agent_binary_sha256 = $null
+    agent_binary_authenticode_status = 'NOT_CHECKED'
+    node_runtime_authenticode_status = 'NOT_CHECKED'
+    smart_app_control_enforcement_test = 'NOT_RUN'
+    inner_binary_trust_release_gate = 'UNVERIFIED'
     node_runtime_sha256 = $null
     onboarding_script_sha256 = $null
     compact_edge_sha256 = $null
@@ -110,6 +114,7 @@ try {
         throw 'Missing bundled Node runtime, pairing app, or production Compact MCP dependencies.'
     }
     $nodeSignature = Get-AuthenticodeSignature -FilePath $nodeSource
+    $report.node_runtime_authenticode_status = [string]$nodeSignature.Status
     if ([string]$nodeSignature.Status -ne 'Valid') {
         throw 'Refusing to package a Node runtime without a valid Windows Authenticode signature.'
     }
@@ -127,6 +132,14 @@ try {
         throw 'Only a compiled Windows tetherd.exe can be packaged by this probe.'
     }
     $report.agent_binary_sha256 = (Get-Sha256Hex -Path $source)
+    # MSIX package signing checks the container; it is not evidence that
+    # a bundled PE child is trusted under Smart App Control enforcement.
+    # Observe, never modify, this native Authenticode signature state.
+    $nativeSignature = Get-AuthenticodeSignature -FilePath $source
+    $report.agent_binary_authenticode_status = [string]$nativeSignature.Status
+    $report.inner_binary_trust_release_gate = if ($report.agent_binary_authenticode_status -eq 'Valid') {
+        'PENDING_REAL_SAC_ON_ACCEPTANCE'
+    } else { 'NATIVE_BINARY_SIGNATURE_NOT_VERIFIED' }
 
     $repo = (Resolve-Path -LiteralPath (Join-Path $PSScriptRoot '..\..')).Path
     $manifestFile = Join-Path $repo 'packaging\msix-store-runtime\AppxManifest.xml'
