@@ -458,10 +458,24 @@ test("Windows saved credential ACL drift blocks restart without modifying identi
     () => readSavedConfig(f.stateRoot),
     /Existing Windows device state has unverified permissions/
   );
-  await assert.rejects(
-    () => createWizard({ stateRoot: f.stateRoot, packageRoot: f.packageRoot }),
-    /Existing Windows device state has unverified permissions/
-  );
+  let agentSpawns = 0;
+  const recovery = await createWizard({
+    stateRoot: f.stateRoot, packageRoot: f.packageRoot,
+    spawnAgent: () => { agentSpawns++; return stubAgent(); }
+  });
+  t.after(() => recovery.close());
+  const blocked = await (await request(recovery, "/api/status")).json();
+  assert.equal(blocked.identityBlocked, true);
+  assert.equal(blocked.state, "existing_identity_blocked");
+  assert.equal(blocked.hasSavedIdentity, false);
+  assert.equal((await request(recovery, "/api/start", "POST", {
+    confirmation: "I APPROVED THIS DEVICE"
+  })).status, 403);
+  assert.equal((await request(recovery, "/api/pair", "POST", {
+    deviceId: "tp-replacement-forbidden", relayUrl: goodRelay(), allowRoot: f.allowRoot
+  })).status, 403);
+  assert.equal((await request(recovery, "/api/stop", "POST", {})).status, 403);
+  assert.equal(agentSpawns, 0);
   assert.equal(await readFile(credPath, "utf8"), originalCredential);
   assert.equal(await readFile(configPath, "utf8"), originalConfig);
 
@@ -504,4 +518,44 @@ test("Windows ACL drift on the saved state root blocks identity reuse", { skip: 
     /Existing Windows device state has unverified permissions/
   );
   assert.equal(await readFile(join(f.stateRoot, "device.json"), "utf8"), preserved);
+});
+
+
+test("invalid saved identity opens safe recovery page and disables all mutations", async t => {
+  const f = await fixture(t);
+  await mkdir(f.stateRoot);
+  const configFile = join(f.stateRoot, "device.json");
+  const sentinel = '{"version":999,"deviceId":"not-a-real-identity"}\n';
+  await writeFile(configFile, sentinel);
+  let pairingCalls = 0;
+  let agentSpawns = 0;
+  const wizard = await createWizard({
+    stateRoot: f.stateRoot, packageRoot: f.packageRoot,
+    fetchImpl: async () => { pairingCalls++; throw Error("unreachable fake relay"); },
+    spawnAgent: () => { agentSpawns++; return stubAgent(); }
+  });
+  t.after(() => wizard.close());
+  const response = await request(wizard, "/api/status");
+  assert.equal(response.status, 200);
+  const status = await response.json();
+  assert.equal(status.state, "existing_identity_blocked");
+  assert.equal(status.identityBlocked, true);
+  assert.equal(status.connected, "not_verified");
+  assert.equal(status.hasSavedIdentity, false);
+  assert.doesNotMatch(JSON.stringify(status), /not-a-real-identity|version.*999/);
+  const html = await request(wizard, "/");
+  assert.equal(html.status, 200);
+  assert.match(await html.text(), /Saved connection needs owner review/);
+
+  assert.equal((await request(wizard,"/api/pair","POST",{
+    deviceId:"tp-new",relayUrl:goodRelay(),allowRoot:f.allowRoot
+  })).status,403);
+  assert.equal((await request(wizard,"/api/start","POST",{
+    confirmation:"I APPROVED THIS DEVICE"
+  })).status,403);
+  assert.equal((await request(wizard,"/api/stop","POST",{})).status,403);
+  assert.equal(pairingCalls,0);
+  assert.equal(agentSpawns,0);
+  assert.equal(await readFile(configFile,"utf8"),sentinel);
+  await assert.rejects(()=>stat(join(f.stateRoot,"device-credential.txt")),{code:"ENOENT"});
 });
