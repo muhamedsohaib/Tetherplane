@@ -1,11 +1,11 @@
 import { createServer } from "node:http";
 import { randomBytes, createHash, timingSafeEqual } from "node:crypto";
 import { request as httpsRequest } from "node:https";
-import { readFile, writeFile, mkdir, stat, unlink } from "node:fs/promises";
+import { readFile, writeFile, mkdir, stat, lstat, rmdir, unlink } from "node:fs/promises";
 import { spawn } from "node:child_process";
 import { fileURLToPath } from "node:url";
 import { dirname, isAbsolute, join, resolve } from "node:path";
-import { initializeCredentialDirectory } from "./state-security.mjs";
+import { initializeCredentialDirectory, assertPrivateCredentialState } from "./state-security.mjs";
 
 const appDirectory = dirname(fileURLToPath(import.meta.url));
 const packageDirectory = resolve(appDirectory, "..");
@@ -155,10 +155,21 @@ export async function probeApprovedDevice(config, options = {}) {
 }
 
 export async function readSavedConfig(stateRoot) {
-  let saved;
-  try { saved = JSON.parse(await readFile(join(stateRoot, "device.json"), "utf8")); }
-  catch (error) {
+  const configPath = join(stateRoot, "device.json");
+  try {
+    const file = await lstat(configPath);
+    if (!file.isFile() || file.isSymbolicLink())
+      throw new Error("Existing setup file is not a regular file.");
+  } catch (error) {
     if (error?.code === "ENOENT") return null;
+    throw new Error("Existing setup file is invalid; preserving it for recovery.");
+  }
+  // A previously protected directory can drift after installation. Refuse
+  // to read saved secrets or resume tetherd until the current ACL is trusted.
+  await assertPrivateCredentialState(stateRoot);
+  let saved;
+  try { saved = JSON.parse(await readFile(configPath, "utf8")); }
+  catch {
     throw new Error("Existing setup file is invalid; preserving it for recovery.");
   }
   if (!saved || saved.version !== 1) throw new Error("Existing setup version is unsupported.");
@@ -181,15 +192,24 @@ export async function persistApprovedConfig(stateRoot, pending, options = {}) {
   const credentialPath = join(stateRoot, "device-credential.txt");
   const configurationPath = join(stateRoot, "device.json");
   let wroteCredential = false;
+  let wroteConfig = false;
   try {
     await writeFile(credentialPath, pending.secret + "\n", { flag: "wx", mode: 0o600 });
     wroteCredential = true;
     await writeFile(configurationPath, JSON.stringify({
       version: 1, deviceId: pending.deviceId, relayUrl: pending.relayUrl, allowRoot: pending.allowRoot
     }) + "\n", { flag: "wx", mode: 0o600 });
-  } catch (error) {
+    wroteConfig = true;
+    // Check the actual post-write DACL before acknowledging the new identity.
+    // This also guards against unexpected file ACL inheritance differences.
+    await assertPrivateCredentialState(stateRoot);
+  } catch {
+    // Only these two files were created exclusively by this attempt (wx).
+    // Preserve any earlier identity and unrelated files if present.
+    if (wroteConfig) await unlink(configurationPath).catch(() => {});
     if (wroteCredential) await unlink(credentialPath).catch(() => {});
-    throw new Error("Could not save the device identity without replacing existing state.");
+    if (process.platform === "win32") await rmdir(stateRoot).catch(() => {});
+    throw new Error("Could not securely save device identity; existing state was not replaced.");
   }
 }
 

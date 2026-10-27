@@ -219,3 +219,28 @@ test("new Windows credentials must be protected before any plaintext write",()=>
   const secretWrite=app.indexOf("await writeFile(credentialPath");
   assert.ok(protect!==-1 && secretWrite>protect, "DACL seal precedes any device secret write");
 });
+
+
+test("Windows saved identity must reverify actual state ACL before reading or restarting",()=>{
+  const storage=txt("packaging/msix-store-runtime/app/state-security.mjs");
+  const integration=txt("tests/release/msix-store-runtime.test.mjs");
+  assert.match(storage,/export async function assertPrivateCredentialState/);
+  assert.match(storage,/VERIFY_EXISTING_WINDOWS_STATE/);
+  assert.match(storage,/FileAttributes\]::ReparsePoint/);
+  assert.match(storage,/Directory\]::GetAccessControl/);
+  assert.match(storage,/File\]::GetAccessControl/);
+  assert.match(storage,/TP_PRIVATE_STATE_RECHECK_PASS/);
+  assert.match(app,/await assertPrivateCredentialState\(stateRoot\)/);
+  assert.match(app,/wroteConfig = true/);
+  assert.match(app,/await unlink\(configurationPath\)/);
+  const readStart = app.indexOf("export async function readSavedConfig");
+  const verify = app.indexOf("await assertPrivateCredentialState(stateRoot)",readStart);
+  const read = app.indexOf('await readFile(configPath, "utf8")',readStart);
+  assert.ok(readStart>=0 && verify>readStart && read>verify,
+    "existing ACL must be verified before loading saved identity");
+  const testStart=integration.indexOf("Windows saved credential ACL drift blocks restart");
+  assert.ok(testStart>=0,"Windows saved-identity drift negative control missing");
+  assert.match(integration,/DRIFT_PRESERVED_FOR_OWNER_REVIEW/);
+  assert.match(integration,/Windows ACL drift on the saved state root/);
+  assert.doesNotMatch(storage,/Set-MpPreference|ExecutionPolicy Bypass|Register-ScheduledTask|Unregister-ScheduledTask/);
+});

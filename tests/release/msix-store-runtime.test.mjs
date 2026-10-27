@@ -429,3 +429,79 @@ test("Windows pre-existing or foreign state is preserved without ACL edits or re
   await assert.rejects(() => stat(join(f.stateRoot, "device-credential.txt")), { code: "ENOENT" });
   await assert.rejects(() => stat(join(f.stateRoot, "device.json")), { code: "ENOENT" });
 });
+
+
+test("Windows saved credential ACL drift blocks restart without modifying identity", { skip: process.platform !== "win32" }, async t => {
+  const f = await fixture(t);
+  const original = {
+    deviceId: "tp-drift-detected",
+    relayUrl: goodRelay(),
+    allowRoot: f.allowRoot,
+    secret: "synthetic-only-restart-dacl-drift-credential",
+    expiresAt: Date.now() + 600_000
+  };
+  await persistApprovedConfig(f.stateRoot, original);
+  const credPath = join(f.stateRoot, "device-credential.txt");
+  const configPath = join(f.stateRoot, "device.json");
+  const originalCredential = await readFile(credPath, "utf8");
+  const originalConfig = await readFile(configPath, "utf8");
+  assert.equal((await readSavedConfig(f.stateRoot)).deviceId, original.deviceId);
+
+  // Simulate an ACL regression in this disposable fixture only. We grant
+  // builtin Users read access to a SYNTHETIC credential, never to an owner
+  // device, and do not relax machine-wide security controls.
+  const icacls = join(process.env.SystemRoot || process.env.WINDIR, "System32", "icacls.exe");
+  await execFileAsync(icacls, [credPath, "/grant", "*S-1-5-32-545:R"], {
+    windowsHide: true, timeout: 8_000, maxBuffer: 16_384
+  });
+  await assert.rejects(
+    () => readSavedConfig(f.stateRoot),
+    /Existing Windows device state has unverified permissions/
+  );
+  await assert.rejects(
+    () => createWizard({ stateRoot: f.stateRoot, packageRoot: f.packageRoot }),
+    /Existing Windows device state has unverified permissions/
+  );
+  assert.equal(await readFile(credPath, "utf8"), originalCredential);
+  assert.equal(await readFile(configPath, "utf8"), originalConfig);
+
+  // Verify Tetherplane did not silently "fix" or erase the bad ACE.
+  const verify = [
+    "$ErrorActionPreference = 'Stop'",
+    "$acl = [System.IO.File]::GetAccessControl($env:TP_DRIFT_FIXTURE)",
+    "$found = $false",
+    "foreach ($rule in $acl.Access) {",
+    "  $sid = $rule.IdentityReference.Translate([System.Security.Principal.SecurityIdentifier]).Value",
+    "  if ($sid -eq 'S-1-5-32-545') { $found = $true }",
+    "}",
+    "if (-not $found) { throw 'Expected fixture ACL drift was silently removed' }",
+    "'DRIFT_PRESERVED_FOR_OWNER_REVIEW'"
+  ].join("\n");
+  const { stdout } = await execFileAsync("powershell.exe",
+    ["-NoProfile", "-NonInteractive", "-Command", verify], {
+      windowsHide: true, timeout: 15_000, maxBuffer: 16_384,
+      env: { ...windowsPowerShell51Environment(process.env), TP_DRIFT_FIXTURE: credPath }
+    });
+  assert.match(stdout, /DRIFT_PRESERVED_FOR_OWNER_REVIEW/);
+});
+
+test("Windows ACL drift on the saved state root blocks identity reuse", { skip: process.platform !== "win32" }, async t => {
+  const f = await fixture(t);
+  await persistApprovedConfig(f.stateRoot, {
+    deviceId: "tp-root-drift",
+    relayUrl: goodRelay(),
+    allowRoot: f.allowRoot,
+    secret: "synthetic-only-root-drift-credential-value",
+    expiresAt: Date.now() + 600_000
+  });
+  const preserved = await readFile(join(f.stateRoot, "device.json"), "utf8");
+  const icacls = join(process.env.SystemRoot || process.env.WINDIR, "System32", "icacls.exe");
+  await execFileAsync(icacls, [f.stateRoot, "/grant", "*S-1-5-32-545:(OI)(CI)R"], {
+    windowsHide: true, timeout: 8_000, maxBuffer: 16_384
+  });
+  await assert.rejects(
+    () => readSavedConfig(f.stateRoot),
+    /Existing Windows device state has unverified permissions/
+  );
+  assert.equal(await readFile(join(f.stateRoot, "device.json"), "utf8"), preserved);
+});
