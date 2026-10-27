@@ -141,7 +141,7 @@ test("new device identity is never persisted on button-click without relay-authe
   assert.match(source,/sec-websocket-accept/);
   assert.match(source,/approvalProbe\(current\.pending\)/);
   assert.match(source,/await approvalProbe\(current\.pending\)/);
-  assert.match(source,/persistApprovedConfig\(stateRoot, current\.pending\)/);
+  assert.match(source,/persistApprovedConfig\(stateRoot, current\.pending,\s*\{\s*relayProofVerified:\s*true\s*\}\)/);
   assert.doesNotMatch(source,/rejectUnauthorized:\s*false/);
 });
 
