@@ -129,6 +129,24 @@ Source review of `relay/src/routing/device-router.ts` and `relay/src/devices/ws-
 
 **No intervention authorized:** no new process launch, killing/restarting PID 20396, task enablement, ACL modification, Smart App Control disablement, re-pairing, replacement credentials or relay redeployment. Gate remains **NO-GO**.
 
+## VAULTER listener observation — owner-operated PowerShell
+
+The owner ran `Get-NetTCPConnection -State Listen` on VAULTER and filtered 443/8788/10000. Observed:
+
+| Listen port | Owning PID | Observations |
+|---|---:|---|
+| 443 | 3724 | Two listening records (address-family / bind details not yet inspected) |
+| 10000 | 3724 | Two listening records; same owning PID as 443 |
+| 8788 | 7936 | One listening record; different PID |
+
+This is **consistent** with Tailscale's port-specific Serve/Funnel listeners on 443 and 10000, proxying to a separate backend relay on 8788, but **process names and actual forwarding mappings are not yet verified**. Do not infer that identical PID 3724 guarantees both public/tailnet listeners forward to the same local backend; likewise different PIDs 3724/7936 do not establish a relay fault.
+
+Tailscale documents `tailscale serve status --json` as a read-only configuration inspection endpoint; its `TCP` and `Web` entries can distinguish HTTPS, TCP forwarding, and local proxy target. Inspect the output **locally and report only endpoint-port classification**, never hostnames, URLs, authentication headers, or other Tailscale Services.
+
+Reference: https://tailscale.com/docs/reference/tailscale-cli/serve ; Tailscale `ServeConfig` shape: https://github.com/tailscale/tailscale/blob/main/ipn/serve.go .
+
+Next boundary: confirm PID names and whether 443 and 10000 both resolve to the same 8788 process and `/device` route. That still will not establish the live authenticated WebSocket registration; the connector-facing relay's live connection map remains negative for Leno.
+
 ## Do-not-touch and release gate
 
 Do **not** disable Smart App Control, replace device credentials, restart or re-enable disabled Tetherplane tasks, change relay identity/authentication, modify the user profile ACLs, or install the development-signed MSIX onto this active canary without a separately approved, reversible, signed trial.
