@@ -13,6 +13,7 @@ import {
   validateRelayUrl, validateDeviceId, validateAllowedRoot, agentArgs,
   requestPairing, readSavedConfig, persistApprovedConfig, createWizard, probeApprovedDevice
 } from "../../packaging/msix-store-runtime/app/runtime-app.mjs";
+import { windowsPowerShell51Environment } from "../../scripts/msix-store/windows-powershell-env.mjs";
 
 const paired = { pairingId: "synthetic-pair", userCode: "ABCD-1234", expiresAt: new Date(Date.now() + 600000).toISOString() };
 function goodRelay() { return "wss://relay.example.test/device"; }
@@ -402,7 +403,7 @@ test("Windows newly paired identity has a user-and-SYSTEM-only DACL before crede
     ["-NoProfile", "-NonInteractive", "-Command", check], {
       windowsHide: true, timeout: 15_000, maxBuffer: 32_768,
       env: {
-        ...process.env,
+        ...windowsPowerShell51Environment(process.env),
         TETHERPLANE_TEST_STATE_ROOT: f.stateRoot,
         TETHERPLANE_TEST_CREDENTIAL_PATH: join(f.stateRoot, "device-credential.txt"),
         TETHERPLANE_TEST_CONFIG_PATH: join(f.stateRoot, "device.json"),
