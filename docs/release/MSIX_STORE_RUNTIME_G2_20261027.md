@@ -25,3 +25,9 @@ Run local Node tests:
 \`node --test tests/release/msix-store-runtime.test.mjs\`
 
 Hosted disposable Windows acceptance must compile tetherd, bundle a trusted native Node runtime and production Compact MCP adapter, validate the full MSIX payload, temporarily sign with a development-only certificate, install/remove on an isolated runner and record **only a data-only JSON report**. This is not equivalent to a clean authorized first-user connection trial.
+
+
+## Packaged-app activation gate (October 27, 2026)
+The first hosted Windows G2 run #40473813335 passed packaging, signed-runtime validation, pack/unpack byte integrity and disposable Add-Appx/Remove-Appx. It did **not** test Windows package AUMID activation.
+
+The next bounded read-only-in-production gate uses the Windows `IApplicationActivationManager` API to activate only the installed *development package*, checks its returned PID against the exact installed Node executable, terminates that matching test process, then removes the ephemeral MSIX and certificates. It runs solely on a guarded GitHub-hosted Windows PR runner. Browser UX, actual owner-approved pairing, Smart App Control On and user auto-start remain unverified and prohibited from release.

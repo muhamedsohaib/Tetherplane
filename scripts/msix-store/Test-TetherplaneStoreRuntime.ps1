@@ -28,6 +28,7 @@ $report = [ordered]@{
     package_unpack_integrity = 'NOT_RUN'
     dev_package_signature = 'NOT_RUN'
     add_appx = 'NOT_RUN'
+    packaged_app_activation = 'NOT_RUN'
     remove_appx = 'NOT_RUN'
     certificate_cleanup = 'NOT_RUN'
     agent_binary_sha256 = $null
@@ -268,6 +269,18 @@ try {
     $installedFullName = $installed[0].PackageFullName
     $report.add_appx = 'PASS'
     Save-MsixPhase 'add_appx_passed'
+
+    # Exercise the actual installed developer package through Windows AUMID
+    # activation, without owner credentials, pairing or startup registration.
+    Save-MsixPhase 'packaged_app_activation_started'
+    $activationProbe = Join-Path $repo 'scripts\msix-store\Test-PackagedAppActivation.ps1'
+    $installedNode = Join-Path $installed[0].InstallLocation 'runtime\node.exe'
+    $activated = & $activationProbe -PackageFamilyName $installed[0].PackageFamilyName -ExecutablePath $installedNode
+    if (($activated -join ' ') -notmatch 'MSIX_G2_PACKAGED_APP_ACTIVATION_PASS') {
+        throw 'Native AUMID activation could not be verified from installed package'
+    }
+    $report.packaged_app_activation = 'PASS'
+    Save-MsixPhase 'packaged_app_activation_passed'
 
     Save-MsixPhase 'remove_appx_started'
     Remove-AppxPackage -Package $installedFullName -ErrorAction Stop

@@ -9,6 +9,7 @@ const script=txt("scripts/msix-store/Test-TetherplaneStoreRuntime.ps1");
 const wrapper=txt("scripts/msix-store/run-bounded-runtime-probe.mjs");
 const preflight=txt("scripts/msix-store/ci-prerequisites.mjs");
 const workflow=txt(".github/workflows/msix-store-runtime-g2.yml");
+const activation=txt("scripts/msix-store/Test-PackagedAppActivation.ps1");
 
 test("MSIX uses a distinct synthetic developer identity and real onboarding entry, no silent startup",()=>{
   assert.match(manifest,/Name="Tetherplane\.StoreRuntime\.DevOnly"/);
@@ -80,4 +81,18 @@ test("negative controls detect permission and metadata weakening",()=>{
   assert.doesNotMatch(wrong,/<rescap:Capability Name="runFullTrust"/);
   const loosened=workflow.replace("contents: read","contents: write");
   assert.match(loosened,/contents: write/);
+});
+
+test("packaged app activation uses Windows AUMID, is restricted to CI and cleans up exact test process",()=>{
+  assert.match(script,/Save-MsixPhase 'packaged_app_activation_started'/);
+  assert.match(script,/\$report\.packaged_app_activation = 'PASS'/);
+  assert.match(script,/Test-PackagedAppActivation\.ps1/);
+  assert.match(activation,/IApplicationActivationManager/);
+  assert.match(activation,/ActivateApplication\(aumid, null, 2/);
+  assert.match(activation,/MSIX_G2_PACKAGED_APP_ACTIVATION_PASS/);
+  assert.match(activation,/RUNNER_ENVIRONMENT -cne 'github-hosted'/);
+  assert.match(activation,/feature\/msix-store-runtime-/);
+  assert.match(activation,/Stop-Process -Id \$activatedProcessId -Force/);
+  assert.match(activation,/if \(\$verified -and \$null -ne \$activatedProcessId\)/);
+  assert.doesNotMatch(activation,/Invoke-WebRequest|Invoke-RestMethod|Register-ScheduledTask|Unregister-ScheduledTask|Install-Package/);
 });
