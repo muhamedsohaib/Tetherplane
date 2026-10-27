@@ -132,8 +132,8 @@ export async function createWizard(options = {}) {
   const spawnAgent = options.spawnAgent || spawn;
   const fetchImpl = options.fetchImpl || fetch;
   const token = randomBytes(32).toString("base64url");
-  const current = { pending: null, agent: null, status: "idle", lastError: null };
-  const saved = await readSavedConfig(stateRoot);
+  const current = { pending: null, agent: null, status: "idle", lastError: null, stopRequested: false };
+  let saved = await readSavedConfig(stateRoot);
   const server = createServer(async (req, res) => {
     try {
       const origin = "http://127.0.0.1:" + server.address().port;
@@ -181,6 +181,7 @@ export async function createWizard(options = {}) {
           if (!current.pending) throw new Error("Request and approve a pairing code first.");
           await persistApprovedConfig(stateRoot, current.pending);
           config = { deviceId: current.pending.deviceId, relayUrl: current.pending.relayUrl, allowRoot: current.pending.allowRoot };
+          saved = { version: 1, ...config };
           current.pending = null;
         }
         const executable = join(packageRoot, "bin", "tetherd.exe");
@@ -189,18 +190,35 @@ export async function createWizard(options = {}) {
         await mkdir(join(stateRoot, "agent-state"), { recursive: true, mode: 0o700 });
         const child = spawnAgent(executable, args, { cwd: stateRoot, windowsHide: true, stdio: ["ignore", "ignore", "pipe"] });
         current.agent = child;
+        current.stopRequested = false;
         current.status = "agent_started_not_verified";
         current.lastError = null;
-        child.once("error", () => { current.status = "start_failed"; current.lastError = "Agent launch failed; inspect the local application event log."; });
+        child.once("error", () => {
+          if (current.agent !== child) return;
+          current.agent = null;
+          current.status = "start_failed";
+          current.lastError = "Agent launch failed; inspect Windows Code Integrity and application logs.";
+        });
         child.once("exit", (code) => {
-          if (current.agent === child) { current.agent = null; current.status = "agent_exited"; current.lastError = "Agent exited (code " + Number(code) + "). Authorization and Smart App Control have not been independently verified."; }
+          if (current.agent !== child) return;
+          const wasStopped = current.stopRequested;
+          current.agent = null;
+          current.stopRequested = false;
+          current.status = wasStopped ? "stopped" : "agent_exited";
+          current.lastError = wasStopped ? null : "Agent exited (code " + Number(code) + "). Authentication and Smart App Control have not been independently verified.";
         });
         child.stderr?.resume();
         return send(res, 200, { state: current.status, connected: "not_verified" });
       }
       if (url.pathname === "/api/stop") {
-        if (current.agent && current.agent.exitCode === null) current.agent.kill();
-        current.status = "stopping";
+        if (current.agent && current.agent.exitCode === null) {
+          current.stopRequested = true;
+          current.status = "stopping";
+          current.agent.kill();
+        } else {
+          current.status = "stopped";
+          current.lastError = null;
+        }
         return send(res, 200, { state: current.status });
       }
       return send(res, 404, { error: "Unknown action" });

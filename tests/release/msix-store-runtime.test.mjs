@@ -190,3 +190,59 @@ test("existing identity is never overwritten even if a second consent arrives",a
   assert.equal(await readFile(join(f.stateRoot,"device-credential.txt"),"utf8"),old);
   assert.equal((await readSavedConfig(f.stateRoot)).deviceId,"tp-original");
 });
+
+test("new pairing becomes a saved identity immediately; stop and restart do not require new pairing", async t => {
+  const f = await fixture(t);
+  const pairingCalls = [], processes = [];
+  const wizard = await createWizard({
+    stateRoot: f.stateRoot, packageRoot: f.packageRoot,
+    fetchImpl: mockFetch(pairingCalls),
+    spawnAgent: (exe,args) => { const p=stubAgent(); processes.push({ p, args }); return p; }
+  });
+  t.after(() => wizard.close());
+  const begin = await request(wizard,"/api/pair","POST",{
+    deviceId:"tp-one-shot",relayUrl:goodRelay(),allowRoot:f.allowRoot
+  });
+  assert.equal(begin.status,200);
+  assert.equal((await request(wizard,"/api/start","POST",{confirmation:"I APPROVED THIS DEVICE"})).status,200);
+  const savedStatus = await (await request(wizard,"/api/status")).json();
+  assert.equal(savedStatus.hasSavedIdentity,true,"same wizard must recognize the new saved identity");
+  assert.equal((await request(wizard,"/api/stop","POST",{})).status,200);
+  const stopped = await (await request(wizard,"/api/status")).json();
+  assert.equal(stopped.state,"stopped");
+  assert.equal(stopped.lastError,null);
+  assert.equal((await request(wizard,"/api/start","POST",{confirmation:"I APPROVED THIS DEVICE"})).status,200);
+  assert.equal(processes.length,2);
+  assert.deepEqual(processes[0].args,processes[1].args);
+  assert.equal(pairingCalls.length,1,"restart must not request replacement pairing");
+  const denied = await request(wizard,"/api/pair","POST",{
+    deviceId:"tp-other",relayUrl:goodRelay(),allowRoot:f.allowRoot
+  });
+  assert.equal(denied.status,400);
+  processes[1].p.kill();
+});
+
+test("native agent launch failure permits recovery without replacing the stored identity", async t => {
+  const f=await fixture(t);
+  await persistApprovedConfig(f.stateRoot,{
+    deviceId:"tp-retry",relayUrl:goodRelay(),allowRoot:f.allowRoot,
+    secret:"test-credential-value-that-is-long-enough",expiresAt:Date.now()+60000
+  });
+  let attempts=0;
+  const wizard=await createWizard({stateRoot:f.stateRoot,packageRoot:f.packageRoot,
+    spawnAgent:()=>{
+      const agent=stubAgent();
+      attempts++;
+      if(attempts===1) queueMicrotask(()=>agent.emit("error",new Error("simulated Smart App Control denial")));
+      return agent;
+    }
+  });
+  t.after(()=>wizard.close());
+  assert.equal((await request(wizard,"/api/start","POST",{confirmation:"I APPROVED THIS DEVICE"})).status,200);
+  await new Promise(resolve=>setImmediate(resolve));
+  const failure=await (await request(wizard,"/api/status")).json();
+  assert.equal(failure.state,"start_failed");
+  assert.equal(failure.hasSavedIdentity,true);
+  assert.equal((await request(wizard,"/api/start","POST",{confirmation:"I APPROVED THIS DEVICE"})).status,200);
+  assert.equal(attempts,2);
+});
