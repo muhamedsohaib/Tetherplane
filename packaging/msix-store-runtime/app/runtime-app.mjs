@@ -5,6 +5,7 @@ import { readFile, writeFile, mkdir, stat, unlink } from "node:fs/promises";
 import { spawn } from "node:child_process";
 import { fileURLToPath } from "node:url";
 import { dirname, isAbsolute, join, resolve } from "node:path";
+import { initializeCredentialDirectory } from "./state-security.mjs";
 
 const appDirectory = dirname(fileURLToPath(import.meta.url));
 const packageDirectory = resolve(appDirectory, "..");
@@ -174,7 +175,9 @@ export async function persistApprovedConfig(stateRoot, pending, options = {}) {
   // confirmation of a device that the relay already approved before expiry.
   if (!pending || (Date.now() >= pending.expiresAt && options.relayProofVerified !== true))
     throw new Error("Pairing code expired; start again.");
-  await mkdir(stateRoot, { recursive: true, mode: 0o700 });
+  // On Windows a POSIX mode is not an owner-only ACL. Seal a NEW state
+  // directory before storing any secret; never modify a pre-existing one.
+  await initializeCredentialDirectory(stateRoot);
   const credentialPath = join(stateRoot, "device-credential.txt");
   const configurationPath = join(stateRoot, "device.json");
   let wroteCredential = false;
