@@ -159,6 +159,27 @@ Owner-operated PowerShell on VAULTER, subsequent to the listener snapshot:
 **Decision:** Do not change or chase the ports. The next low-risk observation should inspect **the saved Leno canary task definition** without outputting its raw arguments. The previous check read PID 20396's command line and returned `NOT_VISIBLE`, likely because this elevated process has a different access context. Its October 24 launch may not match today's saved task definition. Check ID classification (`EXACT_LENO` or mismatch), URL scheme/path/port classification, credential-file argument presence and local Authenticode signature/hash of the configured executable.
 
 The **diagnostic tool** is `scripts/msix-store/Inspect-Leno-Canary-Action-ReadOnly.ps1`. Its result will remain task-definition evidence, **not** proof of actual PID launch arguments, and no task/identity changes follow without independent confirmation.
+## Fifth Leno observation — saved Canary task is not admission-ready
+
+User-operated sanitized PowerShell captured the **saved task definition**, not the arguments used by the already running October 24 process:
+
+| Check | Observed |
+|---|---|
+| Task definition readable | `OK` |
+| Action executable | `TETHERD_DIRECT` |
+| `--device-id` | `NOT_IN_TASK` (not detected by parser) |
+| `--relay-url` | `NOT_IN_TASK` (not detected by parser) |
+| `--device-credential-file` | `NOT_IN_TASK` (not detected by parser) |
+| Configured executable Authenticode status | `NotSigned` |
+| Configured executable SHA-256 | `905737D3B0F4897D71C5E78294866AD202AC09F45E4A069B0028F703DE8DBD50` |
+
+The Rust parser in `agent/tetherd/src/main.rs` requires `--relay-url` together with `--device-id` and `--device-credential-file` to enter remote mode; with neither `--relay-url` nor `--stdio-rpc`, the agent exits with CLI code `2`. The saved scheduled task appears **incomplete** for remote mode if the parser's classifications represent its actual arguments. This is a separate launch definition from the older PID 20396. The Windows 3077 from October 27 shows an enforced block of a `tetherd.exe` attempt but is **not yet proven to refer to this exact SHA-256**.
+
+Microsoft explicitly recommends signing all native executable files for SAC-On distribution; an installed MSIX signed with a disposable CI certificate cannot substitute for an independently trusted signed `tetherd.exe` on Leno. See:
+- https://learn.microsoft.com/windows/apps/develop/smart-app-control/overview
+- https://learn.microsoft.com/en-us/windows/security/application-security/application-control/app-control-for-business/operations/event-id-explanations
+
+**Safe intervention staged (not deployed):** draft PR #71 introduces fail-before-install scheduled-agent argument validation and a SAC-On signature prerequisite in the legacy Windows installer; it never edits the existing Canary task. It offers `-PreflightOnly` and disposable Windows CI tests, with no actual user-machine changes. Do not retrofit this into an unsigned binary or re-pair existing Leno credentials. The next real acceptance candidate must have trusted source + native PE signature, correct launch arguments, preapproved rollback, and an independently verified authenticated owner device connection.
 ## Do-not-touch and release gate
 
 Do **not** disable Smart App Control, replace device credentials, restart or re-enable disabled Tetherplane tasks, change relay identity/authentication, modify the user profile ACLs, or install the development-signed MSIX onto this active canary without a separately approved, reversible, signed trial.
