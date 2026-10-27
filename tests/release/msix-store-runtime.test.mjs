@@ -451,7 +451,7 @@ test("Windows saved credential ACL drift blocks restart without modifying identi
   // builtin Users read access to a SYNTHETIC credential, never to an owner
   // device, and do not relax machine-wide security controls.
   const icacls = join(process.env.SystemRoot || process.env.WINDIR, "System32", "icacls.exe");
-  await execFileAsync(icacls, [credPath, "/grant", "*S-1-5-32-545:(R)"], {
+  await execFileAsync(icacls, [credPath, "/grant", "*S-1-5-32-545:R"], {
     windowsHide: true, timeout: 8_000, maxBuffer: 16_384
   });
   await assert.rejects(
@@ -496,7 +496,7 @@ test("Windows ACL drift on the saved state root blocks identity reuse", { skip: 
   });
   const preserved = await readFile(join(f.stateRoot, "device.json"), "utf8");
   const icacls = join(process.env.SystemRoot || process.env.WINDIR, "System32", "icacls.exe");
-  await execFileAsync(icacls, [f.stateRoot, "/grant", "*S-1-5-32-545:(OI)(CI)(R)"], {
+  await execFileAsync(icacls, [f.stateRoot, "/grant", "*S-1-5-32-545:(OI)(CI)R"], {
     windowsHide: true, timeout: 8_000, maxBuffer: 16_384
   });
   await assert.rejects(
