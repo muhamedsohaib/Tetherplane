@@ -144,3 +144,13 @@ test("new device identity is never persisted on button-click without relay-authe
   assert.match(source,/persistApprovedConfig\(stateRoot, current\.pending\)/);
   assert.doesNotMatch(source,/rejectUnauthorized:\s*false/);
 });
+
+test("expired challenge preserves previously approved pairing and allows explicit retry without identity reset",()=>{
+  const app=txt("packaging/msix-store-runtime/app/runtime-app.mjs");
+  const client=txt("packaging/msix-store-runtime/app/setup-client.js");
+  assert.match(app,/relayProofVerified/);
+  assert.match(app,/current\.status = "pairing_expired"/);
+  assert.match(app,/current\.pending && Date\.now\(\) < current\.pending\.expiresAt/);
+  assert.match(client,/If you already approved it, choose Start/);
+  assert.doesNotMatch(app,/current\.pending = null;\s*current\.status = "pairing_expired"/);
+});

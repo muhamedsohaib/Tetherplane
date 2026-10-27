@@ -261,7 +261,7 @@ test("an expired unapproved challenge can be retried without persisting or repla
   wizard.state.pending.expiresAt=Date.now()-1;
   const expired=await (await request(wizard,"/api/status")).json();
   assert.equal(expired.state,"pairing_expired");
-  assert.equal(expired.pending,null);
+  assert.ok(expired.pending,"expired challenge remains available for late approval verification");
   assert.equal(expired.hasSavedIdentity,false);
   assert.equal((await request(wizard,"/api/pair","POST",data)).status,200);
   assert.equal(calls.length,2);
@@ -332,4 +332,27 @@ test("WSS approval probe checks the exact RFC6455 challenge, never accepts a fak
     assert.equal(sample.headers.authorization,"Device "+config.secret);
     assert.equal(sample.headers["x-tetherplane-device-id"],"tp-probe");
   }
+});
+
+
+test("late owner approval remains recoverable after pairing code TTL, without a second identity",async t=>{
+  const f=await fixture(t);
+  const calls=[], spawns=[];
+  const wizard=await createWizard({
+    stateRoot:f.stateRoot,packageRoot:f.packageRoot,fetchImpl:mockFetch(calls),
+    approvalProbe:async()=>true,
+    spawnAgent:(exe,args)=>{spawns.push({exe,args});return stubAgent();}
+  });
+  t.after(()=>wizard.close());
+  assert.equal((await request(wizard,"/api/pair","POST",{
+    deviceId:"tp-late-approval",relayUrl:goodRelay(),allowRoot:f.allowRoot
+  })).status,200);
+  wizard.state.pending.expiresAt=Date.now()-1;
+  const status=await (await request(wizard,"/api/status")).json();
+  assert.equal(status.state,"pairing_expired");
+  assert.ok(status.pending);
+  assert.equal((await request(wizard,"/api/start","POST",{confirmation:"I APPROVED THIS DEVICE"})).status,200);
+  assert.equal((await (await request(wizard,"/api/status")).json()).hasSavedIdentity,true);
+  assert.equal(calls.length,1);
+  assert.equal(spawns.length,1);
 });

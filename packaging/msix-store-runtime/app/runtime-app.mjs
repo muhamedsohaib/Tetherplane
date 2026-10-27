@@ -169,8 +169,11 @@ export async function readSavedConfig(stateRoot) {
   return { version: 1, deviceId: saved.deviceId, relayUrl: saved.relayUrl, allowRoot: saved.allowRoot };
 }
 
-export async function persistApprovedConfig(stateRoot, pending) {
-  if (!pending || Date.now() >= pending.expiresAt) throw new Error("Pairing code expired; start again.");
+export async function persistApprovedConfig(stateRoot, pending, options = {}) {
+  // Pairing expiry prevents *new approval* at the relay, not subsequent
+  // confirmation of a device that the relay already approved before expiry.
+  if (!pending || (Date.now() >= pending.expiresAt && options.relayProofVerified !== true))
+    throw new Error("Pairing code expired; start again.");
   await mkdir(stateRoot, { recursive: true, mode: 0o700 });
   const credentialPath = join(stateRoot, "device-credential.txt");
   const configurationPath = join(stateRoot, "device.json");
@@ -220,10 +223,11 @@ export async function createWizard(options = {}) {
       if (!url.pathname.startsWith("/api/")) return send(res, 404, { error: "Not found" });
       if (!constantTimeTokenMatches(req.headers["x-tetherplane-setup"], token))
         return send(res, 403, { error: "Local setup authorization required." });
-      // Expired challenges must not permanently block a new, explicitly
-      // requested pairing. Never discard an already persisted device identity.
-      if (current.pending && current.pending.expiresAt <= Date.now()) {
-        current.pending = null;
+      // An approved pairing can still be confirmed after its challenge TTL.
+      // Keep it available for explicit verification, while permitting an
+      // owner-controlled new challenge if the old code was never approved.
+      if (current.pending && current.pending.expiresAt <= Date.now() &&
+          current.status === "awaiting_owner_approval") {
         current.status = "pairing_expired";
       }
       if (req.method === "GET" && url.pathname === "/api/status") {
@@ -237,7 +241,8 @@ export async function createWizard(options = {}) {
       if (req.method !== "POST" || req.headers.origin !== origin) return send(res, 403, { error: "Same-origin user action required." });
       const body = await parseBody(req);
       if (url.pathname === "/api/pair") {
-        if (saved || current.pending) throw new Error("An existing identity or pairing session must not be replaced.");
+        if (saved || (current.pending && Date.now() < current.pending.expiresAt))
+          throw new Error("An existing identity or active pairing session must not be replaced.");
         const deviceId = validateDeviceId(body.deviceId);
         const relayUrl = validateRelayUrl(body.relayUrl);
         const allowRoot = await validateAllowedRoot(body.allowRoot);
@@ -254,8 +259,8 @@ export async function createWizard(options = {}) {
         if (saved) config = saved;
         else {
           if (!current.pending) throw new Error("Request and approve a pairing code first.");
-          if (Date.now() >= current.pending.expiresAt) throw new Error("Pairing code expired; request another code.");
           // Do not persist credentials based on the user's button click alone.
+          // A previously approved device may be verified after code expiry.
           // A valid, authenticated WSS upgrade proves the relay accepted this
           // exact device ID and credential following owner approval.
           current.status = "verifying_owner_approval";
@@ -263,10 +268,13 @@ export async function createWizard(options = {}) {
             const accepted = await approvalProbe(current.pending);
             if (accepted !== true) throw new Error("Relay approval has not been verified.");
           } catch {
-            current.status = "awaiting_owner_approval";
-            throw new Error("Relay has not confirmed owner approval. Approve the code and try again.");
+            current.status = Date.now() >= current.pending.expiresAt
+              ? "pairing_expired" : "awaiting_owner_approval";
+            throw new Error(current.status === "pairing_expired"
+              ? "This code was not approved in time. Request another pairing code."
+              : "Relay has not confirmed owner approval. Approve the code and try again.");
           }
-          await persistApprovedConfig(stateRoot, current.pending);
+          await persistApprovedConfig(stateRoot, current.pending, { relayProofVerified: true });
           config = { deviceId: current.pending.deviceId, relayUrl: current.pending.relayUrl, allowRoot: current.pending.allowRoot };
           saved = { version: 1, ...config };
           current.pending = null;

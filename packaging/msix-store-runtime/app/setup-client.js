@@ -44,9 +44,9 @@ async function refresh() {
     if (r.lastError) feedback.textContent = r.lastError;
     if (r.hasSavedIdentity) { form.hidden = true; document.getElementById("resume").hidden = false; }
     else if (r.state === "pairing_expired") {
-      document.getElementById("challenge").hidden = true;
+      document.getElementById("challenge").hidden = false;
       form.hidden = false;
-      feedback.textContent = "Pairing code expired. Request a new code before continuing.";
+      feedback.textContent = "Code expired. If you already approved it, choose Start; otherwise request a new code.";
     }
   } catch(error) { showError(error); }
 }
