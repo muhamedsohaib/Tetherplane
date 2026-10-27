@@ -6,7 +6,8 @@ param(
     [switch]$Force,
     [switch]$IncludeRelay,
     [switch]$InstallScheduledTask,
-    [string]$AgentArgumentsFile
+    [string]$AgentArgumentsFile,
+    [switch]$PreflightOnly
 )
 
 $ErrorActionPreference = "Stop"
@@ -95,6 +96,14 @@ if ($InstallScheduledTask) {
             throw "SCHEDULED_AGENT_PREFLIGHT_NO_GO: SAC is On and native executable is not trusted-signed"
         }
     }
+}
+
+# A dry, read-only admission result lets CI and operators verify a candidate
+# without deleting/replacing any prior install or creating a task. This never
+# constitutes relay authentication or Windows SAC execution acceptance.
+if ($PreflightOnly) {
+    Write-Output 'TETHERPLANE_INSTALL_PREFLIGHT_PASS: no install/state/task changes'
+    return
 }
 
 if (Test-Path -LiteralPath $install) {
