@@ -104,6 +104,31 @@ New `scripts/msix-store/Inspect-Leno-Agent-Route-ReadOnly.ps1` is deliberately l
 - If device ID and endpoint are consistent and TCP is established: relay-side **WebSocket registration / instance / session** is the next boundary; use already-authorized read-only registration diagnostics before changing anything.
 - If command line is inaccessible: mark **UNKNOWN**. Never infer an ID mismatch from missing telemetry.
 
+## Fourth user-operated Leno result — configured route not observable
+
+User-provided output at `2026-10-27T20:56:29.1002998Z`:
+
+| Field | Observation |
+|---|---|
+| Canary action executable | `TETHERD_DIRECT` |
+| Agent PID | `20396` |
+| Device-ID argument | `NOT_VISIBLE` |
+| Relay transport, host class, route path, configured port | `NOT_VISIBLE` |
+| Established remote TCP port | **`10000`** |
+
+**Critical distinction:** An invisible process command line is not a wrong device ID or wrong relay URL. The program may lack permission to read the command line of the task's elevated process. A TCP session to VAULTER port 10000 is consistent with earlier successful tailnet-only relay handshake tests; it must **not** be labeled a bad port on its own.
+
+Retested the available authenticated connector tool: `device.status(Leno)` still returns `disconnected: requested device is offline`. `device.status(VAULTER)` succeeds with agent 0.1.0 in background-only mode, indicating the connector itself is not wholly unavailable.
+
+Source review of `relay/src/routing/device-router.ts` and `relay/src/devices/ws-gateway.ts` establishes:
+- The connector-facing relay registry recognizes the requested Leno account binding (otherwise it returns unknown device or permission denied), but the currently routed instance lacks a live Leno device connection.
+- A TCP connection does not demonstrate a completed authenticated WebSocket upgrade/registration.
+- The agent may connect to a different VAULTER relay listener from the connector-facing HTTPS/MCP endpoint, or have a stale/failed device WebSocket while TCP remains ESTABLISHED. **Neither is yet proven.**
+
+**Next minimal discriminator:** Compare a read-only, safely redacted snapshot of **the canary task's configured** device ID/relay path and the **relay instance routing** exposed by the already authorized owner. Since the actual PID's launch arguments are unavailable, do not attribute the task's current action arguments to the old process. Do not fetch or output credentials, task arguments, raw URLs, device authorization headers, registry credential hashes or other user identities. Prefer to verify route alignment by locally computing redacted classifications, not by publishing endpoint details.
+
+**No intervention authorized:** no new process launch, killing/restarting PID 20396, task enablement, ACL modification, Smart App Control disablement, re-pairing, replacement credentials or relay redeployment. Gate remains **NO-GO**.
+
 ## Do-not-touch and release gate
 
 Do **not** disable Smart App Control, replace device credentials, restart or re-enable disabled Tetherplane tasks, change relay identity/authentication, modify the user profile ACLs, or install the development-signed MSIX onto this active canary without a separately approved, reversible, signed trial.
