@@ -1,4 +1,5 @@
 import assert from "node:assert/strict";
+import { spawn } from "node:child_process";
 import { copyFile, mkdtemp, mkdir, readFile, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { dirname, join, resolve } from "node:path";
@@ -101,6 +102,55 @@ async function fixture(t){
  return {make};
 }
 
+test("diagnostic only: isolate SDK fixture from PowerShell raw stdio relay",{
+ skip:process.platform!=="win32",
+ timeout:25_000
+},async t=>{
+ const {make}=await fixture(t);
+ const data=await make("diag",await readFile(canonical,"utf8"));
+ const directTransport=new StdioClientTransport({
+   command:process.execPath,
+   args:[fixtureServer,"--tetherd",resolve(dirname(data.launch),"..","bin","tetherd.exe"),
+     "--allow",data.allow,"--state-dir",data.state],
+   stderr:"pipe"
+ });
+ const directClient=new Client({name:"direct-sdk-negative-control",version:"1"},{capabilities:{}});
+ let sdkDirect=false;
+ try{
+   await bounded(directClient.connect(directTransport),5000);
+   const listed=await bounded(directClient.listTools(),3000);
+   sdkDirect=listed.tools.length===6;
+ }finally{await bounded(directClient.close(),4000).catch(()=>undefined);}
+ assert.equal(sdkDirect,true,"direct Node fixture must pass before PowerShell is blamed");
+ const child=spawn("powershell.exe",[
+  "-NoProfile","-NonInteractive","-ExecutionPolicy","Bypass",
+  "-File",data.launch,"--allow",data.allow,"--state-dir",data.state
+ ],{cwd:dirname(data.launch),env:getDefaultEnvironment(),windowsHide:true,stdio:["pipe","pipe","pipe"]});
+ let stdout="",stderr="",childError=null,childExit=null;
+ child.stdout.on("data",buf=>{stdout=(stdout+buf.toString("utf8")).slice(-1500);});
+ child.stderr.on("data",buf=>{stderr=(stderr+buf.toString("utf8")).slice(-1800);});
+ child.on("error",e=>{childError=e.code||e.message;});
+ child.on("exit",code=>{childExit=code;});
+ const frame={jsonrpc:"2.0",id:1,method:"initialize",params:{
+   protocolVersion:"2025-06-18",capabilities:{},
+   clientInfo:{name:"stdio-diagnostic-only",version:"1"}
+ }};
+ child.stdin.write(JSON.stringify(frame)+"\n");
+ await new Promise(resolveWait=>setTimeout(resolveWait,2600));
+ console.log("SYNTHETIC_WINDOWS_STDIO_WIRE "+JSON.stringify({
+   directSDK:sdkDirect, responseSeen:stdout.includes('"result"'),
+   childExited:childExit!==null,childExit,childError,
+   stdout:stdout.slice(-750),stderr:stderr.slice(-1300),
+   inheritedPath:Boolean(getDefaultEnvironment().PATH),
+   inheritedPathext:Boolean(getDefaultEnvironment().PATHEXT)
+ }));
+ child.stdin.end();
+ await Promise.race([
+   new Promise(resolveClose=>child.once("exit",resolveClose)),
+   new Promise(resolveWait=>setTimeout(resolveWait,1200))
+ ]);
+ if(child.exitCode===null)child.kill();
+});
 test("stock MCP SDK environment excludes PATHEXT: a regression check for Windows native execution",{
  skip:process.platform!=="win32"
 },async()=>{
