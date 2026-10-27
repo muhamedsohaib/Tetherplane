@@ -84,7 +84,7 @@ try {
     Invoke-TestPreflight 'double-transport' '["--stdio-rpc","--relay-url","wss://localhost.invalid/device","--device-id","Leno","--device-credential-file","C:\\test-only.credential"]' $false
     Invoke-TestPreflight 'duplicate-device-id' '["--relay-url","wss://localhost.invalid/device","--device-id","Leno","--device-id","Leno","--device-credential-file","C:\\test-only.credential"]' $false
     Invoke-TestPreflight 'missing-value' '["--relay-url","--device-id","Leno","--device-credential-file","C:\\test-only.credential"]' $false
-    Invoke-TestPreflight 'valid-stdio-one-element' '["--stdio-rpc"]' $true
+    Invoke-TestPreflight 'stdio-not-a-background-agent' '["--stdio-rpc"]' $false
     $remoteValid = '["--relay-url","wss://localhost.invalid/device","--device-id","Leno","--device-credential-file","C:\\test-only.credential"]'
     Invoke-TestPreflight 'valid-remote' $remoteValid $true
 
