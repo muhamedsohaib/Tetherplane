@@ -10,6 +10,7 @@ const wrapper=txt("scripts/msix-store/run-bounded-runtime-probe.mjs");
 const preflight=txt("scripts/msix-store/ci-prerequisites.mjs");
 const workflow=txt(".github/workflows/msix-store-runtime-g2.yml");
 const activation=txt("scripts/msix-store/Test-PackagedAppActivation.ps1");
+const realRelay=txt("tests/release/msix-store-runtime-real-relay.test.mjs");
 const syntaxGate=txt("scripts/msix-store/check-powershell-syntax.ps1");
 
 test("MSIX uses a distinct synthetic developer identity and real onboarding entry, no silent startup",()=>{
@@ -119,4 +120,16 @@ test("actual Windows PowerShell 5.1 parsing is a required early CI gate",()=>{
   assert.match(syntaxGate,/Test-PackagedAppActivation\.ps1/);
   assert.match(syntaxGate,/MSIX_PS51_SYNTAX_PASS/);
   assert.doesNotMatch(syntaxGate,/Start-Process|Add-AppxPackage|Import-Certificate|Register-ScheduledTask/);
+});
+
+test("actual compiled agent and relay acceptance must be CI-gated, account-scoped and ephemeral",()=>{
+  assert.match(workflow,/node --test tests\/release\/msix-store-runtime-real-relay\.test\.mjs/);
+  assert.match(realRelay,/RUNNER_ENVIRONMENT === "github-hosted"/);
+  assert.match(realRelay,/allowInsecureLocalhost: true/);
+  assert.match(realRelay,/--relay-allow-insecure-localhost/);
+  assert.match(realRelay,/127\.0\.0\.1/);
+  assert.match(realRelay,/permission_denied/);
+  assert.match(realRelay,/revoke/);
+  assert.match(realRelay,/client\.listTools|owner\.listTools/);
+  assert.doesNotMatch(realRelay,/Invoke-WebRequest|Register-ScheduledTask|Tetherplane Leno Canary/);
 });

@@ -75,6 +75,8 @@ jobs:
           if ($LASTEXITCODE -ne 0) { throw "Compact MCP deployment failed" }
       - name: Compile exact-source native agent
         run: cargo build --release --locked -p tetherd
+      - name: Real native tetherd and authenticated relay acceptance (ephemeral localhost only)
+        run: node --test tests/release/msix-store-runtime-real-relay.test.mjs
       - name: Bounded Store-runtime MSIX package, signature and add/remove test
         run: node scripts/msix-store/run-bounded-runtime-probe.mjs
       - name: Upload only JSON evidence (never app, executable or keys)
