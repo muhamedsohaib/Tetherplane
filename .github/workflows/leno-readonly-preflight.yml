@@ -5,6 +5,7 @@ on:
     paths:
       - ".github/workflows/leno-readonly-preflight.yml"
       - "scripts/msix-store/Inspect-Leno-ReadOnly.ps1"
+      - "scripts/msix-store/Inspect-Leno-Connectivity-ReadOnly.ps1"
 
 permissions:
   contents: read
@@ -38,6 +39,15 @@ jobs:
           foreach ($name in $forbidden) {
             if ($text -match [regex]::Escape($name)) { throw 'LENOPREFLIGHT_UNSAFE_COMMAND_FOUND' }
           }
+          $followup = Join-Path $env:GITHUB_WORKSPACE 'scripts\msix-store\Inspect-Leno-Connectivity-ReadOnly.ps1'
+          $followupErrors = $null
+          $followupTokens = $null
+          [void][System.Management.Automation.Language.Parser]::ParseFile($followup, [ref]$followupTokens, [ref]$followupErrors)
+          if (@($followupErrors).Count -gt 0) { throw 'LENOFOLLOWUP_PS51_PARSE_FAIL' }
+          $followupText = [IO.File]::ReadAllText($followup)
+          foreach ($name in $forbidden) {
+            if ($followupText -match [regex]::Escape($name)) { throw 'LENOFOLLOWUP_UNSAFE_COMMAND_FOUND' }
+          }
           Write-Output 'LENOPREFLIGHT_PS51_SYNTAX_AND_READONLY_CONTRACT_PASS'
       - name: Execute exact diagnostics in disposable Windows runner
         shell: pwsh
@@ -56,4 +66,14 @@ jobs:
           if ($null -eq $report.tetherplane_tasks -or $null -eq $report.agent_processes) {
             throw 'LENOPREFLIGHT_MISSING_FIELDS'
           }
+          $followup = Join-Path $env:GITHUB_WORKSPACE 'scripts\msix-store\Inspect-Leno-Connectivity-ReadOnly.ps1'
+          $second = & $ps51 -NoProfile -NonInteractive -File $followup
+          if ($LASTEXITCODE -ne 0) { throw 'LENOFOLLOWUP_PS51_RUN_FAILED' }
+          $snapshot = ($second | Out-String).Trim() | ConvertFrom-Json -ErrorAction Stop
+          if ($snapshot.schema -ne 'tetherplane-leno-connectivity-readonly-v1' -or
+              @($snapshot.task_runs).Count -ne 2 -or
+              $snapshot.caveat -notmatch 'not authenticated MCP') {
+            throw 'LENOFOLLOWUP_SCHEMA_SCOPE_FAIL'
+          }
+          Write-Output 'LENOFOLLOWUP_PS51_RUN_PASS: isolated Windows CI runner, NOT Leno'
           Write-Output 'LENOPREFLIGHT_PS51_RUN_PASS: synthetic GitHub-hosted Windows runner, NOT Leno'
