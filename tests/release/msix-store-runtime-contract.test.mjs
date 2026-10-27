@@ -166,6 +166,23 @@ test("MSIX reports native PE Authenticode state separately from signed package, 
 });
 
 
+test("native helper is declared under MSIX identity but hidden from Start",()=>{
+  const entries = manifest.match(/<Application Id="[^"]+"[\\s\\S]*?<\\/Application>/g) || [];
+  assert.equal(entries.length, 2, "exactly one user-facing app and one native helper");
+  const agent = entries.find(x => /Id="Agent"/.test(x));
+  assert.ok(agent, "native agent must be registered in manifest");
+  assert.match(agent, /Executable="bin\\\\tetherd\\.exe"/);
+  assert.match(agent, /RuntimeBehavior="packagedClassicApp"/);
+  assert.match(agent, /TrustLevel="mediumIL"/);
+  assert.match(agent, /AppListEntry="none"/);
+  assert.doesNotMatch(agent, /startupTask|uap11:Parameters|runFullTrust/i);
+  assert.equal((manifest.match(/AppListEntry="none"/g)||[]).length, 1);
+  const unregistered = manifest.replace(agent, "");
+  assert.equal((unregistered.match(/<Application Id=/g)||[]).length, 1);
+  const visible = agent.replace('AppListEntry="none"', 'AppListEntry="default"');
+  assert.doesNotMatch(visible, /AppListEntry="none"/);
+});
+
 test("installed MSIX native agent must reach its argument parser without credentials or relay",()=>{
   assert.match(script,/installed_native_parser_probe = 'NOT_RUN'/);
   assert.match(script,/installed_native_parser_scope = 'DISPOSABLE_WINDOWS_RUNNER_ONLY; SAC_NOT_TESTED'/);
