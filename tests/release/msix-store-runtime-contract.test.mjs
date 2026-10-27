@@ -164,3 +164,17 @@ test("MSIX reports native PE Authenticode state separately from signed package, 
   assert.match(script,/PENDING_REAL_SAC_ON_ACCEPTANCE/);
   assert.doesNotMatch(script,/(?:citool\.exe\s+-r|Set-MpPreference|VerifiedAndReputablePolicyState.*Set-ItemProperty|reg add.*CodeIntegrity)/i);
 });
+
+
+test("installed MSIX native agent must reach its argument parser without credentials or relay",()=>{
+  assert.match(script,/installed_native_parser_probe = 'NOT_RUN'/);
+  assert.match(script,/installed_native_parser_scope = 'DISPOSABLE_WINDOWS_RUNNER_ONLY; SAC_NOT_TESTED'/);
+  assert.match(script,/Join-Path \$installed\[0\]\.InstallLocation 'bin\\tetherd\.exe'/);
+  assert.match(script,/installed_native_parser_sha256/);
+  assert.match(script,/installed_native_parser_probe_started/);
+  assert.match(script,/unknown tetherd argument:/);
+  assert.match(script,/WaitForExit\(5000\)/);
+  assert.match(script,/installed_native_parser_probe = 'PASS'/);
+  assert.match(script,/installed_native_parser_probe_passed/);
+  assert.doesNotMatch(script,/Set-MpPreference|Register-ScheduledTask|Unregister-ScheduledTask|ExecutionPolicy Bypass/);
+});
