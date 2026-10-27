@@ -43,6 +43,11 @@ async function refresh() {
     status.textContent = r.state + " — connection not verified";
     if (r.lastError) feedback.textContent = r.lastError;
     if (r.hasSavedIdentity) { form.hidden = true; document.getElementById("resume").hidden = false; }
+    else if (r.state === "pairing_expired") {
+      document.getElementById("challenge").hidden = true;
+      form.hidden = false;
+      feedback.textContent = "Pairing code expired. Request a new code before continuing.";
+    }
   } catch(error) { showError(error); }
 }
 void refresh();

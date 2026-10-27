@@ -246,3 +246,22 @@ test("native agent launch failure permits recovery without replacing the stored 
   assert.equal((await request(wizard,"/api/start","POST",{confirmation:"I APPROVED THIS DEVICE"})).status,200);
   assert.equal(attempts,2);
 });
+
+test("an expired unapproved challenge can be retried without persisting or replacing device identity",async t=>{
+  const f=await fixture(t);
+  const calls=[];
+  const wizard=await createWizard({stateRoot:f.stateRoot,packageRoot:f.packageRoot,fetchImpl:mockFetch(calls)});
+  t.after(()=>wizard.close());
+  const data={deviceId:"tp-expiring",relayUrl:goodRelay(),allowRoot:f.allowRoot};
+  assert.equal((await request(wizard,"/api/pair","POST",data)).status,200);
+  assert.ok(wizard.state.pending);
+  wizard.state.pending.expiresAt=Date.now()-1;
+  const expired=await (await request(wizard,"/api/status")).json();
+  assert.equal(expired.state,"pairing_expired");
+  assert.equal(expired.pending,null);
+  assert.equal(expired.hasSavedIdentity,false);
+  assert.equal((await request(wizard,"/api/pair","POST",data)).status,200);
+  assert.equal(calls.length,2);
+  assert.notEqual(calls[0].body.credentialHash,calls[1].body.credentialHash);
+  await assert.rejects(()=>stat(f.stateRoot),{code:"ENOENT"});
+});

@@ -151,6 +151,12 @@ export async function createWizard(options = {}) {
       if (!url.pathname.startsWith("/api/")) return send(res, 404, { error: "Not found" });
       if (!constantTimeTokenMatches(req.headers["x-tetherplane-setup"], token))
         return send(res, 403, { error: "Local setup authorization required." });
+      // Expired challenges must not permanently block a new, explicitly
+      // requested pairing. Never discard an already persisted device identity.
+      if (current.pending && current.pending.expiresAt <= Date.now()) {
+        current.pending = null;
+        current.status = "pairing_expired";
+      }
       if (req.method === "GET" && url.pathname === "/api/status") {
         return send(res, 200, {
           state: current.status, hasSavedIdentity: Boolean(saved),

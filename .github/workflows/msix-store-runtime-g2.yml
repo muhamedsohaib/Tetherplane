@@ -45,6 +45,11 @@ jobs:
       - uses: dtolnay/rust-toolchain@b725eda525362e7cf34af9a7243cac1e3f01a7ec # stable
       - name: Ensure package is a disposable development probe
         run: node --test tests/release/msix-store-runtime.test.mjs tests/release/msix-store-runtime-contract.test.mjs
+      - name: Parse MSIX PowerShell with Windows PowerShell 5.1 (fail-fast)
+        shell: pwsh
+        run: |
+          & "$env:SystemRoot\System32\WindowsPowerShell\v1.0\powershell.exe" -NoProfile -NonInteractive -File scripts/msix-store/check-powershell-syntax.ps1
+          if ($LASTEXITCODE -ne 0) { throw "MSIX Windows PowerShell syntax preflight failed" }
       - name: Validate signed Node runtime and licensing before packaging
         shell: pwsh
         run: |

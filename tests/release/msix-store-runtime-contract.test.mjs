@@ -10,6 +10,7 @@ const wrapper=txt("scripts/msix-store/run-bounded-runtime-probe.mjs");
 const preflight=txt("scripts/msix-store/ci-prerequisites.mjs");
 const workflow=txt(".github/workflows/msix-store-runtime-g2.yml");
 const activation=txt("scripts/msix-store/Test-PackagedAppActivation.ps1");
+const syntaxGate=txt("scripts/msix-store/check-powershell-syntax.ps1");
 
 test("MSIX uses a distinct synthetic developer identity and real onboarding entry, no silent startup",()=>{
   assert.match(manifest,/Name="Tetherplane\.StoreRuntime\.DevOnly"/);
@@ -109,4 +110,13 @@ test("package activation checks the real localhost wizard with exact process own
   assert.match(script,/\$report\.local_setup_http = 'PASS'/);
   assert.match(wrapper,/OWNER_PAIRING\/BROWSER\/SAC\/STORE NOT TESTED/);
   assert.doesNotMatch(activation,/x-tetherplane-setup|device-credential|pair\/approve/i);
+});
+
+test("actual Windows PowerShell 5.1 parsing is a required early CI gate",()=>{
+  assert.match(workflow,/Parse MSIX PowerShell with Windows PowerShell 5\.1/);
+  assert.match(workflow,/check-powershell-syntax\.ps1/);
+  assert.match(syntaxGate,/System\.Management\.Automation\.Language\.Parser/);
+  assert.match(syntaxGate,/Test-PackagedAppActivation\.ps1/);
+  assert.match(syntaxGate,/MSIX_PS51_SYNTAX_PASS/);
+  assert.doesNotMatch(syntaxGate,/Start-Process|Add-AppxPackage|Import-Certificate|Register-ScheduledTask/);
 });

@@ -78,8 +78,8 @@ try {
     }
     Write-Output 'MSIX_G2_PACKAGED_APP_ACTIVATION_PASS'
 
-    # The exact activated package process must serve the real local wizard.
-    # This read-only HTTP probe never obtains or sends the setup session token.
+    # The exact activated package process must serve the localhost wizard.
+    # Probe only public setup HTML; never read or transmit the session token.
     $netstatExecutable = Join-Path $env:SystemRoot 'System32\netstat.exe'
     if (-not (Test-Path -LiteralPath $netstatExecutable -PathType Leaf)) {
         throw 'Windows TCP listener inspector unavailable'
@@ -88,15 +88,7 @@ try {
     for ($attempt = 0; $attempt -lt 8; $attempt++) {
         $lines = @(& $netstatExecutable -ano -p tcp)
         if ($LASTEXITCODE -ne 0) { throw 'Windows TCP inspection failed' }
-        $pattern = '^\s*TCP\s+127\.0\.0\.1:(\d+)\s+\S+\s+LISTENING\s+' + [regex]::Escape([string]$activatedProcessId) + '\s*
-}
-finally {
-    if ($verified -and $null -ne $activatedProcessId) {
-        # Never terminate a PID unless it matched the exact installed test image.
-        Stop-Process -Id $activatedProcessId -Force -ErrorAction SilentlyContinue
-    }
-}
-
+        $pattern = '^\s*TCP\s+127\.0\.0\.1:(\d+)\s+\S+\s+LISTENING\s+' + [regex]::Escape([string]$activatedProcessId) + '\s*$'
         $port = $null
         foreach ($line in $lines) {
             $match = [regex]::Match([string]$line, $pattern, [Text.RegularExpressions.RegexOptions]::IgnoreCase)
