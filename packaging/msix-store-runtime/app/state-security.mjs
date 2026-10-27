@@ -88,3 +88,84 @@ export async function initializeCredentialDirectory(stateRoot) {
     );
   }
 }
+
+
+// Read-only restart/reuse gate. Do not trust a directory simply because
+// onboarding sealed it earlier: permissions may have changed after a reboot.
+// Refuse links/reparse points and any DACL principal other than this user and
+// LocalSystem. The credential contents are never passed to PowerShell.
+const VERIFY_EXISTING_WINDOWS_STATE = [
+  "$ErrorActionPreference = 'Stop'",
+  "$identity = [System.Security.Principal.WindowsIdentity]::GetCurrent()",
+  "if ($identity.IsSystem -or $null -eq $identity.User) { throw 'Ordinary Windows user required' }",
+  "$allowed = @($identity.User.Value, 'S-1-5-18')",
+  "$paths = @($env:TP_VERIFY_STATE_ROOT, $env:TP_VERIFY_CONFIG, $env:TP_VERIFY_CREDENTIAL)",
+  "for ($i = 0; $i -lt $paths.Count; $i++) {",
+  "  $path = $paths[$i]",
+  "  if ([string]::IsNullOrWhiteSpace($path)) { throw 'Missing private state path' }",
+  "  $attributes = [System.IO.File]::GetAttributes($path)",
+  "  if (($attributes -band [System.IO.FileAttributes]::ReparsePoint) -ne 0) { throw 'Reparse point in private state' }",
+  "  if ($i -eq 0) {",
+  "    if (($attributes -band [System.IO.FileAttributes]::Directory) -eq 0) { throw 'State root not directory' }",
+  "    $acl = [System.IO.Directory]::GetAccessControl($path)",
+  "    if (-not $acl.AreAccessRulesProtected) { throw 'State root inherits access rights' }",
+  "  } else {",
+  "    if (($attributes -band [System.IO.FileAttributes]::Directory) -ne 0) { throw 'State file is directory' }",
+  "    $acl = [System.IO.File]::GetAccessControl($path)",
+  "  }",
+  "  $seen = @()",
+  "  foreach ($rule in $acl.Access) {",
+  "    $sid = $rule.IdentityReference.Translate([System.Security.Principal.SecurityIdentifier]).Value",
+  "    if ($allowed -notcontains $sid) { throw 'Unexpected state access principal' }",
+  "    if ($rule.AccessControlType -ne [System.Security.AccessControl.AccessControlType]::Allow) { throw 'Unexpected state deny rule' }",
+  "    $seen += $sid",
+  "  }",
+  "  if ($seen -notcontains $identity.User.Value -or $seen -notcontains 'S-1-5-18') {",
+  "    throw 'Required Windows state access not present'",
+  "  }",
+  "}",
+  "'TP_PRIVATE_STATE_RECHECK_PASS'"
+].join("\n");
+
+/**
+ * Recheck the existing Windows state *before* reading a credential or
+ * launching tetherd. No ACL repair, credential rotation, identity replacement
+ * or elevation. On Windows any verification error fails closed; the user may
+ * inspect the identity manually without this method changing it.
+ */
+export async function assertPrivateCredentialState(stateRoot) {
+  if (!isAbsolute(stateRoot)) throw new Error("User-local state directory is required.");
+  if (process.platform !== "win32") return;
+  if (!/^[A-Za-z]:[\\/](?![\\/])/.test(stateRoot))
+    throw new Error("Windows state must use a local absolute drive path.");
+
+  try {
+    const items = [stateRoot, join(stateRoot, "device.json"), join(stateRoot, "device-credential.txt")];
+    for (let i = 0; i < items.length; i++) {
+      const info = await lstat(items[i]);
+      if (info.isSymbolicLink() || !(i === 0 ? info.isDirectory() : info.isFile()))
+        throw new Error("Unexpected private state filesystem object");
+    }
+    const winRoot = process.env.SystemRoot || process.env.WINDIR;
+    if (!winRoot || !/^[A-Za-z]:[\\/]/.test(winRoot))
+      throw new Error("Windows system root unavailable.");
+    const powershell = join(winRoot, "System32", "WindowsPowerShell", "v1.0", "powershell.exe");
+    const { stdout } = await execFile(
+      powershell, ["-NoProfile", "-NonInteractive", "-Command", VERIFY_EXISTING_WINDOWS_STATE],
+      {
+        ...CHILD_OPTIONS,
+        env: {
+          ...process.env,
+          TP_VERIFY_STATE_ROOT: stateRoot,
+          TP_VERIFY_CONFIG: items[1],
+          TP_VERIFY_CREDENTIAL: items[2]
+        }
+      }
+    );
+    if (!stdout.includes("TP_PRIVATE_STATE_RECHECK_PASS"))
+      throw new Error("Private state verification did not complete.");
+  } catch {
+    // Avoid printing paths, SIDs, secrets or ownership details to a web UI.
+    throw new Error("Existing Windows device state has unverified permissions; identity preserved for recovery.");
+  }
+}
