@@ -28,6 +28,67 @@ foreach ($required in @(
     }
 }
 
+# Fail before any install/state writes or task replacement. A bare tetherd.exe
+# exits with CLI code 2: a scheduled agent must have a transport mode.
+# The argument file is parsed locally but its contents never enter diagnostics.
+$agentArgs = $null
+if ($InstallScheduledTask) {
+    if ([string]::IsNullOrWhiteSpace($AgentArgumentsFile)) {
+        throw "SCHEDULED_AGENT_PREFLIGHT_NO_GO: scheduled task requires a local argument file"
+    }
+    $agentArgsSource = (Resolve-Path -LiteralPath $AgentArgumentsFile -ErrorAction Stop).Path
+    $decoded = Get-Content -LiteralPath $agentArgsSource -Raw -ErrorAction Stop | ConvertFrom-Json -ErrorAction Stop
+    if (-not ($decoded -is [System.Array])) {
+        throw "SCHEDULED_AGENT_PREFLIGHT_NO_GO: arguments must be a JSON array"
+    }
+    $agentArgs = @($decoded)
+    if ($agentArgs.Count -eq 0) {
+        throw "SCHEDULED_AGENT_PREFLIGHT_NO_GO: missing transport and identity arguments"
+    }
+    foreach ($arg in $agentArgs) {
+        if (-not ($arg -is [string]) -or [string]::IsNullOrWhiteSpace($arg)) {
+            throw "SCHEDULED_AGENT_PREFLIGHT_NO_GO: empty or non-string agent argument"
+        }
+    }
+    $stdio = @($agentArgs | Where-Object { $_ -ceq '--stdio-rpc' }).Count
+    $remote = @($agentArgs | Where-Object { $_ -ceq '--relay-url' }).Count
+    if ($stdio + $remote -ne 1) {
+        throw "SCHEDULED_AGENT_PREFLIGHT_NO_GO: exactly one agent transport mode is required"
+    }
+    if ($remote -eq 1) {
+        foreach ($flag in @('--relay-url', '--device-id', '--device-credential-file')) {
+            $indices = @()
+            for ($i = 0; $i -lt $agentArgs.Count; $i++) {
+                if ($agentArgs[$i] -ceq $flag) { $indices += $i }
+            }
+            if ($indices.Count -ne 1 -or $indices[0] -ge ($agentArgs.Count - 1) -or
+                [string]::IsNullOrWhiteSpace([string]$agentArgs[$indices[0] + 1]) -or
+                [string]$agentArgs[$indices[0] + 1] -like '--*') {
+                throw "SCHEDULED_AGENT_PREFLIGHT_NO_GO: incomplete or duplicate remote device argument"
+            }
+        }
+        # Never inspect, output or hash the referenced credential file here.
+    } elseif ($agentArgs -contains '--device-id' -or
+              $agentArgs -contains '--device-credential-file') {
+        throw "SCHEDULED_AGENT_PREFLIGHT_NO_GO: device identity requires remote transport"
+    }
+    # On SAC-enforced Windows, refuse to schedule a new untrusted native PE.
+    # A valid signature is NOT proof SAC will admit execution; live proof remains.
+    $sacMode = $null
+    try {
+        $policy = Get-ItemProperty -LiteralPath 'HKLM:\SYSTEM\CurrentControlSet\Control\CI\Policy' -Name 'VerifiedAndReputablePolicyState' -ErrorAction Stop
+        $sacMode = [int]$policy.VerifiedAndReputablePolicyState
+    } catch {
+        # An unreadable policy is not proof that SAC is Off.
+    }
+    if ($sacMode -eq 1) {
+        $signature = Get-AuthenticodeSignature -LiteralPath (Join-Path $package 'bin\tetherd.exe') -ErrorAction Stop
+        if ($signature.Status -ne [System.Management.Automation.SignatureStatus]::Valid) {
+            throw "SCHEDULED_AGENT_PREFLIGHT_NO_GO: SAC is On and native executable is not trusted-signed"
+        }
+    }
+}
+
 if (Test-Path -LiteralPath $install) {
     $existing = @(Get-ChildItem -LiteralPath $install -Force -ErrorAction SilentlyContinue)
     if ($existing.Count -gt 0 -and -not $Force) {
@@ -58,14 +119,6 @@ New-Item -ItemType Directory -Force -Path $configDir | Out-Null
 
 $taskName = $null
 if ($InstallScheduledTask) {
-    if (-not $AgentArgumentsFile) {
-        throw "-InstallScheduledTask requires -AgentArgumentsFile"
-    }
-    $agentArgsSource = (Resolve-Path -LiteralPath $AgentArgumentsFile).Path
-    $agentArgs = Get-Content -LiteralPath $agentArgsSource -Raw | ConvertFrom-Json
-    if (-not ($agentArgs -is [System.Array])) {
-        throw "AgentArgumentsFile must contain a JSON array of tetherd arguments"
-    }
     $agentArgs | ConvertTo-Json -Depth 4 | Set-Content -LiteralPath (Join-Path $configDir "agent-args.json") -Encoding UTF8
 
     $taskName = "Tetherplane Agent"
