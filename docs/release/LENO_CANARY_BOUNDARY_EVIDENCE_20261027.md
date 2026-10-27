@@ -85,6 +85,25 @@ Inspected repo `relay/src/routing/device-router.ts`, `relay/src/devices/ws-gatew
 
 **Do not restart or disable the only old process yet.** It might be the only functioning background process and replacing it may encounter the observed SAC block. Next smallest low-risk observation is a local classification of that process's remote port plus sanitized configured device ID/relay endpoint (not the credential, command line, absolute path or IP). A matched relay instance can then be checked for device-session registration through an already-authorized read-only interface. Do not inspect other users' relay identities or persist session tokens.
 
+## Next classified identity/route comparison
+
+New `scripts/msix-store/Inspect-Leno-Agent-Route-ReadOnly.ps1` is deliberately limited to facts that can distinguish stale or misdirected sessions without exposing secrets:
+
+- `device_id_class`: exact `Leno`, case-only mismatch, another device ID, or unavailable. **Never outputs the actual ID if different**.
+- `transport`, `configured_host_class`, and `device_path`: WSS vs WS, VAULTER-named vs other target, and whether the WebSocket URL path is exactly `/device`. It never prints URL/host.
+- `configured_port` and `active_remote_ports`: port numbers only, **never IP addresses**.
+- `canary_action_kind`: direct `tetherd` vs PowerShell/CMD wrapper/other. It never prints the task arguments or executable paths.
+- The script does not read credential files, restart processes, alter ACLs, change Windows policy, or attempt pairing.
+
+**Exact-script CI evidence:** Windows PowerShell 5.1 parse, static no-mutation scan and isolated execution passed in [Leno read-only workflow #40581073108](https://github.com/muhamedsohaib/Tetherplane/actions/runs/40581073108). **This is not a real Leno result**; when the actual owner runs the script, record its JSON below before choosing a corrective action.
+
+### Decision gate for the classification
+
+- If device ID class is not exact `Leno`: classify as **device identity mismatch**; no auto-re-pairing or credential replacement.
+- If host/path/port is inconsistent with the live Leno WebSocket relay path: classify as **stale/misdirected canary configuration**; preserve task and old process for a reversible, owner-approved recovery.
+- If device ID and endpoint are consistent and TCP is established: relay-side **WebSocket registration / instance / session** is the next boundary; use already-authorized read-only registration diagnostics before changing anything.
+- If command line is inaccessible: mark **UNKNOWN**. Never infer an ID mismatch from missing telemetry.
+
 ## Do-not-touch and release gate
 
 Do **not** disable Smart App Control, replace device credentials, restart or re-enable disabled Tetherplane tasks, change relay identity/authentication, modify the user profile ACLs, or install the development-signed MSIX onto this active canary without a separately approved, reversible, signed trial.
