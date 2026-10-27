@@ -147,6 +147,18 @@ Reference: https://tailscale.com/docs/reference/tailscale-cli/serve ; Tailscale 
 
 Next boundary: confirm PID names and whether 443 and 10000 both resolve to the same 8788 process and `/device` route. That still will not establish the live authenticated WebSocket registration; the connector-facing relay's live connection map remains negative for Leno.
 
+## VAULTER Serve forwarding confirmed, with scope limitation
+
+Owner-operated PowerShell on VAULTER, subsequent to the listener snapshot:
+
+- `PID 3724` = **tailscaled**; `PID 7936` = **node**.
+- `tailscale serve status --json` parsed successfully, with **port 443** showing **10 target/handler entries**, of which **at least one** matches target port **8788**, and **port 10000** showing **one** target entry matching port **8788**.
+- This is consistent with Tailscale's 443/10000 proxies reaching the Node relay listener on port 8788, but the coarse status parser did **not** prove which 443 path reaches 8788 (in particular `/mcp`) or that the two target addresses are identical. Do not assume the 10 handlers equal 10 relay instances.
+- `device.status(Leno)` remains disconnected; routing registration, device WebSocket handshake and the current task's saved device-ID/URL classification are still unverified.
+
+**Decision:** Do not change or chase the ports. The next low-risk observation should inspect **the saved Leno canary task definition** without outputting its raw arguments. The previous check read PID 20396's command line and returned `NOT_VISIBLE`, likely because this elevated process has a different access context. Its October 24 launch may not match today's saved task definition. Check ID classification (`EXACT_LENO` or mismatch), URL scheme/path/port classification, credential-file argument presence and local Authenticode signature/hash of the configured executable.
+
+The **diagnostic tool** is `scripts/msix-store/Inspect-Leno-Canary-Action-ReadOnly.ps1`. Its result will remain task-definition evidence, **not** proof of actual PID launch arguments, and no task/identity changes follow without independent confirmation.
 ## Do-not-touch and release gate
 
 Do **not** disable Smart App Control, replace device credentials, restart or re-enable disabled Tetherplane tasks, change relay identity/authentication, modify the user profile ACLs, or install the development-signed MSIX onto this active canary without a separately approved, reversible, signed trial.
