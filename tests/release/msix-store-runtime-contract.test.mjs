@@ -195,3 +195,24 @@ test("installed MSIX native agent must reach its argument parser without credent
   assert.match(script,/installed_native_parser_probe_passed/);
   assert.doesNotMatch(script,/Set-MpPreference|Register-ScheduledTask|Unregister-ScheduledTask|ExecutionPolicy Bypass/);
 });
+
+
+test("new Windows credentials must be protected before any plaintext write",()=>{
+  const storage=txt("packaging/msix-store-runtime/app/state-security.mjs");
+  const integration=txt("tests/release/msix-store-runtime.test.mjs");
+  assert.match(app,/initializeCredentialDirectory\(stateRoot\)/);
+  assert.match(storage,/await mkdir\(stateRoot\)/);
+  assert.match(storage,/\/inheritance:r/);
+  assert.match(storage,/\/grant:r/);
+  assert.match(storage,/S-1-5-18/);
+  assert.match(storage,/\/verify/);
+  assert.match(storage,/rmdir\(stateRoot\)/);
+  assert.match(storage,/windowsHide: true/);
+  assert.match(integration,/Get-Acl -LiteralPath/);
+  assert.match(integration,/AreAccessRulesProtected/);
+  assert.match(integration,/unexpected principal/);
+  assert.doesNotMatch(storage,/Set-MpPreference|Set-Acl|Register-ScheduledTask|Unregister-ScheduledTask|ExecutionPolicy Bypass|\\bnet user\\b/i);
+  const store=app.indexOf("initializeCredentialDirectory(stateRoot)");
+  const secretWrite=app.indexOf("await writeFile(credentialPath");
+  assert.ok(store!==-1 && secretWrite>store, "ACL seal precedes any device secret write");
+});
