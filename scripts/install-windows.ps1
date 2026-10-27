@@ -61,26 +61,23 @@ if ($InstallScheduledTask) {
     }
     $stdio = @($agentArgs | Where-Object { $_ -ceq '--stdio-rpc' }).Count
     $remote = @($agentArgs | Where-Object { $_ -ceq '--relay-url' }).Count
-    if ($stdio + $remote -ne 1) {
-        throw "SCHEDULED_AGENT_PREFLIGHT_NO_GO: exactly one agent transport mode is required"
+    # Stdio RPC is an on-demand foreground protocol, not a usable logon
+    # scheduled task. The background agent must have exactly one remote URL.
+    if ($stdio -ne 0 -or $remote -ne 1) {
+        throw "SCHEDULED_AGENT_PREFLIGHT_NO_GO: scheduled agent requires remote transport"
     }
-    if ($remote -eq 1) {
-        foreach ($flag in @('--relay-url', '--device-id', '--device-credential-file')) {
-            $indices = @()
-            for ($i = 0; $i -lt $agentArgs.Count; $i++) {
-                if ($agentArgs[$i] -ceq $flag) { $indices += $i }
-            }
-            if ($indices.Count -ne 1 -or $indices[0] -ge ($agentArgs.Count - 1) -or
-                [string]::IsNullOrWhiteSpace([string]$agentArgs[$indices[0] + 1]) -or
-                [string]$agentArgs[$indices[0] + 1] -like '--*') {
-                throw "SCHEDULED_AGENT_PREFLIGHT_NO_GO: incomplete or duplicate remote device argument"
-            }
+    foreach ($flag in @('--relay-url', '--device-id', '--device-credential-file')) {
+        $indices = @()
+        for ($i = 0; $i -lt $agentArgs.Count; $i++) {
+            if ($agentArgs[$i] -ceq $flag) { $indices += $i }
         }
-        # Never inspect, output or hash the referenced credential file here.
-    } elseif ($agentArgs -contains '--device-id' -or
-              $agentArgs -contains '--device-credential-file') {
-        throw "SCHEDULED_AGENT_PREFLIGHT_NO_GO: device identity requires remote transport"
+        if ($indices.Count -ne 1 -or $indices[0] -ge ($agentArgs.Count - 1) -or
+            [string]::IsNullOrWhiteSpace([string]$agentArgs[$indices[0] + 1]) -or
+            [string]$agentArgs[$indices[0] + 1] -like '--*') {
+            throw "SCHEDULED_AGENT_PREFLIGHT_NO_GO: incomplete or duplicate remote device argument"
+        }
     }
+    # Never inspect, output or hash the referenced credential file here.
     # On SAC-enforced Windows, refuse to schedule a new untrusted native PE.
     # A valid signature is NOT proof SAC will admit execution; live proof remains.
     $sacMode = $null
