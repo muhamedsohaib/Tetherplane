@@ -37,9 +37,17 @@ if ($InstallScheduledTask) {
         throw "SCHEDULED_AGENT_PREFLIGHT_NO_GO: scheduled task requires a local argument file"
     }
     $agentArgsSource = (Resolve-Path -LiteralPath $AgentArgumentsFile -ErrorAction Stop).Path
-    $decoded = Get-Content -LiteralPath $agentArgsSource -Raw -ErrorAction Stop | ConvertFrom-Json -ErrorAction Stop
-    if (-not ($decoded -is [System.Array])) {
+    $rawArgs = Get-Content -LiteralPath $agentArgsSource -Raw -ErrorAction Stop
+    # PowerShell 5.1 can unwrap a one-element JSON array into a scalar.
+    # Verify the original top-level shape, then normalize both forms.
+    if (-not $rawArgs.TrimStart().StartsWith('[') -or
+        -not $rawArgs.TrimEnd().EndsWith(']')) {
         throw "SCHEDULED_AGENT_PREFLIGHT_NO_GO: arguments must be a JSON array"
+    }
+    try {
+        $decoded = ConvertFrom-Json -InputObject $rawArgs -ErrorAction Stop
+    } catch {
+        throw "SCHEDULED_AGENT_PREFLIGHT_NO_GO: invalid argument JSON"
     }
     $agentArgs = @($decoded)
     if ($agentArgs.Count -eq 0) {
@@ -119,7 +127,7 @@ New-Item -ItemType Directory -Force -Path $configDir | Out-Null
 
 $taskName = $null
 if ($InstallScheduledTask) {
-    $agentArgs | ConvertTo-Json -Depth 4 | Set-Content -LiteralPath (Join-Path $configDir "agent-args.json") -Encoding UTF8
+    ConvertTo-Json -InputObject $agentArgs -Depth 4 | Set-Content -LiteralPath (Join-Path $configDir "agent-args.json") -Encoding UTF8
 
     $taskName = "Tetherplane Agent"
     $action = New-ScheduledTaskAction -Execute "powershell.exe" -Argument ('-NoProfile -NonInteractive -WindowStyle Hidden -ExecutionPolicy Bypass -File "' + (Join-Path $install "launch\tetherplane-agent.ps1") + '"')
