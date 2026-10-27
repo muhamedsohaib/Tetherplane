@@ -91,7 +91,11 @@ if ($InstallScheduledTask) {
         # An unreadable policy is not proof that SAC is Off.
     }
     if ($sacMode -eq 1) {
-        $signature = Get-AuthenticodeSignature -LiteralPath (Join-Path $package 'bin\tetherd.exe') -ErrorAction Stop
+        try {
+            $signature = Get-AuthenticodeSignature -LiteralPath (Join-Path $package 'bin\tetherd.exe') -ErrorAction Stop
+        } catch {
+            throw "SCHEDULED_AGENT_PREFLIGHT_NO_GO: unable to verify native signature while SAC is On"
+        }
         if ($signature.Status -ne [System.Management.Automation.SignatureStatus]::Valid) {
             throw "SCHEDULED_AGENT_PREFLIGHT_NO_GO: SAC is On and native executable is not trusted-signed"
         }
