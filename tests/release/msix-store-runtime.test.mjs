@@ -1,9 +1,13 @@
 import assert from "node:assert/strict";
 import { EventEmitter } from "node:events";
+import { execFile as callbackExecFile } from "node:child_process";
 import { createHash } from "node:crypto";
 import { mkdtemp, mkdir, readFile, stat, writeFile, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
+import { promisify } from "node:util";
+
+const execFileAsync = promisify(callbackExecFile);
 import test from "node:test";
 import {
   validateRelayUrl, validateDeviceId, validateAllowedRoot, agentArgs,
@@ -355,4 +359,72 @@ test("late owner approval remains recoverable after pairing code TTL, without a 
   assert.equal((await (await request(wizard,"/api/status")).json()).hasSavedIdentity,true);
   assert.equal(calls.length,1);
   assert.equal(spawns.length,1);
+});
+
+
+test("Windows newly paired identity has a user-and-SYSTEM-only DACL before credential persistence", { skip: process.platform !== "win32" }, async t => {
+  const f = await fixture(t);
+  const secret = "synthetic-only-not-a-real-device-credential-20261027";
+  await persistApprovedConfig(f.stateRoot, {
+    deviceId: "tp-windows-acl",
+    relayUrl: goodRelay(),
+    allowRoot: f.allowRoot,
+    secret,
+    expiresAt: Date.now() + 600_000,
+  });
+  assert.equal((await readFile(join(f.stateRoot, "device-credential.txt"), "utf8")).trim(), secret);
+  assert.equal((await readSavedConfig(f.stateRoot)).deviceId, "tp-windows-acl");
+
+  // Independent Windows security descriptor inspection, not source-code
+  // assertions or POSIX mode bits. Do not print ACL identities or secrets.
+  const check = [
+    "$ErrorActionPreference = 'Stop'",
+    "$owner = [System.Security.Principal.WindowsIdentity]::GetCurrent().User.Value",
+    "$permitted = @($owner, 'S-1-5-18')",
+    "$paths = @($env:TETHERPLANE_TEST_STATE_ROOT, $env:TETHERPLANE_TEST_CREDENTIAL_PATH, $env:TETHERPLANE_TEST_CONFIG_PATH)",
+    "foreach ($path in $paths) {",
+    "  $acl = Get-Acl -LiteralPath $path",
+    "  if ($path -eq $paths[0] -and -not $acl.AreAccessRulesProtected) { throw 'Private state root still inherits a parent DACL' }",
+    "  $rules = @($acl.Access)",
+    "  if ($rules.Count -lt 2) { throw 'Private state DACL has insufficient entries' }",
+    "  $observed = @()",
+    "  foreach ($rule in $rules) {",
+    "    $sid = $rule.IdentityReference.Translate([System.Security.Principal.SecurityIdentifier]).Value",
+    "    if ($permitted -notcontains $sid) { throw 'Private state contains an unintended principal' }",
+    "    if ($rule.AccessControlType -ne [System.Security.AccessControl.AccessControlType]::Allow) { throw 'Private state contains an unexpected denial' }",
+    "    $observed += $sid",
+    "  }",
+    "  if ($observed -notcontains $owner -or $observed -notcontains 'S-1-5-18') { throw 'Private state does not grant the owner and SYSTEM' }",
+    "}",
+    "'WINDOWS_USER_PRIVATE_DACL_PASS'",
+  ].join("\n");
+  const { stdout } = await execFileAsync("powershell.exe",
+    ["-NoProfile", "-NonInteractive", "-Command", check], {
+      windowsHide: true, timeout: 15_000, maxBuffer: 32_768,
+      env: {
+        ...process.env,
+        TETHERPLANE_TEST_STATE_ROOT: f.stateRoot,
+        TETHERPLANE_TEST_CREDENTIAL_PATH: join(f.stateRoot, "device-credential.txt"),
+        TETHERPLANE_TEST_CONFIG_PATH: join(f.stateRoot, "device.json"),
+      },
+    });
+  assert.match(stdout, /WINDOWS_USER_PRIVATE_DACL_PASS/);
+});
+
+test("Windows pre-existing or foreign state is preserved without ACL edits or re-pairing", { skip: process.platform !== "win32" }, async t => {
+  const f = await fixture(t);
+  await mkdir(f.stateRoot);
+  const sentinel = join(f.stateRoot, "foreign-data.txt");
+  await writeFile(sentinel, "untouched");
+  await assert.rejects(
+    () => persistApprovedConfig(f.stateRoot, {
+      deviceId: "tp-no-overwrite", relayUrl: goodRelay(), allowRoot: f.allowRoot,
+      secret: "synthetic-only-credential-that-must-never-be-written",
+      expiresAt: Date.now() + 600_000,
+    }),
+    /Windows private device state could not be created/
+  );
+  assert.equal(await readFile(sentinel, "utf8"), "untouched");
+  await assert.rejects(() => stat(join(f.stateRoot, "device-credential.txt")), { code: "ENOENT" });
+  await assert.rejects(() => stat(join(f.stateRoot, "device.json")), { code: "ENOENT" });
 });
