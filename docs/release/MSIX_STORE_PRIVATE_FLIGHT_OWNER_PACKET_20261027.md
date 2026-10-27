@@ -21,9 +21,11 @@ The CI test MSIX was temporarily signed with a synthetic development certificate
 
 ## A. Publisher account — human-owned identity gate
 
-**Current account status: UNKNOWN.** Before choosing an account type, check whether a developer account already exists. The correct publisher identity must come from the actual Partner Center app's **Product identity** page; never derive a publisher subject from a brand or a guessed legal name.
+**Owner-selected product/publisher naming (October 27, 2026):** The Windows Store **publisher display brand is ARCUS Labs**, and the application/product is **Tetherplane**. This supersedes the earlier instruction that the public-facing **Published by** field must display Tetherplane. The owner provided a Partner Center screenshot showing the chosen ARCUS Labs publisher display in an active account. For privacy, the public repository does **not** reproduce account-type/legal-contact screenshots, seller IDs, personal information or verification numbers.
 
-**HARD BRAND REQUIREMENT (prior owner instruction):** The public-facing Store **Published by** publisher must display **Tetherplane**, not the owner's personal name. This is separate from the **Product name**, which also must be Tetherplane. Microsoft's Store Policy 10.14 requires a **Company** account for businesses or professional distributors and when a reasonable consumer would interpret the publisher as a business entity; its Store listing documentation says **Published by** always uses the publisher's display name. This repository does not establish a verified eligible legal publisher or a Partner Center receipt. **Do not register an Individual publisher as a workaround**, claim that a product-name reservation changes Published by, impersonate a registered entity, or invent a legal publisher. Before enrollment, independently establish a legitimate eligible legal publisher/trade name and confirm Microsoft will permit the desired display name, or obtain an authoritative Microsoft determination of an acceptable nonbusiness route satisfying both policy and the owner's branding requirement. **If unresolved, the Store path is blocked**; continue isolated development without publication.
+**Compliance boundary:** A display name is not proof of a registered legal organization or a Microsoft-approved Company publisher. Microsoft Store Policy 10.14 (effective October 22, 2026) can require a Company account where a reasonable consumer would interpret an app or publisher name as a business entity. The owner-reported account is classified as **Individual** in Partner Center; existing account status alone does not establish that professional/business-facing release under ARCUS Labs meets this policy. Do not mislabel the account as Company, fabricate a registered entity, attempt to change the developer account type, or submit for certification before checking eligibility with Microsoft. The exact MSIX Publisher subject/package identity must come from the **Tetherplane Product identity** screen after reservation; **ARCUS Labs** as a public-facing brand must not be substituted for a cryptographic publisher string.
+
+**Remaining admission decision:** Product-name availability may be checked without commitment. Reserve under this account only after considering whether the intended publisher account can lawfully hold and publish the product; changing developer account type from Individual to Company is unsupported. No Store submission or public publication is authorized.
 
 Publisher naming references:
 - https://learn.microsoft.com/en-us/windows/apps/publish/store-policies (section 10.14)
@@ -37,7 +39,7 @@ Microsoft's current guidance:
 - Changing an existing Individual Partner Center developer account into a Company account is **not supported**. Do not enroll the wrong irreversible publisher type merely to make the package pass.
 - Do not put legal identity documents, private account email, ID numbers, payment details or screenshots containing PII into this public repository.
 
-**Owner action when authorised:** Sign in at https://storedeveloper.microsoft.com/ ; determine existing registration/account type; complete the applicable identity verification privately. Only after the publisher choice is confirmed, create/reserve a new **MSIX or PWA** product named `Tetherplane` if the exact name is available and rights are appropriate. Name reservation is not currently verified. Preserve old OAuth/DCR clients and all real device identities.
+**Owner action when authorised:** In the existing Partner Center account, open **New product → MSIX or PWA app** and check availability for `Tetherplane`. Do not commit the reservation, create a new developer account, or submit a package until the policy 10.14 publisher eligibility and intended account ownership are resolved. Record the reservation and Product identity privately once confirmed. Preserve existing OAuth/DCR clients and all real device identities.
 
 Record **privately**, not here: whether registered, account type, reserved product name, actual Package/Identity **Name**, **Publisher**, package family name (if available), and Partner Center product ID. An agent may compare those public package identity strings to the manifest but cannot authenticate their provenance from a pasted JSON string alone.
 
@@ -57,6 +59,8 @@ Reference: https://learn.microsoft.com/en-us/windows/apps/publish/publish-your-a
 ## C. Draft Store listing (not approved for publication)
 
 **Product name:** Tetherplane (subject to verified reservation).
+
+**Public publisher brand:** ARCUS Labs (owner-selected; exact Partner Center Product identity and Microsoft policy 10.14 acceptance not yet verified for certification).
 
 **Short description (provisional):**
 Tetherplane connects an authorized Windows device to an owner's AI tools through an explicit pairing and access-control workflow.
@@ -80,7 +84,7 @@ References:
 
 ## E. Release admission gate — all required for GO
 
-- [ ] Legal publisher type confirmed and registered through owner-controlled Microsoft account.
+- [ ] ARCUS Labs public publisher brand confirmed under an eligible Partner Center account; Microsoft Store Policy 10.14 account classification resolved for intended distribution.
 - [ ] `Tetherplane` product name reserved and **actual** App identity/Publisher copied from Partner Center; do not reuse synthetic `Tetherplane.StoreRuntime.DevOnly` identity.
 - [ ] Exact Partner Center identity and package version agree with release manifest, source/build provenance is recorded, signed Store-delivered MSIX verified.
 - [ ] `runFullTrust` declaration and truthful supporting certification notes approved; no new unreviewed restricted capabilities.
