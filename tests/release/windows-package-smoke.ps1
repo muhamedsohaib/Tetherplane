@@ -60,6 +60,36 @@ try {
         }
     }
 
+    # Regression: never copy an install or touch a task if the agent argument
+    # contract is incomplete. All fixtures are synthetic inside this test root.
+    $badTaskArguments = @(
+        @{ Name = "empty"; Json = '[]' },
+        @{ Name = "missing-identity"; Json = '["--relay-url","wss://localhost.invalid/device"]' },
+        @{ Name = "duplicate-transports"; Json = '["--stdio-rpc","--relay-url","wss://localhost.invalid/device","--device-id","Leno","--device-credential-file","C:\test-only.credential"]' },
+        @{ Name = "missing-credential"; Json = '["--relay-url","wss://localhost.invalid/device","--device-id","Leno"]' }
+    )
+    foreach ($case in $badTaskArguments) {
+        $argsFile = Join-Path $root ("bad-agent-args-" + $case.Name + ".json")
+        $forbiddenInstall = Join-Path $root ("must-not-install-" + $case.Name)
+        $forbiddenState = Join-Path $root ("must-not-create-state-" + $case.Name)
+        [IO.File]::WriteAllText($argsFile, [string]$case.Json)
+        $denied = $false
+        try {
+            & $installScript -PackagePath $stage -InstallPrefix $forbiddenInstall -StateDir $forbiddenState -InstallScheduledTask -AgentArgumentsFile $argsFile
+        } catch {
+            if ($_.Exception.Message -notmatch "SCHEDULED_AGENT_PREFLIGHT_NO_GO") {
+                throw "unexpected Windows task preflight failure for synthetic case"
+            }
+            $denied = $true
+        }
+        if (-not $denied -or
+            (Test-Path -LiteralPath $forbiddenInstall) -or
+            (Test-Path -LiteralPath $forbiddenState)) {
+            throw "bad scheduled agent arguments did not fail before touching install/state"
+        }
+    }
+    Write-Output "WINDOWS_SCHEDULED_AGENT_INVALID_PREFLIGHT_PASS"
+
     $supervisorRoot = Join-Path $root "supervisor"
     $supervisorLaunch = Join-Path $supervisorRoot "launch"
     $supervisorBin = Join-Path $supervisorRoot "bin"

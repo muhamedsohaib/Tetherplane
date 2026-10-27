@@ -6,7 +6,8 @@ param(
     [switch]$Force,
     [switch]$IncludeRelay,
     [switch]$InstallScheduledTask,
-    [string]$AgentArgumentsFile
+    [string]$AgentArgumentsFile,
+    [switch]$PreflightOnly
 )
 
 $ErrorActionPreference = "Stop"
@@ -26,6 +27,84 @@ foreach ($required in @(
     if (-not (Test-Path -LiteralPath (Join-Path $package $required))) {
         throw "package is missing required artifact: $required"
     }
+}
+
+# Fail before any install/state writes or task replacement. A bare tetherd.exe
+# exits with CLI code 2: a scheduled agent must have a transport mode.
+# The argument file is parsed locally but its contents never enter diagnostics.
+$agentArgs = $null
+if ($InstallScheduledTask) {
+    if ([string]::IsNullOrWhiteSpace($AgentArgumentsFile)) {
+        throw "SCHEDULED_AGENT_PREFLIGHT_NO_GO: scheduled task requires a local argument file"
+    }
+    $agentArgsSource = (Resolve-Path -LiteralPath $AgentArgumentsFile -ErrorAction Stop).Path
+    $rawArgs = Get-Content -LiteralPath $agentArgsSource -Raw -ErrorAction Stop
+    # PowerShell 5.1 can unwrap a one-element JSON array into a scalar.
+    # Verify the original top-level shape, then normalize both forms.
+    if (-not $rawArgs.TrimStart().StartsWith('[') -or
+        -not $rawArgs.TrimEnd().EndsWith(']')) {
+        throw "SCHEDULED_AGENT_PREFLIGHT_NO_GO: arguments must be a JSON array"
+    }
+    try {
+        $decoded = ConvertFrom-Json -InputObject $rawArgs -ErrorAction Stop
+    } catch {
+        throw "SCHEDULED_AGENT_PREFLIGHT_NO_GO: invalid argument JSON"
+    }
+    $agentArgs = @($decoded)
+    if ($agentArgs.Count -eq 0) {
+        throw "SCHEDULED_AGENT_PREFLIGHT_NO_GO: missing transport and identity arguments"
+    }
+    foreach ($arg in $agentArgs) {
+        if (-not ($arg -is [string]) -or [string]::IsNullOrWhiteSpace($arg)) {
+            throw "SCHEDULED_AGENT_PREFLIGHT_NO_GO: empty or non-string agent argument"
+        }
+    }
+    $stdio = @($agentArgs | Where-Object { $_ -ceq '--stdio-rpc' }).Count
+    $remote = @($agentArgs | Where-Object { $_ -ceq '--relay-url' }).Count
+    # Stdio RPC is an on-demand foreground protocol, not a usable logon
+    # scheduled task. The background agent must have exactly one remote URL.
+    if ($stdio -ne 0 -or $remote -ne 1) {
+        throw "SCHEDULED_AGENT_PREFLIGHT_NO_GO: scheduled agent requires remote transport"
+    }
+    foreach ($flag in @('--relay-url', '--device-id', '--device-credential-file')) {
+        $indices = @()
+        for ($i = 0; $i -lt $agentArgs.Count; $i++) {
+            if ($agentArgs[$i] -ceq $flag) { $indices += $i }
+        }
+        if ($indices.Count -ne 1 -or $indices[0] -ge ($agentArgs.Count - 1) -or
+            [string]::IsNullOrWhiteSpace([string]$agentArgs[$indices[0] + 1]) -or
+            [string]$agentArgs[$indices[0] + 1] -like '--*') {
+            throw "SCHEDULED_AGENT_PREFLIGHT_NO_GO: incomplete or duplicate remote device argument"
+        }
+    }
+    # Never inspect, output or hash the referenced credential file here.
+    # On SAC-enforced Windows, refuse to schedule a new untrusted native PE.
+    # A valid signature is NOT proof SAC will admit execution; live proof remains.
+    $sacMode = $null
+    try {
+        $policy = Get-ItemProperty -LiteralPath 'HKLM:\SYSTEM\CurrentControlSet\Control\CI\Policy' -Name 'VerifiedAndReputablePolicyState' -ErrorAction Stop
+        $sacMode = [int]$policy.VerifiedAndReputablePolicyState
+    } catch {
+        # An unreadable policy is not proof that SAC is Off.
+    }
+    if ($sacMode -eq 1) {
+        try {
+            $signature = Get-AuthenticodeSignature -LiteralPath (Join-Path $package 'bin\tetherd.exe') -ErrorAction Stop
+        } catch {
+            throw "SCHEDULED_AGENT_PREFLIGHT_NO_GO: unable to verify native signature while SAC is On"
+        }
+        if ($signature.Status -ne [System.Management.Automation.SignatureStatus]::Valid) {
+            throw "SCHEDULED_AGENT_PREFLIGHT_NO_GO: SAC is On and native executable is not trusted-signed"
+        }
+    }
+}
+
+# A dry, read-only admission result lets CI and operators verify a candidate
+# without deleting/replacing any prior install or creating a task. This never
+# constitutes relay authentication or Windows SAC execution acceptance.
+if ($PreflightOnly) {
+    Write-Output 'TETHERPLANE_INSTALL_PREFLIGHT_PASS: no install/state/task changes'
+    return
 }
 
 if (Test-Path -LiteralPath $install) {
@@ -58,15 +137,7 @@ New-Item -ItemType Directory -Force -Path $configDir | Out-Null
 
 $taskName = $null
 if ($InstallScheduledTask) {
-    if (-not $AgentArgumentsFile) {
-        throw "-InstallScheduledTask requires -AgentArgumentsFile"
-    }
-    $agentArgsSource = (Resolve-Path -LiteralPath $AgentArgumentsFile).Path
-    $agentArgs = Get-Content -LiteralPath $agentArgsSource -Raw | ConvertFrom-Json
-    if (-not ($agentArgs -is [System.Array])) {
-        throw "AgentArgumentsFile must contain a JSON array of tetherd arguments"
-    }
-    $agentArgs | ConvertTo-Json -Depth 4 | Set-Content -LiteralPath (Join-Path $configDir "agent-args.json") -Encoding UTF8
+    ConvertTo-Json -InputObject $agentArgs -Depth 4 | Set-Content -LiteralPath (Join-Path $configDir "agent-args.json") -Encoding UTF8
 
     $taskName = "Tetherplane Agent"
     $action = New-ScheduledTaskAction -Execute "powershell.exe" -Argument ('-NoProfile -NonInteractive -WindowStyle Hidden -ExecutionPolicy Bypass -File "' + (Join-Path $install "launch\tetherplane-agent.ps1") + '"')
