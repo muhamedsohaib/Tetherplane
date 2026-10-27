@@ -77,6 +77,62 @@ try {
         throw 'Packaged app did not remain running long enough to verify its installed executable'
     }
     Write-Output 'MSIX_G2_PACKAGED_APP_ACTIVATION_PASS'
+
+    # The exact activated package process must serve the real local wizard.
+    # This read-only HTTP probe never obtains or sends the setup session token.
+    $netstatExecutable = Join-Path $env:SystemRoot 'System32\netstat.exe'
+    if (-not (Test-Path -LiteralPath $netstatExecutable -PathType Leaf)) {
+        throw 'Windows TCP listener inspector unavailable'
+    }
+    $verifiedHttp = $false
+    for ($attempt = 0; $attempt -lt 8; $attempt++) {
+        $lines = @(& $netstatExecutable -ano -p tcp)
+        if ($LASTEXITCODE -ne 0) { throw 'Windows TCP inspection failed' }
+        $pattern = '^\s*TCP\s+127\.0\.0\.1:(\d+)\s+\S+\s+LISTENING\s+' + [regex]::Escape([string]$activatedProcessId) + '\s*
+}
+finally {
+    if ($verified -and $null -ne $activatedProcessId) {
+        # Never terminate a PID unless it matched the exact installed test image.
+        Stop-Process -Id $activatedProcessId -Force -ErrorAction SilentlyContinue
+    }
+}
+
+        $port = $null
+        foreach ($line in $lines) {
+            $match = [regex]::Match([string]$line, $pattern, [Text.RegularExpressions.RegexOptions]::IgnoreCase)
+            if ($match.Success) {
+                $port = [int]$match.Groups[1].Value
+                break
+            }
+        }
+        if ($null -eq $port) {
+            Start-Sleep -Milliseconds 500
+            continue
+        }
+        $uri = 'http://127.0.0.1:' + [string]$port + '/'
+        $request = [System.Net.HttpWebRequest]([System.Net.WebRequest]::Create($uri))
+        $request.Timeout = 3000
+        $request.Proxy = $null
+        $response = $null
+        try {
+            $response = [System.Net.HttpWebResponse]$request.GetResponse()
+            $reader = [IO.StreamReader]::new($response.GetResponseStream())
+            try { $page = $reader.ReadToEnd() } finally { $reader.Dispose() }
+            if ([int]$response.StatusCode -ne 200 -or
+                $page -notmatch 'Connect this computer securely\.' -or
+                $response.Headers['Content-Security-Policy'] -notmatch "default-src 'none'" -or
+                $response.Headers['Referrer-Policy'] -cne 'no-referrer') {
+                throw 'Installed app served an unexpected setup page or weaker security headers'
+            }
+            $verifiedHttp = $true
+            break
+        }
+        finally {
+            if ($null -ne $response) { $response.Dispose() }
+        }
+    }
+    if (-not $verifiedHttp) { throw 'Installed app did not serve its localhost setup interface' }
+    Write-Output 'MSIX_G2_LOCAL_SETUP_HTTP_PASS'
 }
 finally {
     if ($verified -and $null -ne $activatedProcessId) {

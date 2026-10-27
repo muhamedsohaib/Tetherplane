@@ -31,3 +31,9 @@ Hosted disposable Windows acceptance must compile tetherd, bundle a trusted nati
 The first hosted Windows G2 run #40473813335 passed packaging, signed-runtime validation, pack/unpack byte integrity and disposable Add-Appx/Remove-Appx. It did **not** test Windows package AUMID activation.
 
 The next bounded read-only-in-production gate uses the Windows `IApplicationActivationManager` API to activate only the installed *development package*, checks its returned PID against the exact installed Node executable, terminates that matching test process, then removes the ephemeral MSIX and certificates. It runs solely on a guarded GitHub-hosted Windows PR runner. Browser UX, actual owner-approved pairing, Smart App Control On and user auto-start remain unverified and prohibited from release.
+
+
+## Next local setup HTTP admission gate
+After the AUMID PID check, the disposable Windows activation test inspects loopback TCP listeners owned by that **exact** process, requests only the public setup home page without a token, and asserts HTTP 200, expected UI copy, a restrictive content security policy and `Referrer-Policy: no-referrer`. It never sends a pairing request, reads a credential or makes a remote call. The package and test process are removed regardless of outcome.
+
+Evidence remains specifically bounded: an HTTP page response is **not** equivalent to human browser usability, successful real OAuth/device pairing or Smart App Control On enforcement.

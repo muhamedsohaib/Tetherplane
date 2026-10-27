@@ -62,7 +62,7 @@ if (!permitted) {
     if (code !== 0 || signal) {
       console.error("MSIX_RUNTIME_G2_NO_GO: see data-only phase report; no public signing or release");
       process.exitCode = 1;
-    } else if (disposition !== "PACKAGE_INSTALL_REMOVE_PASS; OWNER_PAIRING/ACTIVATION/STORE NOT TESTED") {
+    } else if (disposition !== "PACKAGE_INSTALL_REMOVE_PASS; OWNER_PAIRING/BROWSER/SAC/STORE NOT TESTED") {
       console.error("MSIX_RUNTIME_G2_NO_GO: expected final install/remove report not observed");
       process.exitCode = 1;
     } else {

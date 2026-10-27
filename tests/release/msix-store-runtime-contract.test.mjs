@@ -96,3 +96,17 @@ test("packaged app activation uses Windows AUMID, is restricted to CI and cleans
   assert.match(activation,/if \(\$verified -and \$null -ne \$activatedProcessId\)/);
   assert.doesNotMatch(activation,/Invoke-WebRequest|Invoke-RestMethod|Register-ScheduledTask|Unregister-ScheduledTask|Install-Package/);
 });
+
+test("package activation checks the real localhost wizard with exact process ownership and security headers",()=>{
+  assert.match(activation,/netstat\.exe/);
+  assert.match(activation,/LISTENING/);
+  assert.match(activation,/127/);
+  assert.match(activation,/activatedProcessId/);
+  assert.match(activation,/Connect this computer securely/);
+  assert.match(activation,/Content-Security-Policy/);
+  assert.match(activation,/Referrer-Policy/);
+  assert.match(activation,/MSIX_G2_LOCAL_SETUP_HTTP_PASS/);
+  assert.match(script,/\$report\.local_setup_http = 'PASS'/);
+  assert.match(wrapper,/OWNER_PAIRING\/BROWSER\/SAC\/STORE NOT TESTED/);
+  assert.doesNotMatch(activation,/x-tetherplane-setup|device-credential|pair\/approve/i);
+});

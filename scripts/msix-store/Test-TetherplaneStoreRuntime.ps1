@@ -29,6 +29,7 @@ $report = [ordered]@{
     dev_package_signature = 'NOT_RUN'
     add_appx = 'NOT_RUN'
     packaged_app_activation = 'NOT_RUN'
+    local_setup_http = 'NOT_RUN'
     remove_appx = 'NOT_RUN'
     certificate_cleanup = 'NOT_RUN'
     agent_binary_sha256 = $null
@@ -276,10 +277,12 @@ try {
     $activationProbe = Join-Path $repo 'scripts\msix-store\Test-PackagedAppActivation.ps1'
     $installedNode = Join-Path $installed[0].InstallLocation 'runtime\node.exe'
     $activated = & $activationProbe -PackageFamilyName $installed[0].PackageFamilyName -ExecutablePath $installedNode
-    if (($activated -join ' ') -notmatch 'MSIX_G2_PACKAGED_APP_ACTIVATION_PASS') {
-        throw 'Native AUMID activation could not be verified from installed package'
+    if (($activated -join ' ') -notmatch 'MSIX_G2_PACKAGED_APP_ACTIVATION_PASS' -or
+        ($activated -join ' ') -notmatch 'MSIX_G2_LOCAL_SETUP_HTTP_PASS') {
+        throw 'Installed package activation and local wizard HTTP verification did not both pass'
     }
     $report.packaged_app_activation = 'PASS'
+    $report.local_setup_http = 'PASS'
     Save-MsixPhase 'packaged_app_activation_passed'
 
     Save-MsixPhase 'remove_appx_started'
@@ -288,7 +291,7 @@ try {
     $remaining = @(Get-AppxPackage -Name $report.package_identity -ErrorAction Stop)
     if ($remaining.Count -ne 0) { throw 'MSIX identity remains installed after removal.' }
     $report.remove_appx = 'PASS'
-    $report.disposition = 'PACKAGE_INSTALL_REMOVE_PASS; OWNER_PAIRING/ACTIVATION/STORE NOT TESTED'
+    $report.disposition = 'PACKAGE_INSTALL_REMOVE_PASS; OWNER_PAIRING/BROWSER/SAC/STORE NOT TESTED'
     Save-MsixPhase 'install_remove_complete'
 } catch {
     $failed = $_.Exception.Message
@@ -325,4 +328,4 @@ if ($null -ne $failed -or $report.certificate_cleanup -eq 'FAILED' -or $report.r
     Write-Error ("MSIX_FEASIBILITY_NO_GO: " + $report.error)
     exit 1
 }
-Write-Output 'MSIX_FEASIBILITY_PACKAGE_INSTALL_REMOVE_PASS; OWNER_PAIRING/ACTIVATION/STORE NOT TESTED'
+Write-Output 'MSIX_FEASIBILITY_PACKAGE_INSTALL_REMOVE_PASS; OWNER_PAIRING/BROWSER/SAC/STORE NOT TESTED'
