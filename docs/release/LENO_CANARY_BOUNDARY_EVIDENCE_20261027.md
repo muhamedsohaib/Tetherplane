@@ -56,6 +56,35 @@ The read-only script `scripts/msix-store/Inspect-Leno-Canary-Boundary-ReadOnly.p
 
 The script has no policy, task or installation mutation. It was parsed, statically screened and run in disposable GitHub-hosted Windows PowerShell 5.1 CI (#40579436996). **CI is not the Leno observation.**
 
+## Third live Leno observation — connection and startup generation
+
+User-operated snapshot at `2026-10-27T20:39:30.2339058Z` (no changes made):
+
+| Evidence | Exact observation |
+|---|---|
+| Canary task state / multiple instances | `Running` / `IgnoreNew` |
+| Canary user context | `Interactive`, `Highest` |
+| Canary previous result | `0x800710E0`; the reason for the refused request remains **unproven** |
+| Active `tetherd.exe` PID | `20396` |
+| PID creation time | `2026-10-24T10:02:26.7665250Z` |
+| Agent established peer | `TAILNET_VAULTER`, one TCP connection |
+| TaskScheduler Operational event query | Latest bounded 800 messages / 72h returned **no matching canary events**, which does not establish that no events exist |
+| Code Integrity block | Event `3077` for `tetherd.exe` at `2026-10-27T08:00:45.0996612Z` |
+
+**Key timeline**: The existing PID began on **October 24**, nearly three days before the October 27 denied launch. The denial is therefore a separate attempt; it cannot have prevented the October 24 process from starting. With `IgnoreNew`, a refused concurrent attempt is plausible but **not verified as the 0x800710E0 cause**. The agent currently talks to VAULTER at the TCP layer; no conclusion may be drawn from the TCP socket alone about successful authentication.
+
+### Source-specific relay inference
+
+Inspected repo `relay/src/routing/device-router.ts`, `relay/src/devices/ws-gateway.ts`, `agent/tetherd/src/relay_ws.rs` on the current diagnostic branch:
+
+- `DeviceRouter.#resolveConnection` returns `capability_unavailable` if unknown, `permission_denied` if wrong account/revoked, and **`disconnected: requested device is offline`** when the named device is a valid registry binding but **no active WebSocket is in the router's in-memory `#connections` map**.
+- `DeviceWebSocketGateway` registers a live device only **after** authenticating its Device Authorization header and accepting the WebSocket upgrade, then calling `router.connectDevice`.
+- The Rust client reconnects after retryable transport errors; credential 401/403 is **fatal** for a given process. A connected TCP socket to VAULTER need not be connected to the **same relay instance/path** serving the MCP client, or even represent a completed device WebSocket.
+
+**Narrowest proven failed boundary:** In the connector-facing relay instance, the authenticated Leno device WebSocket is not registered at the time of `device.status(Leno)`. The corresponding old process and network peer are observed but exact executable version/hash, remote TCP port, active relay instance, device-id argument and protocol status remain unknown.
+
+**Do not restart or disable the only old process yet.** It might be the only functioning background process and replacing it may encounter the observed SAC block. Next smallest low-risk observation is a local classification of that process's remote port plus sanitized configured device ID/relay endpoint (not the credential, command line, absolute path or IP). A matched relay instance can then be checked for device-session registration through an already-authorized read-only interface. Do not inspect other users' relay identities or persist session tokens.
+
 ## Do-not-touch and release gate
 
 Do **not** disable Smart App Control, replace device credentials, restart or re-enable disabled Tetherplane tasks, change relay identity/authentication, modify the user profile ACLs, or install the development-signed MSIX onto this active canary without a separately approved, reversible, signed trial.
