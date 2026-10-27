@@ -167,11 +167,11 @@ test("MSIX reports native PE Authenticode state separately from signed package, 
 
 
 test("native helper is declared under MSIX identity but hidden from Start",()=>{
-  const entries = manifest.match(/<Application Id="[^"]+"[\\s\\S]*?<\\/Application>/g) || [];
+  const entries = manifest.match(/<Application Id="[^"]+"[\s\S]*?<\/Application>/g) || [];
   assert.equal(entries.length, 2, "exactly one user-facing app and one native helper");
   const agent = entries.find(x => /Id="Agent"/.test(x));
   assert.ok(agent, "native agent must be registered in manifest");
-  assert.match(agent, /Executable="bin\\\\tetherd\\.exe"/);
+  assert.ok(agent.includes('Executable="bin\\tetherd.exe"'));
   assert.match(agent, /RuntimeBehavior="packagedClassicApp"/);
   assert.match(agent, /TrustLevel="mediumIL"/);
   assert.match(agent, /AppListEntry="none"/);
