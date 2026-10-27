@@ -210,7 +210,7 @@ test("new Windows credentials must be protected before any plaintext write",()=>
   assert.match(storage,/windowsHide: true/);
   assert.match(integration,/Get-Acl -LiteralPath/);
   assert.match(integration,/AreAccessRulesProtected/);
-  assert.match(integration,/unexpected principal/);
+  assert.match(integration,/unintended principal/);
   assert.doesNotMatch(storage,/Set-MpPreference|Set-Acl|Register-ScheduledTask|Unregister-ScheduledTask|ExecutionPolicy Bypass|\\bnet user\\b/i);
   const store=app.indexOf("initializeCredentialDirectory(stateRoot)");
   const secretWrite=app.indexOf("await writeFile(credentialPath");
