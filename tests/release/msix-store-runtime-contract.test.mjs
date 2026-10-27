@@ -164,3 +164,34 @@ test("MSIX reports native PE Authenticode state separately from signed package, 
   assert.match(script,/PENDING_REAL_SAC_ON_ACCEPTANCE/);
   assert.doesNotMatch(script,/(?:citool\.exe\s+-r|Set-MpPreference|VerifiedAndReputablePolicyState.*Set-ItemProperty|reg add.*CodeIntegrity)/i);
 });
+
+
+test("native helper is declared under MSIX identity but hidden from Start",()=>{
+  const entries = manifest.match(/<Application Id="[^"]+"[\s\S]*?<\/Application>/g) || [];
+  assert.equal(entries.length, 2, "exactly one user-facing app and one native helper");
+  const agent = entries.find(x => /Id="Agent"/.test(x));
+  assert.ok(agent, "native agent must be registered in manifest");
+  assert.ok(agent.includes('Executable="bin\\tetherd.exe"'));
+  assert.match(agent, /RuntimeBehavior="packagedClassicApp"/);
+  assert.match(agent, /TrustLevel="mediumIL"/);
+  assert.match(agent, /AppListEntry="none"/);
+  assert.doesNotMatch(agent, /startupTask|uap11:Parameters|runFullTrust/i);
+  assert.equal((manifest.match(/AppListEntry="none"/g)||[]).length, 1);
+  const unregistered = manifest.replace(agent, "");
+  assert.equal((unregistered.match(/<Application Id=/g)||[]).length, 1);
+  const visible = agent.replace('AppListEntry="none"', 'AppListEntry="default"');
+  assert.doesNotMatch(visible, /AppListEntry="none"/);
+});
+
+test("installed MSIX native agent must reach its argument parser without credentials or relay",()=>{
+  assert.match(script,/installed_native_parser_probe = 'NOT_RUN'/);
+  assert.match(script,/installed_native_parser_scope = 'DISPOSABLE_WINDOWS_RUNNER_ONLY; SAC_NOT_TESTED'/);
+  assert.match(script,/Join-Path \$installed\[0\]\.InstallLocation 'bin\\tetherd\.exe'/);
+  assert.match(script,/installed_native_parser_sha256/);
+  assert.match(script,/installed_native_parser_probe_started/);
+  assert.match(script,/unknown tetherd argument:/);
+  assert.match(script,/WaitForExit\(5000\)/);
+  assert.match(script,/installed_native_parser_probe = 'PASS'/);
+  assert.match(script,/installed_native_parser_probe_passed/);
+  assert.doesNotMatch(script,/Set-MpPreference|Register-ScheduledTask|Unregister-ScheduledTask|ExecutionPolicy Bypass/);
+});

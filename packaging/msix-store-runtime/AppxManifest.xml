@@ -26,6 +26,17 @@
                           Square44x44Logo="Assets\Logo44.png"
                           BackgroundColor="#20252A" />
     </Application>
+    <!-- The Windows packaged-classic-app launch model requires native helper
+         executables to be declared even when they have no Start menu entry.
+         Do not enable startup, grant capabilities, or expose a second tile. -->
+    <Application Id="Agent" Executable="bin\tetherd.exe"
+                 uap10:RuntimeBehavior="packagedClassicApp" uap10:TrustLevel="mediumIL">
+      <uap:VisualElements AppListEntry="none" DisplayName="Tetherplane Agent (DEV ONLY)"
+                          Description="Internal agent launched only after owner approval"
+                          Square150x150Logo="Assets\Logo150.png"
+                          Square44x44Logo="Assets\Logo44.png"
+                          BackgroundColor="#20252A" />
+    </Application>
   </Applications>
   <Capabilities><rescap:Capability Name="runFullTrust" /></Capabilities>
 </Package>

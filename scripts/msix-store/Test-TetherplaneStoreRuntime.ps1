@@ -34,6 +34,10 @@ $report = [ordered]@{
     certificate_cleanup = 'NOT_RUN'
     agent_binary_sha256 = $null
     agent_binary_authenticode_status = 'NOT_CHECKED'
+    installed_native_parser_probe = 'NOT_RUN'
+    installed_native_parser_exit_code = $null
+    installed_native_parser_sha256 = $null
+    installed_native_parser_scope = 'DISPOSABLE_WINDOWS_RUNNER_ONLY; SAC_NOT_TESTED'
     node_runtime_authenticode_status = 'NOT_CHECKED'
     smart_app_control_enforcement_test = 'NOT_RUN'
     inner_binary_trust_release_gate = 'UNVERIFIED'
@@ -283,6 +287,56 @@ try {
     $installedFullName = $installed[0].PackageFullName
     $report.add_appx = 'PASS'
     Save-MsixPhase 'add_appx_passed'
+
+    # A signed MSIX can install and its Node UI can launch while its native
+    # child still fails to execute. Verify the *installed* PE independently.
+    # This is a credential-free, no-relay parser probe on a disposable runner;
+    # it is NOT Smart App Control On, Store signing, or authenticated onboarding.
+    $installedNative = Join-Path $installed[0].InstallLocation 'bin\tetherd.exe'
+    if (-not (Test-Path -LiteralPath $installedNative -PathType Leaf)) {
+        throw 'The installed MSIX native agent is missing.'
+    }
+    $report.installed_native_parser_sha256 = (Get-Sha256Hex -Path $installedNative)
+    if ($report.installed_native_parser_sha256 -cne $report.agent_binary_sha256) {
+        throw 'Installed native agent SHA-256 does not match the reviewed build.'
+    }
+    $invalidSwitch = '--tetherplane-msix-nonconnecting-parser-probe'
+    $psi = New-Object System.Diagnostics.ProcessStartInfo
+    $psi.FileName = $installedNative
+    $psi.Arguments = $invalidSwitch
+    $psi.UseShellExecute = $false
+    $psi.CreateNoWindow = $true
+    $psi.RedirectStandardOutput = $true
+    $psi.RedirectStandardError = $true
+    Save-MsixPhase 'installed_native_parser_probe_started'
+    $probeProcess = $null
+    try {
+        $probeProcess = [System.Diagnostics.Process]::Start($psi)
+        if ($null -eq $probeProcess) { throw 'Installed native agent could not be launched.' }
+        if (-not $probeProcess.WaitForExit(5000)) {
+            $probeProcess.Kill()
+            [void]$probeProcess.WaitForExit(2000)
+            throw 'Installed native argument-parser probe exceeded the five-second deadline.'
+        }
+        $report.installed_native_parser_exit_code = $probeProcess.ExitCode
+        $probeStderr = $probeProcess.StandardError.ReadToEnd().Trim()
+        $probeStdout = $probeProcess.StandardOutput.ReadToEnd()
+        if ($probeProcess.ExitCode -ne 2 -or
+            $probeStderr -cne ('unknown tetherd argument: ' + $invalidSwitch) -or
+            $probeStdout.Length -ne 0) {
+            throw 'Installed native argument parser did not produce the expected fail-closed result.'
+        }
+        $report.installed_native_parser_probe = 'PASS'
+        Save-MsixPhase 'installed_native_parser_probe_passed'
+    } finally {
+        if ($null -ne $probeProcess) {
+            if (-not $probeProcess.HasExited) {
+                $probeProcess.Kill()
+                [void]$probeProcess.WaitForExit(2000)
+            }
+            $probeProcess.Dispose()
+        }
+    }
 
     # Exercise the actual installed developer package through Windows AUMID
     # activation, without owner credentials, pairing or startup registration.
