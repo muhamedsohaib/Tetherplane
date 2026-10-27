@@ -228,7 +228,18 @@ export async function createWizard(options = {}) {
   const approvalProbe = options.approvalProbe || probeApprovedDevice;
   const token = randomBytes(32).toString("base64url");
   const current = { pending: null, agent: null, status: "idle", lastError: null, stopRequested: false };
-  let saved = await readSavedConfig(stateRoot);
+  let saved = null;
+  let blockedExistingIdentity = false;
+  try {
+    saved = await readSavedConfig(stateRoot);
+  } catch {
+    // Preserve damaged or insecure existing state. Serve an informational
+    // recovery screen instead of crashing or asking for replacement pairing.
+    // No credential contents, ACL principals or paths enter HTTP responses.
+    blockedExistingIdentity = true;
+    current.status = "existing_identity_blocked";
+    current.lastError = "Saved identity cannot be verified. No files were changed; contact the device owner for recovery.";
+  }
   const server = createServer(async (req, res) => {
     try {
       const origin = "http://127.0.0.1:" + server.address().port;
@@ -256,11 +267,13 @@ export async function createWizard(options = {}) {
       if (req.method === "GET" && url.pathname === "/api/status") {
         return send(res, 200, {
           state: current.status, hasSavedIdentity: Boolean(saved),
+          identityBlocked: blockedExistingIdentity,
           pending: current.pending ? { userCode: current.pending.userCode, expiresAt: new Date(current.pending.expiresAt).toISOString() } : null,
           lastError: current.lastError,
           connected: "not_verified"
         });
       }
+      if (blockedExistingIdentity) return send(res, 403, { error: "Saved identity needs owner review; pairing and agent controls are disabled." });
       if (req.method !== "POST" || req.headers.origin !== origin) return send(res, 403, { error: "Same-origin user action required." });
       const body = await parseBody(req);
       if (url.pathname === "/api/pair") {

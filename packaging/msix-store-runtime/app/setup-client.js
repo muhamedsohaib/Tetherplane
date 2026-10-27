@@ -42,6 +42,17 @@ async function refresh() {
     const r = await call("/api/status", null, "GET");
     status.textContent = r.state + " — connection not verified";
     if (r.lastError) feedback.textContent = r.lastError;
+    if (r.identityBlocked) {
+      // No pairing, resume, stop or agent-start interactions on this screen.
+      // The server independently refuses every mutating operation.
+      form.hidden = true;
+      document.getElementById("challenge").hidden = true;
+      document.getElementById("resume").hidden = true;
+      document.getElementById("stop").hidden = true;
+      document.getElementById("blocked").hidden = false;
+      status.textContent = "Stopped — saved device identity needs owner review";
+      return;
+    }
     if (r.hasSavedIdentity) { form.hidden = true; document.getElementById("resume").hidden = false; }
     else if (r.state === "pairing_expired") {
       document.getElementById("challenge").hidden = false;

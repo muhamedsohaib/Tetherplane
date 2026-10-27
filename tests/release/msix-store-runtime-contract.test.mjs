@@ -244,3 +244,25 @@ test("Windows saved identity must reverify actual state ACL before reading or re
   assert.match(integration,/Windows ACL drift on the saved state root/);
   assert.doesNotMatch(storage,/Set-MpPreference|ExecutionPolicy Bypass|Register-ScheduledTask|Unregister-ScheduledTask/);
 });
+
+
+test("unverified saved identity is recoverable in local UI but all mutations fail closed",()=>{
+  const html=txt("packaging/msix-store-runtime/app/setup.html");
+  const client=txt("packaging/msix-store-runtime/app/setup-client.js");
+  const integration=txt("tests/release/msix-store-runtime.test.mjs");
+  assert.match(app,/blockedExistingIdentity = true/);
+  assert.match(app,/current.status = "existing_identity_blocked"/);
+  assert.match(app,/identityBlocked: blockedExistingIdentity/);
+  assert.match(app,/if \(blockedExistingIdentity\) return send\(res, 403/);
+  assert.match(html,/id="blocked" hidden role="alert"/);
+  assert.match(html,/The existing files have been preserved/);
+  assert.match(client,/if \(r\.identityBlocked\)/);
+  assert.match(client,/document\.getElementById\("blocked"\)\.hidden = false/);
+  assert.match(integration,/invalid saved identity opens safe recovery page/);
+  assert.match(integration,/agentSpawns,0/);
+  const statusBranch=app.indexOf('req.method === "GET" && url.pathname === "/api/status"');
+  const denyBranch=app.indexOf("if (blockedExistingIdentity) return send(res, 403");
+  assert.ok(statusBranch>0 && denyBranch>statusBranch,
+    "status must remain available before the mutation deny guard");
+  assert.doesNotMatch(app,/Register-ScheduledTask|Set-MpPreference|new OAuth client/i);
+});
