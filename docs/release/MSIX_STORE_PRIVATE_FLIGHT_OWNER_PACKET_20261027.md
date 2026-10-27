@@ -23,6 +23,13 @@ The CI test MSIX was temporarily signed with a synthetic development certificate
 
 **Current account status: UNKNOWN.** Before choosing an account type, check whether a developer account already exists. The correct publisher identity must come from the actual Partner Center app's **Product identity** page; never derive a publisher subject from a brand or a guessed legal name.
 
+**HARD BRAND REQUIREMENT (prior owner instruction):** The public-facing Store **Published by** publisher must display **Tetherplane**, not the owner's personal name. This is separate from the **Product name**, which also must be Tetherplane. Microsoft's Store Policy 10.14 requires a **Company** account for businesses or professional distributors and when a reasonable consumer would interpret the publisher as a business entity; its Store listing documentation says **Published by** always uses the publisher's display name. The owner previously reported having **no legally registered company in their name**, and `Sohaib Labs` is currently a brand rather than a verified entity. **Do not register an Individual publisher as a workaround**, claim that a product-name reservation changes Published by, impersonate a registered entity, or invent a legal publisher. Before enrollment, independently establish a legitimate eligible legal publisher/trade name and confirm Microsoft will permit the desired display name, or obtain an authoritative Microsoft determination of an acceptable nonbusiness route satisfying both policy and the owner's branding requirement. **If unresolved, the Store path is blocked**; continue isolated development without publication.
+
+Publisher naming references:
+- https://learn.microsoft.com/en-us/windows/apps/publish/store-policies (section 10.14)
+- https://learn.microsoft.com/en-us/windows/apps/publish/publish-your-app/msix/add-additional-information (Published by field)
+
+
 Microsoft's current guidance:
 - Both Individual and Company accounts can be registered through the current free onboarding experience; eligibility and verification are determined by Microsoft.
 - An **Individual** account publishes under a legal person's name; Microsoft's guidance describes this path for work *not related to a business, trade or profession*.
