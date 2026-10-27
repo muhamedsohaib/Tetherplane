@@ -57,6 +57,9 @@ function Invoke-TestPreflight {
         if ($errorText -match 'localhost[.]invalid|test-only[.]credential|SYNTHETIC_PRIVATE_VALUE') {
             throw 'Preflight failure leaked source arguments'
         }
+        if ($Label -eq 'sac-unsigned-pe-denied' -and $errorText -notmatch 'SAC is On') {
+            throw 'Synthetic SAC enforcement did not reach native signature admission gate'
+        }
     }
     if ((Test-Path -LiteralPath $install) -or (Test-Path -LiteralPath $state)) {
         throw ('Preflight unexpectedly created install/state files: ' + $Label)
