@@ -218,7 +218,7 @@ test(
       );
 
       const pagesResult = await waitFor(async () => {
-        const response = await call(local.client, "browser", {
+        const response = await call(activeLocal.client, "browser", {
           op: "pages",
           args: {},
         });
