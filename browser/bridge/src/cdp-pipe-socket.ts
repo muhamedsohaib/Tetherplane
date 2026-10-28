@@ -46,11 +46,15 @@ export class CdpPipeSocket extends EventEmitter {
       }
     });
     this.#output.once("end", () => this.#markClosed());
-    this.#output.once("error", (error) => {
+    // Keep listeners installed after shutdown: late stream errors otherwise
+    // become unhandled EventEmitter exceptions and can crash the broker.
+    this.#output.on("error", (error) => {
+      if (this.#closed) return;
       this.emit("error", error);
       this.#markClosed();
     });
-    this.#input.once("error", (error) => {
+    this.#input.on("error", (error) => {
+      if (this.#closed) return;
       this.emit("error", error);
       this.#markClosed();
     });
