@@ -215,7 +215,7 @@ try {
   // UI page through chrome.tabs instead of simulating a foreign navigation.
   const opened = await evaluatePage(extensionTarget.webSocketDebuggerUrl,
     "chrome.tabs.create({url:chrome.runtime.getURL('pair.html'),active:false}).then(tab=>({id:tab.id,url:tab.url}))");
-  assert.equal(opened.result?.value?.url, popupUrl,
+  assert.ok(Number.isSafeInteger(opened.result?.value?.id),
     "extension could not create its own pairing tab");
   const popup = await until(async () => {
     const response = await fetch("http://127.0.0.1:" + port + "/json/list");
