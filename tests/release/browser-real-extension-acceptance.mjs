@@ -191,9 +191,14 @@ try {
   assert.match(id, /^[a-p]{32}$/);
   result.actualExtensionLoaded = true;
 
-  const wsPort = await availablePort();
-  const pairPort = await availablePort();
-  const rpcPort = await availablePort();
+  let wsPort = await availablePort();
+  let rpcPort = await availablePort();
+  // Real operator pairing uses the fixed loopback endpoint in pair.ts.
+  // This acceptance runs only on a disposable hosted Windows runner; it
+  // must fail if that port is occupied rather than disturb any other host.
+  const pairPort = 17656;
+  while (wsPort === pairPort) wsPort = await availablePort();
+  while (rpcPort === pairPort || rpcPort === wsPort) rpcPort = await availablePort();
   assert.equal(new Set([wsPort, pairPort, rpcPort]).size, 3);
 
   await writeFile(path.join(state, "browser-bridge.token"), token + "\n", {mode: 0o600});
