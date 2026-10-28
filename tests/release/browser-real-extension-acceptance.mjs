@@ -295,12 +295,32 @@ try {
   assert.equal(action.data.state, "verified", JSON.stringify(action.data));
   result.verifiedBrowserAction = true;
 
+  // The extension popup may close or be absent from Chrome's tab list.
+  // Exercise a real ordinary HTTP tab, then revoke a local synthetic grant.
+  // A revoked tab must not remain readable by a remote browser RPC caller.
+  const humanCreated = await evaluatePage(extensionTarget.webSocketDebuggerUrl,
+    "chrome.tabs.create({url:" + JSON.stringify(fixtureUrl) +
+    ",active:false}).then(tab=>({id:tab.id}))");
+  const humanTabId = humanCreated.result?.value?.id;
+  assert.ok(Number.isSafeInteger(humanTabId),
+    "disposable browser did not create an unshared ordinary tab");
+  const locallyShared = await evaluatePage(extensionTarget.webSocketDebuggerUrl,
+    "chrome.runtime.sendMessage({type:'tetherplane.share_current_tab',tab_id:" +
+    humanTabId + ",ttl_ms:300000,allow_navigate:false,allow_upload:false})");
+  assert.equal(locallyShared.result?.value?.ok, true,
+    "synthetic local owner could not share the fixture tab");
+  const locallyRevoked = await evaluatePage(extensionTarget.webSocketDebuggerUrl,
+    "chrome.runtime.sendMessage({type:'tetherplane.detach_current_tab',tab_id:" +
+    humanTabId + "})");
+  assert.equal(locallyRevoked.result?.value?.ok, true,
+    "synthetic local owner could not revoke fixture tab access");
   const pages = await rpc(rpcPort, "pages");
-  const humanPage = pages.data?.pages?.find(p =>
-    p.ownership === "human" && p.url.startsWith("chrome-extension://"));
-  assert.ok(humanPage, "expected unshared extension popup to be human-owned");
+  const humanPage = pages.data?.pages?.find(p => p.tab_id === humanTabId);
+  assert.ok(humanPage, "revoked ordinary tab is absent from ownership registry");
+  assert.equal(humanPage.ownership, "human");
   const forbidden = await rpc(rpcPort, "snapshot", {page_id: humanPage.page_id});
-  assert.equal(forbidden.status, "error");
+  assert.equal(forbidden.status, "error",
+    "RELEASE_NO_GO: remote snapshot still reads a revoked human-owned tab");
   assert.equal(forbidden.error.code, "permission_denied");
   result.humanTabDenied = true;
 
