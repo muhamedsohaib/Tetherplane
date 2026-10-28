@@ -304,12 +304,12 @@ try {
   const humanTabId = humanCreated.result?.value?.id;
   assert.ok(Number.isSafeInteger(humanTabId),
     "disposable browser did not create an unshared ordinary tab");
-  const locallyShared = await evaluatePage(extensionTarget.webSocketDebuggerUrl,
+  const locallyShared = await evaluatePage(popup.webSocketDebuggerUrl,
     "chrome.runtime.sendMessage({type:'tetherplane.share_current_tab',tab_id:" +
     humanTabId + ",ttl_ms:300000,allow_navigate:false,allow_upload:false})");
   assert.equal(locallyShared.result?.value?.ok, true,
     "synthetic local owner could not share the fixture tab");
-  const locallyRevoked = await evaluatePage(extensionTarget.webSocketDebuggerUrl,
+  const locallyRevoked = await evaluatePage(popup.webSocketDebuggerUrl,
     "chrome.runtime.sendMessage({type:'tetherplane.detach_current_tab',tab_id:" +
     humanTabId + "})");
   assert.equal(locallyRevoked.result?.value?.ok, true,
