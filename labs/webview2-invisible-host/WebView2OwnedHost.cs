@@ -92,7 +92,7 @@ internal sealed class WebView2OwnedHost : Form
                 }
             };
             Send(new { ready = true });
-            _ = Task.Run(() => ReadRequestsAsync());
+            Task.Run(() => ReadRequestsAsync());
         }
         catch
         {
