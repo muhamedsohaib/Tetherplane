@@ -207,13 +207,11 @@ async fn main() {
 
     let transport = options.transport;
 
-    let principal = match load_principal_profile(options.principal_profile.as_ref()) {
-        Ok(principal) => principal,
-        Err(message) => {
+    let principal = load_principal_profile(options.principal_profile.as_ref())
+        .unwrap_or_else(|message| {
             eprintln!("{message}");
             std::process::exit(2);
-        }
-    };
+        });
 
     if let Err(message) = validate_browser_only_launch(
         options.browser_only,
@@ -225,13 +223,11 @@ async fn main() {
         std::process::exit(2);
     }
 
-    let browser_token = match load_browser_token(options.browser_bridge_token_file.as_ref()) {
-        Ok(token) => token,
-        Err(message) => {
+    let browser_token = load_browser_token(options.browser_bridge_token_file.as_ref())
+        .unwrap_or_else(|message| {
             eprintln!("{message}");
             std::process::exit(2);
-        }
-    };
+        });
 
     let browser_provider = if let Some(address) = options.browser_bridge {
         match BrowserProvider::connect_with_retry(
