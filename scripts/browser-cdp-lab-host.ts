@@ -44,7 +44,11 @@ async function main(): Promise<void> {
     throw new Error("CDP_LAB_CHROMIUM_NOT_AVAILABLE");
   }
 
-  const control = await launchCdpOwnedBrowser({ executablePath });
+  // Network request interception is installed before first navigation.
+  const control = await launchCdpOwnedBrowser({
+    executablePath,
+    networkOrigin: labOrigin,
+  });
   const backend = new CdpBrowserBackend({ control, pollIntervalMs: 20 });
   let server: Awaited<ReturnType<typeof startBrowserRpcServer>> | null = null;
   let resolveStop!: () => void;
