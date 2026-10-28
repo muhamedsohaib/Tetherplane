@@ -1,8 +1,15 @@
 # Tetherplane
 
-Tetherplane is an open-source control plane for AI-operated computers. It gives AI clients a small, provider-neutral interface for files, processes, browsers, desktop UI, batching, local policy, durable jobs, and optional remote routing.
+Tetherplane is open-source connectivity infrastructure for owner-authorized AI computer use through MCP (Model Context Protocol). It offers a provider-neutral interface for files, processes, browsers and desktop interaction, with local permission enforcement and optional remote device routing.
 
 The local agent is the final authority. Remote relays and AI clients can route requests, but they cannot override stricter local policy.
+
+## Downloads, privacy and code signing
+
+- [Public Windows v0.1.0 release](https://github.com/muhamedsohaib/Tetherplane/releases/tag/v0.1.0) and [installation guidance](docs/release.md). The published Windows ZIP is **not represented as SignPath-signed**. Clean-install Smart App Control acceptance remains unverified.
+- [Privacy policy — proposal pending maintainer review](PRIVACY.md), covering local state, remote relay visibility and OAuth data handling. This is **not yet an operative hosted-service privacy policy**.
+- [Code signing policy — SignPath Foundation application pending](docs/code-signing-policy.md). No active signing or trust approval is claimed.
+- [Application evidence, release-page addendum and approval gates](docs/release/SIGNPATH_APPLICATION_PREP_20261028.md).
 
 ## Default AI-facing surface
 
