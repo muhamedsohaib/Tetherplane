@@ -5,6 +5,7 @@
 // It never reads credentials, runs the agent, or changes existing installations.
 import { readFile, writeFile } from "node:fs/promises";
 import { resolve, sep } from "node:path";
+import { fileURLToPath } from "node:url";
 
 const changes = new Map([
   ["runtime-app.mjs", [
@@ -48,7 +49,7 @@ export function assertApprovedScratchPath(directory) {
   }
 }
 
-const isMain = process.argv[1] && resolve(process.argv[1]) === decodeURI(new URL(import.meta.url).pathname).replace(/^\/([A-Za-z]:\/)/, "$1");
+const isMain = process.argv[1] && resolve(process.argv[1]) === fileURLToPath(import.meta.url);
 if (isMain) {
   const mode = process.argv[2];
   const folder = process.argv[3];
