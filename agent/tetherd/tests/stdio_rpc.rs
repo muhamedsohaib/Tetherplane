@@ -644,3 +644,62 @@ fn browser_only_stdio_cannot_read_files_or_launch_processes_even_when_forged() {
     assert!(child.wait().unwrap().success());
     std::fs::remove_file(&path).unwrap();
 }
+
+
+#[test]
+fn release_candidate_browser_outage_must_not_disconnect_local_device_core() {
+    const CAPS_ID: &str = "00000000-0000-4000-8000-0000000000d1";
+
+    // A configured but unreachable browser host and an absent local browser
+    // token must not terminate the device's independently authenticated core.
+    // This is a stdio-only disposable tetherd, never the installed relay task.
+    for missing_token in [false, true] {
+        let mut command = Command::new(env!("CARGO_BIN_EXE_tetherd"));
+        command
+            .arg("--stdio-rpc")
+            .arg("--browser-bridge")
+            .arg("127.0.0.1:1");
+        if missing_token {
+            command
+                .arg("--browser-bridge-token-file")
+                .arg(std::env::temp_dir().join(format!(
+                    "tetherplane-release-missing-browser-token-{}.txt",
+                    uuid::Uuid::new_v4()
+                )));
+        }
+
+        let mut child = command
+            .stdin(Stdio::piped())
+            .stdout(Stdio::piped())
+            .stderr(Stdio::piped())
+            .spawn()
+            .unwrap();
+
+        let mut request = device_status_invocation(CAPS_ID);
+        request["capability"] = json!("device.capabilities");
+        let mut input = child.stdin.take().unwrap();
+        writeln!(input, "{}", serde_json::to_string(&request).unwrap()).unwrap();
+        drop(input);
+
+        let stdout = child.stdout.take().unwrap();
+        let mut output = String::new();
+        assert!(
+            BufReader::new(stdout).read_line(&mut output).unwrap() > 0,
+            "RELEASE_NO_GO: browser outage terminated the authenticated core"
+        );
+        let result: Value = serde_json::from_str(output.trim_end()).unwrap();
+        assert_eq!(result["status"], "success");
+        let browser = result["data"]["providers"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .find(|provider| provider["namespace"] == "browser")
+            .unwrap();
+        assert_eq!(browser["available"], false);
+        assert_eq!(browser["operations"], json!([]));
+        assert!(
+            child.wait().unwrap().success(),
+            "RELEASE_NO_GO: device core exited unsuccessfully"
+        );
+    }
+}
