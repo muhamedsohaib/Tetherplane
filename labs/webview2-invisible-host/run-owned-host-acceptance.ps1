@@ -7,9 +7,11 @@ $expectedNugetHash = '92DBED160DDEE0F64B901E907439E021211B428E57C089ECC12FC38DCC
 $root = Join-Path $env:TEMP ('tp-webview2-owned-build-' + [guid]::NewGuid().ToString('N'))
 $source = Join-Path $PSScriptRoot 'WebView2OwnedHost.cs'
 $nodeTest = Join-Path $PSScriptRoot 'owned-host-acceptance.mjs'
+$crashTest = Join-Path $PSScriptRoot 'owned-host-crash-acceptance.mjs'
 try {
   if (-not [IO.File]::Exists($source)) { throw 'WEBVIEW2_OWNED_HOST_SOURCE_MISSING' }
   if (-not [IO.File]::Exists($nodeTest)) { throw 'WEBVIEW2_OWNED_TEST_MISSING' }
+  if (-not [IO.File]::Exists($crashTest)) { throw 'WEBVIEW2_CRASH_TEST_MISSING' }
   $compiler = 'C:\Windows\Microsoft.NET\Framework64\v4.0.30319\csc.exe'
   if (-not [IO.File]::Exists($compiler)) { throw 'FRAMEWORK_CSC_MISSING' }
   [void][IO.Directory]::CreateDirectory($root)
@@ -60,6 +62,8 @@ try {
   }
   & node.exe $nodeTest $exe
   if ($LASTEXITCODE -ne 0) { throw 'NATIVE_HOST_ACCEPTANCE_FAILED' }
+  & node.exe $crashTest $exe
+  if ($LASTEXITCODE -ne 0) { throw 'NATIVE_HOST_CRASH_ACCEPTANCE_FAILED' }
   Write-Output 'TETHERPLANE_WEBVIEW2_TYPED_HOST=PASS'
 } catch {
   Write-Output ('TETHERPLANE_WEBVIEW2_TYPED_HOST=FAIL ' + $_.Exception.Message)
