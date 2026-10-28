@@ -239,6 +239,8 @@ class OwnedChromiumControl implements LaunchedCdpControl {
   readonly #wire: CdpWire;
   readonly #browserPid: number | null;
   readonly #downloadDir: string;
+  // Optional, exact test-only loopback request origin; null retains existing behavior.
+  readonly #networkOrigin: string | null;
   readonly #sessions = new Map<string, string>();
   readonly #sessionTargets = new Map<string, string>();
   readonly #diagnosticsEnabled = new Set<string>();
@@ -267,11 +269,13 @@ class OwnedChromiumControl implements LaunchedCdpControl {
     downloadDir: string;
     executablePath: string;
     browserPid: number | null;
+    networkOrigin?: string;
   }) {
     this.#child = options.child;
     this.#wire = options.wire;
     this.#browserPid = options.browserPid;
     this.#downloadDir = options.downloadDir;
+    this.#networkOrigin = options.networkOrigin ?? null;
     this.profile_dir = options.profileDir;
     this.executable_path = options.executablePath;
     this.#eventListener = (event) => {
@@ -584,6 +588,28 @@ class OwnedChromiumControl implements LaunchedCdpControl {
     method: string;
     params: Record<string, unknown>;
   }): void {
+    if (event.method === "Fetch.requestPaused" && this.#networkOrigin) {
+      const requestId = stringField(event.params, "requestId");
+      const request = event.params.request;
+      const url = isRecord(request) ? stringField(request, "url") : null;
+      if (!requestId || !event.sessionId || !url) {
+        // An unresolvable request is unsafe. Keep the whole local test
+        // browser fail-closed rather than resuming unknown traffic.
+        void this.close().catch(() => undefined);
+        return;
+      }
+      const allowed = this.#networkUrlAllowed(url);
+      const method = allowed ? "Fetch.continueRequest" : "Fetch.failRequest";
+      const params = allowed
+        ? { requestId }
+        : { requestId, errorReason: "BlockedByClient" };
+      void this.#wire.send(method, params, event.sessionId).catch(() => {
+        // Losing interception invalidates the network authorization boundary.
+        void this.close().catch(() => undefined);
+      });
+      return;
+    }
+
     if (event.method === "Browser.downloadWillBegin") {
       const guid = stringField(event.params, "guid");
       const url = stringField(event.params, "url");
@@ -661,6 +687,20 @@ class OwnedChromiumControl implements LaunchedCdpControl {
     this.#diagnosticsByTarget.set(targetId, events);
   }
 
+  #networkUrlAllowed(url: string): boolean {
+    if (!this.#networkOrigin) return true;
+    try {
+      const parsed = new URL(url);
+      return (
+        parsed.origin === this.#networkOrigin &&
+        parsed.username === "" &&
+        parsed.password === ""
+      );
+    } catch {
+      return false;
+    }
+  }
+
   async #sessionForTarget(
     targetId: string,
   ): Promise<string> {
@@ -682,6 +722,16 @@ class OwnedChromiumControl implements LaunchedCdpControl {
     );
     this.#sessions.set(targetId, sessionId);
     this.#sessionTargets.set(sessionId, targetId);
+
+    if (this.#networkOrigin) {
+      // Intercept before the first real navigation; creating an about:blank
+      // target and enabling Fetch here avoids an initial-request race.
+      await this.#wire.send(
+        "Fetch.enable",
+        { patterns: [{ urlPattern: "*", requestStage: "Request" }] },
+        sessionId,
+      );
+    }
 
     await this.#wire.send(
       "Page.enable",
@@ -726,6 +776,12 @@ class OwnedChromiumControl implements LaunchedCdpControl {
     targetId: string,
     url: string,
   ): Promise<void> {
+    if (!this.#networkUrlAllowed(url)) {
+      throw new CdpBackendError(
+        "permission_denied",
+        "navigation violates isolated CDP network-origin policy",
+      );
+    }
     const sessionId = await this.#sessionForTarget(targetId);
     const navigation = await this.#wire.send(
       "Page.navigate",
@@ -872,7 +928,25 @@ export async function launchCdpOwnedBrowser(options: {
   executablePath?: string;
   profileParent?: string;
   launchTimeoutMs?: number;
+  // Laboratory-only: every intercepted request must use this exact loopback origin.
+  networkOrigin?: string;
 } = {}): Promise<LaunchedCdpControl> {
+  if (options.networkOrigin !== undefined) {
+    let network: URL;
+    try {
+      network = new URL(options.networkOrigin);
+    } catch {
+      throw new TypeError("CDP lab network origin must be a loopback HTTP origin");
+    }
+    if (
+      network.protocol !== "http:" ||
+      !["localhost", "127.0.0.1", "[::1]"].includes(network.hostname) ||
+      !network.port ||
+      network.origin !== options.networkOrigin
+    ) {
+      throw new TypeError("CDP lab network origin must be a loopback HTTP origin");
+    }
+  }
   const executablePath =
     options.executablePath ?? findInstalledChromium();
   if (!executablePath || !isExecutableFile(executablePath)) {
@@ -913,7 +987,7 @@ export async function launchCdpOwnedBrowser(options: {
     const downloadDir = path.join(profileDir, "Downloads");
     await mkdir(downloadDir, { recursive: true });
     await wire.send("Browser.setDownloadBehavior", {
-      behavior: "allow",
+      behavior: options.networkOrigin ? "deny" : "allow",
       downloadPath: downloadDir,
       eventsEnabled: true,
     });
@@ -925,6 +999,9 @@ export async function launchCdpOwnedBrowser(options: {
       downloadDir,
       executablePath,
       browserPid,
+      ...(options.networkOrigin
+        ? { networkOrigin: options.networkOrigin }
+        : {}),
     });
   } catch (error) {
     await stopOwnedChromiumProcesses(child, null);
