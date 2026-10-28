@@ -25,6 +25,8 @@ The product identity is taken from the owner's actual Product Identity screensho
 - Existing disposable dev profile `packaging/msix-store-runtime/AppxManifest.xml` is **unchanged**, with independent synthetic publisher and `DevOnly` naming.
 - The runtime still has **one owner setup app and one hidden native agent**, and retains `packagedClassicApp`, `mediumIL`, and the existing `runFullTrust` capability. No startup task/service/silent-launch capability has been added.
 - No changes to OAuth/DCR client registration, account permissions, relay, Smart App Control, device identity state, Windows trust stores, or protected branches.
+- The existing onboarding application's source deliberately remains in **development-preview** mode. The Store candidate packaging script makes deterministic, exact-once changes **only in a scratch payload copy**: new `TetherplaneStore` local state directory (not `TetherplaneStoreDevOnly`), a truthful Store customer-facing setup title/banner, and an explicit statement that no previous agent or credential is automatically replaced. Any upstream UI or state-path drift fails packaging rather than silently shipping obsolete strings. CI verifies the unpacked JavaScript and HTML and executes the packaged runtime's credential-free `--self-test`.
+- This state-path distinction is not a supported migration from an old device identity; Leno's existing task, PID and credentials remain untouched. A migration/rollback workflow requires separate user authorization and proof.
 
 ## Packaging modes
 
