@@ -172,9 +172,11 @@ try {
   // A native grant must remain revocable even when the caller still knows the
   // private session capability. This is an actual host-side negative test,
   // not a TypeScript-only policy denial.
-  const revoked = await request("revoke_fixture");
-  assert.equal(revoked.data?.revoked, true);
+  // A trusted owner/broker action must propagate from the typed adapter
+  // through the private transport to the native WebView2 grant boundary.
+  await backend.revokeAndWait();
   report.nativeRevocationAcknowledged = true;
+  await assert.rejects(backend.observe(page), { code: "permission_denied" });
   const afterRevocation = await request("observe_fixture", { page_id: page });
   assert.equal(afterRevocation.error?.code, "permission_denied");
   report.nativeRevocationEnforced = true;
