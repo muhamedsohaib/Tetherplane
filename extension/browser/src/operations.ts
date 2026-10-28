@@ -15,6 +15,8 @@ type OperationalPageRecord = {
     | "shared-authorized";
   grant?: {
     operations: BrowserOperation[];
+    origin?: string;
+    expires_at_ms?: number;
   };
 };
 
@@ -59,6 +61,10 @@ export type ChromeDownloadsApi = {
 
 export type OperationalController = {
   pages(): OperationalPageRecord[];
+  authorizeLivePage?(
+    pageId: string,
+    operation: BrowserOperation,
+  ): Promise<OperationalPageRecord>;
 };
 
 export class ChromeOperationalError extends Error {
@@ -347,23 +353,27 @@ export class ChromeOperationalAgent {
     return structuredClone(page);
   }
 
-  #requireAuthorizedPage(
+  async #requireAuthorizedPage(
     pageId: string,
     operation: BrowserOperation,
-  ): OperationalPageRecord {
+  ): Promise<OperationalPageRecord> {
     const page = this.#requirePage(pageId);
     if (page.ownership === "tetherplane") {
       return page;
     }
-    if (
-      page.ownership === "shared-authorized" &&
-      page.grant?.operations.includes(operation)
-    ) {
-      return page;
+    if (page.ownership === "shared-authorized" &&
+        page.grant?.operations.includes(operation) &&
+        this.#controller.authorizeLivePage) {
+      const live = await this.#controller.authorizeLivePage(pageId, operation);
+      if (live.grant?.origin &&
+          typeof live.grant.expires_at_ms === "number" &&
+          live.grant.expires_at_ms > Date.now()) {
+        return live;
+      }
     }
     throw new ChromeOperationalError(
       "permission_denied",
-      `browser ${operation} requires a Tetherplane-owned or explicitly shared-authorized tab`,
+      `browser ${operation} requires a current owner-approved grant`,
     );
   }
 }
