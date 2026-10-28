@@ -1,8 +1,11 @@
 // Review-only Windows WebView2 disposable fixture host.
-// Five fixed stdin/stdout JSON commands. No listener, generic CDP, external
+// Fixed local-fixture stdin/stdout JSON commands with per-host capability and
+// explicit short-lived lab activation. No listener, generic CDP, external
 // navigation, filesystem operations, or human-browser attachment.
 using System;
 using System.Collections.Generic;
+using System.Diagnostics;
+using System.Security.Cryptography;
 using System.Drawing;
 using System.IO;
 using System.Threading.Tasks;
@@ -32,6 +35,13 @@ internal sealed class WebView2OwnedHost : Form
     private string _pageId;
     private int _revision;
     private bool _stopping;
+    private readonly string _hostCapability = NewHostCapability();
+    private readonly Stopwatch _grantClock = new Stopwatch();
+    private long _grantLifetimeMs;
+    private bool _grantActivated;
+
+    private bool GrantActive { get { return _grantActivated &&
+        _grantClock.IsRunning && _grantClock.ElapsedMilliseconds < _grantLifetimeMs; } }
 
     private WebView2OwnedHost(string profile)
     {
@@ -91,7 +101,10 @@ internal sealed class WebView2OwnedHost : Form
                         null, 403, "Forbidden", "Content-Type: text/plain");
                 }
             };
-            Send(new { ready = true });
+            // Only the parent with the private stdout pipe can obtain this
+            // process-local capability. It is never in argv, environment,
+            // browser pages or diagnostic output.
+            Send(new { ready = true, capability = _hostCapability });
             Task.Run(() => ReadRequestsAsync());
         }
         catch
@@ -176,9 +189,38 @@ internal sealed class WebView2OwnedHost : Form
                 if (args == null) { SendError(id, "permission_denied"); return; }
             }
 
+            if (!CapabilityMatches(_hostCapability, Arg(record, "capability")))
+            {
+                SendError(id, "permission_denied");
+                return;
+            }
+            // Shutdown and closing an already-owned fixture stay available
+            // after expiry so the parent can clean up safely.
+            if (method != "activate_fixture" && method != "shutdown" &&
+                method != "close_fixture" && !GrantActive)
+            {
+                SendError(id, "permission_denied");
+                return;
+            }
+
             object data;
             switch (method)
             {
+                case "activate_fixture":
+                    if (_grantActivated || _created || _closed)
+                        throw new NativeDenied("permission_denied");
+                    object lifetime;
+                    if (!args.TryGetValue("lifetime_ms", out lifetime) ||
+                        (!(lifetime is int) && !(lifetime is long)))
+                        throw new NativeDenied("permission_denied");
+                    var duration = Convert.ToInt64(lifetime);
+                    if (duration < 1000 || duration > 120000)
+                        throw new NativeDenied("permission_denied");
+                    _grantLifetimeMs = duration;
+                    _grantActivated = true;
+                    _grantClock.Start(); // monotonic, unaffected by wall-clock changes
+                    data = new { active = true };
+                    break;
                 case "create_fixture":
                     data = await CreateFixtureAsync();
                     break;
@@ -238,6 +280,8 @@ internal sealed class WebView2OwnedHost : Form
                 throw new NativeDenied("provider_failure");
             var state = await ReadFixtureStatusAsync();
             if (state != "initial") throw new NativeDenied("provider_failure");
+            if (!GrantActive)
+                throw new NativeDenied("permission_denied");
             _pageId = "wvlab:" + Guid.NewGuid().ToString("N");
             _revision = 1;
             return new { page_id = _pageId, url = "about:blank" };
@@ -291,6 +335,24 @@ internal sealed class WebView2OwnedHost : Form
     {
         if (_closed || _pageId == null || Arg(args, "page_id") != _pageId)
             throw new NativeDenied("permission_denied");
+    }
+
+    private static string NewHostCapability()
+    {
+        var secret = new byte[32];
+        using (var rng = RandomNumberGenerator.Create())
+            rng.GetBytes(secret);
+        return BitConverter.ToString(secret).Replace("-", "").ToLowerInvariant();
+    }
+
+    private static bool CapabilityMatches(string expected, string supplied)
+    {
+        if (supplied == null || expected == null || expected.Length != supplied.Length)
+            return false;
+        int difference = 0;
+        for (int i = 0; i < expected.Length; i++)
+            difference |= expected[i] ^ supplied[i];
+        return difference == 0;
     }
 
     private static string Arg(Dictionary<string, object> args, string name)
