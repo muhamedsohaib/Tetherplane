@@ -32,6 +32,10 @@ const report = {
   remoteNavigationDenied: false,
   duplicateCreateDenied: false,
   closeVerified: false,
+  missingCapabilityDenied: false,
+  invalidCapabilityDenied: false,
+  unactivatedFixtureDenied: false,
+  localGrantActivated: false,
   ownedProcessesAfter: null,
   removedProfile: false,
   result: "FAIL",
@@ -63,9 +67,12 @@ try {
       request.resolve(message);
     });
   });
-  await ready;
+  const hello = await ready;
   report.hostReady = true;
-  async function request(method, args = {}) {
+  // A granted capability is never supplied in args, environment, process
+  // arguments, or diagnostic output. Only the parent receives it on stdout.
+  let sessionCapability = null;
+  async function request(method, args = {}, capability = sessionCapability) {
     const id = String(++requestId);
     const result = new Promise((resolve, reject) => {
       const timer = setTimeout(() => {
@@ -74,9 +81,29 @@ try {
       }, 9000);
       pending.set(id, { resolve, timer });
     });
-    child.stdin.write(JSON.stringify({ id, method, args }) + "\n");
+    const envelope = { id, method, args };
+    if (capability !== null) envelope.capability = capability;
+    child.stdin.write(JSON.stringify(envelope) + "\n");
     return result;
   }
+  // These are observable deny-before-side-effect tests against the *real*
+  // native process. The existing host accepts an unauthorized create and
+  // therefore correctly fails this test before the new handshake exists.
+  const beforeAuth = await request("create_fixture");
+  assert.equal(beforeAuth.error?.code, "permission_denied");
+  report.missingCapabilityDenied = true;
+  assert.match(hello.capability, /^[a-f0-9]{64}$/i);
+  const invalidAuth = await request("create_fixture", {}, "0".repeat(64));
+  assert.equal(invalidAuth.error?.code, "permission_denied");
+  report.invalidCapabilityDenied = true;
+  sessionCapability = hello.capability;
+  const unactivated = await request("create_fixture");
+  assert.equal(unactivated.error?.code, "permission_denied");
+  report.unactivatedFixtureDenied = true;
+  const activation = await request("activate_fixture", { lifetime_ms: 60000 });
+  assert.equal(activation.data?.active, true);
+  report.localGrantActivated = true;
+
   // These operations pass through the actual Tetherplane policy adapter,
   // semantic snapshot engine, ownership registry and verified-action engine.
   // Only the narrow injected transport below understands the host's envelope;
