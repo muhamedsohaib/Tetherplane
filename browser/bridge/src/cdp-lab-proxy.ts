@@ -1,5 +1,5 @@
 import http from "node:http";
-import type { Socket } from "node:net";
+import type { Duplex } from "node:stream";
 
 /**
  * Disposable CDP Browser Lab HTTP proxy.
@@ -101,7 +101,7 @@ export async function startCdpLabProxy(input: {
     request.pipe(upstream);
   });
 
-  const rejectSocket = (socket: Socket): void => {
+  const rejectSocket = (socket: Duplex): void => {
     socket.end("HTTP/1.1 403 Forbidden\r\nConnection: close\r\n\r\n");
   };
   server.on("connect", (_request, socket) => {
