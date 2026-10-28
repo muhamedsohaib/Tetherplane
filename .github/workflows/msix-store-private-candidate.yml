@@ -1,0 +1,118 @@
+name: Store private MSIX candidate (nonrelease)
+
+# Discardable preview packaging only. Never uploads MSIX, signs with keys,
+# publishes releases, changes Windows policy or accesses owner devices.
+on:
+  pull_request:
+    paths:
+      - '.github/workflows/msix-store-private-candidate.yml'
+      - 'packaging/msix-store-candidate/**'
+      - 'scripts/msix-store/Build-StorePrivateCandidate.ps1'
+      - 'tests/release/msix-store-private-candidate.test.mjs'
+      - 'docs/release/MSIX_STORE_PRIVATE_CANDIDATE_20261028.md'
+
+permissions:
+  contents: read
+
+jobs:
+  source-contract:
+    if: ${{ github.event.pull_request.head.repo.full_name == github.repository && startsWith(github.head_ref, 'feature/msix-store-private-candidate-') }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
+        with:
+          persist-credentials: false
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4.4.0
+        with:
+          node-version: 22
+      - name: Exact Store identity, runtime boundary and nonpublication contracts
+        run: node --test tests/release/msix-store-private-candidate.test.mjs
+
+  windows-source-package:
+    if: ${{ github.event.pull_request.head.repo.full_name == github.repository && startsWith(github.head_ref, 'feature/msix-store-private-candidate-') }}
+    needs: source-contract
+    runs-on: windows-latest
+    timeout-minutes: 30
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
+        with:
+          persist-credentials: false
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4.4.0
+        with:
+          node-version: 22
+      - uses: dtolnay/rust-toolchain@b725eda525362e7cf34af9a7243cac1e3f01a7ec # stable
+      - name: Validate exact script under Windows PowerShell 5.1
+        shell: pwsh
+        run: |
+          $script = Join-Path $env:GITHUB_WORKSPACE 'scripts\msix-store\Build-StorePrivateCandidate.ps1'
+          $tokens = $null
+          $errors = $null
+          [void][System.Management.Automation.Language.Parser]::ParseFile($script, [ref]$tokens, [ref]$errors)
+          if (@($errors).Count -ne 0) { throw 'STORE_CANDIDATE_PS51_PARSE_FAIL' }
+          $source = [IO.File]::ReadAllText($script)
+          foreach ($forbidden in @('Add-AppxPackage', 'Remove-AppxPackage', 'Import-Certificate', 'New-SelfSignedCertificate', 'Start-ScheduledTask', 'Register-ScheduledTask', 'Set-MpPreference', 'Set-ExecutionPolicy')) {
+            if ($source -match [regex]::Escape($forbidden)) { throw 'STORE_CANDIDATE_FORBIDDEN_DEVICE_MUTATION' }
+          }
+          Write-Output 'STORE_CANDIDATE_PS51_PARSE_AND_NONDEPLOYMENT_PASS'
+      - name: Verify signed bundled Node runtime and source license
+        shell: pwsh
+        run: |
+          $nodeExe = node -p 'process.execPath'
+          if ([string](Get-AuthenticodeSignature -LiteralPath $nodeExe).Status -ne 'Valid') { throw 'NODE_RUNTIME_MUST_BE_SIGNED' }
+          if (-not (Test-Path -LiteralPath (Join-Path (Split-Path -Parent $nodeExe) 'LICENSE'))) { throw 'NODE_LICENSE_REQUIRED' }
+      - name: Prepare production runtime dependencies
+        shell: pwsh
+        run: |
+          corepack enable
+          corepack prepare pnpm@10.34.5 --activate
+          pnpm install --frozen-lockfile
+          if ($LASTEXITCODE -ne 0) { throw 'PNPM_INSTALL_FAILED' }
+          pnpm -r build
+          if ($LASTEXITCODE -ne 0) { throw 'PNPM_BUILD_FAILED' }
+          $out = Join-Path $env:RUNNER_TEMP 'store-private-deploy\compact-mcp'
+          pnpm --config.node-linker=hoisted --filter @tetherplane/compact-mcp deploy --legacy --prod $out
+          if ($LASTEXITCODE -ne 0) { throw 'COMPACT_MCP_DEPLOY_FAILED' }
+      - name: Compile exact checkout native agent
+        run: cargo build --release --locked -p tetherd
+      - name: Real agent / relay denial and reconnection smoke on ephemeral localhost
+        run: node --test tests/release/msix-store-runtime-real-relay.test.mjs
+      - name: Build and unpack Store-identity MSIX preview (synthetic artwork, no install)
+        shell: pwsh
+        run: |
+          $ps51 = Join-Path $env:SystemRoot 'System32\WindowsPowerShell\v1.0\powershell.exe'
+          $report = Join-Path $env:RUNNER_TEMP 'tetherplane-store-private-preview.json'
+          $nodeExe = node -p 'process.execPath'
+          $args = @(
+            '-NoProfile', '-NonInteractive', '-File', 'scripts/msix-store/Build-StorePrivateCandidate.ps1',
+            '-AgentBinary', 'target/release/tetherd.exe',
+            '-NodeExecutable', $nodeExe,
+            '-OnboardingDirectory', 'packaging/msix-store-runtime/app',
+            '-CompactDeployDirectory', (Join-Path $env:RUNNER_TEMP 'store-private-deploy\compact-mcp'),
+            '-ReportPath', $report,
+            '-CiValidationOnly'
+          )
+          & $ps51 @args
+          if ($LASTEXITCODE -ne 0) { throw 'STORE_CANDIDATE_REAL_PACKAGE_CHECK_FAILED' }
+          $evidence = Get-Content -LiteralPath $report -Raw | ConvertFrom-Json
+          if ($evidence.disposition -ne 'CI_PACKAGE_STRUCTURE_PASS_NOT_SUBMITTABLE' -or
+              $evidence.unpack_integrity -ne 'PASS' -or
+              $evidence.identity -ne 'ARCUSLabs.Tetherplane' -or
+              $evidence.approved_artwork -ne $false -or
+              $evidence.native_SAC_On_acceptance -ne 'NOT_RUN' -or
+              $evidence.trusted_Store_signature -ne 'NOT_RUN' -or
+              $evidence.owner_approved_Store_submission -ne $false -or
+              $evidence.source_commit -notmatch '^[0-9a-f]{40}$') {
+            throw 'STORE_CANDIDATE_FALSE_ACCEPTANCE_CLAIM'
+          }
+          Write-Output 'STORE_PRIVATE_CANDIDATE_CI_PREVIEW_PACK_UNPACK_PASS; STORE_AND_SAC_NOT_TESTED'
+      - name: Upload JSON proof only (no package, source binaries, credentials or certificates)
+        if: always()
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        with:
+          name: store-private-preview-report-${{ github.run_id }}-${{ github.run_attempt }}
+          path: ${{ runner.temp }}/tetherplane-store-private-preview.json
+          if-no-files-found: warn
+          retention-days: 7
