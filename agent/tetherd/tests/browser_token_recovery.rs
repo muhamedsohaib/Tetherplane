@@ -17,11 +17,7 @@ impl Drop for TestAgent {
     }
 }
 
-fn invoke(
-    stdin: &mut impl Write,
-    stdout: &mut impl BufRead,
-    capability: &str,
-) -> Value {
+fn invoke(stdin: &mut impl Write, stdout: &mut impl BufRead, capability: &str) -> Value {
     let request_id = Uuid::new_v4().to_string();
     let request = json!({
         "protocol_version": "1.0",
@@ -69,7 +65,9 @@ fn serve_synthetic_browser(listener: TcpListener) {
             }
             Err(error) => panic!("test bridge accept failed: {error}"),
         };
-        socket.set_read_timeout(Some(Duration::from_secs(2))).unwrap();
+        socket
+            .set_read_timeout(Some(Duration::from_secs(2)))
+            .unwrap();
         let mut line = String::new();
         BufReader::new(socket.try_clone().unwrap())
             .read_line(&mut line)
