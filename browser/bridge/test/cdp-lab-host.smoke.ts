@@ -99,8 +99,11 @@ async function stopHost(child: ChildProcess): Promise<void> {
   await complete;
 }
 
+for (const privatePipe of [false, true] as const) {
 test(
-  "extension-free CDP lab host authenticates, performs verified actions and denies unrelated sites",
+  privatePipe
+    ? "private-pipe CDP lab host authenticates and enforces site grants through RPC"
+    : "extension-free CDP lab host authenticates, performs verified actions and denies unrelated sites",
   { timeout: 100_000 },
   async () => {
     const lab = await startBrowserLab();
@@ -121,6 +124,15 @@ test(
         TETHERPLANE_CDP_LAB_ORIGIN: lab.origin,
         TETHERPLANE_CDP_LAB_TOKEN_FILE: tokenPath,
         TETHERPLANE_CDP_LAB_TEST_STDIN_STOP: "1",
+        ...(privatePipe
+          ? {
+              TETHERPLANE_CDP_LAB_PRIVATE_PIPE: "1",
+              ...(process.platform === "win32"
+                ? { TETHERPLANE_CHROMIUM:
+                    "C:\\Program Files\\Google\\Chrome\\Application\\chrome.exe" }
+                : {}),
+            }
+          : {}),
       },
       stdio: ["pipe", "pipe", "pipe"],
       windowsHide: true,
@@ -225,6 +237,12 @@ test(
       await stopHost(child);
 
       assert.ok(stdout.includes("CDP_LAB_SHUTDOWN=COMPLETE"));
+      if (privatePipe) {
+        assert.ok(
+          stdout.includes("CDP_LAB_TRANSPORT=PRIVATE_PIPE"),
+          "test requires proof the authenticated bridge used private CDP",
+        );
+      }
       assert.equal(stdout.includes(token), false);
       assert.equal(stderr.includes(token), false);
     } finally {
@@ -234,3 +252,4 @@ test(
     }
   },
 );
+}
