@@ -10,6 +10,7 @@ import { SemanticSnapshotEngine } from "./semantic.ts";
 import {
   VerifiedActionEngine,
   type BrowserBridgeBackend,
+  type BrowserSemanticAction,
 } from "./action.ts";
 import {
   BrowserOperationalEngine,
@@ -85,6 +86,10 @@ export class BrowserBridgeService {
     backend: BrowserServiceBackend;
     ownership?: BrowserOwnershipRegistry;
     semantics?: SemanticSnapshotEngine;
+    authorizeAction?: (input: {
+      pageId: string;
+      action: BrowserSemanticAction;
+    }) => void | Promise<void>;
   }) {
     this.#backend = options.backend;
     this.#ownership =
@@ -95,6 +100,9 @@ export class BrowserBridgeService {
       backend: this.#backend,
       ownership: this.#ownership,
       semantics: this.#semantics,
+      ...(options.authorizeAction
+        ? { authorizeAction: options.authorizeAction }
+        : {}),
     });
     this.#operations = new BrowserOperationalEngine({
       backend: this.#backend,

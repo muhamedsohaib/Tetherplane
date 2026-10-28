@@ -153,15 +153,23 @@ export class VerifiedActionEngine {
   readonly #backend: BrowserBridgeBackend;
   readonly #ownership: OwnershipAuthorizer;
   readonly #semantics: SemanticSnapshotEngine;
+  readonly #authorizeAction:
+    | ((input: { pageId: string; action: BrowserSemanticAction }) => void | Promise<void>)
+    | undefined;
 
   constructor(options: {
     backend: BrowserBridgeBackend;
     ownership: OwnershipAuthorizer;
     semantics?: SemanticSnapshotEngine;
+    authorizeAction?: (input: {
+      pageId: string;
+      action: BrowserSemanticAction;
+    }) => void | Promise<void>;
   }) {
     this.#backend = options.backend;
     this.#ownership = options.ownership;
     this.#semantics = options.semantics ?? new SemanticSnapshotEngine();
+    this.#authorizeAction = options.authorizeAction;
   }
 
   async execute(request: {
@@ -209,6 +217,12 @@ export class VerifiedActionEngine {
           mode: request.mode,
         });
 
+        // Last local action boundary: check immediately before every mutation,
+        // including later actions in a multi-step batch after grant revocation.
+        await this.#authorizeAction?.({
+          pageId: request.page_id,
+          action,
+        });
         const resolved = this.#resolveAction(action, current.nodes);
         await this.#backend.perform(request.page_id, resolved);
         current = await this.#backend.waitForSettled(

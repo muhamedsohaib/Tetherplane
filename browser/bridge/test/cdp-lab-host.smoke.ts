@@ -154,6 +154,25 @@ test(
       const pageId = created.data?.page_id;
       assert.equal(typeof pageId, "string");
 
+      // A model can embed a navigation inside browser.act. It must be
+      // rejected before any Chromium/CDP action, not only after redirect.
+      const nested = await rpc(address, token, "browser.act", {
+        page_id: pageId,
+        mode: "background_only",
+        actions: [
+          { kind: "navigate", url: "https://unapproved.example/outbound" },
+        ],
+      });
+      assert.equal(nested.status, "error");
+      assert.equal(nested.error?.code, "permission_denied");
+
+      const forgedGrant = await rpc(address, token, "browser.grant", {
+        origin: "https://unapproved.example",
+        operations: ["navigate", "act"],
+      });
+      assert.equal(forgedGrant.status, "error");
+      assert.equal(forgedGrant.error?.code, "permission_denied");
+
       const snapshot = await rpc(address, token, "browser.snapshot", {
         page_id: pageId,
       });
