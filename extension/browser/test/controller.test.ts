@@ -262,9 +262,9 @@ test("detachHumanTab immediately revokes mutation and navigation authority", asy
 
   const navigated = await controller.navigate(
     "tab:1",
-    "https://permitted.example/",
+    "https://human.example/permitted",
   );
-  assert.equal(navigated.url, "https://permitted.example/");
+  assert.equal(navigated.url, "https://human.example/permitted");
 
   const detached = await controller.detachHumanTab(1);
   assert.equal(detached.ownership, "human");
@@ -366,8 +366,9 @@ test("silent cross-origin browser redirect revokes previously shared tab", async
   );
   assert.equal(tabs.lastUpdate, null);
   assert.equal(controller.pages().find(p => p.tab_id === 1)?.ownership, "human");
-  assert.equal(store.records.find(p => p.tab_id === 1), undefined,
-    "revoked grant was persisted");
+  const persisted = store.records.find(p => p.tab_id === 1);
+  assert.equal(persisted?.ownership, "human", "old grant survived revocation");
+  assert.equal(persisted?.grant, undefined);
 });
 
 test("browser restart cannot resurrect a grant after origin redirect", async () => {
