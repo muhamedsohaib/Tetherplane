@@ -23,6 +23,7 @@ const bridgeSecret = randomBytes(32).toString("hex");
 const launchSecret = randomBytes(32).toString("hex");
 const results = {
   missingTokenFailsClosed: false,
+  unpinnedExtensionFailsClosed: false,
   bundledHostStarts: false,
   extensionWsLoopbackOnly: false,
   pairingLoopbackOnly: false,
@@ -102,6 +103,21 @@ try {
   await mkdir(browserRoot, { recursive: true });
   await writeFile(bridgeSecretFile, bridgeSecret + "\n", { mode: 0o600 });
   await writeFile(launchSecretFile, launchSecret + "\n", { mode: 0o600 });
+
+  // A real Chrome extension origin only proves the request came from *some*
+  // extension. The initial owner must explicitly pin their chosen extension.
+  const unpinnedHost = spawnHost(baseEnv);
+  let unpinnedOutput = "";
+  unpinnedHost.stdout.on("data", chunk => { unpinnedOutput += chunk.toString().slice(0, 500); });
+  const unpinnedExit = await Promise.race([
+    new Promise(resolve => unpinnedHost.once("exit", code => resolve(code))),
+    timeout(7000),
+  ]);
+  assert.notEqual(unpinnedExit, 0, "host must refuse pairing without an owner-pinned extension ID");
+  assert.doesNotMatch(unpinnedOutput, /AUTH_PAIRING_READY|AUTH_BROWSER_RPC_READY|AUTH_EXTENSION_WS_READY/);
+  results.unpinnedExtensionFailsClosed = true;
+
+  await writeFile(extensionIdFile, "abcdefghijklmnopabcdefghijklmnop\n", { mode: 0o600 });
   const ports = [];
   while (ports.length < 3) {
     const candidate = await availablePort();
