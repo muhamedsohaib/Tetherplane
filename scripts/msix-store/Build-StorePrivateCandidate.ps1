@@ -178,12 +178,12 @@ try {
         Add-Type -AssemblyName System.Drawing
         foreach ($key in $requiredArtwork.Keys) {
             $size = [int]$requiredArtwork[$key]
-            $bmp = New-Object System.Drawing.Bitmap($size, $size)
+            $bmp = [System.Drawing.Bitmap]::new([int]$size, [int]$size)
             $graphics = [Drawing.Graphics]::FromImage($bmp)
             try {
                 $graphics.Clear([Drawing.Color]::FromArgb(150, 35, 35))
-                $font = New-Object Drawing.Font('Arial', [single][Math]::Max(8, $size / 4))
-                $brush = New-Object Drawing.SolidBrush([Drawing.Color]::White)
+                $font = [System.Drawing.Font]::new('Arial', [single][Math]::Max(8, $size / 4))
+                $brush = [System.Drawing.SolidBrush]::new([System.Drawing.Color]::White)
                 try { $graphics.DrawString('CI', $font, $brush, [single]2, [single]2) }
                 finally { $font.Dispose(); $brush.Dispose() }
                 $bmp.Save((Join-Path $payload ('Assets\' + $key)), [Drawing.Imaging.ImageFormat]::Png)
