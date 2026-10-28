@@ -16,6 +16,7 @@ import path from "node:path";
 
 import WebSocket from "ws";
 import { CdpPipeSocket } from "./cdp-pipe-socket.ts";
+import { closeBrowserTransportWithDeadline } from "./cdp-close.ts";
 
 import {
   CdpBackendError,
@@ -588,10 +589,7 @@ class OwnedChromiumControl implements LaunchedCdpControl {
     this.#closed = true;
 
     this.#wire.offEvent(this.#eventListener);
-    await this.#wire
-      .send("Browser.close")
-      .catch(() => undefined);
-    this.#wire.close();
+    await closeBrowserTransportWithDeadline(this.#wire);
 
     await stopOwnedChromiumProcesses(
       this.#child,
