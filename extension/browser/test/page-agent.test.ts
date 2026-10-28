@@ -255,6 +255,13 @@ test("shared tab observation excludes cross-origin iframes", async () => {
         expires_at_ms: Date.now() + 60_000 },
     }],
     navigate: async () => ({}),
+    authorizeLivePage: async () => ({
+      page_id: "tab:13", tab_id: 13,
+      url: "https://fixture.example/owner",
+      ownership: "shared-authorized" as const,
+      grant: { operations: ["act"], origin: "https://fixture.example",
+        expires_at_ms: Date.now() + 60_000 },
+    }),
   };
   const observed = await new ChromePageAgent({ controller, scripting }).observe("tab:13");
   assert.deepEqual(observed.nodes.map(n => n.accessible_name), ["Permitted"]);
@@ -272,6 +279,13 @@ test("shared tab cannot mutate an embedded frame even with act permission", asyn
         expires_at_ms: Date.now() + 60_000 },
     }],
     navigate: async () => ({}),
+    authorizeLivePage: async () => ({
+      page_id: "tab:13", tab_id: 13,
+      url: "https://fixture.example/owner",
+      ownership: "shared-authorized" as const,
+      grant: { operations: ["act"], origin: "https://fixture.example",
+        expires_at_ms: Date.now() + 60_000 },
+    }),
   };
   await assert.rejects(
     () => new ChromePageAgent({ controller, scripting }).perform("tab:13", {
@@ -299,6 +313,13 @@ test("shared tab may not return content from a silently redirected document", as
         expires_at_ms: Date.now() + 60_000 },
     }],
     navigate: async () => ({}),
+    authorizeLivePage: async () => ({
+      page_id: "tab:13", tab_id: 13,
+      url: "https://fixture.example/owner",
+      ownership: "shared-authorized" as const,
+      grant: { operations: ["act"], origin: "https://fixture.example",
+        expires_at_ms: Date.now() + 60_000 },
+    }),
   };
   await assert.rejects(
     () => new ChromePageAgent({ controller, scripting }).observe("tab:13"),
