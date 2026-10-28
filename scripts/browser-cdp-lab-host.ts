@@ -40,6 +40,8 @@ async function main(): Promise<void> {
     throw new Error("CDP_LAB_TOKEN_INVALID");
   }
 
+  // Human/operator-configured laboratory opt-in only. Never model RPC.
+  const privatePipe = process.env.TETHERPLANE_CDP_LAB_PRIVATE_PIPE === "1";
   const executablePath = findInstalledChromium();
   if (!executablePath) {
     throw new Error("CDP_LAB_CHROMIUM_NOT_AVAILABLE");
@@ -59,6 +61,7 @@ async function main(): Promise<void> {
   });
   const control = await launchCdpOwnedBrowser({
     executablePath,
+    privatePipe,
     networkOrigin: labOrigin,
     labProxyPort: proxy.port,
   }).catch(async (error: unknown) => {
@@ -104,6 +107,7 @@ async function main(): Promise<void> {
     });
     process.stdout.write(`CDP_LAB_RPC_READY=${server.address}\n`);
     process.stdout.write("CDP_LAB_MODE=ISOLATED_EPHEMERAL_NO_EXTENSION\n");
+    process.stdout.write(`CDP_LAB_TRANSPORT=${privatePipe ? "PRIVATE_PIPE" : "TCP_LAB_ONLY"}\n`);
     await stop;
   } finally {
     grant.revoke();
