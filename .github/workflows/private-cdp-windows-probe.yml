@@ -1,0 +1,38 @@
+name: Windows Private CDP Pipe Acceptance (draft lab only)
+
+on:
+  push:
+    branches:
+      - test/browser-private-cdp-windows-20261028
+  pull_request:
+    paths:
+      - 'scripts/private-cdp-windows-probe.py'
+      - 'scripts/private-cdp-node-windows-probe.mjs'
+      - '.github/workflows/private-cdp-windows-probe.yml'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  windows-private-pipe:
+    runs-on: windows-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
+        with:
+          persist-credentials: false
+      - name: Show Python and installed Chrome
+        shell: pwsh
+        run: |
+          python --version
+          if (-not (Test-Path 'C:\Program Files\Google\Chrome\Application\chrome.exe')) {
+            throw 'CHROME_NOT_INSTALLED: private CDP acceptance requires a known browser'
+          }
+      - name: Require functional private CDP protocol, owned tab and cleanup
+        shell: pwsh
+        run: python scripts/private-cdp-windows-probe.py --browser chrome
+      - name: Require Node child_process private CDP transport (no TCP fallback)
+        if: ${{ always() }}
+        shell: pwsh
+        run: node scripts/private-cdp-node-windows-probe.mjs
