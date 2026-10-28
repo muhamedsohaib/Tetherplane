@@ -44,6 +44,8 @@ jobs:
           pnpm --filter @tetherplane/browser-bridge build
       - name: Validate private CDP NUL framing and late-error containment
         run: node --test browser/bridge/test/cdp-pipe-socket.test.ts
+      - name: Verify denied CONNECT/Upgrade sockets safely absorb TCP resets
+        run: node --test browser/bridge/test/cdp-lab-proxy-reset.test.ts
       - name: Prove CDP close timeout cannot block Chromium cleanup
         run: node --test browser/bridge/test/cdp-close.test.ts
       - name: Exercise extension-free host, local token and origin denial
