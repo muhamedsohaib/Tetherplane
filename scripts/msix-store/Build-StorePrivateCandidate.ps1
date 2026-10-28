@@ -59,15 +59,6 @@ function Get-Sha256Hex([string]$Path) {
     }
 }
 
-function Replace-ExactlyOnce([string]$Text, [string]$Expected, [string]$Replacement) {
-    $start = $Text.IndexOf($Expected, [StringComparison]::Ordinal)
-    if ($start -lt 0 -or
-        $Text.IndexOf($Expected, $start + $Expected.Length, [StringComparison]::Ordinal) -ge 0) {
-        throw 'STORE_CANDIDATE_SOURCE_UI_OR_STATE_TRANSFORM_DRIFT'
-    }
-    return $Text.Substring(0, $start) + $Replacement + $Text.Substring($start + $Expected.Length)
-}
-
 function Assert-StoreManifest([string]$Path) {
     [xml]$manifest = Get-Content -LiteralPath $Path -Raw -ErrorAction Stop
     if ($manifest.Package.Identity.Name -cne $identity -or
@@ -192,44 +183,13 @@ try {
     Copy-Item -Path (Join-Path $appSource '*') -Destination (Join-Path $payload 'app') -Recurse -Force
     Copy-Item -LiteralPath $compactSource -Destination (Join-Path $payload 'adapters\compact-mcp') -Recurse -Force
 
-    # Stage a Store-owned state directory and truthful customer setup text.
-    # Exact-once replacements are made only in COPIES of the reviewed dev
-    # runtime: development tests and owner devices remain unchanged.
-    $runtimeCopy = Join-Path $payload 'app\runtime-app.mjs'
-    $runtimeText = [IO.File]::ReadAllText($runtimeCopy)
-    $runtimeText = Replace-ExactlyOnce $runtimeText 'join(process.env.LOCALAPPDATA || "", "TetherplaneStoreDevOnly")' 'join(process.env.LOCALAPPDATA || "", "TetherplaneStore")'
-    [IO.File]::WriteAllText($runtimeCopy, $runtimeText, [Text.UTF8Encoding]::new($false))
-    $htmlCopy = Join-Path $payload 'app\setup.html'
-    $htmlText = [IO.File]::ReadAllText($htmlCopy)
-    $uiReplacements = @(
-        @{
-            From = '<title>Tetherplane — private setup preview</title>'
-            To = '<title>Tetherplane — connect this Windows device</title>'
-        },
-        @{
-            From = 'TETHERPLANE · DEVELOPMENT PREVIEW'
-            To = 'TETHERPLANE · OWNER-APPROVED SETUP'
-        },
-        @{
-            From = 'This development build is not Microsoft Store-certified. Do not use it to replace an existing Tetherplane installation.'
-            To = 'This app does not automatically replace existing Tetherplane agents or credentials. Pair only an owner-authorized device, then independently verify the connection.'
-        },
-        @{
-            From = 'Existing Store-preview credentials will be preserved.'
-            To = 'Existing Tetherplane Store credentials will be preserved.'
-        }
-    )
-    foreach ($replacement in $uiReplacements) {
-        $htmlText = Replace-ExactlyOnce $htmlText $replacement.From $replacement.To
-    }
-    if ($htmlText -match '(?i)development preview|store-preview|not Microsoft Store-certified' -or
-        $runtimeText -match 'TetherplaneStoreDevOnly') {
-        throw 'STORE_CANDIDATE_DEVELOPMENT_PREVIEW_TEXT_REMAINS'
-    }
-    [IO.File]::WriteAllText($htmlCopy, $htmlText, [Text.UTF8Encoding]::new($false))
-    $report.store_runtime_sha256 = Get-Sha256Hex -Path $runtimeCopy
-    $report.store_setup_sha256 = Get-Sha256Hex -Path $htmlCopy
-
+    # A deterministic, separately tested Node overlay transforms only this
+    # fresh scratch copy; dev source and existing device state are untouched.
+    $stageScript = Join-Path $repo 'scripts\msix-store\stage-store-runtime.mjs'
+    & $nodePath $stageScript '--stage' (Join-Path $payload 'app')
+    if ($LASTEXITCODE -ne 0) { throw 'STORE_CANDIDATE_STAGE_UI_FAILED' }
+    $report.store_runtime_sha256 = Get-Sha256Hex -Path (Join-Path $payload 'app\runtime-app.mjs')
+    $report.store_setup_sha256 = Get-Sha256Hex -Path (Join-Path $payload 'app\setup.html')
 
     $requiredArtwork = [ordered]@{ 'Logo44.png' = 44; 'Logo50.png' = 50; 'Logo150.png' = 150 }
     $artHashes = [ordered]@{}
