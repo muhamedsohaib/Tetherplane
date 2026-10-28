@@ -93,3 +93,8 @@ export {
   startExtensionPairingBroker,
   type ExtensionPairingBroker,
 } from "./pairing.ts";
+
+export {
+  CdpLabOnlyBridgeService,
+  requireLoopbackLabOrigin,
+} from "./cdp-lab-service.ts";

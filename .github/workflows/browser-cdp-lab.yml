@@ -1,0 +1,46 @@
+name: Browser CDP Lab (extension-free, review only)
+
+on:
+  push:
+    branches:
+      - feature/browser-cdp-lab-bridge-vnext-20261028
+  pull_request:
+    paths:
+      - 'browser/bridge/**'
+      - 'scripts/browser-cdp-lab-host.ts'
+      - '.github/workflows/browser-cdp-lab.yml'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  extension-free-lab:
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, windows-latest]
+    runs-on: ${{ matrix.os }}
+    steps:
+      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
+        with:
+          persist-credentials: false
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4.4.0
+        with:
+          node-version: 24
+      - name: Prepare pnpm
+        run: |
+          corepack enable
+          corepack prepare pnpm@10.34.5 --activate
+      - name: Install exact dependency lockfile
+        run: pnpm install --frozen-lockfile
+      - name: Typecheck browser bridge and lab
+        run: |
+          pnpm --filter @tetherplane/browser-bridge typecheck
+          pnpm --filter @tetherplane/browser-lab typecheck
+      - name: Build existing browser bridge and lab
+        run: |
+          pnpm --filter @tetherplane/browser-lab build
+          pnpm --filter @tetherplane/browser-bridge build
+      - name: Exercise extension-free host, local token and origin denial
+        run: node --test --test-concurrency=1 browser/bridge/test/cdp-lab-host.smoke.ts
