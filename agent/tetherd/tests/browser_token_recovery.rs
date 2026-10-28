@@ -1,5 +1,5 @@
 use std::io::{BufRead, BufReader, Write};
-use std::net::{TcpListener, TcpStream};
+use std::net::TcpListener;
 use std::process::{Child, Command, Stdio};
 use std::thread;
 use std::time::{Duration, Instant};
@@ -53,7 +53,7 @@ fn browser_available(result: &Value) -> bool {
         .any(|provider| provider["namespace"] == "browser" && provider["available"] == true)
 }
 
-fn serve_synthetic_browser(listener: TcpListener) {
+fn serve_synthetic_browser(listener: &TcpListener) {
     let deadline = Instant::now() + Duration::from_secs(12);
     listener.set_nonblocking(true).unwrap();
     while Instant::now() < deadline {
@@ -108,7 +108,7 @@ fn late_browser_token_file_recovers_without_agent_restart_or_anonymous_browser_a
 
     let listener = TcpListener::bind("127.0.0.1:0").unwrap();
     let address = listener.local_addr().unwrap().to_string();
-    let server = thread::spawn(move || serve_synthetic_browser(listener));
+    let server = thread::spawn(move || serve_synthetic_browser(&listener));
 
     let mut child = TestAgent(
         Command::new(env!("CARGO_BIN_EXE_tetherd"))
