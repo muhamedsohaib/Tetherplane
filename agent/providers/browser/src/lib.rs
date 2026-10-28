@@ -140,7 +140,10 @@ impl BrowserProvider {
         Self::connect_nonfatal_inner(config, Some(token_file))
     }
 
-    fn connect_nonfatal_inner(config: BrowserBridgeConfig, token_file: Option<PathBuf>) -> Arc<Self> {
+    fn connect_nonfatal_inner(
+        config: BrowserBridgeConfig,
+        token_file: Option<PathBuf>,
+    ) -> Arc<Self> {
         let provider = Arc::new(Self {
             config,
             operations: Vec::new(),
