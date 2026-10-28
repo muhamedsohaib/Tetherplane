@@ -5,12 +5,27 @@ import {
   CdpLabOnlyBridgeService,
   requireLoopbackLabOrigin,
 } from "../src/cdp-lab-service.ts";
+import {
+  GRANTABLE_LAB_OPERATIONS,
+  LocalBrowserLabGrant,
+  type GrantableLabOperation,
+} from "../src/local-lab-grant.ts";
 import type {
   BrowserServiceBackend,
   BrowserServicePage,
 } from "../src/rpc-server.ts";
 
 const origin = "http://127.0.0.1:49123";
+
+function labGrant(
+  operations: readonly GrantableLabOperation[] = GRANTABLE_LAB_OPERATIONS,
+): LocalBrowserLabGrant {
+  return new LocalBrowserLabGrant({
+    origin,
+    operations,
+    expiresAtMs: Date.now() + 5 * 60_000,
+  });
+}
 
 class FakeBrowser implements BrowserServiceBackend {
   pagesState: BrowserServicePage[] = [
@@ -117,6 +132,7 @@ test("lab CDP handshake operations exclude file upload and global downloads", ()
   const service = new CdpLabOnlyBridgeService({
     backend,
     labOrigin: origin,
+    grant: labGrant(),
   });
 
   assert.deepEqual(service.operations(), [
@@ -136,6 +152,7 @@ test("model cannot create public tabs or impersonate human browser ownership", a
   const service = new CdpLabOnlyBridgeService({
     backend,
     labOrigin: origin,
+    grant: labGrant(),
   });
 
   await assert.rejects(
@@ -197,6 +214,7 @@ test("a redirected lab page is closed and never reported as authorized", async (
   const service = new CdpLabOnlyBridgeService({
     backend,
     labOrigin: origin,
+    grant: labGrant(),
   });
   await service.invoke("browser.create_tab", { url: origin });
   backend.redirectTo = "https://outside.example/after-redirect";
@@ -214,4 +232,144 @@ test("a redirected lab page is closed and never reported as authorized", async (
   assert.deepEqual((await service.invoke("browser.pages", {})).data, {
     pages: [],
   });
+});
+
+
+test("nested browser.act navigation is denied before any earlier action executes", async () => {
+  const backend = new FakeBrowser();
+  const service = new CdpLabOnlyBridgeService({
+    backend,
+    labOrigin: origin,
+    grant: labGrant(),
+  });
+  await service.invoke("browser.create_tab", { url: origin });
+  assert.equal(backend.writes, 1);
+
+  // A malicious caller could previously put a navigation inside a
+  // multi-action request, bypassing browser.navigate's origin guard.
+  await assert.rejects(
+    service.invoke("browser.act", {
+      page_id: "cdp:owned-test",
+      mode: "background_only",
+      actions: [
+        { kind: "click", target: { ref_id: "fake" } },
+        { kind: "navigate", url: "https://unapproved.example/" },
+      ],
+    }),
+    (error: unknown) =>
+      error instanceof Error &&
+      (error as Error & { code?: string }).code === "permission_denied",
+  );
+  assert.equal(
+    backend.writes,
+    1,
+    "no action from an unsafe batch may execute",
+  );
+});
+
+test("local grant revocation immediately denies every browser action and hides pages", async () => {
+  const backend = new FakeBrowser();
+  const grant = labGrant();
+  const service = new CdpLabOnlyBridgeService({
+    backend,
+    labOrigin: origin,
+    grant,
+  });
+  await service.invoke("browser.create_tab", { url: origin });
+  grant.revoke();
+
+  assert.deepEqual(service.operations(), ["status"]);
+  const status = await service.invoke("browser.status", {});
+  assert.equal((status.data as Record<string, unknown>).available, false);
+
+  for (const [operation, args] of [
+    ["browser.pages", {}],
+    ["browser.snapshot", { page_id: "cdp:owned-test" }],
+    ["browser.navigate", { page_id: "cdp:owned-test", url: origin }],
+    ["browser.act", { page_id: "cdp:owned-test", actions: [] }],
+    ["browser.close", { page_id: "cdp:owned-test" }],
+  ] as const) {
+    await assert.rejects(
+      service.invoke(operation, args),
+      (error: unknown) =>
+        error instanceof Error &&
+        (error as Error & { code?: string }).code === "permission_denied",
+    );
+  }
+  assert.equal(backend.writes, 1, "revoked grants cause no mutations");
+});
+
+test("grant scope cannot be changed through model RPC or a mismatched origin", async () => {
+  const backend = new FakeBrowser();
+  const grant = labGrant(["pages", "create_tab"]);
+  const service = new CdpLabOnlyBridgeService({
+    backend,
+    labOrigin: origin,
+    grant,
+  });
+  await assert.rejects(
+    service.invoke("browser.grant", {
+      origin: "https://amazon.example",
+      operations: ["act", "navigate"],
+      expires_at_ms: Date.now() + 600_000,
+    }),
+    (error: unknown) =>
+      error instanceof Error &&
+      (error as Error & { code?: string }).code === "permission_denied",
+  );
+  await service.invoke("browser.create_tab", { url: origin });
+  await assert.rejects(
+    service.invoke("browser.act", {
+      page_id: "cdp:owned-test",
+      actions: [{ kind: "click", target: { ref_id: "fake" } }],
+    }),
+    (error: unknown) =>
+      error instanceof Error &&
+      (error as Error & { code?: string }).code === "permission_denied",
+  );
+  assert.throws(
+    () => new CdpLabOnlyBridgeService({
+      backend,
+      labOrigin: origin,
+      grant: new LocalBrowserLabGrant({
+        origin: "https://unauthorized.example",
+        operations: ["pages"],
+        expiresAtMs: Date.now() + 60_000,
+      }),
+    }),
+    /local grant origin does not match/,
+  );
+  assert.equal(backend.writes, 1);
+});
+
+test("grants expire fail-closed and reject unsafe lifetimes and URL credentials", () => {
+  let now = 10_000;
+  const clock = () => now;
+  const grant = new LocalBrowserLabGrant({
+    origin,
+    operations: ["pages", "act"],
+    expiresAtMs: now + 100,
+  }, clock);
+  grant.authorize("pages", origin + "/editor");
+  assert.equal(grant.allowsUrl(origin + "/editor"), true);
+  assert.equal(grant.allowsUrl("http://127.0.0.1:49124/editor"), false);
+  assert.equal(grant.allowsUrl("https://amazon.example/"), false);
+  assert.equal(grant.allowsUrl("http://user:pass@127.0.0.1:49123/"), false);
+  now += 100;
+  assert.equal(grant.isActive, false);
+  assert.deepEqual(grant.operations(), []);
+  assert.throws(
+    () => grant.authorize("pages", origin),
+    (error: unknown) =>
+      error instanceof Error &&
+      (error as Error & { code?: string }).code === "permission_denied",
+  );
+  assert.throws(
+    () => new LocalBrowserLabGrant({
+      origin,
+      operations: ["pages"],
+      expiresAtMs: now + 16 * 60_000,
+    }, clock),
+    TypeError,
+  );
 });
