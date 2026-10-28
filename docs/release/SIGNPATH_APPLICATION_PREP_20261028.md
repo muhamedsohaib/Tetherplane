@@ -9,7 +9,7 @@
 - Maintainer's merged Pollinations.ai open-source contribution: https://github.com/pollinations/pollinations/pull/15289 (28 September 2026). This documents contributor activity, **not** the Tetherplane project's user reputation.
 - GitHub Actions: existing CI and Windows source packaging; no source-to-SignPath signing workflow, manual approval or project acceptance yet. New unsigned public release is deliberately blocked.
 - Small GitHub asset-download counters do not establish unique users, installs, active use or third-party endorsements. SignPath's executable reputation rule may still prevent acceptance.
-- **Confirmed by maintainer 28 October 2026:** public distribution is local/self-hosted only; no public managed Tetherplane relay or cloud service is offered to external users. The public privacy contact is **muhammadsohaibsaif@gmail.com**. Private development deployments are not a public hosted service.
+- **Confirmed by maintainer 28 October 2026:** public distribution is local/self-hosted only; no public managed Tetherplane relay or cloud service is offered to external users. The public privacy contact is **tetherplane@gmail.com**. Private development deployments are not a public hosted service.
 
 ## Application fields (after the privacy-policy gate)
 
@@ -24,7 +24,7 @@
 | Maintainer | Individual / independent developer |
 | Build system | GitHub Actions (not yet SignPath-integrated) |
 | First and last name | Owner enters their own legal name privately |
-| Email | Owner enters preferred account email privately; public project privacy contact is muhammadsohaibsaif@gmail.com, which need not be the account login |
+| Email | Owner enters preferred account email privately; public project privacy contact is tetherplane@gmail.com, which need not be the account login |
 | Company | Blank if not applicable |
 | Discovery channel | ChatGPT if available; otherwise Other |
 | Exact source | Recommendation made during research into free OSS code signing for Tetherplane |
@@ -50,7 +50,7 @@ Retain original assets, SHA256SUMS and release history. Do not change release de
 ## Pre-submission gates
 
 - [x] Maintainer confirms local/self-hosted-only distribution (no public hosted relay offered).
-- [x] Maintainer supplies public privacy-contact email: muhammadsohaibsaif@gmail.com.
+- [x] Maintainer supplies public privacy-contact email: tetherplane@gmail.com.
 - [ ] Verify privacy mailbox is reachable, review any project-controlled telemetry and clarify private development infrastructure is not offered externally; approve final wording and effective date. Independent self-hosting operators control their own retention, backups and processors.
 - [ ] Owner reviews and approves the privacy policy and signing policy. Confirm GitHub/SignPath MFA and precise signing/review roles.
 - [ ] Check third-party binary redistribution and license compatibility; ensure software meets SignPath's restrictions on hacking/security bypass features.

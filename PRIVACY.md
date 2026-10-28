@@ -44,6 +44,6 @@ For the implementation's security model, see [remote-plane privacy and boundarie
 
 ## Project privacy contact and effective date
 
-**Privacy inquiries:** [muhammadsohaibsaif@gmail.com](mailto:muhammadsohaibsaif@gmail.com). This contact was supplied by the independent maintainer for public project privacy inquiries. For information held by an independently self-hosted operator, contact that operator rather than the repository maintainer.
+**Privacy inquiries:** [tetherplane@gmail.com](mailto:tetherplane@gmail.com). This contact was supplied by the independent maintainer for public project privacy inquiries. For information held by an independently self-hosted operator, contact that operator rather than the repository maintainer.
 
 **Effective date:** pending final maintainer approval and public policy publication on the protected main branch. This draft is not yet operative.
