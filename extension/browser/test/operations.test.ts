@@ -291,3 +291,69 @@ test("debugger diagnostics refuse attaching to ordinary human tab", async () => 
   );
   assert.equal(debuggerApi.attached.length, 0);
 });
+
+
+test("unscoped downloads cannot enumerate the human browser download history", async () => {
+  const { agent } = setup();
+  await assert.rejects(
+    () => agent.downloads(),
+    (error: unknown) => typeof error === "object" && error !== null &&
+      "code" in error && (error as { code: string }).code === "permission_denied",
+  );
+});
+
+test("unshared human tab cannot request even its own download filenames", async () => {
+  const { agent } = setup();
+  await assert.rejects(
+    () => agent.downloads("tab:1"),
+    (error: unknown) => typeof error === "object" && error !== null &&
+      "code" in error && (error as { code: string }).code === "permission_denied",
+  );
+});
+
+test("shared upload revalidates owner origin before attaching debugger", async () => {
+  const debuggerApi = new FakeDebugger();
+  const controller = {
+    pages: () => [{
+      page_id: "tab:17", tab_id: 17, url: "https://fixture.example/editor",
+      ownership: "shared-authorized" as const,
+      grant: { operations: ["upload"], origin: "https://fixture.example" },
+    }],
+    authorizeLivePage: async () => {
+      throw Object.assign(new Error("tab redirected since approval"), { code: "permission_denied" });
+    },
+  };
+  const agent = new ChromeOperationalAgent({
+    controller, debuggerApi, downloadsApi: new FakeDownloads(),
+  });
+  await assert.rejects(
+    () => agent.uploadFile("tab:17", "frame:0|css:#upload", "C:\\test-only\\file.txt"),
+    (error: unknown) => typeof error === "object" && error !== null &&
+      "code" in error && (error as { code: string }).code === "permission_denied",
+  );
+  assert.equal(debuggerApi.attached.length, 0);
+  assert.equal(debuggerApi.commands.length, 0);
+});
+
+test("shared diagnostics revalidates owner origin before reading browser events", async () => {
+  const debuggerApi = new FakeDebugger();
+  const controller = {
+    pages: () => [{
+      page_id: "tab:17", tab_id: 17, url: "https://fixture.example/editor",
+      ownership: "shared-authorized" as const,
+      grant: { operations: ["diagnostics"], origin: "https://fixture.example" },
+    }],
+    authorizeLivePage: async () => {
+      throw Object.assign(new Error("owner grant was revoked"), { code: "permission_denied" });
+    },
+  };
+  const agent = new ChromeOperationalAgent({
+    controller, debuggerApi, downloadsApi: new FakeDownloads(),
+  });
+  await assert.rejects(
+    () => agent.diagnostics("tab:17", 10),
+    (error: unknown) => typeof error === "object" && error !== null &&
+      "code" in error && (error as { code: string }).code === "permission_denied",
+  );
+  assert.equal(debuggerApi.attached.length, 0);
+});
