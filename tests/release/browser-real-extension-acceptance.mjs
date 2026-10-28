@@ -119,7 +119,7 @@ async function evaluatePage(endpoint, expression) {
       });
     });
     socket.send(JSON.stringify({id: 1, method: "Runtime.evaluate",
-      params: {expression, returnByValue: true}}));
+      params: {expression, returnByValue: true, awaitPromise: true}}));
     return await Promise.race([response, delay(6000).then(() => {throw new Error("CDP evaluation timeout");})]);
   } finally { socket.close(); }
 }
@@ -173,6 +173,11 @@ try {
   }, 15000, "actual extension service worker missing");
   const id = /^chrome-extension:\/\/([a-p]{32})\//.exec(extensionTarget.url)?.[1];
   assert.match(id, /^[a-p]{32}$/);
+  const identity = await evaluatePage(extensionTarget.webSocketDebuggerUrl,
+    "({name:chrome.runtime.getManifest().name,id:chrome.runtime.id})");
+  assert.equal(identity.result?.value?.name, "Tetherplane Browser Bridge",
+    "selected service worker is not the Tetherplane extension");
+  assert.equal(identity.result?.value?.id, id);
   result.actualExtensionLoaded = true;
 
   const wsPort = await availablePort();
@@ -205,11 +210,19 @@ try {
     10000, "host pairing endpoint did not start");
 
   const popupUrl = "chrome-extension://" + id + "/pair.html";
-  const opened = await fetch("http://127.0.0.1:" + port +
-    "/json/new?" + encodeURIComponent(popupUrl), {method: "PUT"});
-  assert.equal(opened.status, 200, "cannot open extension pairing page");
-  const popup = await opened.json();
-  assert.equal(popup.url, popupUrl);
+  // A DevTools /json/new navigation to an extension URL can yield an
+  // internal chrome-error page. Have the isolated extension create its own
+  // UI page through chrome.tabs instead of simulating a foreign navigation.
+  const opened = await evaluatePage(extensionTarget.webSocketDebuggerUrl,
+    "chrome.tabs.create({url:chrome.runtime.getURL('pair.html'),active:false}).then(tab=>({id:tab.id,url:tab.url}))");
+  assert.equal(opened.result?.value?.url, popupUrl,
+    "extension could not create its own pairing tab");
+  const popup = await until(async () => {
+    const response = await fetch("http://127.0.0.1:" + port + "/json/list");
+    const targets = await response.json();
+    const target = targets.find(x => x.url === popupUrl && x.type === "page");
+    return target?.webSocketDebuggerUrl ? target : null;
+  }, 10000, "extension-owned pairing page did not expose a page target");
 
   let popupDiagnostic = null;
   try {
