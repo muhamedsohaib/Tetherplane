@@ -32,6 +32,7 @@ struct CliOptions {
     state_dir: Option<PathBuf>,
     browser_bridge: Option<String>,
     browser_bridge_token_file: Option<PathBuf>,
+    browser_only: bool,
 }
 
 fn parse_args() -> Result<CliOptions, String> {
@@ -42,6 +43,7 @@ fn parse_args() -> Result<CliOptions, String> {
     let mut state_dir = None;
     let mut browser_bridge = None;
     let mut browser_bridge_token_file = None;
+    let mut browser_only = false;
     let mut relay_url = None;
     let mut device_id = None;
     let mut device_credential_file = None;
@@ -50,6 +52,7 @@ fn parse_args() -> Result<CliOptions, String> {
     while let Some(argument) = arguments.next() {
         match argument.as_str() {
             "--stdio-rpc" => stdio_rpc = true,
+            "--browser-only" => browser_only = true,
             "--allow" => {
                 let path = arguments
                     .next()
@@ -134,6 +137,7 @@ fn parse_args() -> Result<CliOptions, String> {
         state_dir,
         browser_bridge,
         browser_bridge_token_file,
+        browser_only,
     })
 }
 
@@ -194,6 +198,31 @@ async fn main() {
             std::process::exit(2);
         }
     };
+
+    if options.browser_only {
+        // This opt-in local security boundary is validated before any browser
+        // service starts. It does not change existing agents that omit the flag.
+        if !options.allowed_roots.is_empty() {
+            eprintln!("browser-only launch must not include --allow directories");
+            std::process::exit(2);
+        }
+        let launched_device_id = match &transport {
+            TransportMode::Relay { device_id, .. } => Some(device_id.as_str()),
+            TransportMode::Stdio => None,
+        };
+        match principal.as_ref() {
+            Some(profile) => {
+                if let Err(message) = profile.validate_browser_only(launched_device_id) {
+                    eprintln!("{message}");
+                    std::process::exit(2);
+                }
+            }
+            None => {
+                eprintln!("browser-only launch requires a principal profile");
+                std::process::exit(2);
+            }
+        }
+    }
 
     let browser_provider = if let Some(address) = options.browser_bridge {
         match BrowserProvider::connect_with_retry(
