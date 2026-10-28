@@ -41,7 +41,7 @@ fn b_to_a(content: TransferContent) -> TrustedTransferIntent {
     }
 }
 
-fn denied(result: PolicyDecision) {
+fn denied(result: &PolicyDecision) {
     assert!(matches!(result, PolicyDecision::Deny { .. }), "{result:?}");
 }
 
@@ -49,7 +49,7 @@ fn denied(result: PolicyDecision) {
 fn no_grants_denies_even_read_only_file_extraction() {
     // A read-only operation from B still discloses B's data to A.
     let policy = DirectionalFlowPolicy::new(vec![]);
-    denied(policy.evaluate(&b_to_a(TransferContent::FileBytes)));
+    denied(&policy.evaluate(&b_to_a(TransferContent::FileBytes)));
 }
 
 #[test]
@@ -61,7 +61,7 @@ fn source_consent_without_receiver_consent_is_not_enough() {
         TransferDirection::Send,
         TransferContent::FileBytes,
     )]);
-    denied(policy.evaluate(&b_to_a(TransferContent::FileBytes)));
+    denied(&policy.evaluate(&b_to_a(TransferContent::FileBytes)));
 }
 
 #[test]
@@ -110,7 +110,7 @@ fn one_way_a_to_b_does_not_implicitly_authorize_reverse_b_to_a() {
     forward.source_device_id = "A".into();
     forward.destination_device_id = "B".into();
     assert_eq!(policy.evaluate(&forward), PolicyDecision::Allow);
-    denied(policy.evaluate(&b_to_a(TransferContent::ClipboardText)));
+    denied(&policy.evaluate(&b_to_a(TransferContent::ClipboardText)));
 }
 
 #[test]
@@ -141,7 +141,7 @@ fn clipboard_permission_does_not_authorize_files_screens_or_browser_content() {
         TransferContent::ScreenFrame,
         TransferContent::ClipboardFileReference,
     ] {
-        denied(policy.evaluate(&b_to_a(kind)));
+        denied(&policy.evaluate(&b_to_a(kind)));
     }
 }
 
@@ -167,7 +167,7 @@ fn authorizing_command_delivery_does_not_authorize_output_extraction() {
     command.source_device_id = "A".into();
     command.destination_device_id = "B".into();
     assert_eq!(policy.evaluate(&command), PolicyDecision::Allow);
-    denied(policy.evaluate(&b_to_a(TransferContent::CommandOutput)));
+    denied(&policy.evaluate(&b_to_a(TransferContent::CommandOutput)));
 }
 
 #[test]
@@ -194,10 +194,10 @@ fn device_identity_and_principal_must_match_both_endpoint_grants() {
     );
     let mut wrong_peer = b_to_a(TransferContent::LinkUrl);
     wrong_peer.destination_device_id = "Vaulter".into();
-    denied(policy.evaluate(&wrong_peer));
+    denied(&policy.evaluate(&wrong_peer));
     let mut wrong_principal = b_to_a(TransferContent::LinkUrl);
     wrong_principal.principal_id = "model:unapproved".into();
-    denied(policy.evaluate(&wrong_principal));
+    denied(&policy.evaluate(&wrong_principal));
 }
 
 #[test]
@@ -222,11 +222,11 @@ fn scope_and_byte_limits_apply_in_both_directions() {
     ]);
     let mut over_limit = b_to_a(TransferContent::FileBytes);
     over_limit.bytes = 101;
-    denied(policy.evaluate(&over_limit));
+    denied(&policy.evaluate(&over_limit));
     let mut wrong_resource = b_to_a(TransferContent::FileBytes);
     wrong_resource.bytes = 10;
     wrong_resource.resource_scope = "fixture:unapproved-secret".into();
-    denied(policy.evaluate(&wrong_resource));
+    denied(&policy.evaluate(&wrong_resource));
     let mut small = b_to_a(TransferContent::FileBytes);
     small.bytes = 100;
     assert_eq!(policy.evaluate(&small), PolicyDecision::Allow);
@@ -252,13 +252,13 @@ fn expired_and_revoked_grants_deny_existing_direction() {
     ]);
     let mut expired = b_to_a(TransferContent::FileBytes);
     expired.now_ms = 10_000;
-    denied(policy.evaluate(&expired));
+    denied(&policy.evaluate(&expired));
     assert_eq!(
         policy.evaluate(&b_to_a(TransferContent::FileBytes)),
         PolicyDecision::Allow
     );
     policy.revoke("send-b");
-    denied(policy.evaluate(&b_to_a(TransferContent::FileBytes)));
+    denied(&policy.evaluate(&b_to_a(TransferContent::FileBytes)));
 }
 
 #[test]
@@ -281,11 +281,11 @@ fn invalid_wildcard_scope_and_same_device_request_fail_closed() {
     ]);
     let mut wildcard = b_to_a(TransferContent::FileBytes);
     wildcard.resource_scope = "*".into();
-    denied(policy.evaluate(&wildcard));
+    denied(&policy.evaluate(&wildcard));
     let mut same_device = b_to_a(TransferContent::FileBytes);
     same_device.destination_device_id = "B".into();
-    denied(policy.evaluate(&same_device));
+    denied(&policy.evaluate(&same_device));
     let mut zero = b_to_a(TransferContent::FileBytes);
     zero.bytes = 0;
-    denied(policy.evaluate(&zero));
+    denied(&policy.evaluate(&zero));
 }
