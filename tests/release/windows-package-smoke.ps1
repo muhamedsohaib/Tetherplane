@@ -144,6 +144,14 @@ try {
     if (-not (Test-Path -LiteralPath (Join-Path $install "browser\\extension" $browserManifest.background.service_worker))) {
         throw "installed browser extension manifest points to missing service worker"
     }
+
+    # Run the actual packaged host with isolated synthetic tokens, randomized
+    # loopback ports and no real browser attachment. Syntax checks are not
+    # sufficient evidence that the bundled runtime starts after installation.
+    & node (Join-Path $PSScriptRoot "browser-package-runtime.mjs") $install
+    if ($LASTEXITCODE -ne 0) {
+        throw "installed browser runtime acceptance failed with exit code $LASTEXITCODE"
+    }
     if (-not (Test-Path -LiteralPath $installedTetherd)) {
         throw "installed tetherd is missing"
     }
