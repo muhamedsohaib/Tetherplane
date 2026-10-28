@@ -72,6 +72,14 @@ export class ChromePageAgent {
 
   async observe(pageId: string): Promise<BrowserObservedState> {
     const page = this.#requirePage(pageId);
+    // The extension owns the final Chrome scripting boundary. A broker
+    // policy mistake must not inject scripts into an unshared human tab.
+    if (page.ownership === "human") {
+      throw new ChromePageAgentError(
+        "permission_denied",
+        "human-owned tab is not shared for semantic observation",
+      );
+    }
     const results = await this.#scripting.executeScript({
       target: {
         tabId: page.tab_id,
