@@ -499,7 +499,6 @@ fn successful_browser_handshake_registers_real_provider_and_capabilities() {
     bridge.join().unwrap();
 }
 
-
 #[test]
 fn browser_only_cli_fails_closed_without_or_with_unsafe_local_principal() {
     let status = Command::new(env!("CARGO_BIN_EXE_tetherd"))
@@ -528,7 +527,11 @@ fn browser_only_cli_fails_closed_without_or_with_unsafe_local_principal() {
         .arg(&path)
         .status()
         .unwrap();
-    assert_eq!(status.code(), Some(2), "unsafe principal must fail before startup");
+    assert_eq!(
+        status.code(),
+        Some(2),
+        "unsafe principal must fail before startup"
+    );
 
     let safe_profile = json!({
         "principal_id": "browser-isolated-test",
@@ -546,7 +549,11 @@ fn browser_only_cli_fails_closed_without_or_with_unsafe_local_principal() {
         .args(["--allow", "."])
         .status()
         .unwrap();
-    assert_eq!(status.code(), Some(2), "browser-only must deny broad --allow roots");
+    assert_eq!(
+        status.code(),
+        Some(2),
+        "browser-only must deny broad --allow roots"
+    );
     std::fs::remove_file(&path).unwrap();
 }
 
@@ -617,20 +624,21 @@ fn browser_only_stdio_cannot_read_files_or_launch_processes_even_when_forged() {
     let mut results = std::collections::BTreeMap::new();
     for line in reader.lines().take(5) {
         let response: Value = serde_json::from_str(&line.unwrap()).unwrap();
-        results.insert(response["request_id"].as_str().unwrap().to_owned(), response);
+        results.insert(
+            response["request_id"].as_str().unwrap().to_owned(),
+            response,
+        );
     }
     assert_eq!(results.len(), 5);
     assert_eq!(results[STATUS_ID]["status"], "success");
     for id in [PROC_ID, FS_ID, BATCH_ID] {
         assert_eq!(
-            results[id]["error"]["code"],
-            "permission_denied",
+            results[id]["error"]["code"], "permission_denied",
             "browser-only principal must deny alternate provider: {id}"
         );
     }
     assert_eq!(
-        results[BROWSER_ID]["error"]["code"],
-        "capability_unavailable",
+        results[BROWSER_ID]["error"]["code"], "capability_unavailable",
         "browser transport can be absent while authorized core runs"
     );
     assert!(child.wait().unwrap().success());
