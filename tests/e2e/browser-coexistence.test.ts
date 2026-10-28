@@ -587,14 +587,30 @@ test(
       });
 
       const completedDownload = await waitFor(async () => {
-        const result = structured(
-          await call(activeLocal.client, "browser", {
-            op: "downloads",
-            args: { page_id: pageId },
-          }),
+        const reply = await call(activeLocal.client, "browser", {
+          op: "downloads",
+          args: { page_id: pageId },
+        });
+        const result = structured(reply);
+        if (reply.isError === true) {
+          const error = result.error as Record<string, unknown> | undefined;
+          const code = String(error?.code ?? "unclassified");
+          // A reconnecting, authenticated browser provider may briefly be unavailable.
+          // Never retry authorization or policy denials.
+          if (
+            code === "capability_unavailable" ||
+            code === "disconnected" ||
+            code === "timeout"
+          ) {
+            return null;
+          }
+          assert.fail(`browser.downloads failed with unexpected code ${code}`);
+        }
+        assert.ok(
+          Array.isArray(result.downloads),
+          "successful browser.downloads response must contain downloads",
         );
-        const downloads =
-          result.downloads as Array<Record<string, unknown>>;
+        const downloads = result.downloads as Array<Record<string, unknown>>;
         return (
           downloads.find(
             (item) => item.state === "complete",
