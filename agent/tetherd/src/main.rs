@@ -191,18 +191,15 @@ async fn main() {
     // A broken bridge (including a missing token file) must not disconnect the
     // authorized device, and no unverified browser operations are exposed.
     let browser_provider = if let Some(address) = options.browser_bridge {
-        match load_browser_token(options.browser_bridge_token_file.as_ref()) {
-            Ok(token) => Some(BrowserProvider::connect_nonfatal(BrowserBridgeConfig {
+        if let Ok(token) = load_browser_token(options.browser_bridge_token_file.as_ref()) {
+            Some(BrowserProvider::connect_nonfatal(BrowserBridgeConfig {
                 address,
                 token,
                 timeout_ms: 2_000,
-            })),
-            Err(_) => {
-                eprintln!(
-                    "browser bridge token unavailable; device remains connected without browser"
-                );
-                None
-            }
+            }))
+        } else {
+            eprintln!("browser bridge token unavailable; device remains connected without browser");
+            None
         }
     } else {
         None
