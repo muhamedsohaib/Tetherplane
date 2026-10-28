@@ -21,6 +21,11 @@ foreach ($required in @(
     "adapters\compact-mcp\dist\stdio-server.js",
     "protocol\schemas\result.schema.json",
     "launch\tetherplane-mcp.ps1",
+    "launch\tetherplane-browser.ps1",
+    "browser\host.mjs",
+    "browser\extension\manifest.json",
+    "browser\extension\dist\background.js",
+    "browser\extension\dist\pair.js",
     "manifest.json"
 )) {
     if (-not (Test-Path -LiteralPath (Join-Path $package $required))) {
@@ -40,7 +45,7 @@ if (Test-Path -LiteralPath $install) {
 
 $stateExisted = Test-Path -LiteralPath $state
 New-Item -ItemType Directory -Force -Path $install,$state | Out-Null
-foreach ($directory in @("bin","adapters","protocol","launch")) {
+foreach ($directory in @("bin","adapters","protocol","launch","browser")) {
     Copy-Item -LiteralPath (Join-Path $package $directory) -Destination $install -Recurse -Force
 }
 foreach ($file in @("manifest.json","README.md","SECURITY.md","CONTRIBUTING.md","LICENSE-MIT","LICENSE-APACHE","install-model-worker-windows.ps1","uninstall-windows.ps1")) {
