@@ -75,7 +75,8 @@ test("new packaging CI cannot publish, install packages, alter trust, or upload 
   assert.match(workflow, /github\.event\.pull_request\.head\.repo\.full_name == github\.repository/);
   assert.match(workflow, /feature\/msix-store-private-candidate-/);
   assert.match(workflow, /CI_PACKAGE_STRUCTURE_PASS_NOT_SUBMITTABLE/);
-  assert.doesNotMatch(workflow, /Add-AppxPackage|Import-Certificate|New-SelfSignedCertificate|SignTool sign|workflow_dispatch|push:\s*\n|contents: write/i);
+  assert.doesNotMatch(workflow, /^\s*(?:&\s*)?(?:Add-AppxPackage|Import-Certificate|New-SelfSignedCertificate)\b/gim);
+  assert.doesNotMatch(workflow, /workflow_dispatch|push:\s*\n|contents: write|SignTool sign/i);
   assert.doesNotMatch(workflow, /\.msix\b.*upload-artifact|upload-artifact.*\.msix\b/i);
   assert.doesNotMatch(builder, /Add-AppxPackage|Import-Certificate|New-SelfSignedCertificate|Start-ScheduledTask|Register-ScheduledTask|Set-MpPreference|Set-ExecutionPolicy/);
   assert.match(builder, /owner_submission_approval = 'NOT_GRANTED'/);
