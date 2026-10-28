@@ -22,11 +22,13 @@ pub struct BrowserBridgeConfig {
     pub timeout_ms: u64,
 }
 
+type BrowserSession = (Vec<String>, Option<String>);
+
 pub struct BrowserProvider {
     config: BrowserBridgeConfig,
     operations: Vec<String>,
     // Only used by recovering instances; None means the bridge is unavailable.
-    live_operations: Option<RwLock<Option<(Vec<String>, Option<String>)>>>,
+    live_operations: Option<RwLock<Option<BrowserSession>>>,
     token_file: Option<PathBuf>,
 }
 
@@ -193,7 +195,7 @@ impl BrowserProvider {
         }
     }
 
-    fn replace_live_operations(&self, operations: Option<(Vec<String>, Option<String>)>) {
+    fn replace_live_operations(&self, operations: Option<BrowserSession>) {
         if let Some(state) = &self.live_operations
             && let Ok(mut current) = state.write()
         {
