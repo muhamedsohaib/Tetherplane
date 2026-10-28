@@ -93,14 +93,12 @@ impl AgentRuntime {
                 .collect()
         });
 
-        let browser_operations = browser_provider
-            .as_ref()
-            .map(|provider| provider.operations().to_vec());
+        let browser_for_status = browser_provider.clone();
         router.register(Arc::new(DeviceProvider::new(
             principal_capabilities,
             job_available,
             audit_available,
-            browser_operations,
+            browser_for_status,
             desktop_operations,
         )))?;
         router.register(Arc::new(FilesystemProvider::new()))?;
@@ -212,7 +210,7 @@ struct DeviceProvider {
     allowed_capabilities: Option<BTreeSet<String>>,
     job_available: bool,
     audit_available: bool,
-    browser_operations: Option<Vec<String>>,
+    browser_provider: Option<Arc<BrowserProvider>>,
     desktop_operations: Option<Vec<String>>,
 }
 
@@ -221,7 +219,7 @@ impl DeviceProvider {
         allowed_capabilities: Option<BTreeSet<String>>,
         job_available: bool,
         audit_available: bool,
-        browser_operations: Option<Vec<String>>,
+        browser_provider: Option<Arc<BrowserProvider>>,
         desktop_operations: Option<Vec<String>>,
     ) -> Self {
         Self {
@@ -229,7 +227,7 @@ impl DeviceProvider {
             allowed_capabilities,
             job_available,
             audit_available,
-            browser_operations,
+            browser_provider,
             desktop_operations,
         }
     }
@@ -254,7 +252,7 @@ impl DeviceProvider {
                 { "namespace": "batch", "available": true, "operations": self.operations("batch", &["execute"]) },
                 { "namespace": "job", "available": self.job_available, "operations": if self.job_available { self.operations("job", &["create", "get", "checkpoint", "acquire_lease", "release_lease"]) } else { Vec::<String>::new() } },
                 { "namespace": "audit", "available": self.audit_available, "operations": if self.audit_available { self.operations("audit", &["read"]) } else { Vec::<String>::new() } },
-                { "namespace": "browser", "available": self.browser_operations.is_some(), "operations": self.browser_operations() },
+                { "namespace": "browser", "available": self.browser_provider.as_ref().and_then(|provider| provider.available_operations()).is_some(), "operations": self.browser_operations() },
                 { "namespace": "desktop", "available": self.desktop_operations.is_some(), "operations": self.desktop_operations() }
             ]
         })
@@ -273,16 +271,16 @@ impl DeviceProvider {
     }
 
     fn browser_operations(&self) -> Vec<String> {
-        self.browser_operations
+        self.browser_provider
             .as_ref()
+            .and_then(|provider| provider.available_operations())
+            .unwrap_or_default()
             .into_iter()
-            .flatten()
             .filter(|operation| {
                 self.allowed_capabilities
                     .as_ref()
                     .is_none_or(|allowed| allowed.contains(&format!("browser.{operation}")))
             })
-            .cloned()
             .collect()
     }
 
