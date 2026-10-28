@@ -101,3 +101,30 @@ test("service never trusts caller-supplied ownership for a human page", async ()
     await server.close();
   }
 });
+
+
+test("authenticated browser RPC refuses a revoked human tab before backend observation", async () => {
+  class ObservedBackend extends FakeBackend {
+    observeAttempts = 0;
+    override async observe(pageId: string) {
+      this.observeAttempts++;
+      return await super.observe(pageId);
+    }
+  }
+  const backend = new ObservedBackend();
+  const service = new BrowserBridgeService({ backend, ownership: new BrowserOwnershipRegistry() });
+  const server = await startBrowserRpcServer({ host: "127.0.0.1", port: 0, service });
+  try {
+    const reply = await rpc(server.address, {
+      type: "invoke",
+      request_id: "revoke-observation-regression",
+      capability: "browser.snapshot",
+      arguments: { page_id: "human-1" },
+    });
+    assert.equal(reply.status, "error");
+    assert.equal((reply.error as Record<string, unknown>).code, "permission_denied");
+    assert.equal(backend.observeAttempts, 0, "unshared human page reached backend");
+  } finally {
+    await server.close();
+  }
+});
