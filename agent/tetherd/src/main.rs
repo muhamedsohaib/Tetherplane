@@ -171,6 +171,30 @@ fn load_browser_token(path: Option<&PathBuf>) -> Result<Option<String>, String> 
     Ok(Some(token.to_owned()))
 }
 
+// A launch flag is local operator configuration, never an AI-supplied grant.
+// Reject unsafe browser-only configurations before any bridge handshake.
+fn validate_browser_only_launch(
+    enabled: bool,
+    allowed_roots: &[PathBuf],
+    principal: Option<&PrincipalProfile>,
+    transport: &TransportMode,
+) -> Result<(), &'static str> {
+    if !enabled {
+        return Ok(());
+    }
+    if !allowed_roots.is_empty() {
+        return Err("browser-only launch must not include --allow directories");
+    }
+    let Some(profile) = principal else {
+        return Err("browser-only launch requires a principal profile");
+    };
+    let launched_device_id = match transport {
+        TransportMode::Relay { device_id, .. } => Some(device_id.as_str()),
+        TransportMode::Stdio => None,
+    };
+    profile.validate_browser_only(launched_device_id)
+}
+
 #[tokio::main]
 async fn main() {
     let options = match parse_args() {
@@ -191,6 +215,16 @@ async fn main() {
         }
     };
 
+    if let Err(message) = validate_browser_only_launch(
+        options.browser_only,
+        &options.allowed_roots,
+        principal.as_ref(),
+        &transport,
+    ) {
+        eprintln!("{message}");
+        std::process::exit(2);
+    }
+
     let browser_token = match load_browser_token(options.browser_bridge_token_file.as_ref()) {
         Ok(token) => token,
         Err(message) => {
@@ -198,31 +232,6 @@ async fn main() {
             std::process::exit(2);
         }
     };
-
-    if options.browser_only {
-        // This opt-in local security boundary is validated before any browser
-        // service starts. It does not change existing agents that omit the flag.
-        if !options.allowed_roots.is_empty() {
-            eprintln!("browser-only launch must not include --allow directories");
-            std::process::exit(2);
-        }
-        let launched_device_id = match &transport {
-            TransportMode::Relay { device_id, .. } => Some(device_id.as_str()),
-            TransportMode::Stdio => None,
-        };
-        match principal.as_ref() {
-            Some(profile) => {
-                if let Err(message) = profile.validate_browser_only(launched_device_id) {
-                    eprintln!("{message}");
-                    std::process::exit(2);
-                }
-            }
-            None => {
-                eprintln!("browser-only launch requires a principal profile");
-                std::process::exit(2);
-            }
-        }
-    }
 
     let browser_provider = if let Some(address) = options.browser_bridge {
         match BrowserProvider::connect_with_retry(
