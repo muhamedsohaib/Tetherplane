@@ -39,6 +39,8 @@ export type ExtensionPageRecord = {
   grant?: {
     operations: BrowserOperation[];
     expires_at_ms: number;
+    // Captured locally from chrome.tabs.get at approval time, never from RPC.
+    origin?: string;
   };
 };
 
@@ -77,7 +79,10 @@ export class ExtensionTabController {
       const pageId = pageIdForTab(tab.id);
       const saved = persisted.get(pageId);
       const restored =
-        saved && !this.#isExpired(saved)
+        saved && !this.#isExpired(saved) &&
+          (saved.ownership === "tetherplane" ||
+            (saved.grant?.origin !== undefined &&
+              saved.grant.origin === approvedOrigin(tab.url)))
           ? saved
           : undefined;
       const record: ExtensionPageRecord = {
@@ -127,7 +132,14 @@ export class ExtensionTabController {
     url: string,
   ): Promise<ExtensionPageRecord> {
     requireUrl(url);
-    const page = this.#requirePage(pageId);
+    const page = await this.authorizeLivePage(pageId, "navigate");
+    if (page.ownership !== "tetherplane" &&
+        approvedOrigin(url) !== page.grant?.origin) {
+      throw new BrowserPolicyError(
+        "permission_denied",
+        "navigation outside the owner-approved website origin is denied",
+      );
+    }
     this.#ownership.authorize({
       page_id: pageId,
       operation: "navigate",
@@ -181,6 +193,13 @@ export class ExtensionTabController {
     if (!tab) {
       throw new Error(`missing tab: ${tabId}`);
     }
+    const origin = approvedOrigin(tab.url);
+    if (!origin) {
+      throw new BrowserPolicyError(
+        "permission_denied",
+        "only http/https website tabs can be shared",
+      );
+    }
     const record: ExtensionPageRecord = {
       page_id: pageIdForTab(tab.id),
       tab_id: tab.id,
@@ -191,11 +210,67 @@ export class ExtensionTabController {
       grant: {
         operations: [...grant.operations],
         expires_at_ms: this.#now() + grant.ttl_ms,
+        origin,
       },
     };
     this.#record(record);
     await this.#persist();
     return structuredClone(record);
+  }
+
+  // Trust boundary shared by extension commands, independently of RPC state.
+  // chrome.tabs.get is checked for every operation, not only at approval.
+  async authorizeLivePage(
+    pageId: string,
+    operation: BrowserOperation,
+  ): Promise<ExtensionPageRecord> {
+    const page = this.#requirePage(pageId);
+    if (page.ownership === "tetherplane") {
+      return page;
+    }
+
+    if (page.ownership !== "shared-authorized" &&
+        page.ownership !== "shared-observe") {
+      throw new BrowserPolicyError(
+        "permission_denied",
+        "a human tab must be explicitly shared before access",
+      );
+    }
+
+    const live = await this.#tabs.get(page.tab_id);
+    const origin = live ? approvedOrigin(live.url) : null;
+    if (!live || !page.grant?.origin ||
+        page.grant.expires_at_ms <= this.#now() ||
+        origin !== page.grant.origin) {
+      const revoked: ExtensionPageRecord = {
+        page_id: page.page_id,
+        tab_id: page.tab_id,
+        window_id: live?.window_id ?? page.window_id,
+        url: live?.url ?? page.url,
+        active: live?.active ?? page.active,
+        ownership: "human",
+      };
+      this.#record(revoked);
+      await this.#persist();
+      throw new BrowserPolicyError(
+        "permission_denied",
+        "the sharing grant expired or the browser left its approved origin",
+      );
+    }
+
+    const observeOnly = operation === "snapshot" ||
+      operation === "wait" || operation === "checkpoint";
+    if ((!observeOnly && !page.grant.operations.includes(operation)) ||
+        (page.ownership === "shared-observe" && !observeOnly)) {
+      throw new BrowserPolicyError(
+        "permission_denied",
+        "the owner has not approved this operation",
+      );
+    }
+
+    return structuredClone({
+      ...page, url: live.url, active: live.active, window_id: live.window_id,
+    });
   }
 
   async detachHumanTab(tabId: number): Promise<ExtensionPageRecord> {
@@ -252,6 +327,7 @@ export class ExtensionTabController {
     return (
       page.ownership === "shared-authorized" &&
       (!page.grant ||
+        !page.grant.origin ||
         !Number.isFinite(page.grant.expires_at_ms) ||
         page.grant.expires_at_ms <= this.#now())
     );
@@ -275,5 +351,17 @@ function requireUrl(url: string): void {
   }
   if (parsed.protocol !== "http:" && parsed.protocol !== "https:") {
     throw new Error("browser URL must use http or https");
+  }
+}
+
+function approvedOrigin(value: string): string | null {
+  try {
+    const url = new URL(value);
+    if (url.protocol !== "http:" && url.protocol !== "https:") {
+      return null;
+    }
+    return url.origin;
+  } catch {
+    return null;
   }
 }
