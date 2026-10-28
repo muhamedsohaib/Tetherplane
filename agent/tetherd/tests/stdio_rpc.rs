@@ -470,17 +470,36 @@ fn successful_browser_handshake_registers_real_provider_and_capabilities() {
     browser["capability"] = json!("browser.status");
 
     let mut stdin = child.stdin.take().unwrap();
-    writeln!(stdin, "{}", serde_json::to_string(&caps).unwrap()).unwrap();
+    let stdout = child.stdout.take().unwrap();
+    let mut reader = BufReader::new(stdout);
+    let mut responses = std::collections::BTreeMap::new();
+    // Browser readiness follows a separate authenticated handshake.
+    for _ in 0..125 {
+        writeln!(stdin, "{}", serde_json::to_string(&caps).unwrap()).unwrap();
+        let mut line = String::new();
+        assert!(reader.read_line(&mut line).unwrap() > 0);
+        let result: Value = serde_json::from_str(line.trim_end()).unwrap();
+        let available = result["data"]["providers"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .any(|p| p["namespace"] == "browser" && p["available"] == true);
+        if available {
+            responses.insert(CAPS_ID.to_owned(), result);
+            break;
+        }
+        thread::sleep(std::time::Duration::from_millis(40));
+    }
+    assert!(
+        responses.contains_key(CAPS_ID),
+        "browser did not become available"
+    );
     writeln!(stdin, "{}", serde_json::to_string(&browser).unwrap()).unwrap();
     drop(stdin);
-
-    let stdout = child.stdout.take().unwrap();
-    let reader = BufReader::new(stdout);
-    let mut responses = std::collections::BTreeMap::new();
-    for line in reader.lines().take(2) {
-        let result: Value = serde_json::from_str(&line.unwrap()).unwrap();
-        responses.insert(result["request_id"].as_str().unwrap().to_owned(), result);
-    }
+    let mut line = String::new();
+    assert!(reader.read_line(&mut line).unwrap() > 0);
+    let result: Value = serde_json::from_str(line.trim_end()).unwrap();
+    responses.insert(BROWSER_ID.to_owned(), result);
 
     let providers = responses[CAPS_ID]["data"]["providers"].as_array().unwrap();
     let browser_provider = providers
