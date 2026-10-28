@@ -60,6 +60,11 @@ test("Store art is required as real assets, never silently inherited from dev sq
   assert.match(builder, /CI_SYNTHETIC_PREVIEW_NOT_SUBMITTABLE/);
   assert.match(builder, /OWNER_CANDIDATE_NO_GO/);
   assert.match(builder, /NO_GO_CLEANUP_FAILED/);
+  assert.match(builder, /STORE_CANDIDATE_SOURCE_UI_OR_STATE_TRANSFORM_DRIFT/);
+  assert.match(builder, /TetherplaneStoreDevOnly/);
+  assert.match(builder, /TetherplaneStore/);
+  assert.match(builder, /STORE_CANDIDATE_UNPACKED_DEVELOPMENT_TEXT_OR_STATE/);
+  assert.match(builder, /STORE_CANDIDATE_RUNTIME_SELFTEST_FAILED/);
 });
 
 test("original synthetic Store-runtime feasibility identity remains untouched", () => {
