@@ -155,6 +155,22 @@ try {
         throw "installed browser runtime acceptance failed with exit code $LASTEXITCODE"
     }
 
+    # Exercise the actual installed extension and host in a disposable,
+    # headless browser profile. The fixture uses only random test tokens,
+    # private localhost services and test-owned tabs; no human session.
+    $edgePath = Join-Path ([Environment]::GetFolderPath("ProgramFilesX86")) "Microsoft\Edge\Application\msedge.exe"
+    if (-not (Test-Path -LiteralPath $edgePath -PathType Leaf)) {
+        throw "Microsoft Edge executable is required for isolated real-extension release acceptance"
+    }
+    $edgeSignature = Get-AuthenticodeSignature -LiteralPath $edgePath
+    if ($edgeSignature.Status -ne "Valid") {
+        throw "Microsoft Edge signature did not validate for isolated extension test"
+    }
+    & node (Join-Path $PSScriptRoot "browser-real-extension-acceptance.mjs") $install $edgePath
+    if ($LASTEXITCODE -ne 0) {
+        throw "RELEASE_NO_GO: installed real extension acceptance failed"
+    }
+
     # The operator-controlled setup must generate separate, non-public, scoped
     # local token files and refuse accidental replacement or extension rebind.
     $browserSetup = Join-Path $install "launch\tetherplane-browser-setup.ps1"
