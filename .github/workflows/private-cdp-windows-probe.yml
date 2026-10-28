@@ -7,6 +7,7 @@ on:
   pull_request:
     paths:
       - 'scripts/private-cdp-windows-probe.py'
+      - 'scripts/private-cdp-node-windows-probe.mjs'
       - '.github/workflows/private-cdp-windows-probe.yml'
   workflow_dispatch:
 
@@ -31,3 +32,6 @@ jobs:
       - name: Require functional private CDP protocol, owned tab and cleanup
         shell: pwsh
         run: python scripts/private-cdp-windows-probe.py --browser chrome
+      - name: Require Node child_process private CDP transport (no TCP fallback)
+        shell: pwsh
+        run: node scripts/private-cdp-node-windows-probe.mjs
