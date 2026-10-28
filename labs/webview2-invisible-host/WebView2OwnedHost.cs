@@ -39,8 +39,9 @@ internal sealed class WebView2OwnedHost : Form
     private readonly Stopwatch _grantClock = new Stopwatch();
     private long _grantLifetimeMs;
     private bool _grantActivated;
+    private bool _grantRevoked;
 
-    private bool GrantActive { get { return _grantActivated &&
+    private bool GrantActive { get { return _grantActivated && !_grantRevoked &&
         _grantClock.IsRunning && _grantClock.ElapsedMilliseconds < _grantLifetimeMs; } }
 
     private WebView2OwnedHost(string profile)
@@ -196,7 +197,8 @@ internal sealed class WebView2OwnedHost : Form
             }
             // Shutdown and closing an already-owned fixture stay available
             // after expiry so the parent can clean up safely.
-            if (method != "activate_fixture" && method != "shutdown" &&
+            if (method != "activate_fixture" && method != "revoke_fixture" &&
+                method != "shutdown" &&
                 method != "close_fixture" && !GrantActive)
             {
                 SendError(id, "permission_denied");
@@ -207,7 +209,7 @@ internal sealed class WebView2OwnedHost : Form
             switch (method)
             {
                 case "activate_fixture":
-                    if (_grantActivated || _created || _closed)
+                    if (_grantActivated || _grantRevoked || _created || _closed)
                         throw new NativeDenied("permission_denied");
                     object lifetime;
                     if (!args.TryGetValue("lifetime_ms", out lifetime) ||
@@ -220,6 +222,12 @@ internal sealed class WebView2OwnedHost : Form
                     _grantActivated = true;
                     _grantClock.Start(); // monotonic, unaffected by wall-clock changes
                     data = new { active = true };
+                    break;
+                case "revoke_fixture":
+                    // A native host may not be reactivated after revocation.
+                    // The authenticated parent retains only cleanup/stop access.
+                    _grantRevoked = true;
+                    data = new { revoked = true };
                     break;
                 case "create_fixture":
                     data = await CreateFixtureAsync();
