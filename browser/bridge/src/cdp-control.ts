@@ -930,6 +930,8 @@ export async function launchCdpOwnedBrowser(options: {
   launchTimeoutMs?: number;
   // Laboratory-only: every intercepted request must use this exact loopback origin.
   networkOrigin?: string;
+  // A deny-by-default proxy is mandatory in guarded mode: Fetch alone misses WS.
+  labProxyPort?: number;
 } = {}): Promise<LaunchedCdpControl> {
   if (options.networkOrigin !== undefined) {
     let network: URL;
@@ -947,6 +949,20 @@ export async function launchCdpOwnedBrowser(options: {
       throw new TypeError("CDP lab network origin must be a loopback HTTP origin");
     }
   }
+  if (options.networkOrigin !== undefined) {
+    if (
+      !Number.isSafeInteger(options.labProxyPort) ||
+      (options.labProxyPort ?? 0) < 1 ||
+      (options.labProxyPort ?? 0) > 65_535
+    ) {
+      throw new TypeError(
+        "network-guarded CDP mode requires an explicit local proxy port",
+      );
+    }
+  } else if (options.labProxyPort !== undefined) {
+    throw new TypeError("CDP lab proxy cannot be used without an origin");
+  }
+
   const executablePath =
     options.executablePath ?? findInstalledChromium();
   if (!executablePath || !isExecutableFile(executablePath)) {
@@ -962,6 +978,14 @@ export async function launchCdpOwnedBrowser(options: {
     path.join(parent, "tetherplane-cdp-"),
   );
   const args = buildIsolatedChromiumArgs(profileDir);
+  if (options.labProxyPort !== undefined) {
+    // Explicit proxy only, with no DIRECT fallback. Chromium otherwise
+    // implicitly bypasses proxies for loopback (including WebSocket).
+    args.push(
+      "--proxy-server=http://127.0.0.1:" + String(options.labProxyPort),
+      "--proxy-bypass-list=<-loopback>",
+    );
+  }
   const child = spawn(executablePath, args, {
     stdio: "ignore",
     windowsHide: true,
