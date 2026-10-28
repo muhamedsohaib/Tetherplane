@@ -91,11 +91,19 @@ function Assert-StoreManifest([string]$Path) {
         throw 'STORE_PROFILE_ASSET_NAMES_INVALID'
     }
     $xmlText = $manifest.OuterXml
-    if ($xmlText -match '(?i)startupTask|packagedServices|localSystemServices|Tetherplane.StoreRuntime.DevOnly|Development Probe' -or
-        @($manifest.Package.Capabilities.ChildNodes).Count -ne 1 -or
-        $manifest.Package.Capabilities.ChildNodes[0].Name -cne 'rescap:Capability' -or
-        $manifest.Package.Capabilities.ChildNodes[0].GetAttribute('Name') -cne 'runFullTrust') {
-        throw 'STORE_PROFILE_UNEXPECTED_PRIVILEGE_OR_DEVELOPMENT_IDENTITY'
+    if ($xmlText -match '(?i)startupTask|packagedServices|localSystemServices|Tetherplane.StoreRuntime.DevOnly|Development Probe') {
+        throw 'STORE_PROFILE_DEVELOPMENT_IDENTITY_OR_STARTUP_CAPABILITY'
+    }
+    # Use XML namespace-aware fields rather than PowerShell's adapted .Name
+    # or .ChildNodes properties (which do not behave consistently in PS 5.1).
+    $capabilities = @($manifest.SelectNodes("/*[local-name()='Package']/*[local-name()='Capabilities']/*"))
+    if ($capabilities.Count -ne 1) {
+        throw 'STORE_PROFILE_CAPABILITY_COUNT_MISMATCH'
+    }
+    if ($capabilities[0].LocalName -cne 'Capability' -or
+        $capabilities[0].NamespaceURI -cne 'http://schemas.microsoft.com/appx/manifest/foundation/windows10/restrictedcapabilities' -or
+        $capabilities[0].GetAttribute('Name') -cne 'runFullTrust') {
+        throw 'STORE_PROFILE_UNEXPECTED_PRIVILEGE'
     }
 }
 
