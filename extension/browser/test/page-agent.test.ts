@@ -229,3 +229,80 @@ test("extension denies human-owned observation before injecting scripts into a t
   );
   assert.equal(scripting.calls.length, 0, "revoked human tab must not reach Chrome scripting");
 });
+
+
+test("shared tab observation excludes cross-origin iframes", async () => {
+  const scripting = new FakeScripting();
+  scripting.nextResults = [
+    { frameId: 0, result: {
+      url: "https://fixture.example/owner",
+      semantic_revision: 8, resource_revision: null,
+      nodes: [{ backend_id: "css:#visible", role: "textbox", accessible_name: "Permitted" }],
+      validation_messages: [], toasts: [],
+    }},
+    { frameId: 3, result: {
+      url: "https://other-account.test/private",
+      semantic_revision: 9, resource_revision: null,
+      nodes: [{ backend_id: "css:#secret", role: "textbox", accessible_name: "SECRET" }],
+      validation_messages: [], toasts: [],
+    }},
+  ];
+  const controller = {
+    pages: () => [{
+      page_id: "tab:13", tab_id: 13, url: "https://fixture.example/owner",
+      ownership: "shared-authorized" as const,
+      grant: { operations: ["act"], origin: "https://fixture.example",
+        expires_at_ms: Date.now() + 60_000 },
+    }],
+    navigate: async () => ({}),
+  };
+  const observed = await new ChromePageAgent({ controller, scripting }).observe("tab:13");
+  assert.deepEqual(observed.nodes.map(n => n.accessible_name), ["Permitted"]);
+  assert.deepEqual(scripting.calls[0]?.target, { tabId: 13, frameIds: [0] });
+});
+
+test("shared tab cannot mutate an embedded frame even with act permission", async () => {
+  const scripting = new FakeScripting();
+  scripting.nextResults = [{ frameId: 3, result: { ok: true } }];
+  const controller = {
+    pages: () => [{
+      page_id: "tab:13", tab_id: 13, url: "https://fixture.example/owner",
+      ownership: "shared-authorized" as const,
+      grant: { operations: ["act"], origin: "https://fixture.example",
+        expires_at_ms: Date.now() + 60_000 },
+    }],
+    navigate: async () => ({}),
+  };
+  await assert.rejects(
+    () => new ChromePageAgent({ controller, scripting }).perform("tab:13", {
+      kind: "fill", backend_id: "frame:3|css:#secret", value: "should-never-run",
+    }),
+    (error: unknown) => typeof error === "object" && error !== null &&
+      "code" in error && (error as { code: string }).code === "permission_denied",
+  );
+  assert.equal(scripting.calls.length, 0, "cross-origin frame received an injection");
+});
+
+test("shared tab may not return content from a silently redirected document", async () => {
+  const scripting = new FakeScripting();
+  scripting.nextResults = [{ frameId: 0, result: {
+    url: "https://unapproved.test/private", semantic_revision: 12,
+    resource_revision: null,
+    nodes: [{ backend_id: "css:#secret", role: "textbox", accessible_name: "PRIVATE" }],
+    validation_messages: [], toasts: [],
+  }}];
+  const controller = {
+    pages: () => [{
+      page_id: "tab:13", tab_id: 13, url: "https://fixture.example/owner",
+      ownership: "shared-authorized" as const,
+      grant: { operations: ["act"], origin: "https://fixture.example",
+        expires_at_ms: Date.now() + 60_000 },
+    }],
+    navigate: async () => ({}),
+  };
+  await assert.rejects(
+    () => new ChromePageAgent({ controller, scripting }).observe("tab:13"),
+    (error: unknown) => typeof error === "object" && error !== null &&
+      "code" in error && (error as { code: string }).code === "permission_denied",
+  );
+});
