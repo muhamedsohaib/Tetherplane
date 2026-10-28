@@ -81,6 +81,16 @@ export class WebView2OwnedFixtureBackend implements BrowserBridgeBackend {
     ) {
       throw new WebView2FixturePolicyError("provider_failure", "native WebView2 returned an invalid owned page");
     }
+    // Creating a native controller is asynchronous. An owner may revoke the
+    // local grant before it returns; never register the late page as owned.
+    if (this.#revoked || this.#clock() >= this.#expiresAtMs) {
+      const cleanup = await this.#transport.request("close_fixture", { page_id: page });
+      this.#throwHostFailure(cleanup);
+      if (cleanup.closed !== true) {
+        throw new WebView2FixturePolicyError("provider_failure", "revoked fixture cleanup was not acknowledged");
+      }
+      throw new WebView2FixturePolicyError("permission_denied", "WebView2 lab grant revoked during page creation");
+    }
     this.#owned.add(page);
     return { page_id: page, url: FIXTURE_URL, active: false, ownership: "tetherplane" };
   }
