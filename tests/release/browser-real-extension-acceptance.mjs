@@ -166,18 +166,29 @@ try {
     return Number.isSafeInteger(p) && p > 0 ? p : null;
   }, 15000, "isolated browser DevTools unavailable");
 
+  // Edge ships first-party extensions such as Microsoft Voices. Never take
+  // the first chrome-extension target: bind to the actual Tetherplane manifest.
   const extensionTarget = await until(async () => {
     const response = await fetch("http://127.0.0.1:" + port + "/json/list");
     const targets = await response.json();
-    return targets.find(x => /^chrome-extension:\/\/[a-p]{32}\//.test(x.url));
-  }, 15000, "actual extension service worker missing");
-  const id = /^chrome-extension:\/\/([a-p]{32})\//.exec(extensionTarget.url)?.[1];
+    for (const candidate of targets) {
+      const match = /^chrome-extension:\/\/([a-p]{32})\//.exec(candidate.url);
+      if (!match || !candidate.webSocketDebuggerUrl) continue;
+      try {
+        const identity = await evaluatePage(candidate.webSocketDebuggerUrl,
+          "({name:chrome.runtime.getManifest().name,id:chrome.runtime.id})");
+        if (identity.result?.value?.name === "Tetherplane Browser Bridge" &&
+            identity.result?.value?.id === match[1]) {
+          return { ...candidate, extension_id: match[1] };
+        }
+      } catch {
+        // Ignore unrelated/short-lived browser-internal extension targets.
+      }
+    }
+    return null;
+  }, 15000, "actual Tetherplane extension service worker missing");
+  const id = extensionTarget.extension_id;
   assert.match(id, /^[a-p]{32}$/);
-  const identity = await evaluatePage(extensionTarget.webSocketDebuggerUrl,
-    "({name:chrome.runtime.getManifest().name,id:chrome.runtime.id})");
-  assert.equal(identity.result?.value?.name, "Tetherplane Browser Bridge",
-    "selected service worker is not the Tetherplane extension");
-  assert.equal(identity.result?.value?.id, id);
   result.actualExtensionLoaded = true;
 
   const wsPort = await availablePort();
