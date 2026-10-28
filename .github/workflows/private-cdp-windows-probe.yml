@@ -33,5 +33,6 @@ jobs:
         shell: pwsh
         run: python scripts/private-cdp-windows-probe.py --browser chrome
       - name: Require Node child_process private CDP transport (no TCP fallback)
+        if: ${{ always() }}
         shell: pwsh
         run: node scripts/private-cdp-node-windows-probe.mjs
