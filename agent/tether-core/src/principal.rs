@@ -52,8 +52,7 @@ impl PrincipalProfile {
             return Err("browser-only principal must name an authorized device");
         }
         if let Some(device_id) = launched_device_id
-            && (self.allowed_devices.len() != 1
-                || !self.allowed_devices.contains(device_id))
+            && (self.allowed_devices.len() != 1 || !self.allowed_devices.contains(device_id))
         {
             return Err("browser-only principal must be scoped to this device");
         }
