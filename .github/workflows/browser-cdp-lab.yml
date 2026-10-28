@@ -58,6 +58,10 @@ jobs:
       - name: Verify an abruptly killed broker does not leave a live private-CDP browser
         if: runner.os == 'Windows'
         run: node scripts/private-cdp-broker-crash-acceptance.mjs
+      - name: Prove Windows WebView2 native owned fixture command host
+        if: runner.os == 'Windows'
+        shell: pwsh
+        run: powershell.exe -NoProfile -NonInteractive -ExecutionPolicy Bypass -File labs/webview2-invisible-host/run-owned-host-acceptance.ps1
       - name: Diagnose installed Windows Edge private CDP without changing browser configuration
         if: runner.os == 'Windows'
         continue-on-error: true
