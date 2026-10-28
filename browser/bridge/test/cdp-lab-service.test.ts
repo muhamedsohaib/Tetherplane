@@ -39,6 +39,7 @@ class FakeBrowser implements BrowserServiceBackend {
   writes = 0;
   closes: string[] = [];
   redirectTo: string | null = null;
+  onPerform: (() => void) | null = null;
 
   capabilities() {
     return { backend: "cdp", operations: ["pages", "act", "upload"] };
@@ -86,6 +87,7 @@ class FakeBrowser implements BrowserServiceBackend {
 
   async perform() {
     this.writes += 1;
+    this.onPerform?.();
   }
 
   async waitForSettled(pageId: string) {
@@ -371,5 +373,37 @@ test("grants expire fail-closed and reject unsafe lifetimes and URL credentials"
       expiresAtMs: now + 16 * 60_000,
     }, clock),
     TypeError,
+  );
+});
+
+
+test("revocation between actions prevents later mutations in the same batch", async () => {
+  const backend = new FakeBrowser();
+  const grant = labGrant();
+  const service = new CdpLabOnlyBridgeService({
+    backend,
+    labOrigin: origin,
+    grant,
+  });
+  await service.invoke("browser.create_tab", { url: origin });
+
+  backend.onPerform = () => grant.revoke();
+  await assert.rejects(
+    service.invoke("browser.act", {
+      page_id: "cdp:owned-test",
+      mode: "background_only",
+      actions: [
+        { kind: "navigate", url: origin + "/first" },
+        { kind: "navigate", url: origin + "/second" },
+      ],
+    }),
+    (error: unknown) =>
+      error instanceof Error &&
+      (error as Error & { code?: string }).code === "permission_denied",
+  );
+  assert.equal(
+    backend.writes,
+    2,
+    "only creation and the first already-authorized action may execute",
   );
 });
