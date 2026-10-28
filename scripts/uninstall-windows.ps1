@@ -23,10 +23,17 @@ if ($receipt -and $receipt.scheduled_task) {
 
 $modelWorkerRunKey = "HKCU:\Software\Microsoft\Windows\CurrentVersion\Run"
 $modelWorkerRunValue = "TetherplaneModelWorker"
-Remove-ItemProperty -Path $modelWorkerRunKey -Name $modelWorkerRunValue -ErrorAction SilentlyContinue
-
 $modelWorkerSupervisor = Join-Path $install "config\model-worker-supervisor.ps1"
 $modelWorkerMain = Join-Path $install "adapters\model-client\dist\worker-main.js"
+
+# A disposable installation must not delete an unrelated model worker's
+# globally named startup entry. Only unregister the exact command that
+# install-model-worker-windows.ps1 creates for THIS install prefix.
+$expectedRunCommand = 'powershell.exe -NoProfile -NonInteractive -WindowStyle Hidden -ExecutionPolicy Bypass -File "' + $modelWorkerSupervisor + '"'
+$existingRunValue = Get-ItemProperty -Path $modelWorkerRunKey -Name $modelWorkerRunValue -ErrorAction SilentlyContinue
+if ($existingRunValue -and [string]$existingRunValue.$modelWorkerRunValue -ceq $expectedRunCommand) {
+    Remove-ItemProperty -Path $modelWorkerRunKey -Name $modelWorkerRunValue -ErrorAction SilentlyContinue
+}
 $modelWorkerProcesses =
     @(
         Get-CimInstance Win32_Process -ErrorAction SilentlyContinue |
