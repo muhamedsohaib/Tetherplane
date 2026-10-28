@@ -1,6 +1,8 @@
 import assert from "node:assert/strict";
 import { existsSync } from "node:fs";
 import path from "node:path";
+import os from "node:os";
+import { mkdtemp, readdir, rm } from "node:fs/promises";
 import test from "node:test";
 
 import { startBrowserLab } from "@tetherplane/browser-lab";
@@ -45,5 +47,27 @@ test("private CDP pipe drives owned Browser Lab tab without a TCP debugger", {
     assert.equal(existsSync(profileDir), false);
   } finally {
     await lab.close();
+  }
+});
+
+test("unaccepted Windows Edge private pipe fails before any profile or browser launch", {
+  timeout: 10_000,
+  skip: process.platform !== "win32",
+}, async (t) => {
+  const edge = "C:\\Program Files (x86)\\Microsoft\\Edge\\Application\\msedge.exe";
+  if (!existsSync(edge)) return t.skip("Edge is not installed");
+  const parent = await mkdtemp(path.join(os.tmpdir(), "tp-edge-pipe-deny-"));
+  try {
+    await assert.rejects(
+      launchCdpOwnedBrowser({
+        executablePath: edge,
+        privatePipe: true,
+        profileParent: parent,
+      }),
+      /private CDP transport is not yet accepted for Windows Edge/,
+    );
+    assert.deepEqual(await readdir(parent), []);
+  } finally {
+    await rm(parent, { recursive: true, force: true });
   }
 });
