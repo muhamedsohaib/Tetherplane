@@ -63,6 +63,24 @@ export class WebView2OwnedFixtureBackend implements BrowserBridgeBackend {
     this.#revoked = true;
   }
 
+  /**
+   * Trusted local owner/broker only. Deny new adapter actions immediately,
+   * then require an independent acknowledgement from the native host.
+   * A failed acknowledgement MUST be treated by the owning supervisor as a
+   * host-termination condition, not proof that the host was revoked.
+   */
+  async revokeAndWait(): Promise<void> {
+    this.#revoked = true;
+    const response = await this.#transport.request("revoke_fixture", {});
+    this.#throwHostFailure(response);
+    if (response.revoked !== true) {
+      throw new WebView2FixturePolicyError(
+        "provider_failure",
+        "native WebView2 fixture revocation not acknowledged",
+      );
+    }
+  }
+
   async createPage(): Promise<{
     page_id: string;
     url: "about:blank";
