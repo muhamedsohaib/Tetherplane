@@ -198,7 +198,9 @@ async fn main() {
                 timeout_ms: 2_000,
             }))
         } else {
-            eprintln!("browser bridge token unavailable; device remains connected without browser");
+            eprintln!(
+                "browser bridge token unavailable; device remains connected without browser"
+            );
             None
         }
     } else {
