@@ -17,6 +17,10 @@ import {
 } from "../browser/bridge/src/index.ts";
 import { CdpLabOnlyBridgeService, requireLoopbackLabOrigin } from
   "../browser/bridge/src/cdp-lab-service.ts";
+import {
+  GRANTABLE_LAB_OPERATIONS,
+  LocalBrowserLabGrant,
+} from "../browser/bridge/src/local-lab-grant.ts";
 
 async function main(): Promise<void> {
   if (process.env.TETHERPLANE_CDP_LAB_MODE !== "1") {
@@ -67,9 +71,17 @@ async function main(): Promise<void> {
   }
 
   try {
+    // Seed only an ephemeral local fixture grant. No AI RPC can issue
+    // or renew it; real website/account consent is intentionally absent.
+    const grant = new LocalBrowserLabGrant({
+      origin: labOrigin,
+      operations: GRANTABLE_LAB_OPERATIONS,
+      expiresAtMs: Date.now() + 10 * 60_000,
+    });
     const service: BrowserBridgeService = new CdpLabOnlyBridgeService({
       backend,
       labOrigin,
+      grant,
     });
     server = await startBrowserRpcServer({
       host: "127.0.0.1",
