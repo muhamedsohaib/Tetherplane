@@ -129,3 +129,26 @@ test("host refusal or malformed page identity is not silently accepted", async (
   const backend = new WebView2OwnedFixtureBackend({ transport: untrusted, expiresAtMs: Date.now() + 2000 });
   await assert.rejects(backend.createPage(), { code: "provider_failure" });
 });
+
+
+test("revocation during native page creation rejects and closes the newly created fixture", async () => {
+  let finishCreate: ((value: Record<string, unknown>) => void) | undefined;
+  const calls: string[] = [];
+  const native: WebView2OwnedFixtureTransport = {
+    async request(method, args) {
+      calls.push(method);
+      if (method === "create_fixture") {
+        return await new Promise<Record<string, unknown>>((resolve) => { finishCreate = resolve; });
+      }
+      if (method === "close_fixture" && args.page_id === PAGE) return { closed: true };
+      throw new Error("unexpected native request");
+    },
+  };
+  const backend = new WebView2OwnedFixtureBackend({ transport: native, expiresAtMs: Date.now() + 5000 });
+  const creating = backend.createPage();
+  assert.ok(finishCreate, "native create must have started");
+  backend.revoke();
+  finishCreate({ page_id: PAGE, url: "about:blank" });
+  await assert.rejects(creating, { code: "permission_denied" });
+  assert.deepEqual(calls, ["create_fixture", "close_fixture"]);
+});
