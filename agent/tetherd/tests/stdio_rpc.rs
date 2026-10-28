@@ -645,7 +645,6 @@ fn browser_only_stdio_cannot_read_files_or_launch_processes_even_when_forged() {
     std::fs::remove_file(&path).unwrap();
 }
 
-
 #[test]
 fn release_candidate_browser_outage_must_not_disconnect_local_device_core() {
     const CAPS_ID: &str = "00000000-0000-4000-8000-0000000000d1";
