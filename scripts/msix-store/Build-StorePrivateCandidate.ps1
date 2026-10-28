@@ -324,6 +324,24 @@ try {
     & $makeAppx unpack /p $candidate /d $unpack
     if ($LASTEXITCODE -ne 0) { throw 'STORE_CANDIDATE_MAKEAPPX_UNPACK_FAILED' }
     Assert-StoreManifest -Path (Join-Path $unpack 'AppxManifest.xml')
+    $unpackedUi = [IO.File]::ReadAllText((Join-Path $unpack 'app\setup.html'))
+    $unpackedJs = [IO.File]::ReadAllText((Join-Path $unpack 'app\runtime-app.mjs'))
+    if ($unpackedUi -match '(?i)development preview|store-preview|not Microsoft Store-certified' -or
+        $unpackedJs -match 'TetherplaneStoreDevOnly' -or
+        $unpackedJs -notmatch '"TetherplaneStore"') {
+        throw 'STORE_CANDIDATE_UNPACKED_DEVELOPMENT_TEXT_OR_STATE'
+    }
+    # The packaged app must survive its own nonconnecting self-test.
+    # This mode reads local packaged files only: no OAuth, pairing or agent start.
+    $selfTestNode = Join-Path $unpack 'runtime\node.exe'
+    $selfTestScript = Join-Path $unpack 'app\runtime-app.mjs'
+    Push-Location $unpack
+    try {
+        $selfTestText = & $selfTestNode $selfTestScript --self-test
+        if ($LASTEXITCODE -ne 0) { throw 'STORE_CANDIDATE_RUNTIME_SELFTEST_EXIT_NONZERO' }
+        $selfTestData = ($selfTestText | Out-String).Trim() | ConvertFrom-Json -ErrorAction Stop
+        if ($selfTestData.success -ne $true) { throw 'STORE_CANDIDATE_RUNTIME_SELFTEST_FAILED' }
+    } finally { Pop-Location }
     foreach ($entry in @(
         @{ Name = 'bin\tetherd.exe'; Hash = $report.agent_sha256 },
         @{ Name = 'runtime\node.exe'; Hash = $report.node_sha256 },
