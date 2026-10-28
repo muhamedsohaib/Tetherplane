@@ -15,6 +15,7 @@ import os from "node:os";
 import path from "node:path";
 
 import WebSocket from "ws";
+import { CdpPipeSocket } from "./cdp-pipe-socket.ts";
 
 import {
   CdpBackendError,
@@ -57,13 +58,13 @@ type CdpEventListener = (event: {
 }) => void;
 
 class CdpWire {
-  readonly #socket: WebSocket;
+  readonly #socket: WebSocket | CdpPipeSocket;
   readonly #pending = new Map<number, PendingRequest>();
   readonly #eventListeners = new Set<CdpEventListener>();
   #nextId = 1;
   #closed = false;
 
-  private constructor(socket: WebSocket) {
+  private constructor(socket: WebSocket | CdpPipeSocket) {
     this.#socket = socket;
 
     socket.on("message", (data) => {
@@ -96,6 +97,28 @@ class CdpWire {
       ),
     ]);
     return new CdpWire(socket);
+  }
+
+  static async connectPipe(child: ChildProcess, timeoutMs: number): Promise<CdpWire> {
+    const wire = new CdpWire(new CdpPipeSocket(child));
+    let timer: NodeJS.Timeout | undefined;
+    try {
+      await Promise.race([
+        wire.send("Browser.getVersion"),
+        new Promise<never>((_resolve, reject) => {
+          timer = setTimeout(
+            () => reject(new CdpBackendError("timeout", "private CDP handshake timed out")),
+            timeoutMs,
+          );
+        }),
+      ]);
+      return wire;
+    } catch (error) {
+      wire.close();
+      throw error;
+    } finally {
+      if (timer) clearTimeout(timer);
+    }
   }
 
   send(
@@ -928,6 +951,8 @@ export async function launchCdpOwnedBrowser(options: {
   executablePath?: string;
   profileParent?: string;
   launchTimeoutMs?: number;
+  // Opt-in private pipe: never fall back to a TCP debugger if handshake fails.
+  privatePipe?: boolean;
   // Laboratory-only: every intercepted request must use this exact loopback origin.
   networkOrigin?: string;
   // A deny-by-default proxy is mandatory in guarded mode: Fetch alone misses WS.
@@ -972,12 +997,32 @@ export async function launchCdpOwnedBrowser(options: {
     );
   }
 
+  // Windows Edge 156 failed physical Leno acceptance: refuse private mode
+  // before spawning until an independently tested Edge implementation exists.
+  if (
+    options.privatePipe &&
+    process.platform === "win32" &&
+    path.basename(executablePath).toLowerCase() === "msedge.exe"
+  ) {
+    throw new CdpBackendError(
+      "capability_unavailable",
+      "private CDP transport is not yet accepted for Windows Edge",
+    );
+  }
+
   const parent = options.profileParent ?? os.tmpdir();
   await mkdir(parent, { recursive: true });
   const profileDir = await mkdtemp(
     path.join(parent, "tetherplane-cdp-"),
   );
   const args = buildIsolatedChromiumArgs(profileDir);
+  if (options.privatePipe) {
+    const portArgumentIndex = args.indexOf("--remote-debugging-port=0");
+    if (portArgumentIndex < 0) {
+      throw new CdpBackendError("provider_failure", "private CDP cannot remove TCP debugger");
+    }
+    args.splice(portArgumentIndex, 1, "--remote-debugging-pipe");
+  }
   if (options.labProxyPort !== undefined) {
     // Explicit proxy only, with no DIRECT fallback. Chromium otherwise
     // implicitly bypasses proxies for loopback (including WebSocket).
@@ -987,7 +1032,9 @@ export async function launchCdpOwnedBrowser(options: {
     );
   }
   const child = spawn(executablePath, args, {
-    stdio: "ignore",
+    stdio: options.privatePipe
+      ? ["ignore", "ignore", "ignore", "pipe", "pipe"]
+      : "ignore",
     windowsHide: true,
   });
 
@@ -999,14 +1046,18 @@ export async function launchCdpOwnedBrowser(options: {
       ),
     ]);
 
-    const websocketUrl =
-      await waitForDevToolsActivePort({
-        child,
-        profileDir,
-        timeoutMs:
+    const wire = options.privatePipe
+      ? await CdpWire.connectPipe(
+          child,
           options.launchTimeoutMs ?? DEFAULT_CDP_LAUNCH_TIMEOUT_MS,
-      });
-    const wire = await CdpWire.connect(websocketUrl);
+        )
+      : await CdpWire.connect(
+          await waitForDevToolsActivePort({
+            child,
+            profileDir,
+            timeoutMs: options.launchTimeoutMs ?? DEFAULT_CDP_LAUNCH_TIMEOUT_MS,
+          }),
+        );
     const browserPid = await discoverBrowserPid(wire);
     const downloadDir = path.join(profileDir, "Downloads");
     await mkdir(downloadDir, { recursive: true });
