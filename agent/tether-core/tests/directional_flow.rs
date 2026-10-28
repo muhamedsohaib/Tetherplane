@@ -2,8 +2,8 @@
 //! Pure policy tests only: these grants are NOT installed or reachable from
 //! production relay/device RPC. Real identities must come from trusted auth.
 use tether_core::{
-    DirectionalFlowPolicy, DirectionalGrant, PolicyDecision, TransferContent,
-    TransferDirection, TrustedTransferIntent,
+    DirectionalFlowPolicy, DirectionalGrant, PolicyDecision, TransferContent, TransferDirection,
+    TrustedTransferIntent,
 };
 
 const PRINCIPAL: &str = "human:owner";
@@ -54,17 +54,33 @@ fn no_grants_denies_even_read_only_file_extraction() {
 
 #[test]
 fn source_consent_without_receiver_consent_is_not_enough() {
-    let policy = DirectionalFlowPolicy::new(vec![
-        grant("send-b", "B", "A", TransferDirection::Send, TransferContent::FileBytes),
-    ]);
+    let policy = DirectionalFlowPolicy::new(vec![grant(
+        "send-b",
+        "B",
+        "A",
+        TransferDirection::Send,
+        TransferContent::FileBytes,
+    )]);
     denied(policy.evaluate(&b_to_a(TransferContent::FileBytes)));
 }
 
 #[test]
 fn explicit_send_and_receive_grants_allow_one_exact_transfer() {
     let policy = DirectionalFlowPolicy::new(vec![
-        grant("send-b", "B", "A", TransferDirection::Send, TransferContent::FileBytes),
-        grant("receive-a", "A", "B", TransferDirection::Receive, TransferContent::FileBytes),
+        grant(
+            "send-b",
+            "B",
+            "A",
+            TransferDirection::Send,
+            TransferContent::FileBytes,
+        ),
+        grant(
+            "receive-a",
+            "A",
+            "B",
+            TransferDirection::Receive,
+            TransferContent::FileBytes,
+        ),
     ]);
     assert_eq!(
         policy.evaluate(&b_to_a(TransferContent::FileBytes)),
@@ -75,8 +91,20 @@ fn explicit_send_and_receive_grants_allow_one_exact_transfer() {
 #[test]
 fn one_way_a_to_b_does_not_implicitly_authorize_reverse_b_to_a() {
     let policy = DirectionalFlowPolicy::new(vec![
-        grant("send-a", "A", "B", TransferDirection::Send, TransferContent::ClipboardText),
-        grant("receive-b", "B", "A", TransferDirection::Receive, TransferContent::ClipboardText),
+        grant(
+            "send-a",
+            "A",
+            "B",
+            TransferDirection::Send,
+            TransferContent::ClipboardText,
+        ),
+        grant(
+            "receive-b",
+            "B",
+            "A",
+            TransferDirection::Receive,
+            TransferContent::ClipboardText,
+        ),
     ]);
     let mut forward = b_to_a(TransferContent::ClipboardText);
     forward.source_device_id = "A".into();
@@ -88,8 +116,20 @@ fn one_way_a_to_b_does_not_implicitly_authorize_reverse_b_to_a() {
 #[test]
 fn clipboard_permission_does_not_authorize_files_screens_or_browser_content() {
     let policy = DirectionalFlowPolicy::new(vec![
-        grant("b-send-clip", "B", "A", TransferDirection::Send, TransferContent::ClipboardText),
-        grant("a-receive-clip", "A", "B", TransferDirection::Receive, TransferContent::ClipboardText),
+        grant(
+            "b-send-clip",
+            "B",
+            "A",
+            TransferDirection::Send,
+            TransferContent::ClipboardText,
+        ),
+        grant(
+            "a-receive-clip",
+            "A",
+            "B",
+            TransferDirection::Receive,
+            TransferContent::ClipboardText,
+        ),
     ]);
     assert_eq!(
         policy.evaluate(&b_to_a(TransferContent::ClipboardText)),
@@ -108,8 +148,20 @@ fn clipboard_permission_does_not_authorize_files_screens_or_browser_content() {
 #[test]
 fn authorizing_command_delivery_does_not_authorize_output_extraction() {
     let policy = DirectionalFlowPolicy::new(vec![
-        grant("a-send-command", "A", "B", TransferDirection::Send, TransferContent::CommandRequest),
-        grant("b-receive-command", "B", "A", TransferDirection::Receive, TransferContent::CommandRequest),
+        grant(
+            "a-send-command",
+            "A",
+            "B",
+            TransferDirection::Send,
+            TransferContent::CommandRequest,
+        ),
+        grant(
+            "b-receive-command",
+            "B",
+            "A",
+            TransferDirection::Receive,
+            TransferContent::CommandRequest,
+        ),
     ]);
     let mut command = b_to_a(TransferContent::CommandRequest);
     command.source_device_id = "A".into();
@@ -121,10 +173,25 @@ fn authorizing_command_delivery_does_not_authorize_output_extraction() {
 #[test]
 fn device_identity_and_principal_must_match_both_endpoint_grants() {
     let policy = DirectionalFlowPolicy::new(vec![
-        grant("send-b", "B", "A", TransferDirection::Send, TransferContent::LinkUrl),
-        grant("receive-a", "A", "B", TransferDirection::Receive, TransferContent::LinkUrl),
+        grant(
+            "send-b",
+            "B",
+            "A",
+            TransferDirection::Send,
+            TransferContent::LinkUrl,
+        ),
+        grant(
+            "receive-a",
+            "A",
+            "B",
+            TransferDirection::Receive,
+            TransferContent::LinkUrl,
+        ),
     ]);
-    assert_eq!(policy.evaluate(&b_to_a(TransferContent::LinkUrl)), PolicyDecision::Allow);
+    assert_eq!(
+        policy.evaluate(&b_to_a(TransferContent::LinkUrl)),
+        PolicyDecision::Allow
+    );
     let mut wrong_peer = b_to_a(TransferContent::LinkUrl);
     wrong_peer.destination_device_id = "Vaulter".into();
     denied(policy.evaluate(&wrong_peer));
@@ -135,10 +202,22 @@ fn device_identity_and_principal_must_match_both_endpoint_grants() {
 
 #[test]
 fn scope_and_byte_limits_apply_in_both_directions() {
-    let mut receiver = grant("receive-a", "A", "B", TransferDirection::Receive, TransferContent::FileBytes);
+    let mut receiver = grant(
+        "receive-a",
+        "A",
+        "B",
+        TransferDirection::Receive,
+        TransferContent::FileBytes,
+    );
     receiver.max_bytes = 100;
     let policy = DirectionalFlowPolicy::new(vec![
-        grant("send-b", "B", "A", TransferDirection::Send, TransferContent::FileBytes),
+        grant(
+            "send-b",
+            "B",
+            "A",
+            TransferDirection::Send,
+            TransferContent::FileBytes,
+        ),
         receiver,
     ]);
     let mut over_limit = b_to_a(TransferContent::FileBytes);
@@ -156,13 +235,28 @@ fn scope_and_byte_limits_apply_in_both_directions() {
 #[test]
 fn expired_and_revoked_grants_deny_existing_direction() {
     let mut policy = DirectionalFlowPolicy::new(vec![
-        grant("send-b", "B", "A", TransferDirection::Send, TransferContent::FileBytes),
-        grant("receive-a", "A", "B", TransferDirection::Receive, TransferContent::FileBytes),
+        grant(
+            "send-b",
+            "B",
+            "A",
+            TransferDirection::Send,
+            TransferContent::FileBytes,
+        ),
+        grant(
+            "receive-a",
+            "A",
+            "B",
+            TransferDirection::Receive,
+            TransferContent::FileBytes,
+        ),
     ]);
     let mut expired = b_to_a(TransferContent::FileBytes);
     expired.now_ms = 10_000;
     denied(policy.evaluate(&expired));
-    assert_eq!(policy.evaluate(&b_to_a(TransferContent::FileBytes)), PolicyDecision::Allow);
+    assert_eq!(
+        policy.evaluate(&b_to_a(TransferContent::FileBytes)),
+        PolicyDecision::Allow
+    );
     policy.revoke("send-b");
     denied(policy.evaluate(&b_to_a(TransferContent::FileBytes)));
 }
@@ -170,8 +264,20 @@ fn expired_and_revoked_grants_deny_existing_direction() {
 #[test]
 fn invalid_wildcard_scope_and_same_device_request_fail_closed() {
     let policy = DirectionalFlowPolicy::new(vec![
-        grant("send-b", "B", "A", TransferDirection::Send, TransferContent::FileBytes),
-        grant("receive-a", "A", "B", TransferDirection::Receive, TransferContent::FileBytes),
+        grant(
+            "send-b",
+            "B",
+            "A",
+            TransferDirection::Send,
+            TransferContent::FileBytes,
+        ),
+        grant(
+            "receive-a",
+            "A",
+            "B",
+            TransferDirection::Receive,
+            TransferContent::FileBytes,
+        ),
     ]);
     let mut wildcard = b_to_a(TransferContent::FileBytes);
     wildcard.resource_scope = "*".into();
