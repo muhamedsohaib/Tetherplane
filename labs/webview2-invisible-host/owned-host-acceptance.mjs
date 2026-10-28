@@ -7,6 +7,12 @@ import { mkdtemp, rm } from "node:fs/promises";
 import { existsSync } from "node:fs";
 import path from "node:path";
 import os from "node:os";
+import {
+  BrowserOwnershipRegistry,
+  SemanticSnapshotEngine,
+  VerifiedActionEngine,
+} from "../../browser/bridge/src/index.ts";
+import { WebView2OwnedFixtureBackend } from "../../browser/bridge/src/webview2-owned-fixture.ts";
 
 if (process.platform !== "win32") throw new Error("WINDOWS_REQUIRED");
 
@@ -71,35 +77,72 @@ try {
     child.stdin.write(JSON.stringify({ id, method, args }) + "\n");
     return result;
   }
-  const created = await request("create_fixture");
-  const page = created.data?.page_id;
-  assert.ok(typeof page === "string" && /^wvlab:[A-Za-z0-9_-]{6,128}$/.test(page));
-  assert.equal(created.data?.url, "about:blank");
+  // These operations pass through the actual Tetherplane policy adapter,
+  // semantic snapshot engine, ownership registry and verified-action engine.
+  // Only the narrow injected transport below understands the host's envelope;
+  // the native host never receives unrestricted model/browser commands.
+  const transport = {
+    async request(method, args) {
+      const response = await request(method, args);
+      return response.error ? { error: response.error } : response.data ?? {};
+    },
+  };
+  const backend = new WebView2OwnedFixtureBackend({
+    transport,
+    expiresAtMs: Date.now() + 45_000,
+  });
+  const created = await backend.createPage();
+  const page = created.page_id;
+  assert.match(page, /^wvlab:[A-Za-z0-9_-]{6,128}$/);
+  assert.equal(created.url, "about:blank");
+  assert.equal(created.ownership, "tetherplane");
+  assert.equal(created.active, false);
   report.created = true;
 
-  const observed = await request("observe_fixture", { page_id: page });
-  assert.equal(observed.data?.page_id, page);
-  assert.equal(observed.data?.status, "initial");
+  const observed = await backend.observe(page);
+  assert.equal(observed.page_id, page);
+  assert.equal(observed.nodes.find((n) => n.role === "status")?.accessible_name, "initial");
   report.observed = true;
   const duplicate = await request("create_fixture");
   assert.equal(duplicate.error?.code, "permission_denied");
   report.duplicateCreateDenied = true;
   const foreign = await request("observe_fixture", { page_id: "wvlab:foreign12345" });
   assert.equal(foreign.error?.code, "permission_denied");
+  await assert.rejects(backend.observe("wvlab:foreign12345"), { code: "permission_denied" });
   report.foreignPageDenied = true;
   const remote = await request("navigate", { page_id: page, url: "https://example.com/" });
   assert.equal(remote.error?.code, "capability_unavailable");
+  await assert.rejects(
+    backend.perform(page, { kind: "navigate", url: "https://example.com/" }),
+    { code: "capability_unavailable" },
+  );
   report.remoteNavigationDenied = true;
-  const clicked = await request("click_fixture", { page_id: page, element: "go" });
-  assert.equal(clicked.data?.clicked, true);
+
+  const semantics = new SemanticSnapshotEngine();
+  const button = semantics.snapshot(observed.nodes, {
+    revision: observed.semantic_revision,
+  }).nodes.find((n) => n.role === "button" && n.accessible_name === "GO");
+  assert.ok(button?.ref);
+  const ownership = new BrowserOwnershipRegistry();
+  ownership.register({ page_id: page, ownership: "tetherplane", active: false });
+  const verifiedEngine = new VerifiedActionEngine({ backend, semantics, ownership });
+  const action = await verifiedEngine.execute({
+    page_id: page,
+    mode: "background_only",
+    actions: [{ kind: "click", target: button.ref }],
+    expectations: [{ kind: "text", includes: "clicked" }],
+  });
+  assert.equal(action.state, "verified");
+  assert.ok(action.after_semantic_revision > action.before_semantic_revision);
   const result = await request("observe_fixture", { page_id: page });
   assert.equal(result.data?.status, "clicked");
-  assert.ok(result.data.revision > observed.data.revision);
   report.clickVerified = true;
-  const closed = await request("close_fixture", { page_id: page });
-  assert.equal(closed.data?.closed, true);
+  const beforeClose = await backend.observe(page);
+  assert.equal(beforeClose.semantic_revision, 2);
+  await backend.closePage(page);
   const after = await request("observe_fixture", { page_id: page });
   assert.equal(after.error?.code, "permission_denied");
+  await assert.rejects(backend.observe(page), { code: "permission_denied" });
   report.closeVerified = true;
   const shutdown = await request("shutdown");
   assert.equal(shutdown.data?.stopping, true);
