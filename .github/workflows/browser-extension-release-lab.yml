@@ -1,0 +1,66 @@
+name: Browser Extension Release Lab (review only)
+
+on:
+  pull_request:
+    paths:
+      - 'extension/browser/**'
+      - 'browser/bridge/**'
+      - 'scripts/browser-extension-host.ts'
+      - 'tests/release/browser-real-extension-acceptance.mjs'
+      - 'tests/release/windows-package-smoke.ps1'
+      - '.github/workflows/browser-extension-release-lab.yml'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  windows-isolated-extension:
+    runs-on: windows-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
+        with:
+          persist-credentials: false
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4.4.0
+        with:
+          node-version: 24
+      - name: Prepare pinned pnpm
+        shell: pwsh
+        run: |
+          corepack enable
+          corepack prepare pnpm@10.34.5 --activate
+      - name: Install locked workspace
+        run: pnpm install --frozen-lockfile
+      - name: Build only authenticated browser components
+        shell: pwsh
+        run: |
+          pnpm.cmd --filter @tetherplane/browser-bridge build
+          if ($LASTEXITCODE -ne 0) { throw "browser bridge build failed" }
+          pnpm.cmd --filter @tetherplane/browser-extension build
+          if ($LASTEXITCODE -ne 0) { throw "browser extension build failed" }
+      - name: Stage browser-only distribution without Rust or installing services
+        shell: pwsh
+        run: |
+          $root = Join-Path $env:GITHUB_WORKSPACE 'target\extension-release-lab'
+          $browser = Join-Path $root 'browser'
+          New-Item -ItemType Directory -Force -Path $root | Out-Null
+          pnpm.cmd --config.node-linker=hoisted --filter @tetherplane/browser-bridge deploy --legacy --prod 'target\extension-release-lab\browser'
+          if ($LASTEXITCODE -ne 0) { throw "isolated browser runtime deploy failed" }
+          $ext = Join-Path $browser 'extension'
+          New-Item -ItemType Directory -Force -Path $ext | Out-Null
+          Copy-Item -LiteralPath 'extension\browser\manifest.json' -Destination (Join-Path $ext 'manifest.json')
+          Copy-Item -LiteralPath 'extension\browser\pair.html' -Destination (Join-Path $ext 'pair.html')
+          Copy-Item -LiteralPath 'extension\browser\dist' -Destination $ext -Recurse
+          $host = Join-Path $browser 'host.mjs'
+          pnpm.cmd --filter @tetherplane/browser-extension exec esbuild scripts/browser-extension-host.ts --bundle --platform=node --format=esm --target=node22 --packages=external ("--outfile=" + $host)
+          if ($LASTEXITCODE -ne 0 -or -not (Test-Path -LiteralPath $host)) { throw "isolated browser host bundling failed" }
+      - name: Exercise actual Microsoft-signed Edge extension in a disposable profile
+        shell: pwsh
+        run: |
+          $edge = Join-Path ([Environment]::GetFolderPath("ProgramFilesX86")) "Microsoft\Edge\Application\msedge.exe"
+          if (-not (Test-Path -LiteralPath $edge -PathType Leaf)) { throw "Microsoft Edge not installed" }
+          if ((Get-AuthenticodeSignature -LiteralPath $edge).Status -ne "Valid") { throw "Microsoft Edge signature invalid" }
+          $root = Join-Path $env:GITHUB_WORKSPACE 'target\extension-release-lab'
+          & node tests/release/browser-real-extension-acceptance.mjs $root $edge
+          if ($LASTEXITCODE -ne 0) { throw "REAL_EXTENSION_ACCEPTANCE=FAIL" }
