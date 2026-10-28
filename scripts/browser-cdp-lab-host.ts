@@ -50,6 +50,22 @@ async function main(): Promise<void> {
   process.once("SIGINT", resolveStop);
   process.once("SIGTERM", resolveStop);
 
+  // Test-only cleanup channel; avoids orphaning Chromium in Windows CI.
+  if (process.env.TETHERPLANE_CDP_LAB_TEST_STDIN_STOP === "1") {
+    let input = "";
+    process.stdin.setEncoding("utf8");
+    process.stdin.on("data", (chunk: string) => {
+      input += chunk;
+      if (input.includes("\n")) {
+        if (input.trim() === "STOP_CDP_LAB") {
+          resolveStop();
+        }
+        input = "";
+      }
+    });
+    process.stdin.resume();
+  }
+
   try {
     const service: BrowserBridgeService = new CdpLabOnlyBridgeService({
       backend,
@@ -67,6 +83,7 @@ async function main(): Promise<void> {
   } finally {
     await server?.close().catch(() => undefined);
     await backend.shutdown();
+    process.stdin.pause();
     process.stdout.write("CDP_LAB_SHUTDOWN=COMPLETE\n");
   }
 }
