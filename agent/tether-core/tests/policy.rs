@@ -1,3 +1,4 @@
+use std::collections::BTreeSet;
 use std::fs;
 use std::path::Path;
 use std::sync::{
@@ -11,8 +12,8 @@ use tempfile::TempDir;
 use tether_core::{
     Actor, ActorKind, CapabilityError, CapabilityProvider, CapabilityRouter, ErrorCode,
     InvocationEnvelope, LocalPolicyBroker, LocalPolicyConfig, PolicyBroker, PolicyDecision,
-    ProviderResult, ResponseMode, ResultStatus, SideEffectClass, VerificationStatus,
-    authorize_path,
+    PrincipalAuthentication, PrincipalProfile, ProviderResult, ResponseMode, ResultStatus,
+    SideEffectClass, VerificationStatus, authorize_path,
 };
 use uuid::Uuid;
 
@@ -349,4 +350,121 @@ fn browser_upload_file_must_remain_inside_allowed_root() {
         json!({ "page_id": "page:1", "file_path": outside }),
     ));
     assert!(matches!(denied_decision, PolicyDecision::Deny { .. }));
+}
+
+
+fn dedicated_browser_only_profile() -> PrincipalProfile {
+    PrincipalProfile {
+        principal_id: "browser-test-principal".into(),
+        authentication: PrincipalAuthentication::LocalProcessBinding,
+        allowed_devices: BTreeSet::from(["Leno".to_owned()]),
+        allowed_capabilities: BTreeSet::from([
+            "device.status".to_owned(),
+            "device.capabilities".to_owned(),
+            "browser.status".to_owned(),
+            "browser.pages".to_owned(),
+            "browser.snapshot".to_owned(),
+            "browser.act".to_owned(),
+        ]),
+        allowed_directories: Vec::new(),
+    }
+}
+
+#[test]
+fn browser_only_launch_admission_rejects_privileged_capability_composition() {
+    let safe = dedicated_browser_only_profile();
+    assert!(safe.validate_browser_only(Some("Leno")).is_ok());
+
+    let dangerous = [
+        "process.run",
+        "process.read",
+        "process.list_system",
+        "filesystem.read",
+        "filesystem.read_many",
+        "filesystem.write",
+        "search.start",
+        "batch.execute",
+        "job.create",
+        "desktop.snapshot",
+        "audit.read",
+        "browser.upload",
+        "browser.downloads",
+        "browser.diagnostics",
+        "browser.future_unreviewed",
+    ];
+
+    for capability in dangerous {
+        let mut profile = safe.clone();
+        profile.allowed_capabilities.insert(capability.to_owned());
+        assert!(
+            profile.validate_browser_only(Some("Leno")).is_err(),
+            "unsafe capability admitted: {capability}"
+        );
+    }
+    let mut with_directory = safe.clone();
+    with_directory
+        .allowed_directories
+        .push(std::env::temp_dir());
+    assert!(with_directory.validate_browser_only(Some("Leno")).is_err());
+
+    let mut with_other_device = safe.clone();
+    with_other_device.allowed_devices.insert("Surface".into());
+    assert!(
+        with_other_device.validate_browser_only(Some("Leno")).is_err(),
+        "a browser-only identity must be bound to exactly one local device"
+    );
+    assert!(safe.validate_browser_only(Some("Surface")).is_err());
+
+    let mut unnamed = safe.clone();
+    unnamed.principal_id.clear();
+    assert!(unnamed.validate_browser_only(Some("Leno")).is_err());
+    let mut unknown = safe.clone();
+    unknown.allowed_capabilities.remove("device.capabilities");
+    assert!(unknown.validate_browser_only(Some("Leno")).is_err());
+}
+
+#[test]
+fn browser_only_principal_denies_process_filesystem_and_indirect_bypasses() {
+    let temp = TempDir::new().unwrap();
+    let profile = dedicated_browser_only_profile();
+    let broker = LocalPolicyBroker::new(
+        LocalPolicyConfig::new(vec![temp.path().to_owned()]).with_principal(profile),
+    );
+    for capability in [
+        "process.run",
+        "process.read",
+        "process.list_system",
+        "filesystem.read",
+        "filesystem.list",
+        "filesystem.write",
+        "search.start",
+        "batch.execute",
+        "job.create",
+        "desktop.act",
+        "audit.read",
+        "browser.upload",
+        "browser.downloads",
+    ] {
+        let mut call = invocation(capability, json!({ "path": temp.path() }));
+        call.principal_id = Some("browser-test-principal".into());
+        call.device_id = Some("Leno".into());
+        assert!(
+            matches!(broker.evaluate(&call), PolicyDecision::Deny { .. }),
+            "browser-only principal bypassed through {capability}"
+        );
+    }
+    let mut legitimate = invocation("browser.pages", json!({}));
+    legitimate.principal_id = Some("browser-test-principal".into());
+    legitimate.device_id = Some("Leno".into());
+    assert!(matches!(
+        broker.evaluate(&legitimate),
+        PolicyDecision::Allow
+    ));
+
+    // The request cannot replace its launch-bound identity with a caller string.
+    legitimate.principal_id = Some("fake-owner".into());
+    assert!(matches!(
+        broker.evaluate(&legitimate),
+        PolicyDecision::Deny { .. }
+    ));
 }
