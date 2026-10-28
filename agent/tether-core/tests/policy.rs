@@ -414,6 +414,10 @@ fn browser_only_launch_admission_rejects_privileged_capability_composition() {
             .is_err(),
         "a browser-only identity must be bound to exactly one local device"
     );
+    assert!(
+        with_other_device.validate_browser_only(None).is_err(),
+        "local stdio must also reject multi-device browser-only profiles"
+    );
     assert!(safe.validate_browser_only(Some("Surface")).is_err());
 
     let mut unnamed = safe.clone();
