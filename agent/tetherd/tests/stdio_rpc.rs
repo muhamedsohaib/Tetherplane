@@ -498,3 +498,149 @@ fn successful_browser_handshake_registers_real_provider_and_capabilities() {
     assert!(child.wait().unwrap().success());
     bridge.join().unwrap();
 }
+
+#[test]
+fn browser_only_cli_fails_closed_without_or_with_unsafe_local_principal() {
+    let status = Command::new(env!("CARGO_BIN_EXE_tetherd"))
+        .args(["--stdio-rpc", "--browser-only"])
+        .status()
+        .unwrap();
+    assert_eq!(status.code(), Some(2));
+
+    let path = std::env::temp_dir().join(format!(
+        "tetherplane-browser-only-deny-{}.json",
+        uuid::Uuid::new_v4()
+    ));
+    let unsafe_profile = json!({
+        "principal_id": "browser-isolated-test",
+        "authentication": "local_process_binding",
+        "allowed_devices": ["Leno"],
+        "allowed_capabilities": [
+            "device.status", "device.capabilities", "browser.pages",
+            "process.run"
+        ],
+        "allowed_directories": []
+    });
+    std::fs::write(&path, serde_json::to_vec(&unsafe_profile).unwrap()).unwrap();
+    let status = Command::new(env!("CARGO_BIN_EXE_tetherd"))
+        .args(["--stdio-rpc", "--browser-only", "--principal-profile"])
+        .arg(&path)
+        .status()
+        .unwrap();
+    assert_eq!(
+        status.code(),
+        Some(2),
+        "unsafe principal must fail before startup"
+    );
+
+    let safe_profile = json!({
+        "principal_id": "browser-isolated-test",
+        "authentication": "local_process_binding",
+        "allowed_devices": ["Leno"],
+        "allowed_capabilities": [
+            "device.status", "device.capabilities", "browser.pages"
+        ],
+        "allowed_directories": []
+    });
+    std::fs::write(&path, serde_json::to_vec(&safe_profile).unwrap()).unwrap();
+    let status = Command::new(env!("CARGO_BIN_EXE_tetherd"))
+        .args(["--stdio-rpc", "--browser-only", "--principal-profile"])
+        .arg(&path)
+        .args(["--allow", "."])
+        .status()
+        .unwrap();
+    assert_eq!(
+        status.code(),
+        Some(2),
+        "browser-only must deny broad --allow roots"
+    );
+    std::fs::remove_file(&path).unwrap();
+}
+
+#[test]
+fn browser_only_stdio_cannot_read_files_or_launch_processes_even_when_forged() {
+    const STATUS_ID: &str = "00000000-0000-4000-8000-0000000000f1";
+    const PROC_ID: &str = "00000000-0000-4000-8000-0000000000f2";
+    const FS_ID: &str = "00000000-0000-4000-8000-0000000000f3";
+    const BATCH_ID: &str = "00000000-0000-4000-8000-0000000000f4";
+    const BROWSER_ID: &str = "00000000-0000-4000-8000-0000000000f5";
+
+    let path = std::env::temp_dir().join(format!(
+        "tetherplane-browser-only-allowed-{}.json",
+        uuid::Uuid::new_v4()
+    ));
+    let principal = json!({
+        "principal_id": "browser-isolated-test",
+        "authentication": "local_process_binding",
+        "allowed_devices": ["Leno"],
+        "allowed_capabilities": [
+            "device.status", "device.capabilities", "browser.pages"
+        ],
+        "allowed_directories": []
+    });
+    std::fs::write(&path, serde_json::to_vec(&principal).unwrap()).unwrap();
+    let mut child = Command::new(env!("CARGO_BIN_EXE_tetherd"))
+        .args(["--stdio-rpc", "--browser-only", "--principal-profile"])
+        .arg(&path)
+        .stdin(Stdio::piped())
+        .stdout(Stdio::piped())
+        .stderr(Stdio::piped())
+        .spawn()
+        .unwrap();
+
+    let mut status = device_status_invocation(STATUS_ID);
+    // Attack: request claims to be a different, privileged local principal.
+    status["principal_id"] = json!("forged-owner-principal");
+
+    let mut process = device_status_invocation(PROC_ID);
+    process["principal_id"] = json!("forged-owner-principal");
+    process["capability"] = json!("process.run");
+    process["arguments"] = json!({
+        "program": "an-untrusted-executable-that-must-not-start",
+        "args": []
+    });
+
+    let mut filesystem = device_status_invocation(FS_ID);
+    filesystem["capability"] = json!("filesystem.read");
+    filesystem["arguments"] = json!({"path": path});
+
+    let mut batch = device_status_invocation(BATCH_ID);
+    batch["capability"] = json!("batch.execute");
+    batch["arguments"] = json!({
+        "invocations": [{"capability":"process.run","arguments":{}}]
+    });
+
+    let mut browser = device_status_invocation(BROWSER_ID);
+    browser["capability"] = json!("browser.pages");
+
+    let mut stdin = child.stdin.take().unwrap();
+    for request in [status, process, filesystem, batch, browser] {
+        writeln!(stdin, "{}", serde_json::to_string(&request).unwrap()).unwrap();
+    }
+    drop(stdin);
+
+    let stdout = child.stdout.take().unwrap();
+    let reader = BufReader::new(stdout);
+    let mut results = std::collections::BTreeMap::new();
+    for line in reader.lines().take(5) {
+        let response: Value = serde_json::from_str(&line.unwrap()).unwrap();
+        results.insert(
+            response["request_id"].as_str().unwrap().to_owned(),
+            response,
+        );
+    }
+    assert_eq!(results.len(), 5);
+    assert_eq!(results[STATUS_ID]["status"], "success");
+    for id in [PROC_ID, FS_ID, BATCH_ID] {
+        assert_eq!(
+            results[id]["error"]["code"], "permission_denied",
+            "browser-only principal must deny alternate provider: {id}"
+        );
+    }
+    assert_eq!(
+        results[BROWSER_ID]["error"]["code"], "capability_unavailable",
+        "browser transport can be absent while authorized core runs"
+    );
+    assert!(child.wait().unwrap().success());
+    std::fs::remove_file(&path).unwrap();
+}

@@ -32,6 +32,7 @@ struct CliOptions {
     state_dir: Option<PathBuf>,
     browser_bridge: Option<String>,
     browser_bridge_token_file: Option<PathBuf>,
+    browser_only: bool,
 }
 
 fn parse_args() -> Result<CliOptions, String> {
@@ -42,6 +43,7 @@ fn parse_args() -> Result<CliOptions, String> {
     let mut state_dir = None;
     let mut browser_bridge = None;
     let mut browser_bridge_token_file = None;
+    let mut browser_only = false;
     let mut relay_url = None;
     let mut device_id = None;
     let mut device_credential_file = None;
@@ -50,6 +52,7 @@ fn parse_args() -> Result<CliOptions, String> {
     while let Some(argument) = arguments.next() {
         match argument.as_str() {
             "--stdio-rpc" => stdio_rpc = true,
+            "--browser-only" => browser_only = true,
             "--allow" => {
                 let path = arguments
                     .next()
@@ -134,6 +137,7 @@ fn parse_args() -> Result<CliOptions, String> {
         state_dir,
         browser_bridge,
         browser_bridge_token_file,
+        browser_only,
     })
 }
 
@@ -167,6 +171,30 @@ fn load_browser_token(path: Option<&PathBuf>) -> Result<Option<String>, String> 
     Ok(Some(token.to_owned()))
 }
 
+// A launch flag is local operator configuration, never an AI-supplied grant.
+// Reject unsafe browser-only configurations before any bridge handshake.
+fn validate_browser_only_launch(
+    enabled: bool,
+    allowed_roots: &[PathBuf],
+    principal: Option<&PrincipalProfile>,
+    transport: &TransportMode,
+) -> Result<(), &'static str> {
+    if !enabled {
+        return Ok(());
+    }
+    if !allowed_roots.is_empty() {
+        return Err("browser-only launch must not include --allow directories");
+    }
+    let Some(profile) = principal else {
+        return Err("browser-only launch requires a principal profile");
+    };
+    let launched_device_id = match transport {
+        TransportMode::Relay { device_id, .. } => Some(device_id.as_str()),
+        TransportMode::Stdio => None,
+    };
+    profile.validate_browser_only(launched_device_id)
+}
+
 #[tokio::main]
 async fn main() {
     let options = match parse_args() {
@@ -179,21 +207,27 @@ async fn main() {
 
     let transport = options.transport;
 
-    let principal = match load_principal_profile(options.principal_profile.as_ref()) {
-        Ok(principal) => principal,
-        Err(message) => {
+    let principal =
+        load_principal_profile(options.principal_profile.as_ref()).unwrap_or_else(|message| {
             eprintln!("{message}");
             std::process::exit(2);
-        }
-    };
+        });
 
-    let browser_token = match load_browser_token(options.browser_bridge_token_file.as_ref()) {
-        Ok(token) => token,
-        Err(message) => {
+    if let Err(message) = validate_browser_only_launch(
+        options.browser_only,
+        &options.allowed_roots,
+        principal.as_ref(),
+        &transport,
+    ) {
+        eprintln!("{message}");
+        std::process::exit(2);
+    }
+
+    let browser_token = load_browser_token(options.browser_bridge_token_file.as_ref())
+        .unwrap_or_else(|message| {
             eprintln!("{message}");
             std::process::exit(2);
-        }
-    };
+        });
 
     let browser_provider = if let Some(address) = options.browser_bridge {
         match BrowserProvider::connect_with_retry(
