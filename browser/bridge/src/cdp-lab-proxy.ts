@@ -17,13 +17,19 @@ export type CdpLabProxy = {
     deniedHttp: number;
     deniedConnect: number;
     deniedUpgrade: number;
+    deniedRevoked: number;
   };
   close(): Promise<void>;
 };
 
 export async function startCdpLabProxy(input: {
   approvedOrigin: string;
+  // Trusted local-only grant evaluation; never accepted from browser RPC.
+  canForward: () => boolean;
 }): Promise<CdpLabProxy> {
+  if (typeof input.canForward !== "function") {
+    throw new TypeError("CDP lab proxy requires a live local grant predicate");
+  }
   let origin: URL;
   try {
     origin = new URL(input.approvedOrigin);
@@ -45,8 +51,14 @@ export async function startCdpLabProxy(input: {
   let deniedHttp = 0;
   let deniedConnect = 0;
   let deniedUpgrade = 0;
+  let deniedRevoked = 0;
 
   const server = http.createServer((request, response) => {
+    if (!input.canForward()) {
+      deniedRevoked += 1;
+      response.writeHead(403).end();
+      return;
+    }
     let destination: URL;
     try {
       destination = new URL(request.url ?? "");
@@ -137,6 +149,7 @@ export async function startCdpLabProxy(input: {
       deniedHttp,
       deniedConnect,
       deniedUpgrade,
+      deniedRevoked,
     }),
     close: async () => {
       if (closed) return;
