@@ -29,6 +29,11 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
+      - name: Windows uninstall isolation without registry writes
+        if: runner.os == 'Windows'
+        shell: pwsh
+        run: ./tests/release/windows-uninstall-isolation.ps1
+
       - name: Install Rust toolchain
         uses: dtolnay/rust-toolchain@stable
         with:
