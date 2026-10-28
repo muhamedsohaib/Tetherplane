@@ -28,6 +28,10 @@ impl PrincipalProfile {
     /// This is an opt-in, local admission check, not owner approval or an
     /// operating-system sandbox. It does not make a TCP CDP debugger safe
     /// for saved website sessions.
+    ///
+    /// # Errors
+    /// Rejects an absent, broad, multiple-device or unreviewed capability
+    /// profile before any browser connection or device transport starts.
     pub fn validate_browser_only(
         &self,
         launched_device_id: Option<&str>,
