@@ -192,8 +192,23 @@ export class ChromeOperationalAgent {
   async downloads(
     pageId?: string,
   ): Promise<RawBrowserDownload[]> {
-    const page = pageId ? this.#requirePage(pageId) : null;
-    const origin = page ? originOf(page.url) : null;
+    if (!pageId) {
+      throw new ChromeOperationalError(
+        "permission_denied",
+        "an authorized page ID is required for downloads",
+      );
+    }
+    const page = this.#requirePage(pageId);
+    if (page.ownership === "human") {
+      throw new ChromeOperationalError(
+        "permission_denied",
+        "unshared human download details are not available",
+      );
+    }
+    const origin = originOf(page.url);
+    if (!origin) {
+      throw new ChromeOperationalError("permission_denied", "page origin is unavailable");
+    }
     const items = await this.#downloads.search({});
 
     return items
@@ -208,7 +223,7 @@ export class ChromeOperationalAgent {
       })
       .map((item) => ({
         backend_id: `chrome:${item.id}`,
-        page_id: page?.page_id ?? "browser",
+        page_id: page.page_id,
         filename:
           portableBasename(item.filename) ||
           `download-${item.id}`,
