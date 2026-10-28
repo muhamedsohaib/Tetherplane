@@ -3,6 +3,7 @@ import assert from "node:assert/strict";
 import { readFileSync } from "node:fs";
 import { join } from "node:path";
 import { fileURLToPath } from "node:url";
+import { transformStoreRuntime, assertApprovedScratchPath } from "../../scripts/msix-store/stage-store-runtime.mjs";
 
 const repo = fileURLToPath(new URL("../../", import.meta.url));
 const read = (path) => readFileSync(join(repo, path), "utf8");
@@ -60,11 +61,33 @@ test("Store art is required as real assets, never silently inherited from dev sq
   assert.match(builder, /CI_SYNTHETIC_PREVIEW_NOT_SUBMITTABLE/);
   assert.match(builder, /OWNER_CANDIDATE_NO_GO/);
   assert.match(builder, /NO_GO_CLEANUP_FAILED/);
-  assert.match(builder, /STORE_CANDIDATE_SOURCE_UI_OR_STATE_TRANSFORM_DRIFT/);
+  assert.match(builder, /STORE_CANDIDATE_STAGE_UI_FAILED/);
   assert.match(builder, /TetherplaneStoreDevOnly/);
   assert.match(builder, /TetherplaneStore/);
   assert.match(builder, /STORE_CANDIDATE_UNPACKED_DEVELOPMENT_TEXT_OR_STATE/);
   assert.match(builder, /STORE_CANDIDATE_RUNTIME_SELFTEST_FAILED/);
+});
+
+
+test("Store-only overlay is deterministic, fail-closed and never alters development source", () => {
+  const devJs = read("packaging/msix-store-runtime/app/runtime-app.mjs");
+  const devUi = read("packaging/msix-store-runtime/app/setup.html");
+  const storeJs = transformStoreRuntime("runtime-app.mjs", devJs);
+  const storeUi = transformStoreRuntime("setup.html", devUi);
+  assert.ok(devJs.includes("TetherplaneStoreDevOnly"));
+  assert.ok(devUi.includes("DEVELOPMENT PREVIEW"));
+  assert.ok(storeJs.includes('"TetherplaneStore"'));
+  assert.doesNotMatch(storeJs, /TetherplaneStoreDevOnly/);
+  assert.match(storeUi, /OWNER-APPROVED SETUP/);
+  assert.doesNotMatch(storeUi, /DEVELOPMENT PREVIEW|Store-preview|not Microsoft Store-certified/);
+  assert.throws(
+    () => transformStoreRuntime("runtime-app.mjs", storeJs),
+    /STORE_UI_SOURCE_CONTRACT_DRIFT/
+  );
+  assert.throws(() => assertApprovedScratchPath(repo), /STORE_UI_STAGE_DENIED_OUTSIDE_PRIVATE_SCRATCH/);
+  assert.doesNotThrow(() => assertApprovedScratchPath(
+    join(repo, "tetherplane-store-private-" + "a".repeat(32), "payload", "app")
+  ));
 });
 
 test("original synthetic Store-runtime feasibility identity remains untouched", () => {
