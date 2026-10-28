@@ -17,6 +17,8 @@ import tempfile
 import threading
 import time
 
+from private_cdp_relaunch import classify_cdp_startup
+
 
 def find_browser(name):
     roots = {
@@ -44,6 +46,9 @@ def run_probe(executable, timeout):
         "remaining_test_browser_processes": None,
         "profile_removed": False,
         "error": None,
+        "startup_classification": "not_inspected",
+        "browser_child_count_at_failure": None,
+        "cdp_browser_product": None,
     }
     try:
         command_read, command_write = os.pipe()
@@ -126,6 +131,9 @@ def run_probe(executable, timeout):
         if not version.get("protocolVersion"):
             raise RuntimeError("cdp_protocol_version_missing")
         report["private_cdp_version"] = True
+        product = version.get("product")
+        if isinstance(product, str):
+            report["cdp_browser_product"] = product[:90]
 
         target = call("Target.createTarget", {"url": "about:blank"}).get("targetId")
         if not target:
@@ -155,6 +163,43 @@ def run_probe(executable, timeout):
                 child.wait(timeout=2)
             except subprocess.TimeoutExpired:
                 pass
+
+            # For failure diagnostics, inspect only processes launched with
+            # this random disposable test profile. Do not print command lines,
+            # filenames, credentials, user tabs or inherited HANDLE values.
+            root_escaped = str(profile).replace("'", "''")
+            inspector = (
+                "$r='" + root_escaped + "';"
+                "$p=@(Get-CimInstance Win32_Process "
+                "-Filter \"Name = 'msedge.exe' OR Name = 'chrome.exe'\" "
+                "|Where-Object {$_.CommandLine -like \"*$r*\"});"
+                "$items=@($p|ForEach-Object{"
+                "$role='browser';"
+                "if($_.CommandLine -match '--type=([a-z-]+)'){$role=$Matches[1]};"
+                "[pscustomobject]@{pid=$_.ProcessId;ppid=$_.ParentProcessId;"
+                "role=$role;"
+                "pipe_flag=$_.CommandLine.Contains('--remote-debugging-pipe');"
+                "handles_flag=$_.CommandLine.Contains('--remote-debugging-io-pipes=')}});"
+                "ConvertTo-Json -InputObject $items -Compress -Depth 3"
+            )
+            owned = []
+            try:
+                inspected = subprocess.run(
+                    ["powershell.exe", "-NoProfile", "-NonInteractive", "-Command", inspector],
+                    capture_output=True, text=True, timeout=9, check=True,
+                )
+                parsed = json.loads(inspected.stdout.strip() or "[]")
+                owned = parsed if isinstance(parsed, list) else [parsed]
+                owned = [p for p in owned if isinstance(p, dict)]
+                report["browser_child_count_at_failure"] = len(owned)
+            except (ValueError, subprocess.SubprocessError):
+                report["process_inspection"] = "unavailable"
+            report["startup_classification"] = classify_cdp_startup(
+                handshake_ok=report["private_cdp_version"],
+                launcher_pid=child.pid,
+                launcher_exit_code=child.poll(),
+                owned_processes=owned,
+            )
 
         # Never stop other Edge/Chrome processes: match only this unique lab profile.
         root = str(profile).replace("'", "''")
