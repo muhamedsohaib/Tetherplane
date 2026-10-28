@@ -217,15 +217,29 @@ test(
         ["batch", "browser", "desktop", "device", "files", "process"],
       );
 
-      const pagesResult = await call(local.client, "browser", {
-        op: "pages",
-        args: {},
-      });
-      assert.equal(
-        pagesResult.isError,
-        undefined,
-        `browser.pages failed: ${JSON.stringify(pagesResult)}`,
-      );
+      const pagesResult = await waitFor(async () => {
+        const response = await call(local.client, "browser", {
+          op: "pages",
+          args: {},
+        });
+        if (response.isError === true) {
+          const result = structured(response);
+          const code = String(
+            (result.error as Record<string, unknown> | undefined)?.code ?? "unknown",
+          );
+          // Startup is deliberately asynchronous. Retry only typed temporary
+          // unavailability; a policy denial must remain an immediate failure.
+          if (
+            code === "capability_unavailable" ||
+            code === "disconnected" ||
+            code === "timeout"
+          ) {
+            return null;
+          }
+          assert.fail(`browser.pages denied unexpectedly: ${code}`);
+        }
+        return response;
+      }, 10_000);
       const pagesData = structured(pagesResult);
       assert.ok(
         Array.isArray(pagesData.pages),
