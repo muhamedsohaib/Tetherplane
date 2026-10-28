@@ -418,3 +418,21 @@ async fn resilient_browser_does_not_enable_operations_from_a_rejected_handshake(
         .unwrap_err();
     assert_eq!(error.code, ErrorCode::CapabilityUnavailable);
 }
+
+#[tokio::test]
+async fn resilient_browser_releases_authentication_token_on_provider_teardown() {
+    let provider = BrowserProvider::connect_nonfatal(BrowserBridgeConfig {
+        address: "127.0.0.1:1".into(),
+        token: Some("ephemeral-session-token".into()),
+        timeout_ms: 250,
+    });
+    let reference = std::sync::Arc::downgrade(&provider);
+    drop(provider);
+    tokio::time::timeout(Duration::from_secs(3), async {
+        while reference.upgrade().is_some() {
+            tokio::time::sleep(Duration::from_millis(40)).await;
+        }
+    })
+    .await
+    .expect("browser watcher must not retain a dropped authentication token");
+}
