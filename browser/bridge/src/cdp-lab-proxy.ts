@@ -22,6 +22,20 @@ export type CdpLabProxy = {
   close(): Promise<void>;
 };
 
+/**
+ * A rejected CONNECT/Upgrade socket can be reset by Chromium after the 403.
+ * Without an error listener this becomes an uncaught exception in the broker.
+ * Keep the listener active after the first error for delayed TCP resets.
+ */
+export function rejectCdpLabSocket(socket: Duplex): void {
+  socket.on("error", () => {
+    socket.destroy();
+  });
+  if (!socket.destroyed) {
+    socket.end("HTTP/1.1 403 Forbidden\r\nConnection: close\r\n\r\n");
+  }
+}
+
 export async function startCdpLabProxy(input: {
   approvedOrigin: string;
   // Trusted local-only grant evaluation; never accepted from browser RPC.
@@ -113,19 +127,16 @@ export async function startCdpLabProxy(input: {
     request.pipe(upstream);
   });
 
-  const rejectSocket = (socket: Duplex): void => {
-    socket.end("HTTP/1.1 403 Forbidden\r\nConnection: close\r\n\r\n");
-  };
   server.on("connect", (_request, socket) => {
     deniedConnect += 1;
-    rejectSocket(socket);
+    rejectCdpLabSocket(socket);
   });
   server.on("upgrade", (_request, socket) => {
     deniedUpgrade += 1;
-    rejectSocket(socket);
+    rejectCdpLabSocket(socket);
   });
   server.on("clientError", (_error, socket) => {
-    rejectSocket(socket);
+    rejectCdpLabSocket(socket);
   });
 
   const port = await new Promise<number>((resolve, reject) => {
