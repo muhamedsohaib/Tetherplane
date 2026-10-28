@@ -72,23 +72,35 @@ try {
         const message = JSON.parse(line);
         if (message.ready !== true) return;
         clearTimeout(timeout);
-        resolve();
+        resolve(message);
       } catch {}
     });
   });
-  await ready;
-  child.stdin.write(JSON.stringify({ id: "1", method: "create_fixture", args: {} }) + "\n");
-  const created = await new Promise((resolve, reject) => {
-    const timeout = setTimeout(() => reject(new Error("OWNED_PAGE_NOT_CREATED")), 9000);
-    reader.on("line", function onLine(line) {
-      let response;
-      try { response = JSON.parse(line); } catch { return; }
-      if (response.id !== "1") return;
-      clearTimeout(timeout);
-      reader.off("line", onLine);
-      resolve(response);
+  const hello = await ready;
+  assert.match(hello.capability, /^[a-f0-9]{64}$/i);
+  async function request(id, method, args = {}) {
+    return await new Promise((resolve, reject) => {
+      const timeout = setTimeout(() => {
+        reader.off("line", onLine);
+        reject(new Error("HOST_COMMAND_TIMEOUT_" + method));
+      }, 9000);
+      function onLine(line) {
+        let response;
+        try { response = JSON.parse(line); } catch { return; }
+        if (response.id !== id) return;
+        clearTimeout(timeout);
+        reader.off("line", onLine);
+        resolve(response);
+      }
+      reader.on("line", onLine);
+      child.stdin.write(JSON.stringify({
+        id, method, args, capability: hello.capability,
+      }) + "\n");
     });
-  });
+  }
+  const activation = await request("0", "activate_fixture", { lifetime_ms: 60000 });
+  assert.equal(activation.data?.active, true);
+  const created = await request("1", "create_fixture");
   assert.match(created.data?.page_id, /^wvlab:[A-Za-z0-9_-]{6,128}$/);
   const before = inspectOwned();
   report.before = before.count;
