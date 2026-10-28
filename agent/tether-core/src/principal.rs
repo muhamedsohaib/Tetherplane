@@ -30,6 +30,11 @@ impl PrincipalProfile {
     /// for saved website sessions.
     ///
     /// # Errors
+    ///
+    /// Returns an error when the principal's identity, device scope,
+    /// capability allowlist or filesystem roots violate browser-only policy.
+    ///
+    /// # Errors
     /// Rejects an absent, broad, multiple-device or unreviewed capability
     /// profile before any browser connection or device transport starts.
     pub fn validate_browser_only(
