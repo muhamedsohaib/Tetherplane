@@ -102,9 +102,12 @@ try {
   await mkdir(browserRoot, { recursive: true });
   await writeFile(bridgeSecretFile, bridgeSecret + "\n", { mode: 0o600 });
   await writeFile(launchSecretFile, launchSecret + "\n", { mode: 0o600 });
-  const [wsPort, pairingPort, rpcPort] =
-    await Promise.all([availablePort(), availablePort(), availablePort()]);
-  assert.equal(new Set([wsPort, pairingPort, rpcPort]).size, 3, "distinct loopback ports");
+  const ports = [];
+  while (ports.length < 3) {
+    const candidate = await availablePort();
+    if (!ports.includes(candidate)) ports.push(candidate);
+  }
+  const [wsPort, pairingPort, rpcPort] = ports;
   child = spawnHost({
     ...baseEnv,
     TETHERPLANE_EXTENSION_WS_PORT: String(wsPort),
