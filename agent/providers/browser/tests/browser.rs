@@ -2,7 +2,9 @@ use std::time::Duration;
 
 use serde_json::json;
 use tether_browser_provider::{BrowserBridgeConfig, BrowserProvider};
-use tether_core::{Actor, ActorKind, CapabilityProvider, ErrorCode, InvocationEnvelope, ResponseMode};
+use tether_core::{
+    Actor, ActorKind, CapabilityProvider, ErrorCode, InvocationEnvelope, ResponseMode,
+};
 use tokio::io::{AsyncBufReadExt, AsyncWriteExt, BufReader};
 use tokio::net::TcpListener;
 use uuid::Uuid;
@@ -306,7 +308,8 @@ async fn startup_retry_attaches_when_loopback_bridge_becomes_ready_shortly_after
 }
 
 #[tokio::test]
-async fn resilient_browser_is_unavailable_until_authenticated_then_recovers_without_agent_restart() {
+async fn resilient_browser_is_unavailable_until_authenticated_then_recovers_without_agent_restart()
+{
     // Reserve a free address without exposing a listener when the agent starts.
     let reservation = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
     let address = reservation.local_addr().unwrap().to_string();
@@ -383,7 +386,10 @@ async fn resilient_browser_is_unavailable_until_authenticated_then_recovers_with
         .execute(&invocation("browser.status", json!({})))
         .await
         .unwrap_err();
-    assert!(matches!(disconnected.code, ErrorCode::Disconnected | ErrorCode::Timeout));
+    assert!(matches!(
+        disconnected.code,
+        ErrorCode::Disconnected | ErrorCode::Timeout
+    ));
     assert_eq!(provider.available_operations(), None);
 }
 
