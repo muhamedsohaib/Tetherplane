@@ -17,6 +17,7 @@ import {
 } from "../browser/bridge/src/index.ts";
 import { CdpLabOnlyBridgeService, requireLoopbackLabOrigin } from
   "../browser/bridge/src/cdp-lab-service.ts";
+import { startCdpLabProxy } from "../browser/bridge/src/cdp-lab-proxy.ts";
 import {
   GRANTABLE_LAB_OPERATIONS,
   LocalBrowserLabGrant,
@@ -44,7 +45,26 @@ async function main(): Promise<void> {
     throw new Error("CDP_LAB_CHROMIUM_NOT_AVAILABLE");
   }
 
-  const control = await launchCdpOwnedBrowser({ executablePath });
+  // A test grant exists only in this local process, never in model RPC.
+  const grant = new LocalBrowserLabGrant({
+    origin: labOrigin,
+    operations: GRANTABLE_LAB_OPERATIONS,
+    expiresAtMs: Date.now() + 10 * 60_000,
+  });
+  // CDP Fetch interception alone misses WebSocket handshakes. A separate
+  // local proxy denies CONNECT/Upgrade and checks the active grant on HTTP.
+  const proxy = await startCdpLabProxy({
+    approvedOrigin: labOrigin,
+    canForward: () => grant.isActive,
+  });
+  const control = await launchCdpOwnedBrowser({
+    executablePath,
+    networkOrigin: labOrigin,
+    labProxyPort: proxy.port,
+  }).catch(async (error: unknown) => {
+    await proxy.close();
+    throw error;
+  });
   const backend = new CdpBrowserBackend({ control, pollIntervalMs: 20 });
   let server: Awaited<ReturnType<typeof startBrowserRpcServer>> | null = null;
   let resolveStop!: () => void;
@@ -71,13 +91,6 @@ async function main(): Promise<void> {
   }
 
   try {
-    // Seed only an ephemeral local fixture grant. No AI RPC can issue
-    // or renew it; real website/account consent is intentionally absent.
-    const grant = new LocalBrowserLabGrant({
-      origin: labOrigin,
-      operations: GRANTABLE_LAB_OPERATIONS,
-      expiresAtMs: Date.now() + 10 * 60_000,
-    });
     const service: BrowserBridgeService = new CdpLabOnlyBridgeService({
       backend,
       labOrigin,
@@ -93,8 +106,10 @@ async function main(): Promise<void> {
     process.stdout.write("CDP_LAB_MODE=ISOLATED_EPHEMERAL_NO_EXTENSION\n");
     await stop;
   } finally {
+    grant.revoke();
     await server?.close().catch(() => undefined);
     await backend.shutdown();
+    await proxy.close();
     process.stdin.pause();
     process.stdout.write("CDP_LAB_SHUTDOWN=COMPLETE\n");
   }
