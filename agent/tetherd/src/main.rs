@@ -219,7 +219,9 @@ async fn main() {
             timeout_ms: 2_000,
         };
         if let Some(path) = options.browser_bridge_token_file {
-            Some(BrowserProvider::connect_nonfatal_with_token_file(config, path))
+            Some(BrowserProvider::connect_nonfatal_with_token_file(
+                config, path,
+            ))
         } else {
             Some(BrowserProvider::connect_nonfatal(config))
         }
