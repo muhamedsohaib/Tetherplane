@@ -32,6 +32,9 @@ $report = [ordered]@{
     agent_authenticode = 'NOT_CHECKED'
     node_sha256 = 'NOT_VERIFIED'
     manifest_sha256 = 'NOT_VERIFIED'
+    store_runtime_sha256 = 'NOT_VERIFIED'
+    store_setup_sha256 = 'NOT_VERIFIED'
+    store_state_directory = 'TetherplaneStore'
     approved_artwork = $false
     package_sha256 = 'NOT_BUILT'
     unpack_integrity = 'NOT_RUN'
@@ -54,6 +57,15 @@ function Get-Sha256Hex([string]$Path) {
         $algorithm.Dispose()
         $stream.Dispose()
     }
+}
+
+function Replace-ExactlyOnce([string]$Text, [string]$Expected, [string]$Replacement) {
+    $start = $Text.IndexOf($Expected, [StringComparison]::Ordinal)
+    if ($start -lt 0 -or
+        $Text.IndexOf($Expected, $start + $Expected.Length, [StringComparison]::Ordinal) -ge 0) {
+        throw 'STORE_CANDIDATE_SOURCE_UI_OR_STATE_TRANSFORM_DRIFT'
+    }
+    return $Text.Substring(0, $start) + $Replacement + $Text.Substring($start + $Expected.Length)
 }
 
 function Assert-StoreManifest([string]$Path) {
@@ -172,6 +184,45 @@ try {
     Copy-Item -Path (Join-Path $appSource '*') -Destination (Join-Path $payload 'app') -Recurse -Force
     Copy-Item -LiteralPath $compactSource -Destination (Join-Path $payload 'adapters\compact-mcp') -Recurse -Force
 
+    # Stage a Store-owned state directory and truthful customer setup text.
+    # Exact-once replacements are made only in COPIES of the reviewed dev
+    # runtime: development tests and owner devices remain unchanged.
+    $runtimeCopy = Join-Path $payload 'app\runtime-app.mjs'
+    $runtimeText = [IO.File]::ReadAllText($runtimeCopy)
+    $runtimeText = Replace-ExactlyOnce $runtimeText 'join(process.env.LOCALAPPDATA || "", "TetherplaneStoreDevOnly")' 'join(process.env.LOCALAPPDATA || "", "TetherplaneStore")'
+    [IO.File]::WriteAllText($runtimeCopy, $runtimeText, [Text.UTF8Encoding]::new($false))
+    $htmlCopy = Join-Path $payload 'app\setup.html'
+    $htmlText = [IO.File]::ReadAllText($htmlCopy)
+    $uiReplacements = @(
+        @{
+            From = '<title>Tetherplane — private setup preview</title>'
+            To = '<title>Tetherplane — connect this Windows device</title>'
+        },
+        @{
+            From = 'TETHERPLANE · DEVELOPMENT PREVIEW'
+            To = 'TETHERPLANE · OWNER-APPROVED SETUP'
+        },
+        @{
+            From = 'This development build is not Microsoft Store-certified. Do not use it to replace an existing Tetherplane installation.'
+            To = 'This app does not automatically replace existing Tetherplane agents or credentials. Pair only an owner-authorized device, then independently verify the connection.'
+        },
+        @{
+            From = 'Existing Store-preview credentials will be preserved.'
+            To = 'Existing Tetherplane Store credentials will be preserved.'
+        }
+    )
+    foreach ($replacement in $uiReplacements) {
+        $htmlText = Replace-ExactlyOnce $htmlText $replacement.From $replacement.To
+    }
+    if ($htmlText -match '(?i)development preview|store-preview|not Microsoft Store-certified' -or
+        $runtimeText -match 'TetherplaneStoreDevOnly') {
+        throw 'STORE_CANDIDATE_DEVELOPMENT_PREVIEW_TEXT_REMAINS'
+    }
+    [IO.File]::WriteAllText($htmlCopy, $htmlText, [Text.UTF8Encoding]::new($false))
+    $report.store_runtime_sha256 = Get-Sha256Hex -Path $runtimeCopy
+    $report.store_setup_sha256 = Get-Sha256Hex -Path $htmlCopy
+
+
     $requiredArtwork = [ordered]@{ 'Logo44.png' = 44; 'Logo50.png' = 50; 'Logo150.png' = 150 }
     $artHashes = [ordered]@{}
     if ($CiValidationOnly) {
@@ -235,6 +286,9 @@ try {
         native_agent_sha256 = $report.agent_sha256
         node_sha256 = $report.node_sha256
         manifest_sha256 = $report.manifest_sha256
+        store_runtime_sha256 = $report.store_runtime_sha256
+        store_setup_sha256 = $report.store_setup_sha256
+        store_state_directory = $report.store_state_directory
         logos_sha256 = $artHashes
         CI_synthetic_preview_only = [bool]$CiValidationOnly
         Store_certificate = 'NOT_APPLIED'
@@ -274,7 +328,8 @@ try {
         @{ Name = 'bin\tetherd.exe'; Hash = $report.agent_sha256 },
         @{ Name = 'runtime\node.exe'; Hash = $report.node_sha256 },
         @{ Name = 'AppxManifest.xml'; Hash = $report.manifest_sha256 },
-        @{ Name = 'app\runtime-app.mjs'; Hash = (Get-Sha256Hex -Path (Join-Path $appSource 'runtime-app.mjs')) },
+        @{ Name = 'app\runtime-app.mjs'; Hash = $report.store_runtime_sha256 },
+        @{ Name = 'app\setup.html'; Hash = $report.store_setup_sha256 },
         @{ Name = 'adapters\compact-mcp\dist\stdio-server.js'; Hash = (Get-Sha256Hex -Path (Join-Path $compactSource 'dist\stdio-server.js')) }
     )) {
         if ((Get-Sha256Hex -Path (Join-Path $unpack $entry.Name)) -cne $entry.Hash) {
@@ -289,7 +344,9 @@ try {
     $unpackedProvenance = Get-Content -LiteralPath (Join-Path $unpack 'tetherplane-provenance.json') -Raw | ConvertFrom-Json
     if ($unpackedProvenance.source_commit -cne $report.source_commit -or
         $unpackedProvenance.native_agent_sha256 -cne $report.agent_sha256 -or
-        $unpackedProvenance.package_identity -cne $identity) {
+        $unpackedProvenance.package_identity -cne $identity -or
+        $unpackedProvenance.store_runtime_sha256 -cne $report.store_runtime_sha256 -or
+        $unpackedProvenance.store_setup_sha256 -cne $report.store_setup_sha256) {
         throw 'STORE_CANDIDATE_PROVENANCE_FAILED'
     }
     $report.unpack_integrity = 'PASS'
