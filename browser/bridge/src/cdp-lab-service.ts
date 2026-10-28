@@ -37,6 +37,12 @@ export class CdpLabOnlyBridgeService extends BrowserBridgeService {
   }) {
     const origin = requireLoopbackLabOrigin(options.labOrigin);
     const grant = options.grant;
+    if (grant.approvedOrigin !== origin) {
+      throw new BrowserPolicyError(
+        "permission_denied",
+        "local grant origin does not match the isolated browser lab",
+      );
+    }
     super({
       backend: options.backend,
       // This hook runs *before each backend mutation*, not merely once
