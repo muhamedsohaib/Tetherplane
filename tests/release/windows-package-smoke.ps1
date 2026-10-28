@@ -40,7 +40,13 @@ try {
         "install-windows.ps1",
         "install-model-worker-windows.ps1",
         "uninstall-windows.ps1",
-        "manifest.json"
+        "manifest.json",
+        "browser\\host.mjs",
+        "browser\\extension\\manifest.json",
+        "browser\\extension\\pair.html",
+        "browser\\extension\\dist\\background.js",
+        "browser\\extension\\dist\\pair.js",
+        "launch\\tetherplane-browser.ps1"
     )) {
         if (-not (Test-Path -LiteralPath (Join-Path $stage $relative))) {
             throw "release package is missing $relative"
@@ -118,6 +124,34 @@ try {
     $installedSmoke = Join-Path $install "adapters\compact-mcp\smoke-six-tools.mjs"
     $installedWorker = Join-Path $install "adapters\model-client\dist\worker-main.js"
     $installedWorkerInstaller = Join-Path $install "install-model-worker-windows.ps1"
+    foreach ($relative in @(
+        "browser\\host.mjs",
+        "browser\\extension\\manifest.json",
+        "browser\\extension\\pair.html",
+        "browser\\extension\\dist\\background.js",
+        "browser\\extension\\dist\\pair.js",
+        "launch\\tetherplane-browser.ps1"
+    )) {
+        if (-not (Test-Path -LiteralPath (Join-Path $install $relative) -PathType Leaf)) {
+            throw "installed browser runtime is missing $relative"
+        }
+    }
+    & node --check (Join-Path $install "browser\\host.mjs")
+    if ($LASTEXITCODE -ne 0) {
+        throw "installed browser host script is not parseable Node.js"
+    }
+    $browserManifest = Get-Content -LiteralPath (Join-Path $install "browser\\extension\\manifest.json") -Raw | ConvertFrom-Json
+    if (-not (Test-Path -LiteralPath (Join-Path $install "browser\\extension" $browserManifest.background.service_worker))) {
+        throw "installed browser extension manifest points to missing service worker"
+    }
+
+    # Run the actual packaged host with isolated synthetic tokens, randomized
+    # loopback ports and no real browser attachment. Syntax checks are not
+    # sufficient evidence that the bundled runtime starts after installation.
+    & node (Join-Path $PSScriptRoot "browser-package-runtime.mjs") $install
+    if ($LASTEXITCODE -ne 0) {
+        throw "installed browser runtime acceptance failed with exit code $LASTEXITCODE"
+    }
     if (-not (Test-Path -LiteralPath $installedTetherd)) {
         throw "installed tetherd is missing"
     }
