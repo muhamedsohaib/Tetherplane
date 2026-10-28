@@ -8,6 +8,7 @@ on:
       - '.github/workflows/msix-store-private-candidate.yml'
       - 'packaging/msix-store-candidate/**'
       - 'scripts/msix-store/Build-StorePrivateCandidate.ps1'
+      - 'scripts/msix-store/stage-store-runtime.mjs'
       - 'tests/release/msix-store-private-candidate.test.mjs'
       - 'docs/release/MSIX_STORE_PRIVATE_CANDIDATE_20261028.md'
 
