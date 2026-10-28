@@ -9,6 +9,7 @@ import {
   launchCdpOwnedBrowser,
 } from "../src/index.ts";
 import { CdpLabOnlyBridgeService } from "../src/cdp-lab-service.ts";
+import { startCdpLabProxy } from "../src/cdp-lab-proxy.ts";
 import {
   GRANTABLE_LAB_OPERATIONS,
   LocalBrowserLabGrant,
@@ -43,12 +44,17 @@ test(
   { timeout: 65_000 },
   async () => {
     let forbiddenHits = 0;
+    let forbiddenWebSocketUpgrades = 0;
     let allowedAjaxHits = 0;
 
     const forbidden = http.createServer((_request, response) => {
       forbiddenHits += 1;
       response.writeHead(200, { "Access-Control-Allow-Origin": "*" });
       response.end("must-not-receive-traffic");
+    });
+    forbidden.on("upgrade", (_request, socket) => {
+      forbiddenWebSocketUpgrades += 1;
+      socket.end("HTTP/1.1 403 Forbidden\r\nConnection: close\r\n\r\n");
     });
     const forbiddenPort = await listen(forbidden);
 
@@ -64,7 +70,9 @@ test(
         "'/allowed'" +
         ").catch(()=>{});fetch('http://127.0.0.1:" +
         String(forbiddenPort) +
-        "/probe',{mode:'no-cors'}).catch(()=>{})" +
+        "/probe',{mode:'no-cors'}).catch(()=>{});new WebSocket('ws://127.0.0.1:" +
+        String(forbiddenPort) +
+        "/socket')" +
         '">Probe both</button><img src="http://127.0.0.1:' +
         String(forbiddenPort) +
         '/pixel" /></body></html>';
@@ -76,9 +84,14 @@ test(
 
     const executable = findInstalledChromium();
     assert.ok(executable, "Chromium required for real security acceptance");
+    const proxy = await startCdpLabProxy({ approvedOrigin: origin });
     const control = await launchCdpOwnedBrowser({
       executablePath: executable,
       networkOrigin: origin,
+      labProxyPort: proxy.port,
+    }).catch(async (error: unknown) => {
+      await proxy.close();
+      throw error;
     });
     const backend = new CdpBrowserBackend({ control });
     try {
@@ -115,8 +128,18 @@ test(
         mode: "background_only",
         actions: [{ kind: "click", target: trigger.ref }],
       });
-      await delay(500);
+      await delay(700);
       assert.ok(allowedAjaxHits > 0, "same-origin fetch must be allowed");
+      assert.ok(proxy.snapshot().forwardedHttp > 0, "allowed HTTP must traverse proxy");
+      assert.ok(
+        proxy.snapshot().deniedConnect > 0,
+        "WebSocket CONNECT attempts must be denied by the local proxy",
+      );
+      assert.equal(
+        forbiddenWebSocketUpgrades,
+        0,
+        "WebSocket handshakes must not reach a different origin",
+      );
       assert.equal(
         forbiddenHits,
         0,
@@ -128,6 +151,7 @@ test(
       assert.equal(forbiddenHits, 0);
     } finally {
       await backend.shutdown();
+      await proxy.close();
       await stop(allowed);
       await stop(forbidden);
     }
@@ -146,4 +170,8 @@ test("request guard cannot be enabled for a public or credentialed origin", asyn
       TypeError,
     );
   }
+  await assert.rejects(
+    launchCdpOwnedBrowser({ networkOrigin: "http://127.0.0.1:49123" }),
+    TypeError,
+  );
 });
