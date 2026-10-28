@@ -205,3 +205,27 @@ test("Chrome page agent surfaces missing page and stale target as machine-readab
       (error as { code: unknown }).code === "stale_reference",
   );
 });
+
+
+test("extension denies human-owned observation before injecting scripts into a tab", async () => {
+  const scripting = new FakeScripting();
+  const controller = {
+    pages: () => [{
+      page_id: "tab:92",
+      tab_id: 92,
+      url: "http://127.0.0.1:12345/private-fixture",
+      ownership: "human" as const,
+    }],
+    navigate: async (_pageId: string, _url: string) => ({}),
+  };
+  const agent = new ChromePageAgent({ controller, scripting });
+  await assert.rejects(
+    () => agent.observe("tab:92"),
+    (error: unknown) =>
+      typeof error === "object" &&
+      error !== null &&
+      "code" in error &&
+      (error as { code: unknown }).code === "permission_denied",
+  );
+  assert.equal(scripting.calls.length, 0, "revoked human tab must not reach Chrome scripting");
+});
