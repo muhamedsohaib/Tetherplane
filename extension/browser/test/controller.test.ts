@@ -326,3 +326,60 @@ test("detached human tab remains human across service-worker controller restart"
       error.code === "permission_denied",
   );
 });
+
+
+test("owner sharing pins the live origin and blocks a cross-origin navigation", async () => {
+  const tabs = new FakeTabs([humanTab()]);
+  const controller = new ExtensionTabController({ tabs, store: new MemoryStore() });
+  await controller.initialize();
+  const shared = await controller.attachHumanTab(1, {
+    operations: ["act", "navigate"],
+    ttl_ms: 60_000,
+  });
+  assert.equal(shared.grant?.origin, "https://human.example");
+
+  await assert.rejects(
+    () => controller.navigate("tab:1", "https://human.example.evil.test/"),
+    (error: unknown) => error instanceof BrowserPolicyError &&
+      error.code === "permission_denied",
+  );
+  assert.equal(tabs.lastUpdate, null, "forbidden origin reached chrome.tabs.update");
+
+  const sameOrigin = await controller.navigate("tab:1", "https://human.example/next");
+  assert.equal(sameOrigin.url, "https://human.example/next");
+});
+
+test("silent cross-origin browser redirect revokes previously shared tab", async () => {
+  const tabs = new FakeTabs([humanTab()]);
+  const store = new MemoryStore();
+  const controller = new ExtensionTabController({ tabs, store });
+  await controller.initialize();
+  await controller.attachHumanTab(1, {
+    operations: ["act", "navigate"], ttl_ms: 60_000,
+  });
+  tabs.tabs.get(1)!.url = "https://unapproved.test/landing";
+
+  await assert.rejects(
+    () => controller.navigate("tab:1", "https://human.example/return"),
+    (error: unknown) => error instanceof BrowserPolicyError &&
+      error.code === "permission_denied",
+  );
+  assert.equal(tabs.lastUpdate, null);
+  assert.equal(controller.pages().find(p => p.tab_id === 1)?.ownership, "human");
+  assert.equal(store.records.find(p => p.tab_id === 1), undefined,
+    "revoked grant was persisted");
+});
+
+test("browser restart cannot resurrect a grant after origin redirect", async () => {
+  const tabs = new FakeTabs([humanTab()]);
+  const store = new MemoryStore();
+  const first = new ExtensionTabController({ tabs, store });
+  await first.initialize();
+  await first.attachHumanTab(1, { operations: ["act"], ttl_ms: 60_000 });
+  tabs.tabs.get(1)!.url = "https://other-account.test/";
+  const restarted = new ExtensionTabController({ tabs, store });
+  await restarted.initialize();
+  const page = restarted.pages().find(p => p.tab_id === 1);
+  assert.equal(page?.ownership, "human");
+  assert.equal(page?.grant, undefined);
+});
