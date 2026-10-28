@@ -84,7 +84,15 @@ test(
 
     const executable = findInstalledChromium();
     assert.ok(executable, "Chromium required for real security acceptance");
-    const proxy = await startCdpLabProxy({ approvedOrigin: origin });
+    const grant = new LocalBrowserLabGrant({
+      origin,
+      operations: GRANTABLE_LAB_OPERATIONS,
+      expiresAtMs: Date.now() + 60_000,
+    });
+    const proxy = await startCdpLabProxy({
+      approvedOrigin: origin,
+      canForward: () => grant.isActive,
+    });
     const control = await launchCdpOwnedBrowser({
       executablePath: executable,
       networkOrigin: origin,
@@ -95,11 +103,6 @@ test(
     });
     const backend = new CdpBrowserBackend({ control });
     try {
-      const grant = new LocalBrowserLabGrant({
-        origin,
-        operations: GRANTABLE_LAB_OPERATIONS,
-        expiresAtMs: Date.now() + 60_000,
-      });
       const service = new CdpLabOnlyBridgeService({
         backend,
         labOrigin: origin,
@@ -149,7 +152,30 @@ test(
         backend.navigate(id, "http://127.0.0.1:" + String(forbiddenPort) + "/other"),
       );
       assert.equal(forbiddenHits, 0);
+
+      // A revoked locally issued grant must deny browser network traffic
+      // even if the existing page tries a later request on its own.
+      grant.revoke();
+      const before = allowedAjaxHits;
+      const deniedStatus = await new Promise<number>((resolve, reject) => {
+        const request = http.get(
+          {
+            hostname: "127.0.0.1",
+            port: proxy.port,
+            path: origin + "/allowed",
+          },
+          (response) => {
+            response.resume();
+            response.once("end", () => resolve(response.statusCode ?? 0));
+          },
+        );
+        request.once("error", reject);
+      });
+      assert.equal(deniedStatus, 403);
+      assert.equal(allowedAjaxHits, before);
+      assert.ok(proxy.snapshot().deniedRevoked >= 1);
     } finally {
+      grant.revoke();
       await backend.shutdown();
       await proxy.close();
       await stop(allowed);
