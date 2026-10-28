@@ -479,16 +479,21 @@ fn successful_browser_handshake_registers_real_provider_and_capabilities() {
         let mut line = String::new();
         assert!(reader.read_line(&mut line).unwrap() > 0);
         let result: Value = serde_json::from_str(line.trim_end()).unwrap();
-        let available = result["data"]["providers"].as_array().unwrap().iter().any(|p| {
-            p["namespace"] == "browser" && p["available"] == true
-        });
+        let available = result["data"]["providers"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .any(|p| p["namespace"] == "browser" && p["available"] == true);
         if available {
             responses.insert(CAPS_ID.to_owned(), result);
             break;
         }
         thread::sleep(std::time::Duration::from_millis(40));
     }
-    assert!(responses.contains_key(CAPS_ID), "browser did not become available");
+    assert!(
+        responses.contains_key(CAPS_ID),
+        "browser did not become available"
+    );
     writeln!(stdin, "{}", serde_json::to_string(&browser).unwrap()).unwrap();
     drop(stdin);
     let mut line = String::new();
@@ -546,7 +551,9 @@ fn unavailable_browser_or_missing_bridge_token_does_not_block_device_startup() {
         assert!(BufReader::new(stdout).read_line(&mut line).unwrap() > 0);
         let result: Value = serde_json::from_str(line.trim_end()).unwrap();
         assert_eq!(result["status"], "success");
-        let browser = result["data"]["providers"].as_array().unwrap()
+        let browser = result["data"]["providers"]
+            .as_array()
+            .unwrap()
             .iter()
             .find(|provider| provider["namespace"] == "browser")
             .unwrap();
