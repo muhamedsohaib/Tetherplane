@@ -48,6 +48,7 @@ def run_probe(executable, timeout):
         "error": None,
         "startup_classification": "not_inspected",
         "browser_child_count_at_failure": None,
+        "cdp_browser_product": None,
     }
     try:
         command_read, command_write = os.pipe()
@@ -130,6 +131,9 @@ def run_probe(executable, timeout):
         if not version.get("protocolVersion"):
             raise RuntimeError("cdp_protocol_version_missing")
         report["private_cdp_version"] = True
+        product = version.get("product")
+        if isinstance(product, str):
+            report["cdp_browser_product"] = product[:90]
 
         target = call("Target.createTarget", {"url": "about:blank"}).get("targetId")
         if not target:
