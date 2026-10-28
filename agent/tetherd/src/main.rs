@@ -207,8 +207,8 @@ async fn main() {
 
     let transport = options.transport;
 
-    let principal = load_principal_profile(options.principal_profile.as_ref())
-        .unwrap_or_else(|message| {
+    let principal =
+        load_principal_profile(options.principal_profile.as_ref()).unwrap_or_else(|message| {
             eprintln!("{message}");
             std::process::exit(2);
         });
