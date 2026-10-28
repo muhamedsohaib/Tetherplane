@@ -317,7 +317,7 @@ test("shared upload revalidates owner origin before attaching debugger", async (
     pages: () => [{
       page_id: "tab:17", tab_id: 17, url: "https://fixture.example/editor",
       ownership: "shared-authorized" as const,
-      grant: { operations: ["upload"], origin: "https://fixture.example" },
+      grant: { operations: ["upload" as const], origin: "https://fixture.example" },
     }],
     authorizeLivePage: async () => {
       throw Object.assign(new Error("tab redirected since approval"), { code: "permission_denied" });
@@ -341,7 +341,7 @@ test("shared diagnostics revalidates owner origin before reading browser events"
     pages: () => [{
       page_id: "tab:17", tab_id: 17, url: "https://fixture.example/editor",
       ownership: "shared-authorized" as const,
-      grant: { operations: ["diagnostics"], origin: "https://fixture.example" },
+      grant: { operations: ["diagnostics" as const], origin: "https://fixture.example" },
     }],
     authorizeLivePage: async () => {
       throw Object.assign(new Error("owner grant was revoked"), { code: "permission_denied" });
