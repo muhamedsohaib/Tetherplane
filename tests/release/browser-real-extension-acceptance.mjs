@@ -293,5 +293,8 @@ if (result.cleaned && result.actualExtensionLoaded && result.hostAuthenticatedEx
     result.pinnedLocalPairing && result.browserRpcAuthenticated && result.realOwnedTabCreated &&
     result.verifiedBrowserAction && result.humanTabDenied && result.tokenRedacted &&
     !result.error) result.verdict = "PASS";
+if (process.argv[4]) {
+  await writeFile(process.argv[4], JSON.stringify(result), "utf8");
+}
 console.log("REAL_EXTENSION_ACCEPTANCE=" + JSON.stringify(result));
 if (result.verdict !== "PASS") process.exitCode = 1;
