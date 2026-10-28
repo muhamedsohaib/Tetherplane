@@ -42,6 +42,8 @@ jobs:
         run: |
           pnpm --filter @tetherplane/browser-lab build
           pnpm --filter @tetherplane/browser-bridge build
+      - name: Validate private CDP NUL framing and late-error containment
+        run: node --test browser/bridge/test/cdp-pipe-socket.test.ts
       - name: Exercise extension-free host, local token and origin denial
         run: node --test --test-concurrency=1 browser/bridge/test/cdp-lab-host.smoke.ts
       - name: Prove private CDP owned-tab operation without TCP debugging on Windows
