@@ -223,29 +223,19 @@ async fn main() {
         std::process::exit(2);
     }
 
-    let browser_token = load_browser_token(options.browser_bridge_token_file.as_ref())
-        .unwrap_or_else(|message| {
-            eprintln!("{message}");
-            std::process::exit(2);
-        });
-
+    // An optional browser bridge cannot take the independently authorized
+    // device core offline. The browser provider must reauthenticate before
+    // advertising or executing any browser operation.
     let browser_provider = if let Some(address) = options.browser_bridge {
-        match BrowserProvider::connect_with_retry(
-            BrowserBridgeConfig {
+        if let Ok(token) = load_browser_token(options.browser_bridge_token_file.as_ref()) {
+            Some(BrowserProvider::connect_nonfatal(BrowserBridgeConfig {
                 address,
-                token: browser_token,
+                token,
                 timeout_ms: 2_000,
-            },
-            5,
-            Duration::from_millis(100),
-        )
-        .await
-        {
-            Ok(provider) => Some(Arc::new(provider)),
-            Err(error) => {
-                eprintln!("browser bridge unavailable: {}", error.message);
-                std::process::exit(1);
-            }
+            }))
+        } else {
+            eprintln!("browser bridge token unavailable; device remains connected without browser");
+            None
         }
     } else {
         None

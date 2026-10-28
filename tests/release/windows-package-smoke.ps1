@@ -46,7 +46,8 @@ try {
         "browser\\extension\\pair.html",
         "browser\\extension\\dist\\background.js",
         "browser\\extension\\dist\\pair.js",
-        "launch\\tetherplane-browser.ps1"
+        "launch\\tetherplane-browser.ps1",
+        "launch\\tetherplane-browser-setup.ps1"
     )) {
         if (-not (Test-Path -LiteralPath (Join-Path $stage $relative))) {
             throw "release package is missing $relative"
@@ -130,7 +131,8 @@ try {
         "browser\\extension\\pair.html",
         "browser\\extension\\dist\\background.js",
         "browser\\extension\\dist\\pair.js",
-        "launch\\tetherplane-browser.ps1"
+        "launch\\tetherplane-browser.ps1",
+        "launch\\tetherplane-browser-setup.ps1"
     )) {
         if (-not (Test-Path -LiteralPath (Join-Path $install $relative) -PathType Leaf)) {
             throw "installed browser runtime is missing $relative"
@@ -152,6 +154,34 @@ try {
     if ($LASTEXITCODE -ne 0) {
         throw "installed browser runtime acceptance failed with exit code $LASTEXITCODE"
     }
+
+    # The operator-controlled setup must generate separate, non-public, scoped
+    # local token files and refuse accidental replacement or extension rebind.
+    $browserSetup = Join-Path $install "launch\tetherplane-browser-setup.ps1"
+    $browserState = Join-Path $root "owner-browser-state"
+    & powershell.exe -NoProfile -NonInteractive -File $browserSetup -BrowserStateDir $browserState -ExtensionId "abcdefghijklmnopabcdefghijklmnop"
+    if ($LASTEXITCODE -ne 0) { throw "fresh browser setup failed" }
+    $tokenNames = @("browser-bridge.token","browser-extension-launch.token")
+    $hashes = @{}
+    foreach($name in $tokenNames) {
+        $tokenPath = Join-Path $browserState $name
+        if (-not (Test-Path -LiteralPath $tokenPath -PathType Leaf)) { throw "browser setup missing $name" }
+        if ((Get-Item -LiteralPath $tokenPath).Length -lt 32) { throw "browser setup generated short $name" }
+        $acl = Get-Acl -LiteralPath $tokenPath
+        if (-not $acl.AreAccessRulesProtected) { throw "browser setup token ACL inherited broad parent access" }
+        $hashes[$name] = (Get-FileHash -LiteralPath $tokenPath -Algorithm SHA256).Hash
+    }
+    if ((Get-Content -LiteralPath (Join-Path $browserState "browser-extension.id") -Raw).Trim() -ne "abcdefghijklmnopabcdefghijklmnop") {
+        throw "owner extension ID was not pinned"
+    }
+    & powershell.exe -NoProfile -NonInteractive -File $browserSetup -BrowserStateDir $browserState -ExtensionId "abcdefghijklmnopabcdefghijklmnop"
+    if ($LASTEXITCODE -ne 0) { throw "idempotent browser setup failed" }
+    foreach($name in $tokenNames) {
+        if ((Get-FileHash -LiteralPath (Join-Path $browserState $name) -Algorithm SHA256).Hash -ne $hashes[$name]) {
+            throw "browser setup unexpectedly rotated $name"
+        }
+    }
+    Write-Output "BROWSER_OWNER_SETUP_SMOKE_OK"
     if (-not (Test-Path -LiteralPath $installedTetherd)) {
         throw "installed tetherd is missing"
     }

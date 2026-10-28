@@ -16,7 +16,7 @@ $agentToken = Join-Path $BrowserStateDir "browser-bridge.token"
 $extensionToken = Join-Path $BrowserStateDir "browser-extension-launch.token"
 $pinnedExtensionId = Join-Path $BrowserStateDir "browser-extension.id"
 
-foreach ($required in @($hostScript, $extension, $agentToken, $extensionToken)) {
+foreach ($required in @($hostScript, $extension, $agentToken, $extensionToken, $pinnedExtensionId)) {
     if (-not (Test-Path -LiteralPath $required -PathType Leaf)) {
         throw "Tetherplane browser cannot start: required local file missing: $required"
     }

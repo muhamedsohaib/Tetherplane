@@ -2,7 +2,9 @@ use std::time::Duration;
 
 use serde_json::json;
 use tether_browser_provider::{BrowserBridgeConfig, BrowserProvider};
-use tether_core::{Actor, ActorKind, CapabilityProvider, InvocationEnvelope, ResponseMode};
+use tether_core::{
+    Actor, ActorKind, CapabilityProvider, ErrorCode, InvocationEnvelope, ResponseMode,
+};
 use tokio::io::{AsyncBufReadExt, AsyncWriteExt, BufReader};
 use tokio::net::TcpListener;
 use uuid::Uuid;
@@ -303,4 +305,134 @@ async fn startup_retry_attaches_when_loopback_bridge_becomes_ready_shortly_after
 
     assert!(provider.operations().contains(&"pages".to_owned()));
     delayed.await.unwrap();
+}
+
+#[tokio::test]
+async fn resilient_browser_is_unavailable_until_authenticated_then_recovers_without_agent_restart()
+{
+    // Reserve a free address without exposing a listener when the agent starts.
+    let reservation = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
+    let address = reservation.local_addr().unwrap().to_string();
+    drop(reservation);
+
+    let provider = BrowserProvider::connect_nonfatal(BrowserBridgeConfig {
+        address: address.clone(),
+        token: Some("session-secret".into()),
+        timeout_ms: 250,
+    });
+    assert_eq!(provider.available_operations(), None);
+    let denied = provider
+        .execute(&invocation("browser.status", json!({})))
+        .await
+        .unwrap_err();
+    assert_eq!(denied.code, ErrorCode::CapabilityUnavailable);
+
+    let listener = TcpListener::bind(&address).await.unwrap();
+    let server = tokio::spawn(async move {
+        loop {
+            let (stream, _) = listener.accept().await.unwrap();
+            let (read, mut write) = stream.into_split();
+            let mut lines = BufReader::new(read).lines();
+            let raw = lines.next_line().await.unwrap().unwrap();
+            let request: serde_json::Value = serde_json::from_str(&raw).unwrap();
+            assert_eq!(request["token"], "session-secret");
+            if request["type"] == "handshake" {
+                let response = json!({
+                    "request_id":"handshake",
+                    "status":"success",
+                    "data":{"protocol_version":"1.0","operations":["status","pages"]}
+                });
+                write
+                    .write_all(format!("{response}\n").as_bytes())
+                    .await
+                    .unwrap();
+            } else {
+                assert_eq!(request["type"], "invoke");
+                assert_eq!(request["capability"], "browser.status");
+                let response = json!({
+                    "request_id":request["request_id"],
+                    "status":"success",
+                    "data":{"available":true}
+                });
+                write
+                    .write_all(format!("{response}\n").as_bytes())
+                    .await
+                    .unwrap();
+                break;
+            }
+        }
+    });
+
+    tokio::time::timeout(Duration::from_secs(8), async {
+        loop {
+            if provider.available_operations() == Some(vec!["status".into(), "pages".into()]) {
+                break;
+            }
+            tokio::time::sleep(Duration::from_millis(40)).await;
+        }
+    })
+    .await
+    .expect("browser never reauthenticated after late bridge startup");
+
+    let result = provider
+        .execute(&invocation("browser.status", json!({})))
+        .await
+        .unwrap();
+    assert_eq!(result.data["available"], true);
+    server.await.unwrap();
+
+    // A later connection error must revoke advertised availability.
+    let disconnected = provider
+        .execute(&invocation("browser.status", json!({})))
+        .await
+        .unwrap_err();
+    assert!(matches!(
+        disconnected.code,
+        ErrorCode::Disconnected | ErrorCode::Timeout
+    ));
+    assert_eq!(provider.available_operations(), None);
+}
+
+#[tokio::test]
+async fn resilient_browser_does_not_enable_operations_from_a_rejected_handshake() {
+    let (address, observed) = fake_bridge(json!({
+        "request_id":"handshake",
+        "status":"error",
+        "error":{"code":"permission_denied","message":"invalid browser token"}
+    }))
+    .await;
+    let provider = BrowserProvider::connect_nonfatal(BrowserBridgeConfig {
+        address,
+        token: Some("untrusted-token".into()),
+        timeout_ms: 250,
+    });
+    let handshake = tokio::time::timeout(Duration::from_secs(3), observed)
+        .await
+        .expect("no authentication attempt was made")
+        .unwrap();
+    assert_eq!(handshake["type"], "handshake");
+    assert_eq!(provider.available_operations(), None);
+    let error = provider
+        .execute(&invocation("browser.pages", json!({})))
+        .await
+        .unwrap_err();
+    assert_eq!(error.code, ErrorCode::CapabilityUnavailable);
+}
+
+#[tokio::test]
+async fn resilient_browser_releases_authentication_token_on_provider_teardown() {
+    let provider = BrowserProvider::connect_nonfatal(BrowserBridgeConfig {
+        address: "127.0.0.1:1".into(),
+        token: Some("ephemeral-session-token".into()),
+        timeout_ms: 250,
+    });
+    let reference = std::sync::Arc::downgrade(&provider);
+    drop(provider);
+    tokio::time::timeout(Duration::from_secs(3), async {
+        while reference.upgrade().is_some() {
+            tokio::time::sleep(Duration::from_millis(40)).await;
+        }
+    })
+    .await
+    .expect("browser watcher must not retain a dropped authentication token");
 }

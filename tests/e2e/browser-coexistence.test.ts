@@ -217,15 +217,29 @@ test(
         ["batch", "browser", "desktop", "device", "files", "process"],
       );
 
-      const pagesResult = await call(local.client, "browser", {
-        op: "pages",
-        args: {},
-      });
-      assert.equal(
-        pagesResult.isError,
-        undefined,
-        `browser.pages failed: ${JSON.stringify(pagesResult)}`,
-      );
+      const pagesResult = await waitFor(async () => {
+        const response = await call(activeLocal.client, "browser", {
+          op: "pages",
+          args: {},
+        });
+        if (response.isError === true) {
+          const result = structured(response);
+          const code = String(
+            (result.error as Record<string, unknown> | undefined)?.code ?? "unknown",
+          );
+          // Startup is deliberately asynchronous. Retry only typed temporary
+          // unavailability; a policy denial must remain an immediate failure.
+          if (
+            code === "capability_unavailable" ||
+            code === "disconnected" ||
+            code === "timeout"
+          ) {
+            return null;
+          }
+          assert.fail(`browser.pages denied unexpectedly: ${code}`);
+        }
+        return response;
+      }, 10_000);
       const pagesData = structured(pagesResult);
       assert.ok(
         Array.isArray(pagesData.pages),
@@ -587,14 +601,30 @@ test(
       });
 
       const completedDownload = await waitFor(async () => {
-        const result = structured(
-          await call(activeLocal.client, "browser", {
-            op: "downloads",
-            args: { page_id: pageId },
-          }),
+        const reply = await call(activeLocal.client, "browser", {
+          op: "downloads",
+          args: { page_id: pageId },
+        });
+        const result = structured(reply);
+        if (reply.isError === true) {
+          const error = result.error as Record<string, unknown> | undefined;
+          const code = String(error?.code ?? "unclassified");
+          // A reconnecting, authenticated browser provider may briefly be unavailable.
+          // Never retry authorization or policy denials.
+          if (
+            code === "capability_unavailable" ||
+            code === "disconnected" ||
+            code === "timeout"
+          ) {
+            return null;
+          }
+          assert.fail(`browser.downloads failed with unexpected code ${code}`);
+        }
+        assert.ok(
+          Array.isArray(result.downloads),
+          "successful browser.downloads response must contain downloads",
         );
-        const downloads =
-          result.downloads as Array<Record<string, unknown>>;
+        const downloads = result.downloads as Array<Record<string, unknown>>;
         return (
           downloads.find(
             (item) => item.state === "complete",

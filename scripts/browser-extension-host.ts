@@ -3,7 +3,6 @@ import process from "node:process";
 import {
   mkdir,
   readFile,
-  writeFile,
 } from "node:fs/promises";
 
 import {
@@ -56,6 +55,11 @@ const extensionToken = await readSecret(
   extensionTokenFile,
   "extension launch token",
 );
+// Do not open even a loopback pairing socket until the owner has selected
+// and pinned the *specific* Chrome extension in their own local context.
+if (!(await readPinnedExtensionId(pinnedExtensionIdFile))) {
+  throw new Error("owner-pinned extension ID is required before browser pairing");
+}
 
 const extensionServer =
   await startExtensionBridgeServer({
@@ -93,34 +97,15 @@ try {
         pinnedExtensionIdFile,
       );
 
+    if (!pinnedExtensionId) {
+      throw new Error("owner-pinned extension ID is required before browser pairing");
+    }
     pairingBroker =
       await startExtensionPairingBroker({
         launchToken: extensionToken,
         bridgeUrl: extensionServer.url,
         port: pairingPort,
-        ...(pinnedExtensionId
-          ? { expectedExtensionId: pinnedExtensionId }
-          : {}),
-        onPaired: async (extensionId) => {
-          if (!pinnedExtensionId) {
-            await writeFile(
-              pinnedExtensionIdFile,
-              extensionId + "\n",
-              {
-                encoding: "utf8",
-                flag: "wx",
-              },
-            ).catch(async (error: unknown) => {
-              const current =
-                await readPinnedExtensionId(
-                  pinnedExtensionIdFile,
-                );
-              if (current !== extensionId) {
-                throw error;
-              }
-            });
-          }
-        },
+        expectedExtensionId: pinnedExtensionId,
       });
 
     process.stdout.write(

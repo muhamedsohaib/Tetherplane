@@ -1,6 +1,7 @@
 #![forbid(unsafe_code)]
 
 use std::net::SocketAddr;
+use std::sync::{Arc, RwLock};
 use std::time::Duration;
 
 use async_trait::async_trait;
@@ -23,6 +24,8 @@ pub struct BrowserBridgeConfig {
 pub struct BrowserProvider {
     config: BrowserBridgeConfig,
     operations: Vec<String>,
+    // Only used by recovering instances; None means the bridge is unavailable.
+    live_operations: Option<RwLock<Option<Vec<String>>>>,
 }
 
 impl BrowserProvider {
@@ -63,7 +66,11 @@ impl BrowserProvider {
             .filter_map(Value::as_str)
             .map(ToOwned::to_owned)
             .collect::<Vec<_>>();
-        Ok(Self { config, operations })
+        Ok(Self {
+            config,
+            operations,
+            live_operations: None,
+        })
     }
 
     /// Retries transient loopback connection failures during startup.
@@ -112,6 +119,49 @@ impl BrowserProvider {
     pub fn operations(&self) -> &[String] {
         &self.operations
     }
+
+    /// A failed or absent browser bridge never prevents core device startup.
+    /// A background task re-authenticates to the loopback bridge after recovery.
+    #[must_use]
+    pub fn connect_nonfatal(config: BrowserBridgeConfig) -> Arc<Self> {
+        let provider = Arc::new(Self {
+            config,
+            operations: Vec::new(),
+            live_operations: Some(RwLock::new(None)),
+        });
+        // A weak reference prevents the recovery loop from retaining the
+        // provider (and its local authentication token) after agent teardown.
+        let watcher = Arc::downgrade(&provider);
+        tokio::spawn(async move {
+            while let Some(provider) = watcher.upgrade() {
+                let operations = Self::connect(provider.config.clone())
+                    .await
+                    .ok()
+                    .map(|connected| connected.operations);
+                provider.replace_live_operations(operations);
+                drop(provider);
+                sleep(Duration::from_secs(2)).await;
+            }
+        });
+        provider
+    }
+
+    /// None until the bridge completes its authenticated handshake.
+    #[must_use]
+    pub fn available_operations(&self) -> Option<Vec<String>> {
+        match &self.live_operations {
+            Some(state) => state.read().ok().and_then(|current| current.clone()),
+            None => Some(self.operations.clone()),
+        }
+    }
+
+    fn replace_live_operations(&self, operations: Option<Vec<String>>) {
+        if let Some(state) = &self.live_operations
+            && let Ok(mut current) = state.write()
+        {
+            *current = operations;
+        }
+    }
 }
 
 #[async_trait]
@@ -124,6 +174,15 @@ impl CapabilityProvider for BrowserProvider {
         &self,
         invocation: &InvocationEnvelope,
     ) -> Result<ProviderResult, CapabilityError> {
+        // Never forward an operation before the background handshake succeeds.
+        if self.live_operations.is_some() && self.available_operations().is_none() {
+            return Err(CapabilityError {
+                code: ErrorCode::CapabilityUnavailable,
+                message: "browser bridge is not authenticated or available".into(),
+                recovery_hint: Some("browser bridge recovery is automatic".into()),
+                details: json!({}),
+            });
+        }
         let mut arguments = invocation.arguments.clone();
         if let Some(object) = arguments.as_object_mut() {
             object.remove("ownership");
@@ -144,7 +203,12 @@ impl CapabilityProvider for BrowserProvider {
                 "expectations": invocation.expectations,
             }),
         )
-        .await?;
+        .await
+        .inspect_err(|error| {
+            if error.code == ErrorCode::Disconnected || error.code == ErrorCode::Timeout {
+                self.replace_live_operations(None);
+            }
+        })?;
 
         if response["status"] != "success" {
             return Err(response_error(&response));

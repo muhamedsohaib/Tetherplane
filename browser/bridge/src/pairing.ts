@@ -18,10 +18,15 @@ export async function startExtensionPairingBroker(options: {
   }
 
   const bridgeUrl = validateBridgeUrl(options.bridgeUrl);
-  const expectedExtensionId =
-    options.expectedExtensionId === undefined
-      ? undefined
-      : validateExtensionId(options.expectedExtensionId);
+  // A valid extension Origin is not proof of owner approval: any
+  // *other* installed extension has its own valid Chrome extension Origin.
+  // Pairing must bind to an identity pinned independently by the owner.
+  if (options.expectedExtensionId === undefined) {
+    throw new Error("owner-pinned extension ID is required before pairing");
+  }
+  const expectedExtensionId = validateExtensionId(
+    options.expectedExtensionId,
+  );
 
   let consumed = false;
 

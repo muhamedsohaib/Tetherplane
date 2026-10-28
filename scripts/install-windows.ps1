@@ -22,6 +22,7 @@ foreach ($required in @(
     "protocol\schemas\result.schema.json",
     "launch\tetherplane-mcp.ps1",
     "launch\tetherplane-browser.ps1",
+    "launch\tetherplane-browser-setup.ps1",
     "browser\host.mjs",
     "browser\extension\manifest.json",
     "browser\extension\dist\background.js",
