@@ -211,11 +211,20 @@ try {
   const popup = await opened.json();
   assert.equal(popup.url, popupUrl);
 
-  await until(async () => {
-    const response = await evaluatePage(popup.webSocketDebuggerUrl,
-      "document.querySelector('#pair-local') !== null");
-    return response.result?.value === true;
-  }, 10000, "extension popup never loaded its pairing control");
+  let popupDiagnostic = null;
+  try {
+    await until(async () => {
+      const response = await evaluatePage(popup.webSocketDebuggerUrl,
+        "({href:location.href,readyState:document.readyState,title:document.title,pairFound:document.querySelector('#pair-local')!==null})");
+      popupDiagnostic = response.result?.value ??
+        {exception: String(response.exceptionDetails?.text ?? "no evaluation value")};
+      return popupDiagnostic.pairFound === true;
+    }, 10000, "extension popup never loaded its pairing control");
+  } catch (error) {
+    // Non-secret diagnostic only. No DOM text, credentials, cookies or tokens.
+    result.popupDiagnostic = popupDiagnostic;
+    throw error;
+  }
 
   const clicked = await evaluatePage(popup.webSocketDebuggerUrl,
     "document.querySelector('#pair-local').click(); true");
