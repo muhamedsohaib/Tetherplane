@@ -117,3 +117,25 @@ test("screenshot and certification are independently gated", () => {
     assert.ok(checklist.includes(gate), "Missing release gate: " + gate);
   }
 });
+
+test("owner review MSIX is not exported until scratch package passes every integrity gate", () => {
+  const marks = [
+    "Tetherplane.OWNER-REVIEW.STAGED.UNSIGNED.msix",
+    "STORE_CANDIDATE_RUNTIME_SELFTEST_FAILED",
+    "STORE_CANDIDATE_UNPACKED_RUNTIME_HASH_MISMATCH",
+    "STORE_CANDIDATE_PROVENANCE_FAILED",
+    "$report.unpack_integrity = 'PASS'",
+    "STORE_CANDIDATE_EXPORT_HASH_MISMATCH",
+    "[IO.File]::Move($exportTemp, $ownerOutput)"
+  ];
+  let previous = -1;
+  for (const marker of marks) {
+    const position = builder.indexOf(marker);
+    assert.ok(position > previous, marker + " must follow previous verification/export stage");
+    previous = position;
+  }
+  assert.match(builder, /\[IO\.FileMode\]::CreateNew/);
+  assert.match(builder, /\$exportOwned = true|\$exportOwned = \$true/);
+  assert.match(builder, /if \(\$exportOwned -and \(Test-Path -LiteralPath \$exportTemp -PathType Leaf\)\)/);
+  assert.doesNotMatch(builder, /& \$makeAppx pack \/d \$payload \/p \$ownerOutput/);
+});

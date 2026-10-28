@@ -47,6 +47,7 @@ $report = [ordered]@{
 }
 $failure = $null
 $scratch = $null
+$ownerOutput = $null
 
 function Get-Sha256Hex([string]$Path) {
     $stream = [IO.File]::OpenRead($Path)
@@ -271,17 +272,19 @@ try {
     $candidate = if ($CiValidationOnly) {
         Join-Path $scratch 'Tetherplane.CI-PREVIEW.NOT-FOR-SUBMISSION.msix'
     } else {
-        $full = [IO.Path]::GetFullPath($OutputPath)
-        if (Test-Path -LiteralPath $full -ErrorAction SilentlyContinue) {
+        $ownerOutput = [IO.Path]::GetFullPath($OutputPath)
+        if (Test-Path -LiteralPath $ownerOutput -ErrorAction SilentlyContinue) {
             throw 'STORE_CANDIDATE_REFUSES_REPLACE_EXISTING_OUTPUT'
         }
-        if (-not (Test-Path -LiteralPath (Split-Path -Parent $full) -PathType Container)) {
+        if (-not (Test-Path -LiteralPath (Split-Path -Parent $ownerOutput) -PathType Container)) {
             throw 'STORE_CANDIDATE_OUTPUT_DIRECTORY_NOT_FOUND'
         }
-        if (-not $full.EndsWith('.msix', [StringComparison]::OrdinalIgnoreCase)) {
+        if (-not $ownerOutput.EndsWith('.msix', [StringComparison]::OrdinalIgnoreCase)) {
             throw 'STORE_CANDIDATE_OUTPUT_MUST_BE_MSIX'
         }
-        $full
+        # Even operator mode packs only in scratch. The requested output is
+        # created atomically after unpacking, self-test and hash verification.
+        Join-Path $scratch 'Tetherplane.OWNER-REVIEW.STAGED.UNSIGNED.msix'
     }
     & $makeAppx pack /d $payload /p $candidate
     if ($LASTEXITCODE -ne 0 -or -not (Test-Path -LiteralPath $candidate -PathType Leaf)) {
@@ -336,6 +339,35 @@ try {
         throw 'STORE_CANDIDATE_PROVENANCE_FAILED'
     }
     $report.unpack_integrity = 'PASS'
+    if (-not $CiValidationOnly) {
+        $report.last_phase = 'EXPORTING_VERIFIED_OWNER_CANDIDATE'
+        if (Test-Path -LiteralPath $ownerOutput) {
+            throw 'STORE_CANDIDATE_REFUSES_REPLACE_EXISTING_OUTPUT'
+        }
+        # The temporary export is on the destination volume so the final
+        # rename is atomic. CreateNew ensures no pre-existing file is changed.
+        $exportTemp = Join-Path (Split-Path -Parent $ownerOutput) ('.tetherplane-store-export-' + [guid]::NewGuid().ToString('N') + '.tmp')
+        $exportOwned = $false
+        try {
+            $outStream = [IO.File]::Open($exportTemp, [IO.FileMode]::CreateNew, [IO.FileAccess]::Write, [IO.FileShare]::None)
+            $exportOwned = $true
+            try {
+                $inStream = [IO.File]::OpenRead($candidate)
+                try { $inStream.CopyTo($outStream) }
+                finally { $inStream.Dispose() }
+                $outStream.Flush($true)
+            } finally { $outStream.Dispose() }
+            if ((Get-Sha256Hex -Path $exportTemp) -cne $report.package_sha256) {
+                throw 'STORE_CANDIDATE_EXPORT_HASH_MISMATCH'
+            }
+            [IO.File]::Move($exportTemp, $ownerOutput)
+            $exportOwned = $false
+        } finally {
+            if ($exportOwned -and (Test-Path -LiteralPath $exportTemp -PathType Leaf)) {
+                Remove-Item -LiteralPath $exportTemp -Force -ErrorAction Stop
+            }
+        }
+    }
     $report.last_phase = 'COMPLETE'
     $report.disposition = if ($CiValidationOnly) { 'CI_PACKAGE_STRUCTURE_PASS_NOT_SUBMITTABLE' } else { 'UNSIGNED_CANDIDATE_NEEDS_OWNER_AND_STORE_ACCEPTANCE' }
 } catch {
