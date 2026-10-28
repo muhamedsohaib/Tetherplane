@@ -129,14 +129,20 @@ impl BrowserProvider {
             operations: Vec::new(),
             live_operations: Some(RwLock::new(None)),
         });
-        let watcher = Arc::clone(&provider);
+        // A weak reference prevents the recovery loop from retaining the
+        // provider (and its local authentication token) after agent teardown.
+        let watcher = Arc::downgrade(&provider);
         tokio::spawn(async move {
             loop {
-                let operations = Self::connect(watcher.config.clone())
+                let Some(provider) = watcher.upgrade() else {
+                    break;
+                };
+                let operations = Self::connect(provider.config.clone())
                     .await
                     .ok()
                     .map(|connected| connected.operations);
-                watcher.replace_live_operations(operations);
+                provider.replace_live_operations(operations);
+                drop(provider);
                 sleep(Duration::from_secs(2)).await;
             }
         });
