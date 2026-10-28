@@ -17,6 +17,7 @@ import {
 } from "../browser/bridge/src/index.ts";
 import { CdpLabOnlyBridgeService, requireLoopbackLabOrigin } from
   "../browser/bridge/src/cdp-lab-service.ts";
+import { startCdpLabProxy } from "../browser/bridge/src/cdp-lab-proxy.ts";
 import {
   GRANTABLE_LAB_OPERATIONS,
   LocalBrowserLabGrant,
@@ -44,10 +45,16 @@ async function main(): Promise<void> {
     throw new Error("CDP_LAB_CHROMIUM_NOT_AVAILABLE");
   }
 
-  // Network request interception is installed before first navigation.
+  // CDP Fetch interception alone misses WebSocket handshakes. A separate
+  // local proxy denies all CONNECT/Upgrade traffic before any destination.
+  const proxy = await startCdpLabProxy({ approvedOrigin: labOrigin });
   const control = await launchCdpOwnedBrowser({
     executablePath,
     networkOrigin: labOrigin,
+    labProxyPort: proxy.port,
+  }).catch(async (error: unknown) => {
+    await proxy.close();
+    throw error;
   });
   const backend = new CdpBrowserBackend({ control, pollIntervalMs: 20 });
   let server: Awaited<ReturnType<typeof startBrowserRpcServer>> | null = null;
@@ -99,6 +106,7 @@ async function main(): Promise<void> {
   } finally {
     await server?.close().catch(() => undefined);
     await backend.shutdown();
+    await proxy.close();
     process.stdin.pause();
     process.stdout.write("CDP_LAB_SHUTDOWN=COMPLETE\n");
   }
