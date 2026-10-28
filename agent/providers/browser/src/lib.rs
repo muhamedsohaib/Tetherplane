@@ -133,10 +133,7 @@ impl BrowserProvider {
         // provider (and its local authentication token) after agent teardown.
         let watcher = Arc::downgrade(&provider);
         tokio::spawn(async move {
-            loop {
-                let Some(provider) = watcher.upgrade() else {
-                    break;
-                };
+            while let Some(provider) = watcher.upgrade() {
                 let operations = Self::connect(provider.config.clone())
                     .await
                     .ok()
