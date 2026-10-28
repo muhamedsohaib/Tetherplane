@@ -103,6 +103,7 @@ Copy-Item -Path (Join-Path $repo "protocol\schemas\*.json") -Destination (Join-P
 Copy-Item -LiteralPath (Join-Path $repo "packaging\windows\tetherplane-mcp.ps1") -Destination (Join-Path $output "launch\tetherplane-mcp.ps1")
 Copy-Item -LiteralPath (Join-Path $repo "packaging\windows\tetherplane-agent.ps1") -Destination (Join-Path $output "launch\tetherplane-agent.ps1")
 Copy-Item -LiteralPath (Join-Path $repo "packaging\windows\tetherplane-browser.ps1") -Destination (Join-Path $output "launch\tetherplane-browser.ps1")
+Copy-Item -LiteralPath (Join-Path $repo "packaging\windows\tetherplane-browser-setup.ps1") -Destination (Join-Path $output "launch\tetherplane-browser-setup.ps1")
 Copy-Item -LiteralPath (Join-Path $repo "scripts\install-windows.ps1") -Destination (Join-Path $output "install-windows.ps1")
 Copy-Item -LiteralPath (Join-Path $repo "scripts\install-model-worker-windows.ps1") -Destination (Join-Path $output "install-model-worker-windows.ps1")
 Copy-Item -LiteralPath (Join-Path $repo "scripts\uninstall-windows.ps1") -Destination (Join-Path $output "uninstall-windows.ps1")
