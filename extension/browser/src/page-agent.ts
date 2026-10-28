@@ -14,12 +14,18 @@ type PageRecord = {
   ownership: "human" | "tetherplane" | "shared-observe" | "shared-authorized";
   grant?: {
     operations: string[];
+    origin?: string;
+    expires_at_ms?: number;
   };
 };
 
 export type PageAgentController = {
   pages(): PageRecord[];
   navigate(pageId: string, url: string): Promise<unknown>;
+  authorizeLivePage?(
+    pageId: string,
+    operation: "snapshot" | "navigate" | "act",
+  ): Promise<PageRecord>;
 };
 
 export type ChromeInjectionResult = {
@@ -71,21 +77,14 @@ export class ChromePageAgent {
   }
 
   async observe(pageId: string): Promise<BrowserObservedState> {
-    const page = this.#requirePage(pageId);
-    // The extension owns the final Chrome scripting boundary. A broker
-    // policy mistake must not inject scripts into an unshared human tab.
-    if (page.ownership === "human") {
-      throw new ChromePageAgentError(
-        "permission_denied",
-        "human-owned tab is not shared for semantic observation",
-      );
-    }
+    const page = await this.#requireAuthorizedPage(pageId, "snapshot");
+    const shared = page.ownership !== "tetherplane";
     const results = await this.#scripting.executeScript({
-      target: {
-        tabId: page.tab_id,
-        allFrames: true,
-      },
+      target: shared
+        ? { tabId: page.tab_id, frameIds: [0] }
+        : { tabId: page.tab_id, allFrames: true },
       func: collectDocumentSemanticState,
+      ...(shared ? { args: [page.grant!.origin] } : {}),
     });
 
     const observations = results
@@ -99,7 +98,8 @@ export class ChromePageAgent {
         ): item is {
           injection: ChromeInjectionResult;
           observed: FrameObservation;
-        } => item.observed !== null,
+        } => item.observed !== null &&
+          (!shared || item.injection.frameId === 0),
       );
 
     if (observations.length === 0) {
@@ -112,6 +112,12 @@ export class ChromePageAgent {
     const top =
       observations.find((item) => item.injection.frameId === 0) ??
       observations[0]!;
+    if (shared && websiteOrigin(top.observed.url) !== page.grant?.origin) {
+      throw new ChromePageAgentError(
+        "permission_denied",
+        "browser document left the approved website origin",
+      );
+    }
     const nodes: BackendSemanticNode[] = [];
 
     for (const item of observations) {
@@ -156,8 +162,10 @@ export class ChromePageAgent {
     pageId: string,
     action: Record<string, unknown>,
   ): Promise<void> {
-    const page = this.#requirePage(pageId);
     const kind = requiredString(action, "kind");
+    const page = await this.#requireAuthorizedPage(
+      pageId, kind === "navigate" ? "navigate" : "act",
+    );
 
     if (kind === "navigate") {
       await this.#controller.navigate(
@@ -171,13 +179,21 @@ export class ChromePageAgent {
 
     const backendId = requiredString(action, "backend_id");
     const parsed = parseBackendId(backendId);
+    if (page.ownership !== "tetherplane" && parsed.frameId !== 0) {
+      throw new ChromePageAgentError(
+        "permission_denied",
+        "shared tabs cannot execute actions in embedded frames",
+      );
+    }
     const results = await this.#scripting.executeScript({
       target: {
         tabId: page.tab_id,
         frameIds: [parsed.frameId],
       },
       func: performDocumentAction,
-      args: [parsed.selectorToken, structuredClone(action)],
+      args: page.ownership === "tetherplane"
+        ? [parsed.selectorToken, structuredClone(action)]
+        : [parsed.selectorToken, structuredClone(action), page.grant!.origin],
     });
 
     const result = results[0]?.result;
@@ -205,6 +221,35 @@ export class ChromePageAgent {
         ? response.message
         : "browser page action failed",
     );
+  }
+
+  async #requireAuthorizedPage(
+    pageId: string,
+    operation: "snapshot" | "navigate" | "act",
+  ): Promise<PageRecord> {
+    const page = this.#requirePage(pageId);
+    if (page.ownership === "tetherplane") {
+      return page;
+    }
+    // Human sharing must be revalidated against the live chrome.tabs URL.
+    if ((page.ownership !== "shared-authorized" &&
+         page.ownership !== "shared-observe") ||
+        !this.#controller.authorizeLivePage) {
+      throw new ChromePageAgentError(
+        "permission_denied",
+        "owner-shared browser authority is required",
+      );
+    }
+    const verified = await this.#controller.authorizeLivePage(pageId, operation);
+    if (!verified.grant?.origin ||
+        typeof verified.grant.expires_at_ms !== "number" ||
+        verified.grant.expires_at_ms <= Date.now()) {
+      throw new ChromePageAgentError(
+        "permission_denied",
+        "browser grant is missing its approved origin or has expired",
+      );
+    }
+    return verified;
   }
 
   #requirePage(pageId: string): PageRecord {
@@ -330,7 +375,14 @@ function uniqueStrings(values: string[]): string[] {
   return [...new Set(values)];
 }
 
-function collectDocumentSemanticState(): FrameObservation {
+function collectDocumentSemanticState(expectedOrigin?: string): FrameObservation {
+  if (expectedOrigin && location.origin !== expectedOrigin) {
+    // Deny any DOM collection if a redirect occurs after authorization.
+    return {
+      url: "about:blank", semantic_revision: 0, resource_revision: null,
+      nodes: [], validation_messages: [], toasts: [],
+    };
+  }
   const maxNodes = 500;
   const candidates = Array.from(
     document.querySelectorAll(
@@ -623,11 +675,18 @@ function collectDocumentSemanticState(): FrameObservation {
 function performDocumentAction(
   selectorToken: string,
   action: Record<string, unknown>,
+  expectedOrigin?: string,
 ): {
   ok: boolean;
   code?: string;
   message?: string;
 } {
+  if (expectedOrigin && location.origin !== expectedOrigin) {
+    return {
+      ok: false, code: "permission_denied",
+      message: "document origin no longer matches owner grant",
+    };
+  }
   if (!selectorToken.startsWith("css:")) {
     return {
       ok: false,
@@ -749,4 +808,15 @@ function performDocumentAction(
     code: "invalid_arguments",
     message: "unsupported semantic browser action",
   };
+}
+
+function websiteOrigin(value: string): string | null {
+  try {
+    const url = new URL(value);
+    return url.protocol === "https:" || url.protocol === "http:"
+      ? url.origin
+      : null;
+  } catch {
+    return null;
+  }
 }
