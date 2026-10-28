@@ -352,7 +352,6 @@ fn browser_upload_file_must_remain_inside_allowed_root() {
     assert!(matches!(denied_decision, PolicyDecision::Deny { .. }));
 }
 
-
 fn dedicated_browser_only_profile() -> PrincipalProfile {
     PrincipalProfile {
         principal_id: "browser-test-principal".into(),
@@ -410,7 +409,9 @@ fn browser_only_launch_admission_rejects_privileged_capability_composition() {
     let mut with_other_device = safe.clone();
     with_other_device.allowed_devices.insert("Surface".into());
     assert!(
-        with_other_device.validate_browser_only(Some("Leno")).is_err(),
+        with_other_device
+            .validate_browser_only(Some("Leno"))
+            .is_err(),
         "a browser-only identity must be bound to exactly one local device"
     );
     assert!(safe.validate_browser_only(Some("Surface")).is_err());
