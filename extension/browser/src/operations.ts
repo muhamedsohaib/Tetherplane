@@ -113,7 +113,7 @@ export class ChromeOperationalAgent {
     backendId: string,
     filePath: string,
   ): Promise<void> {
-    const page = this.#requireAuthorizedPage(pageId, "upload");
+    const page = await this.#requireAuthorizedPage(pageId, "upload");
     if (!filePath.trim()) {
       throw new ChromeOperationalError(
         "invalid_arguments",
@@ -160,6 +160,9 @@ export class ChromeOperationalAgent {
       );
     }
 
+    if (page.ownership !== "tetherplane") {
+      await this.#requireAuthorizedPage(pageId, "upload");
+    }
     await this.#debugger.sendCommand(
       target,
       "DOM.setFileInputFiles",
@@ -204,13 +207,7 @@ export class ChromeOperationalAgent {
         "an authorized page ID is required for downloads",
       );
     }
-    const page = this.#requirePage(pageId);
-    if (page.ownership === "human") {
-      throw new ChromeOperationalError(
-        "permission_denied",
-        "unshared human download details are not available",
-      );
-    }
+    const page = await this.#requireAuthorizedPage(pageId, "downloads");
     const origin = originOf(page.url);
     if (!origin) {
       throw new ChromeOperationalError("permission_denied", "page origin is unavailable");
@@ -245,7 +242,7 @@ export class ChromeOperationalAgent {
     pageId: string,
     limit: number,
   ): Promise<RawBrowserDiagnosticEvent[]> {
-    const page = this.#requireAuthorizedPage(
+    const page = await this.#requireAuthorizedPage(
       pageId,
       "diagnostics",
     );
