@@ -36,6 +36,8 @@ const report = {
   invalidCapabilityDenied: false,
   unactivatedFixtureDenied: false,
   localGrantActivated: false,
+  nativeRevocationAcknowledged: false,
+  nativeRevocationEnforced: false,
   ownedProcessesAfter: null,
   removedProfile: false,
   result: "FAIL",
@@ -166,6 +168,20 @@ try {
   report.clickVerified = true;
   const beforeClose = await backend.observe(page);
   assert.equal(beforeClose.semantic_revision, 2);
+
+  // A native grant must remain revocable even when the caller still knows the
+  // private session capability. This is an actual host-side negative test,
+  // not a TypeScript-only policy denial.
+  const revoked = await request("revoke_fixture");
+  assert.equal(revoked.data?.revoked, true);
+  report.nativeRevocationAcknowledged = true;
+  const afterRevocation = await request("observe_fixture", { page_id: page });
+  assert.equal(afterRevocation.error?.code, "permission_denied");
+  report.nativeRevocationEnforced = true;
+  const reactivation = await request("activate_fixture", { lifetime_ms: 60000 });
+  assert.equal(reactivation.error?.code, "permission_denied");
+
+  // Ownership cleanup must stay available even after a grant is revoked.
   await backend.closePage(page);
   const after = await request("observe_fixture", { page_id: page });
   assert.equal(after.error?.code, "permission_denied");
