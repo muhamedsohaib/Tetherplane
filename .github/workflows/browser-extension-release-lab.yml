@@ -39,6 +39,11 @@ jobs:
           if ($LASTEXITCODE -ne 0) { throw "browser bridge build failed" }
           pnpm.cmd --filter @tetherplane/browser-extension build
           if ($LASTEXITCODE -ne 0) { throw "browser extension build failed" }
+      - name: Verify browser ownership, RPC and extension privacy regression tests
+        shell: pwsh
+        run: |
+          node --test browser/bridge/test/ownership.test.ts browser/bridge/test/rpc-server.test.ts extension/browser/test/page-agent.test.ts
+          if ($LASTEXITCODE -ne 0) { throw "BROWSER_POLICY_REGRESSION=FAIL" }
       - name: Stage browser-only distribution without Rust or installing services
         shell: pwsh
         run: |
