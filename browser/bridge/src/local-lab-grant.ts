@@ -80,6 +80,10 @@ export class LocalBrowserLabGrant {
     this.#revoked = true;
   }
 
+  get approvedOrigin(): string {
+    return this.#origin;
+  }
+
   get isActive(): boolean {
     return !this.#revoked && this.#clock() < this.#expiresAtMs;
   }
