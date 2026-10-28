@@ -54,3 +54,7 @@ jobs:
       - name: Verify an abruptly killed broker does not leave a live private-CDP browser
         if: runner.os == 'Windows'
         run: node scripts/private-cdp-broker-crash-acceptance.mjs
+      - name: Diagnose installed Windows Edge private CDP without changing browser configuration
+        if: runner.os == 'Windows'
+        continue-on-error: true
+        run: python scripts/private-cdp-windows-probe.py --browser edge
