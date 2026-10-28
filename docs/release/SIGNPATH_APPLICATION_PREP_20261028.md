@@ -9,6 +9,7 @@
 - Maintainer's merged Pollinations.ai open-source contribution: https://github.com/pollinations/pollinations/pull/15289 (28 September 2026). This documents contributor activity, **not** the Tetherplane project's user reputation.
 - GitHub Actions: existing CI and Windows source packaging; no source-to-SignPath signing workflow, manual approval or project acceptance yet. New unsigned public release is deliberately blocked.
 - Small GitHub asset-download counters do not establish unique users, installs, active use or third-party endorsements. SignPath's executable reputation rule may still prevent acceptance.
+- **Confirmed by maintainer 28 October 2026:** public distribution is local/self-hosted only; no public managed Tetherplane relay or cloud service is offered to external users. The public privacy contact is **muhammadsohaibsaif@gmail.com**. Private development deployments are not a public hosted service.
 
 ## Application fields (after the privacy-policy gate)
 
@@ -23,7 +24,7 @@
 | Maintainer | Individual / independent developer |
 | Build system | GitHub Actions (not yet SignPath-integrated) |
 | First and last name | Owner enters their own legal name privately |
-| Email | Owner enters an authorized private email |
+| Email | Owner enters preferred account email privately; public project privacy contact is muhammadsohaibsaif@gmail.com, which need not be the account login |
 | Company | Blank if not applicable |
 | Discovery channel | ChatGPT if available; otherwise Other |
 | Exact source | Recommendation made during research into free OSS code signing for Tetherplane |
@@ -34,7 +35,7 @@ Secure, self-hostable device connectivity for AI agents through MCP, with owner-
 
 ### Description
 
-Tetherplane is a free open-source connectivity infrastructure project for owner-authorized computer use by AI clients through the Model Context Protocol (MCP). The compact interface supports controlled file, process, browser and desktop operations. Its local policy remains authoritative; optional user-configured relays route authorized client requests to paired devices. Its signing, clean-install Windows Smart App Control acceptance and Microsoft Store certification remain separate incomplete release gates.
+Tetherplane is a free open-source connectivity project for owner-authorized computer use by AI clients through MCP. It is currently distributed for **local and self-hosted deployment**, without a public managed Tetherplane cloud service. Its compact interface supports controlled file, process, browser and desktop operations. Local policy remains authoritative; optional operator-configured relays route authenticated requests to paired devices. Signing, clean-install Windows Smart App Control acceptance and Microsoft Store certification remain unfulfilled release gates.
 
 ### Reputation text
 
@@ -48,7 +49,9 @@ Retain original assets, SHA256SUMS and release history. Do not change release de
 
 ## Pre-submission gates
 
-- [ ] Verify actual live hosted operator, privacy contact, network/logging configuration, third-party subprocessors, retention, backups, deletion handling and effective date.
+- [x] Maintainer confirms local/self-hosted-only distribution (no public hosted relay offered).
+- [x] Maintainer supplies public privacy-contact email: muhammadsohaibsaif@gmail.com.
+- [ ] Verify privacy mailbox is reachable, review any project-controlled telemetry and clarify private development infrastructure is not offered externally; approve final wording and effective date. Independent self-hosting operators control their own retention, backups and processors.
 - [ ] Owner reviews and approves the privacy policy and signing policy. Confirm GitHub/SignPath MFA and precise signing/review roles.
 - [ ] Check third-party binary redistribution and license compatibility; ensure software meets SignPath's restrictions on hacking/security bypass features.
 - [ ] Merge through protected main after reviews; verify README and privacy-policy link live.

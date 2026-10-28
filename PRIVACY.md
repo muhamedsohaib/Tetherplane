@@ -1,12 +1,12 @@
 # Tetherplane privacy policy — proposed, not yet effective
 
-> **REVIEW DRAFT, 28 October 2026.** The maintainer must approve this document, identify the operator of any hosted public service and specify an authorized private contact before publishing it as an operative privacy policy. Source review is not a substitute for inspection of live infrastructure and retention settings.
+> **REVIEW DRAFT, 28 October 2026 — not yet effective.** The independent maintainer has selected local/self-hosted-only public distribution and supplied a privacy-contact email. This document remains a proposed policy until final review and publication.
 
 ## Scope and service operators
 
-Tetherplane is free and open-source device-connectivity software. It supports local-only mode and optional operator-configured remote relay and OAuth identity services. The operator of each independently hosted relay, authorization server, reverse proxy, AI client or cloud service controls that service's records and must disclose its own privacy practices. One developer cannot promise uniform logging or retention for every self-hosted deployment.
+Tetherplane is free and open-source device-connectivity software. Current public distribution is **local/self-hosted only**. The maintainer does **not** offer a public Tetherplane-managed relay, cloud, or account-hosting service to external users. Each independent operator decides whether to configure their own remote relay, OAuth provider, reverse proxy, AI client or host and remains responsible for the corresponding logging, backups, data protection, retention, and third-party disclosures.
 
-This notice describes source-supported behavior, not an assertion that all installations are controlled by the project's maintainer.
+The maintainer may operate private development infrastructure for the maintainer's own devices; this is not a public managed offering or a promise to process external users' data. A future Tetherplane-operated hosting service would require a separate, verified service privacy notice before external users could enroll. The software remains subject to each operator's configuration and authorization settings.
 
 ## Categories of information processed
 
@@ -14,7 +14,8 @@ This notice describes source-supported behavior, not an assertion that all insta
 - **Pairing registry:** a relay can persist device ID, account ID, SHA-256 credential hash, pairing time and revocation time/status. Pending pairing challenges are held transiently. Revocation need not delete historical metadata or backups.
 - **Authentication service:** the reference self-hosted OAuth/OIDC server uses persistent SQLite state for registered clients, grants, authorization codes, refresh tokens, interactions and sessions. A separately selected identity provider can process related identity information according to its terms.
 - **Tool requests/results:** within locally granted permissions, requests and returned data can contain file paths or content, process output, browser page data and desktop observations. A relay terminating the MCP TLS connection **can observe those requests/results in transit**. This is **not generic end-to-end encryption between the AI client and the computer**.
-- **Infrastructure and support:** third-party hosting/reverse proxies may process network metadata and access logs; optional diagnostic files or support submissions may contain details of the user's configuration. No universal claim of zero logging or zero telemetry has been established for all deployed components.
+- **Infrastructure:** independent relay hosts, reverse proxies and other selected services may process network metadata and access logs; optional diagnostics may include device or configuration details. No universal promise of zero logging or zero telemetry is established for every deployment.
+- **Voluntary privacy/support email:** when you email the project contact, the maintainer receives your sender address, message, associated metadata and any attachments. This mailbox is hosted through **Gmail (Google)**, whose systems process email under Google's own privacy terms. Emailing the maintainer does **not** automatically send data from your self-hosted device or relay; do not send credentials or unredacted logs.
 
 ## Processing purposes and user choices
 
@@ -30,16 +31,19 @@ Operators must identify the destination of remote device data to the person auth
 - A configured relay state file persists device registry information. Revocation prevents subsequent authorization but can preserve the record with a revocation timestamp. This is **not** a promise of immediate complete deletion.
 - The reference OAuth server stores state in SQLite, uses record expiry checks and supports grant revocation; the database, logs and backups can persist according to the real operator's configuration and backup schedule.
 - Local device identity/state and some diagnostic information can survive agent exit or an ordinary uninstall. Installation documentation states that ordinary uninstall preserves state; explicit purge is a distinct operation.
-- Concrete hosted-service retention periods, access-log configuration, subprocessors, privacy contact, backup disposal and deletion request procedure **must be verified for the deployed service before public adoption**. No universal retention period can be honestly specified from the repository alone.
+- Each self-hosted operator determines their own logs, backup schedules, third-party processors, access and deletion processes. Tetherplane does not operate a shared public customer-data service and cannot promise a universal retention period for independent installations.
+- Voluntary privacy/support email remains in the maintainer's Gmail mailbox under the mailbox configuration and Google's policies. No fixed project-side auto-deletion period for emails is established. Send access or deletion requests to the privacy contact; handling may depend on the records and applicable obligations.
 
 Users should address revocation or deletion requests to the operator of the particular service hosting their information. Never post passwords, bearer tokens, OAuth credentials, personal files, or private support logs in a public issue.
 
 ## Third parties and security
 
-Depending on configuration, data can reach the chosen relay host, identity provider, reverse proxy, AI-client provider and GitHub when users download files or submit reports. Review the corresponding operator's privacy policy. GitHub's own website and downloads are governed by [GitHub's privacy statement](https://docs.github.com/en/site-policy/privacy-policies/github-general-privacy-statement).
+Depending on operator configuration, data can reach the selected relay host, identity provider, reverse proxy or AI-client provider; this is **operator-selected infrastructure**, not a Tetherplane-managed public hosting service. GitHub separately handles source browsing, downloads and issues under [GitHub's privacy statement](https://docs.github.com/en/site-policy/privacy-policies/github-general-privacy-statement). The privacy contact mailbox is processed by Google under [Google's privacy policy](https://policies.google.com/privacy).
 
 For the implementation's security model, see [remote-plane privacy and boundaries](docs/security/remote-plane.md), [threat model](docs/security/threat-model.md), [security reporting](SECURITY.md), and [installation/uninstallation guidance](docs/release.md).
 
-## Contact and effective date — blocking owner decision
+## Project privacy contact and effective date
 
-**Private privacy contact: PENDING OWNER APPROVAL.** The maintainer must confirm a reachable authorized private address or contact channel and whether any public Tetherplane-hosted service is operated by the maintainer. Do not publish a guessed email or name. The effective date is the date on which the approved policy actually becomes publicly operative, not the date this draft was written.
+**Privacy inquiries:** [muhammadsohaibsaif@gmail.com](mailto:muhammadsohaibsaif@gmail.com). This contact was supplied by the independent maintainer for public project privacy inquiries. For information held by an independently self-hosted operator, contact that operator rather than the repository maintainer.
+
+**Effective date:** pending final maintainer approval and public policy publication on the protected main branch. This draft is not yet operative.

@@ -1,6 +1,6 @@
 # Tetherplane
 
-Tetherplane is open-source connectivity infrastructure for owner-authorized AI computer use through MCP (Model Context Protocol). It offers a provider-neutral interface for files, processes, browsers and desktop interaction, with local permission enforcement and optional remote device routing.
+Tetherplane is open-source connectivity infrastructure for owner-authorized AI computer use through MCP (Model Context Protocol). It offers a provider-neutral interface for files, processes, browsers and desktop interaction, with local permission enforcement and optional remote device routing. Current public distribution is **local or self-hosted**; no public Tetherplane-managed relay service is offered.
 
 The local agent is the final authority. Remote relays and AI clients can route requests, but they cannot override stricter local policy.
 

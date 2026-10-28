@@ -33,10 +33,10 @@ The public tag release workflow currently **blocks new unsigned public Windows r
 
 Review the proposed [Tetherplane privacy policy](../PRIVACY.md), [remote-plane disclosure](security/remote-plane.md), [threat model](security/threat-model.md), [security reporting](../SECURITY.md), [release/installation documentation](release.md) and [recovery guide](recovery.md).
 
-Tetherplane's local agent enforces policy, and a configured remote relay can observe MCP request/result data in transit. Users/operators must explicitly configure remote destinations and approve permissions. The per-user installer and ordinary uninstall are documented; ordinary uninstall can preserve device state, and intentional state purge requires a separate action.
+Tetherplane is currently distributed for local and **self-hosted use only**, with **no public Tetherplane-managed relay service** for external users. The local agent enforces policy, and an operator-configured relay can observe MCP request/result data in transit. Users/operators configure remote destinations and approve permissions. The per-user installer and ordinary uninstall are documented; ordinary uninstall may preserve device state, and intentional state purge requires a separate action.
 
 ## Activation blockers
 
-SignPath acceptance; verified MFA and signing roles; project-owned eligible artifacts and dependency-licensing review; an approved **operative** privacy policy with a real private contact and accurate hosted retention; source-provenance workflow; manual signing approval; independent Windows acceptance; and owner authorization to publish.
+SignPath acceptance; verified MFA and signing roles; eligible project-owned binaries and dependency-licensing review; final approval and effective-date publication of the self-hosted privacy policy and provided Gmail contact; source-provenance workflow; manual signing approval; independent Windows acceptance; and owner authorization to publish.
 
 Program terms: https://signpath.org/terms.html
