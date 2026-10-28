@@ -71,7 +71,7 @@ function waitForReady(
     child.stdout?.on("data", (chunk: Buffer) => {
       output += chunk.toString("utf8");
       const match = /CDP_LAB_RPC_READY=(127\.0\.0\.1:[0-9]+)/.exec(output);
-      if (match && !settled) {
+      if (match?.[1] && !settled) {
         settled = true;
         clearTimeout(timer);
         resolve(match[1]);
