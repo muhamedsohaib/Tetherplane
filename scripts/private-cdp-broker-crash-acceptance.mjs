@@ -37,6 +37,22 @@ async function testOwnedBrowserProcessIds(profileParent) {
     .filter((pid) => Number.isSafeInteger(pid) && pid > 0);
 }
 
+async function ownedTcpListenerCount(pids) {
+  const ids = pids.join(",");
+  const command =
+    "$owned=@(" + ids + ");" +
+    "Write-Output (@(Get-NetTCPConnection -State Listen -ErrorAction Stop " +
+    "|Where-Object {$owned -contains $_.OwningProcess}).Count)";
+  const { stdout } = await execFileAsync(
+    "powershell.exe",
+    ["-NoProfile", "-NonInteractive", "-Command", command],
+    { timeout: 12_000, windowsHide: true },
+  );
+  const value = Number(stdout.trim());
+  assert.ok(Number.isSafeInteger(value) && value >= 0, "TCP listener inspection failed");
+  return value;
+}
+
 async function forceCleanupOwnedBrowser(profileParent) {
   const safe = profileParent.replaceAll("'", "''");
   const command =
@@ -112,6 +128,8 @@ async function main() {
   const report = {
     result: "FAILED",
     ownedBeforeCrash: 0,
+    rawTcpListenerCount: null,
+    devtoolsPortFile: null,
     ownedAfterCrash: null,
     recoveryMs: null,
     disposedProfile: false,
@@ -132,6 +150,12 @@ async function main() {
     const active = await testOwnedBrowserProcessIds(parentDir);
     report.ownedBeforeCrash = active.length;
     assert.ok(active.length > 0, "test cannot prove recovery without a live owned browser");
+    // An independent Windows process enumerates Chrome-owned TCP listeners:
+    // a DevToolsActivePort file check alone cannot prove no raw CDP endpoint.
+    report.devtoolsPortFile = existsSync(path.join(profile, "DevToolsActivePort"));
+    report.rawTcpListenerCount = await ownedTcpListenerCount(active);
+    assert.equal(report.devtoolsPortFile, false, "raw DevTools TCP metadata exists");
+    assert.equal(report.rawTcpListenerCount, 0, "Chrome exposes a listening TCP endpoint");
 
     const crashStart = Date.now();
     assert.equal(child.kill("SIGKILL"), true, "failed to terminate disposable test broker");
