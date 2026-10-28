@@ -44,3 +44,6 @@ jobs:
           pnpm --filter @tetherplane/browser-bridge build
       - name: Exercise extension-free host, local token and origin denial
         run: node --test --test-concurrency=1 browser/bridge/test/cdp-lab-host.smoke.ts
+      - name: Prove private CDP owned-tab operation without TCP debugging on Windows
+        if: runner.os == 'Windows'
+        run: node --test --test-concurrency=1 browser/bridge/test/cdp-private-pipe.test.ts
