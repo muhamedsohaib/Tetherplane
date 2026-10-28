@@ -85,7 +85,7 @@ test("new packaging CI cannot publish, install packages, alter trust, or upload 
 
 test("screenshot and certification are independently gated", () => {
   const checklist = read("docs/release/MSIX_STORE_PRIVATE_CANDIDATE_20261028.md");
-  for (const gate of ["genuine", "Smart App Control", "Partner Center", "recovery", "Microsoft Store", "NO-GO"]) {
+  for (const gate of ["genuine", "Smart App Control", "Partner Center", "rollback", "Microsoft Store", "NO-GO"]) {
     assert.ok(checklist.includes(gate), "Missing release gate: " + gate);
   }
 });
