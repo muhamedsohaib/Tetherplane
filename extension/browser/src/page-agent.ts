@@ -78,7 +78,7 @@ export class ChromePageAgent {
 
   async observe(pageId: string): Promise<BrowserObservedState> {
     const page = await this.#requireAuthorizedPage(pageId, "snapshot");
-    const shared = page.ownership !== "tetherplane";
+    const shared = Boolean(page.grant?.origin);
     const results = await this.#scripting.executeScript({
       target: shared
         ? { tabId: page.tab_id, frameIds: [0] }
@@ -179,7 +179,7 @@ export class ChromePageAgent {
 
     const backendId = requiredString(action, "backend_id");
     const parsed = parseBackendId(backendId);
-    if (page.ownership !== "tetherplane" && parsed.frameId !== 0) {
+    if (page.grant?.origin && parsed.frameId !== 0) {
       throw new ChromePageAgentError(
         "permission_denied",
         "shared tabs cannot execute actions in embedded frames",
@@ -191,9 +191,7 @@ export class ChromePageAgent {
         frameIds: [parsed.frameId],
       },
       func: performDocumentAction,
-      args: page.ownership === "tetherplane"
-        ? [parsed.selectorToken, structuredClone(action)]
-        : [parsed.selectorToken, structuredClone(action), page.grant!.origin],
+      args: [parsed.selectorToken, structuredClone(action), page.grant!.origin],
     });
 
     const result = results[0]?.result;
@@ -228,13 +226,9 @@ export class ChromePageAgent {
     operation: "snapshot" | "navigate" | "act",
   ): Promise<PageRecord> {
     const page = this.#requirePage(pageId);
-    if (page.ownership === "tetherplane") {
-      return page;
-    }
-    // Human sharing must be revalidated against the live chrome.tabs URL.
-    if ((page.ownership !== "shared-authorized" &&
-         page.ownership !== "shared-observe") ||
-        !this.#controller.authorizeLivePage) {
+    // Tab ownership is not a website grant. Recheck every owned/shared
+    // tab against the controller's live Chrome URL and owner consent.
+    if (page.ownership === "human" || !this.#controller.authorizeLivePage) {
       throw new ChromePageAgentError(
         "permission_denied",
         "owner-shared browser authority is required",
