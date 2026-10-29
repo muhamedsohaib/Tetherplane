@@ -22,14 +22,31 @@ export type LocalApprovalResult =
   | { handled: false }
   | { handled: true; page: unknown };
 
+export type LocalApprovalSender = {
+  senderUrl: string | undefined;
+  ownerPopupUrl: string;
+};
+
 const MAX_ATTACHMENT_TTL_MS = 3_600_000;
 
 export async function handleLocalApprovalMessage(
   controller: LocalApprovalController,
   message: unknown,
+  sender: LocalApprovalSender,
 ): Promise<LocalApprovalResult> {
   if (!isRecord(message) || typeof message.type !== "string") {
     return { handled: false };
+  }
+  if ((message.type === "tetherplane.share_current_tab" ||
+       message.type === "tetherplane.detach_current_tab" ||
+       message.type === "tetherplane.approve_owned_site" ||
+       message.type === "tetherplane.revoke_owned_site") &&
+      (!sender.senderUrl || !sender.ownerPopupUrl ||
+       sender.senderUrl !== sender.ownerPopupUrl)) {
+    throw new BrowserPolicyError(
+      "permission_denied",
+      "browser ownership changes require the local owner popup",
+    );
   }
 
   if (message.type === "tetherplane.detach_current_tab") {

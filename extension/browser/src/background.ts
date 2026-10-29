@@ -57,7 +57,9 @@ chrome.runtime.onMessage.addListener(
     if (message && typeof message === "object" &&
         ("type" in message) &&
         (message.type === "tetherplane.approve_owned_site" ||
-         message.type === "tetherplane.revoke_owned_site") &&
+         message.type === "tetherplane.revoke_owned_site" ||
+         message.type === "tetherplane.share_current_tab" ||
+         message.type === "tetherplane.detach_current_tab") &&
         sender.url !== chrome.runtime.getURL("pair.html")) {
       sendResponse({ ok: false, error: "site approval must originate from the owner popup" });
       return false;
@@ -94,6 +96,10 @@ chrome.runtime.onMessage.addListener(
         handleLocalApprovalMessage(
           controller,
           message,
+          {
+            senderUrl: sender.url,
+            ownerPopupUrl: chrome.runtime.getURL("pair.html"),
+          },
         ),
     ).then(
       (result) => {

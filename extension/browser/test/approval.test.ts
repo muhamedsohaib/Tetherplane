@@ -4,9 +4,22 @@ import test from "node:test";
 import { BrowserPolicyError } from "@tetherplane/browser-bridge";
 
 import {
-  handleLocalApprovalMessage,
+  handleLocalApprovalMessage as handleLocalApprovalMessageWithContext,
   type LocalApprovalController,
 } from "../src/approval.ts";
+
+const OWNER_POPUP_URL = "chrome-extension://fixture/pair.html";
+
+// Existing positive cases use the exact local popup sender.
+function handleLocalApprovalMessage(
+  controller: LocalApprovalController,
+  message: unknown,
+) {
+  return handleLocalApprovalMessageWithContext(controller, message, {
+    senderUrl: OWNER_POPUP_URL,
+    ownerPopupUrl: OWNER_POPUP_URL,
+  });
+}
 
 class FakeController implements LocalApprovalController {
   attachCalls: Array<{
@@ -158,11 +171,11 @@ test("site-origin grants reject invalid TTL before reaching the controller", asy
 test("non-owner extension context cannot approve or revoke tab access", async () => {
   const controller = new FakeController();
   // Exercise the proposed sender-bound API before implementation.
-  const senderBoundHandler = handleLocalApprovalMessage as unknown as (
+  const senderBoundHandler = handleLocalApprovalMessageWithContext as unknown as (
     ctrl: LocalApprovalController,
     message: unknown,
     context: { senderUrl: string; ownerPopupUrl: string },
-  ) => ReturnType<typeof handleLocalApprovalMessage>;
+  ) => ReturnType<typeof handleLocalApprovalMessageWithContext>;
   const context = {
     senderUrl: "chrome-extension://fixture/untrusted.html",
     ownerPopupUrl: "chrome-extension://fixture/pair.html",
