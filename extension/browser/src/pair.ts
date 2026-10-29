@@ -7,6 +7,8 @@ import {
   activatePairing,
 } from "./pair-activation.ts";
 import {
+  approveOwnedSite,
+  revokeOwnedSite,
   detachCurrentTab,
   shareCurrentTab,
   type PopupBrowserApi,
@@ -30,6 +32,10 @@ const shareUploadElement =
   document.querySelector<HTMLInputElement>("#share-upload");
 const shareCurrentElement =
   document.querySelector<HTMLButtonElement>("#share-current");
+const approveOwnedSiteElement =
+  document.querySelector<HTMLButtonElement>("#approve-owned-site");
+const revokeOwnedSiteElement =
+  document.querySelector<HTMLButtonElement>("#revoke-owned-site");
 const detachCurrentElement =
   document.querySelector<HTMLButtonElement>("#detach-current");
 const shareStatusElement =
@@ -45,6 +51,8 @@ if (
   !shareNavigateElement ||
   !shareUploadElement ||
   !shareCurrentElement ||
+  !approveOwnedSiteElement ||
+  !revokeOwnedSiteElement ||
   !detachCurrentElement ||
   !shareStatusElement
 ) {
@@ -60,6 +68,8 @@ const shareTtl = shareTtlElement;
 const shareNavigate = shareNavigateElement;
 const shareUpload = shareUploadElement;
 const shareCurrent = shareCurrentElement;
+const approveOwnedSiteButton = approveOwnedSiteElement;
+const revokeOwnedSiteButton = revokeOwnedSiteElement;
 const detachCurrent = detachCurrentElement;
 const shareStatus = shareStatusElement;
 
@@ -92,6 +102,14 @@ shareCurrent.addEventListener("click", () => {
 
 detachCurrent.addEventListener("click", () => {
   void detach();
+});
+
+approveOwnedSiteButton.addEventListener("click", () => {
+  void approveSite();
+});
+
+revokeOwnedSiteButton.addEventListener("click", () => {
+  void revokeSite();
 });
 
 async function activate(
@@ -190,6 +208,35 @@ async function share(): Promise<void> {
       error instanceof Error
         ? error.message
         : "Share failed";
+  }
+}
+
+async function approveSite(): Promise<void> {
+  shareStatus.textContent = "";
+  try {
+    const response = await approveOwnedSite(popupApi, {
+      ttl_ms: Number(shareTtl.value),
+      allow_navigate: shareNavigate.checked,
+      allow_upload: shareUpload.checked,
+    });
+    assertApprovalResponse(response);
+    shareStatus.textContent =
+      "This website origin is approved for AI-created tabs until the grant expires.";
+  } catch (error) {
+    shareStatus.textContent =
+      error instanceof Error ? error.message : "Website approval failed";
+  }
+}
+
+async function revokeSite(): Promise<void> {
+  shareStatus.textContent = "";
+  try {
+    const response = await revokeOwnedSite(popupApi);
+    assertApprovalResponse(response);
+    shareStatus.textContent = "AI-created tab access to this website was revoked.";
+  } catch (error) {
+    shareStatus.textContent =
+      error instanceof Error ? error.message : "Site revocation failed";
   }
 }
 
