@@ -1,7 +1,7 @@
 import assert from "node:assert/strict";
 import { readFileSync } from "node:fs";
 import test from "node:test";
-const workflow = readFileSync(new URL("../../.github/workflows/windows-candidate-provenance.yml", import.meta.url), "utf8");.replace(/\r\n/g, "\n");
+const workflow = readFileSync(new URL("../../.github/workflows/windows-candidate-provenance.yml", import.meta.url), "utf8").replace(/\r\n/g, "\n");
 
 function check(w) {
   assert.match(w, /^on:\n  push:\n    branches:\n      - test\/windows-provenance-quarantine-20261030$/m);
