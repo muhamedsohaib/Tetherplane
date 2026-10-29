@@ -327,3 +327,44 @@ test("shared tab may not return content from a silently redirected document", as
       "code" in error && (error as { code: string }).code === "permission_denied",
   );
 });
+
+
+test("agent-owned page without a live website grant cannot be observed", async () => {
+  const scripting = new FakeScripting();
+  const controller = {
+    pages: () => [{ page_id: "tab:98", tab_id: 98,
+      url: "https://private.example/", ownership: "tetherplane" as const }],
+    navigate: async () => ({}),
+  };
+  await assert.rejects(
+    () => new ChromePageAgent({controller, scripting}).observe("tab:98"),
+    (e: unknown) => typeof e === "object" && e !== null &&
+      "code" in e && (e as {code:string}).code === "permission_denied",
+  );
+  assert.equal(scripting.calls.length, 0);
+});
+
+test("agent-owned website grant cannot observe a cross-origin embedded frame", async () => {
+  const scripting = new FakeScripting();
+  scripting.nextResults = [
+    {frameId:0, result: { url:"https://approved.example/",
+      semantic_revision:1, resource_revision:null,
+      nodes:[{backend_id:"css:#public",role:"textbox",accessible_name:"PUBLIC"}],
+      validation_messages:[],toasts:[] }},
+    {frameId:4, result: { url:"https://private.example/account",
+      semantic_revision:2, resource_revision:null,
+      nodes:[{backend_id:"css:#private",role:"textbox",accessible_name:"SECRET"}],
+      validation_messages:[],toasts:[] }},
+  ];
+  const page = { page_id:"tab:98", tab_id:98, url:"https://approved.example/",
+    ownership:"tetherplane" as const, grant:{ operations:["act","navigate"],
+      origin:"https://approved.example", expires_at_ms:Date.now()+60_000 } };
+  const controller = {
+    pages:() => [page],
+    navigate:async () => ({}),
+    authorizeLivePage:async () => page,
+  };
+  const observed = await new ChromePageAgent({controller,scripting}).observe("tab:98");
+  assert.deepEqual(observed.nodes.map(n => n.accessible_name), ["PUBLIC"]);
+  assert.deepEqual(scripting.calls[0]?.target, {tabId:98,frameIds:[0]});
+});
