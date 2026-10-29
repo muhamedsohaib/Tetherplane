@@ -19,6 +19,8 @@ export type CdpFrame = {
   frame_id: string;
   document_id: string;
   parent_frame_id: string | null;
+  // CDP Page.getFrameTree reports the document's URL before injection.
+  url?: string;
 };
 
 export type CdpFrameObservation = {
@@ -44,12 +46,14 @@ export type CdpControl = {
   observeFrame(
     targetId: string,
     frameId: string,
+    expectedOrigin?: string,
   ): Promise<CdpFrameObservation>;
   performFrame(
     targetId: string,
     frameId: string,
     selectorToken: string,
     action: Record<string, unknown>,
+    expectedOrigin?: string,
   ): Promise<void>;
   uploadFile(
     targetId: string,
@@ -218,23 +222,43 @@ export class CdpBrowserBackend implements BrowserBridgeBackend {
       );
     }
 
+    const pinnedOrigin = this.#ownedTargets.get(targetId)!;
+    // Do not evaluate or return foreign frames. Missing/opaque child URLs
+    // fail closed. CDP performs a second origin check inside the page.
+    const eligibleFrames = frames.filter(
+      (frame) => frame.parent_frame_id === null ||
+        (frame.url !== undefined &&
+         this.#isAuthorized("snapshot", frame.url, pinnedOrigin)),
+    );
     const observations = await Promise.all(
-      frames.map(async (frame) => ({
+      eligibleFrames.map(async (frame) => ({
         frame,
         observed: await this.#control.observeFrame(
           targetId,
           frame.frame_id,
+          pinnedOrigin,
         ),
       })),
     );
 
-    const top =
-      observations.find(
-        (item) => item.frame.parent_frame_id === null,
-      ) ?? observations[0]!;
+    const top = observations.find(
+      (item) => item.frame.parent_frame_id === null,
+    );
+    if (!top) {
+      throw new CdpBackendError("permission_denied",
+        "approved CDP top frame is unavailable");
+    }
+    this.#requireSitePermission(
+      "snapshot", top.observed.url, pinnedOrigin,
+    );
+    const approvedObservations = observations.filter(
+      (item) => this.#isAuthorized(
+        "snapshot", item.observed.url, pinnedOrigin,
+      ),
+    );
     const nodes: BackendSemanticNode[] = [];
 
-    for (const item of observations) {
+    for (const item of approvedObservations) {
       for (const node of item.observed.nodes) {
         nodes.push({
           ...structuredClone(node),
@@ -249,7 +273,7 @@ export class CdpBrowserBackend implements BrowserBridgeBackend {
       page_id: pageIdValue,
       url: top.observed.url,
       semantic_revision: aggregateSemanticRevision(
-        observations.map((item) => ({
+        approvedObservations.map((item) => ({
           frameId: item.frame.frame_id,
           revision: item.observed.semantic_revision,
         })),
@@ -257,12 +281,12 @@ export class CdpBrowserBackend implements BrowserBridgeBackend {
       resource_revision: top.observed.resource_revision,
       nodes,
       validation_messages: uniqueStrings(
-        observations.flatMap(
+        approvedObservations.flatMap(
           (item) => item.observed.validation_messages,
         ),
       ),
       toasts: uniqueStrings(
-        observations.flatMap((item) => item.observed.toasts),
+        approvedObservations.flatMap((item) => item.observed.toasts),
       ),
     };
   }
@@ -279,22 +303,24 @@ export class CdpBrowserBackend implements BrowserBridgeBackend {
     const targetId = await this.#requireAuthorizedTarget(pageIdValue, "act");
     const parsed = parseBackendId(action.backend_id);
     const frames = await this.#control.frames(targetId);
-    if (
-      !frames.some(
-        (frame) => frame.frame_id === parsed.frameId,
-      )
-    ) {
-      throw new CdpBackendError(
-        "stale_reference",
-        "CDP frame no longer exists",
-      );
+    const frame = frames.find((item) => item.frame_id === parsed.frameId);
+    if (!frame) {
+      throw new CdpBackendError("stale_reference", "CDP frame no longer exists");
     }
-
+    const pinnedOrigin = this.#ownedTargets.get(targetId)!;
+    if (frame.parent_frame_id !== null && !frame.url) {
+      throw new CdpBackendError("permission_denied",
+        "CDP subframe has no approved URL");
+    }
+    if (frame.url) {
+      this.#requireSitePermission("act", frame.url, pinnedOrigin);
+    }
     await this.#control.performFrame(
       targetId,
       parsed.frameId,
       parsed.selectorToken,
       action as unknown as Record<string, unknown>,
+      pinnedOrigin,
     );
   }
 
