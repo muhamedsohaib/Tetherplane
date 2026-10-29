@@ -12,13 +12,13 @@ $owned = Join-Path $root "owned-install"
 $ownedTask = "Tetherplane CI Owned-" + [guid]::NewGuid().ToString("N")
 
 # The uninstaller may inspect HKCU Run in CI, but may not modify any real value.
-$script:runRegistryRemovalAttempts = 0
+$global:runRegistryRemovalAttempts = 0
 function Remove-ItemProperty {
     [CmdletBinding()]
     param([string]$Path, [string]$Name)
     if ($Path -eq "HKCU:\Software\Microsoft\Windows\CurrentVersion\Run" -and
         $Name -eq "TetherplaneModelWorker") {
-        $script:runRegistryRemovalAttempts++
+        $global:runRegistryRemovalAttempts++
         return
     }
     throw "unexpected registry removal intercepted in disposable uninstaller test"
@@ -78,7 +78,7 @@ try {
         (Get-Content -LiteralPath $marker -Raw) -ne "FOREIGN-OWNER") {
         throw "RELEASE_NO_GO: rejected foreign-task uninstall deleted unrelated files"
     }
-    if ($script:runRegistryRemovalAttempts -ne 0) {
+    if ($global:runRegistryRemovalAttempts -ne 0) {
         throw "RELEASE_NO_GO: rejected foreign-task uninstall reached registry mutation"
     }
     Write-Output "WINDOWS_FOREIGN_TASK_UNINSTALL_REJECTED_OK"
