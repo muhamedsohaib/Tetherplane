@@ -160,6 +160,19 @@ function observation(
   };
 }
 
+// Fixture-only local authorization. This is not user consent or a
+// production way to grant arbitrary website access.
+function fixtureBackend(control: FakeCdpControl): CdpBrowserBackend {
+  return new CdpBrowserBackend({
+    control,
+    authorizeSite: (_operation, url) => {
+      if (new URL(url).origin !== "https://fixture.example") {
+        throw new CdpBackendError("permission_denied", "out of synthetic test scope");
+      }
+    },
+  });
+}
+
 test("CDP fallback advertises reduced Tetherplane-owned capability surface truthfully", () => {
   const backend = new CdpBrowserBackend({
     control: new FakeCdpControl(),
@@ -217,7 +230,7 @@ test("isolated Chromium args always use a dedicated profile and ephemeral debugg
 
 test("CDP backend creates only owned background targets and rejects unknown targets", async () => {
   const control = new FakeCdpControl();
-  const backend = new CdpBrowserBackend({ control });
+  const backend = fixtureBackend(control);
 
   const page = await backend.createTab(
     "https://fixture.example/editor",
@@ -292,7 +305,7 @@ test("CDP semantic observation preserves frame and document identity", async () 
     }),
   );
 
-  const backend = new CdpBrowserBackend({ control });
+  const backend = fixtureBackend(control);
   const page = await backend.createTab(
     "https://fixture.example/editor",
   );
@@ -317,7 +330,7 @@ test("CDP semantic observation preserves frame and document identity", async () 
 test("CDP semantic action returns to the exact observed frame", async () => {
   const control = new FakeCdpControl();
   control.observations.set("top", observation());
-  const backend = new CdpBrowserBackend({ control });
+  const backend = fixtureBackend(control);
   const page = await backend.createTab(
     "https://fixture.example/editor",
   );
@@ -344,7 +357,7 @@ test("CDP semantic action returns to the exact observed frame", async () => {
 
 test("CDP backend exposes native upload downloads and diagnostics for owned targets", async () => {
   const control = new FakeCdpControl();
-  const backend = new CdpBrowserBackend({ control });
+  const backend = fixtureBackend(control);
   const page = await backend.createTab(
     "https://fixture.example/editor",
   );
@@ -394,7 +407,7 @@ test("CDP backend exposes native upload downloads and diagnostics for owned targ
 
 test("CDP operational methods reject unowned target IDs", async () => {
   const control = new FakeCdpControl();
-  const backend = new CdpBrowserBackend({ control });
+  const backend = fixtureBackend(control);
 
   await assert.rejects(
     () =>
