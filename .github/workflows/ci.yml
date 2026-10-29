@@ -19,6 +19,9 @@ jobs:
       - name: Enforce fail-closed public release policy
         run: node --test tests/release/windows-main-publication-block.test.mjs
 
+      - name: Test read-only Windows candidate byte evidence
+        run: node --test tests/release/windows-candidate-digests.test.mjs
+
   quality:
     strategy:
       fail-fast: false
@@ -66,6 +69,10 @@ jobs:
       - uses: actions/setup-node@v4
         with:
           node-version: 22
+
+      - name: Test Windows candidate byte evidence on Node 22
+        if: runner.os == 'Windows'
+        run: node --test tests/release/windows-candidate-digests.test.mjs
 
       - name: Enable Corepack
         run: corepack enable
