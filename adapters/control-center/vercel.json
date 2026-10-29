@@ -1,0 +1,9 @@
+{
+  "$schema": "https://openapi.vercel.sh/vercel.json",
+  "git": {
+    "deploymentEnabled": {
+      "test/release-real-extension-acceptance-20261028": false,
+      "test/release-origin-bound-human-grants-20261029": false
+    }
+  }
+}

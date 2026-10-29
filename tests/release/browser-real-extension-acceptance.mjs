@@ -119,7 +119,7 @@ async function evaluatePage(endpoint, expression) {
       });
     });
     socket.send(JSON.stringify({id: 1, method: "Runtime.evaluate",
-      params: {expression, returnByValue: true}}));
+      params: {expression, returnByValue: true, awaitPromise: true}}));
     return await Promise.race([response, delay(6000).then(() => {throw new Error("CDP evaluation timeout");})]);
   } finally { socket.close(); }
 }
@@ -166,18 +166,39 @@ try {
     return Number.isSafeInteger(p) && p > 0 ? p : null;
   }, 15000, "isolated browser DevTools unavailable");
 
+  // Edge ships first-party extensions such as Microsoft Voices. Never take
+  // the first chrome-extension target: bind to the actual Tetherplane manifest.
   const extensionTarget = await until(async () => {
     const response = await fetch("http://127.0.0.1:" + port + "/json/list");
     const targets = await response.json();
-    return targets.find(x => /^chrome-extension:\/\/[a-p]{32}\//.test(x.url));
-  }, 15000, "actual extension service worker missing");
-  const id = /^chrome-extension:\/\/([a-p]{32})\//.exec(extensionTarget.url)?.[1];
+    for (const candidate of targets) {
+      const match = /^chrome-extension:\/\/([a-p]{32})\//.exec(candidate.url);
+      if (!match || !candidate.webSocketDebuggerUrl) continue;
+      try {
+        const identity = await evaluatePage(candidate.webSocketDebuggerUrl,
+          "({name:chrome.runtime.getManifest().name,id:chrome.runtime.id})");
+        if (identity.result?.value?.name === "Tetherplane Browser Bridge" &&
+            identity.result?.value?.id === match[1]) {
+          return { ...candidate, extension_id: match[1] };
+        }
+      } catch {
+        // Ignore unrelated/short-lived browser-internal extension targets.
+      }
+    }
+    return null;
+  }, 15000, "actual Tetherplane extension service worker missing");
+  const id = extensionTarget.extension_id;
   assert.match(id, /^[a-p]{32}$/);
   result.actualExtensionLoaded = true;
 
-  const wsPort = await availablePort();
-  const pairPort = await availablePort();
-  const rpcPort = await availablePort();
+  let wsPort = await availablePort();
+  let rpcPort = await availablePort();
+  // Real operator pairing uses the fixed loopback endpoint in pair.ts.
+  // This acceptance runs only on a disposable hosted Windows runner; it
+  // must fail if that port is occupied rather than disturb any other host.
+  const pairPort = 17656;
+  while (wsPort === pairPort) wsPort = await availablePort();
+  while (rpcPort === pairPort || rpcPort === wsPort) rpcPort = await availablePort();
   assert.equal(new Set([wsPort, pairPort, rpcPort]).size, 3);
 
   await writeFile(path.join(state, "browser-bridge.token"), token + "\n", {mode: 0o600});
@@ -205,17 +226,34 @@ try {
     10000, "host pairing endpoint did not start");
 
   const popupUrl = "chrome-extension://" + id + "/pair.html";
-  const opened = await fetch("http://127.0.0.1:" + port +
-    "/json/new?" + encodeURIComponent(popupUrl), {method: "PUT"});
-  assert.equal(opened.status, 200, "cannot open extension pairing page");
-  const popup = await opened.json();
-  assert.equal(popup.url, popupUrl);
+  // A DevTools /json/new navigation to an extension URL can yield an
+  // internal chrome-error page. Have the isolated extension create its own
+  // UI page through chrome.tabs instead of simulating a foreign navigation.
+  const opened = await evaluatePage(extensionTarget.webSocketDebuggerUrl,
+    "chrome.tabs.create({url:chrome.runtime.getURL('pair.html'),active:false}).then(tab=>({id:tab.id,url:tab.url}))");
+  assert.ok(Number.isSafeInteger(opened.result?.value?.id),
+    "extension could not create its own pairing tab");
+  const popup = await until(async () => {
+    const response = await fetch("http://127.0.0.1:" + port + "/json/list");
+    const targets = await response.json();
+    const target = targets.find(x => x.url === popupUrl && x.type === "page");
+    return target?.webSocketDebuggerUrl ? target : null;
+  }, 10000, "extension-owned pairing page did not expose a page target");
 
-  await until(async () => {
-    const response = await evaluatePage(popup.webSocketDebuggerUrl,
-      "document.querySelector('#pair-local') !== null");
-    return response.result?.value === true;
-  }, 10000, "extension popup never loaded its pairing control");
+  let popupDiagnostic = null;
+  try {
+    await until(async () => {
+      const response = await evaluatePage(popup.webSocketDebuggerUrl,
+        "({href:location.href,readyState:document.readyState,title:document.title,pairFound:document.querySelector('#pair-local')!==null})");
+      popupDiagnostic = response.result?.value ??
+        {exception: String(response.exceptionDetails?.text ?? "no evaluation value")};
+      return popupDiagnostic.pairFound === true;
+    }, 10000, "extension popup never loaded its pairing control");
+  } catch (error) {
+    // Non-secret diagnostic only. No DOM text, credentials, cookies or tokens.
+    result.popupDiagnostic = popupDiagnostic;
+    throw error;
+  }
 
   const clicked = await evaluatePage(popup.webSocketDebuggerUrl,
     "document.querySelector('#pair-local').click(); true");
@@ -257,12 +295,32 @@ try {
   assert.equal(action.data.state, "verified", JSON.stringify(action.data));
   result.verifiedBrowserAction = true;
 
+  // The extension popup may close or be absent from Chrome's tab list.
+  // Exercise a real ordinary HTTP tab, then revoke a local synthetic grant.
+  // A revoked tab must not remain readable by a remote browser RPC caller.
+  const humanCreated = await evaluatePage(extensionTarget.webSocketDebuggerUrl,
+    "chrome.tabs.create({url:" + JSON.stringify(fixtureUrl) +
+    ",active:false}).then(tab=>({id:tab.id}))");
+  const humanTabId = humanCreated.result?.value?.id;
+  assert.ok(Number.isSafeInteger(humanTabId),
+    "disposable browser did not create an unshared ordinary tab");
+  const locallyShared = await evaluatePage(popup.webSocketDebuggerUrl,
+    "chrome.runtime.sendMessage({type:'tetherplane.share_current_tab',tab_id:" +
+    humanTabId + ",ttl_ms:300000,allow_navigate:false,allow_upload:false})");
+  assert.equal(locallyShared.result?.value?.ok, true,
+    "synthetic local owner could not share the fixture tab");
+  const locallyRevoked = await evaluatePage(popup.webSocketDebuggerUrl,
+    "chrome.runtime.sendMessage({type:'tetherplane.detach_current_tab',tab_id:" +
+    humanTabId + "})");
+  assert.equal(locallyRevoked.result?.value?.ok, true,
+    "synthetic local owner could not revoke fixture tab access");
   const pages = await rpc(rpcPort, "pages");
-  const humanPage = pages.data?.pages?.find(p =>
-    p.ownership === "human" && p.url.startsWith("chrome-extension://"));
-  assert.ok(humanPage, "expected unshared extension popup to be human-owned");
+  const humanPage = pages.data?.pages?.find(p => p.tab_id === humanTabId);
+  assert.ok(humanPage, "revoked ordinary tab is absent from ownership registry");
+  assert.equal(humanPage.ownership, "human");
   const forbidden = await rpc(rpcPort, "snapshot", {page_id: humanPage.page_id});
-  assert.equal(forbidden.status, "error");
+  assert.equal(forbidden.status, "error",
+    "RELEASE_NO_GO: remote snapshot still reads a revoked human-owned tab");
   assert.equal(forbidden.error.code, "permission_denied");
   result.humanTabDenied = true;
 
