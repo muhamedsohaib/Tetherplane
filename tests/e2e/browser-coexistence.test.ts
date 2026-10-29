@@ -187,6 +187,9 @@ test(
       cdp = new CdpBrowserBackend({
         control,
         pollIntervalMs: 20,
+        authorizeSite: (_operation, url) => {
+          if (new URL(url).origin !== lab.origin) throw new Error("non-fixture site");
+        },
       });
       const backend = new CoexistenceBackend(cdp);
       bridge = await startBrowserRpcServer({
