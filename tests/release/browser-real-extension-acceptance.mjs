@@ -393,9 +393,9 @@ try {
     "synthetic local owner could not revoke fixture tab access");
   const pages = await rpc(rpcPort, "pages");
   const humanPage = pages.data?.pages?.find(p => p.tab_id === humanTabId);
-  assert.ok(humanPage, "revoked ordinary tab is absent from ownership registry");
-  assert.equal(humanPage.ownership, "human");
-  const forbidden = await rpc(rpcPort, "snapshot", {page_id: humanPage.page_id});
+  assert.equal(humanPage, undefined,
+    "unshared human tab metadata leaked after owner revoked sharing");
+  const forbidden = await rpc(rpcPort, "snapshot", {page_id: "tab:" + humanTabId});
   assert.equal(forbidden.status, "error",
     "RELEASE_NO_GO: remote snapshot still reads a revoked human-owned tab");
   assert.equal(forbidden.error.code, "permission_denied");

@@ -146,8 +146,14 @@ export class BrowserBridgeService {
     }
 
     if (operation === "pages") {
+      const pages = await this.#syncPages();
       return {
-        data: { pages: await this.#syncPages() },
+        data: {
+          pages: pages.filter((page) =>
+            page.ownership === "tetherplane" ||
+            page.ownership === "shared-observe" ||
+            page.ownership === "shared-authorized"),
+        },
         verification: "not_applicable",
       };
     }
