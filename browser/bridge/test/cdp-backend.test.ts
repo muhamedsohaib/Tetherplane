@@ -442,12 +442,12 @@ test("CDP site authorization is exact-origin, revocable, and checked before brow
   let approved = true;
   const backend = new CdpBrowserBackend({
     control,
-    authorizeSite: (operation, url) => {
+    authorizeSite: (_operation: string, url: string) => {
       if (!approved || new URL(url).origin !== "https://fixture.example") {
         throw new CdpBackendError("permission_denied", "local site permission denied");
       }
     },
-  });
+  } as unknown as ConstructorParameters<typeof CdpBrowserBackend>[0]);
   await assert.rejects(
     () => backend.createTab("https://fixture.example.evil.test/"),
     (e: unknown) => e instanceof CdpBackendError && e.code === "permission_denied",
