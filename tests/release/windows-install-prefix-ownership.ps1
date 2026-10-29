@@ -136,7 +136,7 @@ try {
         scheduled_task = $null
     } | ConvertTo-Json | Set-Content -LiteralPath (Join-Path $preflightInstall "config\install.json")
     $receiptBefore = Get-Content -LiteralPath (Join-Path $preflightInstall "config\install.json") -Raw
-    [IO.File]::WriteAllText($preflightArgs, '["--stdio-rpc"]')
+    [IO.File]::WriteAllText($preflightArgs, '["--stdio-rpc","--relay-url"]')
     $preflightRejected = $false
     try {
         & $installer -PackagePath $package -InstallPrefix $preflightInstall -StateDir $preflightState -Force -InstallScheduledTask -AgentTaskName $preflightTask -AgentArgumentsFile $preflightArgs
