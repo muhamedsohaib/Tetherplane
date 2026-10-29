@@ -153,3 +153,34 @@ test("site-origin grants reject invalid TTL before reaching the controller", asy
   );
   assert.equal(controller.siteGrants.length, 0);
 });
+
+
+test("non-owner extension context cannot approve or revoke tab access", async () => {
+  const controller = new FakeController();
+  // Exercise the proposed sender-bound API before implementation.
+  const senderBoundHandler = handleLocalApprovalMessage as unknown as (
+    ctrl: LocalApprovalController,
+    message: unknown,
+    context: { senderUrl: string; ownerPopupUrl: string },
+  ) => ReturnType<typeof handleLocalApprovalMessage>;
+  const context = {
+    senderUrl: "chrome-extension://fixture/untrusted.html",
+    ownerPopupUrl: "chrome-extension://fixture/pair.html",
+  };
+  for (const message of [
+    {type:"tetherplane.share_current_tab",tab_id:17,
+      ttl_ms:300_000,allow_navigate:true},
+    {type:"tetherplane.detach_current_tab",tab_id:17},
+    {type:"tetherplane.approve_owned_site",tab_id:17,ttl_ms:300_000},
+    {type:"tetherplane.revoke_owned_site",tab_id:17},
+  ]) {
+    await assert.rejects(
+      () => senderBoundHandler(controller,message,context),
+      (e: unknown) => e instanceof BrowserPolicyError && e.code === "permission_denied",
+    );
+  }
+  assert.equal(controller.attachCalls.length,0);
+  assert.equal(controller.detachCalls.length,0);
+  assert.equal(controller.siteGrants.length,0);
+  assert.equal(controller.siteRevokes.length,0);
+});
