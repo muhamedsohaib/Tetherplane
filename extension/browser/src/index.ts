@@ -281,6 +281,13 @@ export class ExtensionTabController {
     const page = this.#requirePage(pageId);
     if (page.ownership === "tetherplane") {
       const live = await this.#tabs.get(page.tab_id);
+      // A new tab can temporarily report about:blank while its approved
+      // first navigation is committing. Deny reads/actions, but do not
+      // irreversibly revoke the site grant for this pending state.
+      if (live?.url === "about:blank") {
+        throw new BrowserPolicyError("permission_denied",
+          "AI-owned tab has not committed an approved website origin");
+      }
       const origin = page.grant?.origin;
       const currentGrant = origin ? this.#approvedOwnedOrigins.get(origin) : undefined;
       if (!live || !origin || approvedOrigin(live.url) !== origin ||
