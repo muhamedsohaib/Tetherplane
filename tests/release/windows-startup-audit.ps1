@@ -20,6 +20,30 @@ try {
         $sourceOfAudit -notmatch 'nativeArgumentsFileOnly') {
         throw 'auditor cannot distinguish native owned tasks from legacy PowerShell supervisors'
     }
+    # Use an isolated synthetic registry key, not the runner's actual
+    # HKCU Run key. Audit only Tetherplane-named autoruns, never values.
+    $runKey = Join-Path 'HKCU:\Software\Tetherplane\ci-startup-audit' ([guid]::NewGuid().ToString('N'))
+    try {
+        New-Item -Path $runKey -Force | Out-Null
+        $secret = 'SYNTHETIC_PRIVATE_COMMAND_SENTINEL'
+        $dummy = 'powershell.exe -NoProfile -WindowStyle Hidden -File "C:\ci\model-worker.ps1" --token ' + $secret
+        New-ItemProperty -Path $runKey -Name 'TetherplaneModelWorker' -Value $dummy -PropertyType String -Force | Out-Null
+        New-ItemProperty -Path $runKey -Name 'ForeignStartup' -Value ('keep-private ' + $secret) -PropertyType String -Force | Out-Null
+        $raw = & $auditScript -InstallPrefix $fixture -RunKeyPath $runKey | Out-String
+        $report = $raw | ConvertFrom-Json
+        if (@($report.autoruns).Count -ne 1) { throw 'expected one Tetherplane HKCU autorun, not foreign entries' }
+        if ($report.autoruns[0].name -cne 'TetherplaneModelWorker') { throw 'autorun identity was lost' }
+        if (-not $report.autoruns[0].usesPowerShell -or
+            -not $report.autoruns[0].requestsHiddenWindow) {
+            throw 'autorun command-type classification failed'
+        }
+        if ($raw.Contains($secret) -or $raw.Contains('C:\ci\model-worker.ps1')) {
+            throw 'private startup command or token leaked into diagnostic output'
+        }
+        if (-not (Test-Path -LiteralPath $runKey)) { throw 'audit modified test registry' }
+    } finally {
+        Remove-Item -LiteralPath $runKey -Recurse -Force -ErrorAction SilentlyContinue
+    }
     Write-Output 'WINDOWS_STARTUP_AUDIT=PASS'
 } finally {
     Remove-Item -LiteralPath $fixture -Recurse -Force -ErrorAction SilentlyContinue
