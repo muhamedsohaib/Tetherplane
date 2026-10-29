@@ -12,6 +12,10 @@ export type LocalApprovalController = {
     },
   ): Promise<unknown>;
   detachHumanTab(tabId: number): Promise<unknown>;
+  approveOwnedOriginFromTab(tabId: number, grant: {
+    ttl_ms: number; operations: BrowserOperation[];
+  }): Promise<unknown>;
+  revokeOwnedOriginFromTab(tabId: number): Promise<unknown>;
 };
 
 export type LocalApprovalResult =
@@ -36,6 +40,25 @@ export async function handleLocalApprovalMessage(
     };
   }
 
+  if (message.type === "tetherplane.approve_owned_site") {
+    const tabId = requiredTabId(message.tab_id);
+    const ttlMs = requiredTtl(message.ttl_ms);
+    const operations: BrowserOperation[] = ["act"];
+    if (message.allow_navigate === true) operations.push("navigate");
+    if (message.allow_upload === true) operations.push("upload");
+    return {
+      handled: true,
+      page: await controller.approveOwnedOriginFromTab(tabId, {
+        ttl_ms: ttlMs, operations,
+      }),
+    };
+  }
+  if (message.type === "tetherplane.revoke_owned_site") {
+    const tabId = requiredTabId(message.tab_id);
+    return {
+      handled: true, page: await controller.revokeOwnedOriginFromTab(tabId),
+    };
+  }
   if (message.type !== "tetherplane.share_current_tab") {
     return { handled: false };
   }
