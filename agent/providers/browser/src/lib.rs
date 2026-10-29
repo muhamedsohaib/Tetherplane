@@ -1,6 +1,7 @@
 #![forbid(unsafe_code)]
 
 use std::net::SocketAddr;
+use std::path::PathBuf;
 use std::sync::{Arc, RwLock};
 use std::time::Duration;
 
@@ -21,11 +22,14 @@ pub struct BrowserBridgeConfig {
     pub timeout_ms: u64,
 }
 
+type BrowserSession = (Vec<String>, Option<String>);
+
 pub struct BrowserProvider {
     config: BrowserBridgeConfig,
     operations: Vec<String>,
     // Only used by recovering instances; None means the bridge is unavailable.
-    live_operations: Option<RwLock<Option<Vec<String>>>>,
+    live_operations: Option<RwLock<Option<BrowserSession>>>,
+    token_file: Option<PathBuf>,
 }
 
 impl BrowserProvider {
@@ -70,6 +74,7 @@ impl BrowserProvider {
             config,
             operations,
             live_operations: None,
+            token_file: None,
         })
     }
 
@@ -124,21 +129,53 @@ impl BrowserProvider {
     /// A background task re-authenticates to the loopback bridge after recovery.
     #[must_use]
     pub fn connect_nonfatal(config: BrowserBridgeConfig) -> Arc<Self> {
+        Self::connect_nonfatal_inner(config, None)
+    }
+
+    /// Retry a locally provisioned bridge credential without restarting the core agent.
+    /// The credential is never used until a successful authenticated handshake.
+    #[must_use]
+    pub fn connect_nonfatal_with_token_file(
+        config: BrowserBridgeConfig,
+        token_file: PathBuf,
+    ) -> Arc<Self> {
+        Self::connect_nonfatal_inner(config, Some(token_file))
+    }
+
+    fn connect_nonfatal_inner(
+        config: BrowserBridgeConfig,
+        token_file: Option<PathBuf>,
+    ) -> Arc<Self> {
         let provider = Arc::new(Self {
             config,
             operations: Vec::new(),
             live_operations: Some(RwLock::new(None)),
+            token_file,
         });
         // A weak reference prevents the recovery loop from retaining the
         // provider (and its local authentication token) after agent teardown.
         let watcher = Arc::downgrade(&provider);
         tokio::spawn(async move {
             while let Some(provider) = watcher.upgrade() {
-                let operations = Self::connect(provider.config.clone())
-                    .await
-                    .ok()
-                    .map(|connected| connected.operations);
-                provider.replace_live_operations(operations);
+                let credential = if let Some(path) = &provider.token_file {
+                    std::fs::read_to_string(path)
+                        .ok()
+                        .map(|content| content.trim().to_owned())
+                        .filter(|content| !content.is_empty())
+                } else {
+                    provider.config.token.clone()
+                };
+                let session = if provider.token_file.is_some() && credential.is_none() {
+                    None
+                } else {
+                    let mut config = provider.config.clone();
+                    config.token = credential.clone();
+                    Self::connect(config)
+                        .await
+                        .ok()
+                        .map(|connected| (connected.operations, credential))
+                };
+                provider.replace_live_operations(session);
                 drop(provider);
                 sleep(Duration::from_secs(2)).await;
             }
@@ -150,12 +187,15 @@ impl BrowserProvider {
     #[must_use]
     pub fn available_operations(&self) -> Option<Vec<String>> {
         match &self.live_operations {
-            Some(state) => state.read().ok().and_then(|current| current.clone()),
+            Some(state) => state
+                .read()
+                .ok()
+                .and_then(|current| current.as_ref().map(|(operations, _)| operations.clone())),
             None => Some(self.operations.clone()),
         }
     }
 
-    fn replace_live_operations(&self, operations: Option<Vec<String>>) {
+    fn replace_live_operations(&self, operations: Option<BrowserSession>) {
         if let Some(state) = &self.live_operations
             && let Ok(mut current) = state.write()
         {
@@ -175,24 +215,32 @@ impl CapabilityProvider for BrowserProvider {
         invocation: &InvocationEnvelope,
     ) -> Result<ProviderResult, CapabilityError> {
         // Never forward an operation before the background handshake succeeds.
-        if self.live_operations.is_some() && self.available_operations().is_none() {
-            return Err(CapabilityError {
-                code: ErrorCode::CapabilityUnavailable,
-                message: "browser bridge is not authenticated or available".into(),
-                recovery_hint: Some("browser bridge recovery is automatic".into()),
-                details: json!({}),
-            });
+        let mut request_config = self.config.clone();
+        if let Some(state) = &self.live_operations {
+            let authenticated = state
+                .read()
+                .ok()
+                .and_then(|current| current.as_ref().map(|(_, token)| token.clone()));
+            let Some(token) = authenticated else {
+                return Err(CapabilityError {
+                    code: ErrorCode::CapabilityUnavailable,
+                    message: "browser bridge is not authenticated or available".into(),
+                    recovery_hint: Some("browser bridge recovery is automatic".into()),
+                    details: json!({}),
+                });
+            };
+            request_config.token = token;
         }
         let mut arguments = invocation.arguments.clone();
         if let Some(object) = arguments.as_object_mut() {
             object.remove("ownership");
         }
         let response = rpc_call(
-            &self.config,
+            &request_config,
             json!({
                 "type": "invoke",
                 "request_id": invocation.request_id.to_string(),
-                "token": self.config.token,
+                "token": request_config.token,
                 "capability": invocation.capability,
                 "arguments": arguments,
                 "principal_id": invocation.principal_id,

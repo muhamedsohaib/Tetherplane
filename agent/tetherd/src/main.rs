@@ -157,20 +157,6 @@ fn load_principal_profile(path: Option<&PathBuf>) -> Result<Option<PrincipalProf
     Ok(Some(profile))
 }
 
-fn load_browser_token(path: Option<&PathBuf>) -> Result<Option<String>, String> {
-    let Some(path) = path else {
-        return Ok(None);
-    };
-
-    let content = std::fs::read_to_string(path)
-        .map_err(|error| format!("failed to read browser bridge token file: {error}"))?;
-    let token = content.trim();
-    if token.is_empty() {
-        return Err("browser bridge token file is empty".to_owned());
-    }
-    Ok(Some(token.to_owned()))
-}
-
 // A launch flag is local operator configuration, never an AI-supplied grant.
 // Reject unsafe browser-only configurations before any bridge handshake.
 fn validate_browser_only_launch(
@@ -227,15 +213,17 @@ async fn main() {
     // device core offline. The browser provider must reauthenticate before
     // advertising or executing any browser operation.
     let browser_provider = if let Some(address) = options.browser_bridge {
-        if let Ok(token) = load_browser_token(options.browser_bridge_token_file.as_ref()) {
-            Some(BrowserProvider::connect_nonfatal(BrowserBridgeConfig {
-                address,
-                token,
-                timeout_ms: 2_000,
-            }))
+        let config = BrowserBridgeConfig {
+            address,
+            token: None,
+            timeout_ms: 2_000,
+        };
+        if let Some(path) = options.browser_bridge_token_file {
+            Some(BrowserProvider::connect_nonfatal_with_token_file(
+                config, path,
+            ))
         } else {
-            eprintln!("browser bridge token unavailable; device remains connected without browser");
-            None
+            Some(BrowserProvider::connect_nonfatal(config))
         }
     } else {
         None
