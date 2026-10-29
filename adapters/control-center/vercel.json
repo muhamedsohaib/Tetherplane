@@ -13,7 +13,8 @@
       "test/windows-agent-args-preflight-20261029": false,
       "test/windows-native-agent-flag-cardinality-20261029": false,
       "codex/windows-candidate-byte-evidence-20261029": false,
-      "test/windows-actual-package-byte-identity-20261030": false
+      "test/windows-actual-package-byte-identity-20261030": false,
+      "test/windows-provenance-quarantine-20261030": false
     }
   }
 }
