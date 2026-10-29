@@ -54,6 +54,11 @@ export class ExtensionTabController {
   readonly #store: ExtensionOwnershipStore;
   readonly #ownership = new BrowserOwnershipRegistry();
   readonly #pages = new Map<string, ExtensionPageRecord>();
+  // Owner approval is deliberately ephemeral; an extension restart fails closed.
+  readonly #approvedOwnedOrigins = new Map<string, {
+    operations: BrowserOperation[];
+    expires_at_ms: number;
+  }>();
   readonly #now: () => number;
 
   constructor(options: {
@@ -80,9 +85,12 @@ export class ExtensionTabController {
       const saved = persisted.get(pageId);
       const restored =
         saved && !this.#isExpired(saved) &&
-          (saved.ownership === "tetherplane" ||
-            (saved.grant?.origin !== undefined &&
-              saved.grant.origin === approvedOrigin(tab.url)))
+          (saved.ownership === "tetherplane"
+            ? Boolean(saved.grant?.origin &&
+                this.#approvedOwnedOrigins.get(saved.grant.origin)?.expires_at_ms! > this.#now() &&
+                saved.grant.origin === approvedOrigin(tab.url))
+            : saved.grant?.origin !== undefined &&
+              saved.grant.origin === approvedOrigin(tab.url))
           ? saved
           : undefined;
       const record: ExtensionPageRecord = {
@@ -110,6 +118,14 @@ export class ExtensionTabController {
 
   async createOwnedTab(url: string): Promise<ExtensionPageRecord> {
     requireUrl(url);
+    const origin = approvedOrigin(url);
+    const grant = origin ? this.#approvedOwnedOrigins.get(origin) : undefined;
+    if (!grant || grant.expires_at_ms <= this.#now()) {
+      throw new BrowserPolicyError(
+        "permission_denied",
+        "an owner-approved website grant is required before opening an AI tab",
+      );
+    }
     const tab = await this.#tabs.create({
       url,
       active: false,
@@ -121,6 +137,8 @@ export class ExtensionTabController {
       url: tab.url,
       active: false,
       ownership: "tetherplane",
+      grant: { origin: origin!, operations: [...grant.operations],
+        expires_at_ms: grant.expires_at_ms },
     };
     this.#record(record);
     await this.#persist();
@@ -133,8 +151,7 @@ export class ExtensionTabController {
   ): Promise<ExtensionPageRecord> {
     requireUrl(url);
     const page = await this.authorizeLivePage(pageId, "navigate");
-    if (page.ownership !== "tetherplane" &&
-        approvedOrigin(url) !== page.grant?.origin) {
+    if (approvedOrigin(url) !== page.grant?.origin) {
       throw new BrowserPolicyError(
         "permission_denied",
         "navigation outside the owner-approved website origin is denied",
@@ -218,6 +235,41 @@ export class ExtensionTabController {
     return structuredClone(record);
   }
 
+  async approveOwnedOriginFromTab(tabId: number, grant: {
+    ttl_ms: number;
+    operations: BrowserOperation[];
+  }): Promise<{ origin: string; expires_at_ms: number }> {
+    if (!Number.isSafeInteger(grant.ttl_ms) ||
+        grant.ttl_ms <= 0 || grant.ttl_ms > 3_600_000) {
+      throw new BrowserPolicyError("invalid_arguments", "invalid site-grant duration");
+    }
+    const tab = await this.#tabs.get(tabId);
+    const origin = tab ? approvedOrigin(tab.url) : null;
+    if (!origin) {
+      throw new BrowserPolicyError("permission_denied", "approved tab must be an open website");
+    }
+    const expires_at_ms = this.#now() + grant.ttl_ms;
+    this.#approvedOwnedOrigins.set(origin, {
+      operations: [...grant.operations], expires_at_ms,
+    });
+    return { origin, expires_at_ms };
+  }
+
+  async revokeOwnedOriginFromTab(tabId: number): Promise<void> {
+    const tab = await this.#tabs.get(tabId);
+    const origin = tab ? approvedOrigin(tab.url) : null;
+    if (!origin) {
+      throw new BrowserPolicyError("permission_denied", "site origin unavailable for revocation");
+    }
+    this.#approvedOwnedOrigins.delete(origin);
+    for (const page of this.#pages.values()) {
+      if (page.ownership === "tetherplane" && page.grant?.origin === origin) {
+        this.#record({ ...page, ownership: "human", grant: undefined });
+      }
+    }
+    await this.#persist();
+  }
+
   // Trust boundary shared by extension commands, independently of RPC state.
   // chrome.tabs.get is checked for every operation, not only at approval.
   async authorizeLivePage(
@@ -226,7 +278,25 @@ export class ExtensionTabController {
   ): Promise<ExtensionPageRecord> {
     const page = this.#requirePage(pageId);
     if (page.ownership === "tetherplane") {
-      return page;
+      const live = await this.#tabs.get(page.tab_id);
+      const origin = page.grant?.origin;
+      const currentGrant = origin ? this.#approvedOwnedOrigins.get(origin) : undefined;
+      if (!live || !origin || approvedOrigin(live.url) !== origin ||
+          !currentGrant || currentGrant.expires_at_ms <= this.#now()) {
+        this.#record({ ...page, ownership: "human", grant: undefined,
+          ...(live ? { url: live.url, active: live.active, window_id: live.window_id } : {}) });
+        await this.#persist();
+        throw new BrowserPolicyError("permission_denied",
+          "AI-owned tab left the approved website or the site grant was revoked");
+      }
+      const observeOnly = operation === "snapshot" || operation === "wait" ||
+        operation === "checkpoint";
+      if (!observeOnly && !currentGrant.operations.includes(operation)) {
+        throw new BrowserPolicyError("permission_denied",
+          "operation was not approved for this AI-owned site");
+      }
+      return structuredClone({ ...page, url: live.url, active: live.active,
+        window_id: live.window_id });
     }
 
     if (page.ownership !== "shared-authorized" &&
@@ -325,8 +395,12 @@ export class ExtensionTabController {
 
   #isExpired(page: ExtensionPageRecord): boolean {
     return (
-      page.ownership === "shared-authorized" &&
+      (page.ownership === "shared-authorized" ||
+        page.ownership === "tetherplane") &&
       (!page.grant ||
+        (page.ownership === "tetherplane" &&
+         (!this.#approvedOwnedOrigins.has(page.grant.origin ?? "") ||
+          this.#approvedOwnedOrigins.get(page.grant.origin ?? "")!.expires_at_ms <= this.#now())) ||
         !page.grant.origin ||
         !Number.isFinite(page.grant.expires_at_ms) ||
         page.grant.expires_at_ms <= this.#now())
