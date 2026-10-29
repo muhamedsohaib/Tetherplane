@@ -72,6 +72,34 @@ if ($receipt.PSObject.Properties.Name -contains "scheduled_task" -and [string]$r
     }
 }
 
+# State purge authorization must be checked BEFORE unregistering a task,
+# removing a Run value, terminating any worker or deleting installation files.
+$stateDir = $null
+$stateManaged = $false
+if ($receipt.PSObject.Properties.Name -contains "state_dir" -and [string]$receipt.state_dir) {
+    $stateDir = [IO.Path]::GetFullPath([string]$receipt.state_dir)
+}
+if ($receipt.PSObject.Properties.Name -contains "state_created_by_installer") {
+    $stateManaged = [bool]$receipt.state_created_by_installer
+}
+if ($PurgeState) {
+    if (-not $stateDir) {
+        throw "cannot purge state without an install receipt"
+    }
+    if (-not $stateManaged) {
+        throw "refusing to purge a state directory not created by the Tetherplane installer"
+    }
+    $stateRoot = [IO.Path]::GetPathRoot($stateDir)
+    if ($stateDir -eq $stateRoot -or $stateDir.Length -le $stateRoot.Length + 3) {
+        throw "refusing unsafe state purge path: $stateDir"
+    }
+    if (Test-Path -LiteralPath $stateDir -PathType Container) {
+        if (((Get-Item -LiteralPath $stateDir -Force).Attributes -band [IO.FileAttributes]::ReparsePoint) -ne 0) {
+            throw "refusing state purge through a reparse point"
+        }
+    }
+}
+
 # Only a verified task action in a stopped state is eligible for unregister.
 if ($taskName) {
     Unregister-ScheduledTask -TaskName $taskName -Confirm:$false
@@ -108,30 +136,10 @@ foreach ($process in $modelWorkerProcesses) {
     Stop-Process -Id $process.ProcessId -Force -ErrorAction SilentlyContinue
 }
 
-$stateDir = $null
-$stateManaged = $false
-if ($receipt) {
-    if ($receipt.state_dir) {
-        $stateDir = [IO.Path]::GetFullPath([string]$receipt.state_dir)
-    }
-    $stateManaged = [bool]$receipt.state_created_by_installer
-}
-
 if (Test-Path -LiteralPath $install) {
     Remove-Item -LiteralPath $install -Recurse -Force
 }
-
 if ($PurgeState) {
-    if (-not $stateDir) {
-        throw "cannot purge state without an install receipt"
-    }
-    if (-not $stateManaged) {
-        throw "refusing to purge a state directory not created by the Tetherplane installer"
-    }
-    $root = [IO.Path]::GetPathRoot($stateDir)
-    if ($stateDir -eq $root -or $stateDir.Length -le $root.Length + 3) {
-        throw "refusing unsafe state purge path: $stateDir"
-    }
     Remove-Item -LiteralPath $stateDir -Recurse -Force -ErrorAction SilentlyContinue
 }
 
