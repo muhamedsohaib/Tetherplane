@@ -158,7 +158,7 @@ test("unknown and unshared page IDs deny without revealing private existence", a
       (error: unknown) =>
         typeof error === "object" && error !== null &&
         "code" in error && error.code === "permission_denied" &&
-        !String((error as Error).message).includes("https://human.test"),
+        (!(error instanceof Error) || !error.message.includes("https://human.test")),
     );
   }
 });
