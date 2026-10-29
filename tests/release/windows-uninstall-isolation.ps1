@@ -32,7 +32,7 @@ function Remove-ItemProperty {
 }
 function Get-CimInstance {
     [CmdletBinding()]
-    param([Parameter(Position = 0)][string]$ClassName)
+    param([Parameter(Position = 0)][string]$ClassName,[string]$Filter)
     if ($ClassName -ne "Win32_Process") { throw "unexpected process inspection intercepted" }
     return @()
 }
