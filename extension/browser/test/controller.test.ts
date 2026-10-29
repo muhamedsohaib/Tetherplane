@@ -120,16 +120,19 @@ test("creates Tetherplane-owned tab in background without changing active human 
   const store = new MemoryStore();
   const controller = new ExtensionTabController({ tabs, store });
   await controller.initialize();
+  await controller.approveOwnedOriginFromTab(1, {
+    ttl_ms: 60_000, operations: ["act", "navigate"],
+  });
 
   const created = await controller.createOwnedTab(
-    "https://fixture.example/editor",
+    "https://human.example/editor",
   );
 
   assert.equal(created.ownership, "tetherplane");
   assert.equal(created.active, false);
   assert.equal(tabs.activeTabId, 1);
   assert.deepEqual(tabs.lastCreate, {
-    url: "https://fixture.example/editor",
+    url: "https://human.example/editor",
     active: false,
   });
 });
@@ -141,21 +144,24 @@ test("navigates owned background tab without activating it", async () => {
     store: new MemoryStore(),
   });
   await controller.initialize();
+  await controller.approveOwnedOriginFromTab(1, {
+    ttl_ms: 60_000, operations: ["act", "navigate"],
+  });
   const created = await controller.createOwnedTab(
-    "https://fixture.example/one",
+    "https://human.example/one",
   );
 
   const navigated = await controller.navigate(
     created.page_id,
-    "https://fixture.example/two",
+    "https://human.example/two",
   );
 
-  assert.equal(navigated.url, "https://fixture.example/two");
+  assert.equal(navigated.url, "https://human.example/two");
   assert.equal(tabs.activeTabId, 1);
   assert.deepEqual(tabs.lastUpdate, {
     tabId: created.tab_id,
     properties: {
-      url: "https://fixture.example/two",
+      url: "https://human.example/two",
     },
   });
 });
@@ -184,13 +190,16 @@ test("human-owned tab cannot be navigated or closed by extension controller", as
   assert.equal((await tabs.get(1))?.url, "https://human.example/");
 });
 
-test("owned-tab identity survives service-worker controller restart", async () => {
+test("agent-owned tab becomes human-owned after controller restart without site reapproval", async () => {
   const tabs = new FakeTabs([humanTab()]);
   const store = new MemoryStore();
   const first = new ExtensionTabController({ tabs, store });
   await first.initialize();
+  await first.approveOwnedOriginFromTab(1, {
+    ttl_ms: 60_000, operations: ["act", "navigate"],
+  });
   const created = await first.createOwnedTab(
-    "https://fixture.example/editor",
+    "https://human.example/editor",
   );
 
   const restarted = new ExtensionTabController({ tabs, store });
@@ -199,7 +208,7 @@ test("owned-tab identity survives service-worker controller restart", async () =
   const restored = restarted
     .pages()
     .find((page) => page.page_id === created.page_id);
-  assert.equal(restored?.ownership, "tetherplane");
+  assert.equal(restored?.ownership, "human");
   assert.equal(restored?.tab_id, created.tab_id);
   assert.equal(tabs.activeTabId, 1);
 });
