@@ -192,12 +192,11 @@ async function runBridgeLoop(
           operationalAgent,
         });
 
+      // Readiness is not an authorization grant. Never forward the
+      // extension's human-owned tab registry during bridge handshake.
       session.send({
         type: "event",
         event: "extension_ready",
-        data: {
-          pages: controller.pages(),
-        },
       });
 
       await runtime.run();
