@@ -1,0 +1,41 @@
+$ErrorActionPreference = "Stop"
+Set-StrictMode -Version Latest
+
+if ([Environment]::OSVersion.Platform -ne [PlatformID]::Win32NT) {
+    throw "two-mode native executable build requires Windows"
+}
+
+$repo = (Resolve-Path (Join-Path $PSScriptRoot "..")).Path
+$consoleExe = Join-Path $repo "target\release\tetherd.exe"
+$windowlessExe = Join-Path $repo "target\release\tetherd-agentw.exe"
+
+Push-Location $repo
+try {
+    # Never reuse a stale windowless artifact from a different source revision.
+    Remove-Item -LiteralPath $windowlessExe -Force -ErrorAction SilentlyContinue
+
+    # Same core policy/transport, but use the Windows GUI subsystem so a
+    # scheduled background process does not allocate a visible console.
+    & cargo build --release -p tetherd --features windows-headless-agent
+    if ($LASTEXITCODE -ne 0 -or -not (Test-Path -LiteralPath $consoleExe -PathType Leaf)) {
+        throw "windowless agent build failed"
+    }
+    Copy-Item -LiteralPath $consoleExe -Destination $windowlessExe -Force
+
+    # Restore the ordinary Cargo-managed console executable for existing
+    # MCP stdin/stdout users and developer commands.
+    & cargo build --release -p tetherd
+    if ($LASTEXITCODE -ne 0 -or -not (Test-Path -LiteralPath $consoleExe -PathType Leaf)) {
+        throw "stdio agent build failed"
+    }
+}
+catch {
+    Remove-Item -LiteralPath $windowlessExe -Force -ErrorAction SilentlyContinue
+    throw
+}
+finally {
+    Pop-Location
+}
+
+Write-Output "WINDOWS_DUAL_AGENT_BINARY_BUILD_OK"
+

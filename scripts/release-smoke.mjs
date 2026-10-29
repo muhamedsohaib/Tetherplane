@@ -60,6 +60,15 @@ try {
   const names = tools.tools.map((tool) => tool.name).sort();
   assert.deepEqual(names, ["batch", "browser", "desktop", "device", "files", "process"]);
   process.stdout.write("SIX_TOOL_SMOKE_OK\n");
+  // Listing six schemas does not prove that a GUI/console build preserved
+  // the actual stdin/stdout agent transport.
+  const status = await client.callTool({
+    name: "device",
+    arguments: { op: "status", device: "Leno" },
+  });
+  assert.equal(status.isError, undefined, "packaged stdio device.status must succeed");
+  assert.equal(status.structuredContent?.agent_version, "0.1.0");
+  process.stdout.write("PACKAGED_STDIO_DEVICE_STATUS_OK\n");
 } finally {
   await client.close().catch(() => undefined);
 }
