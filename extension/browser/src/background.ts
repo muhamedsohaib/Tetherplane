@@ -51,7 +51,17 @@ const bridgeLoop = new BridgeLoopCoordinator({
 });
 
 chrome.runtime.onMessage.addListener(
-  (message, _sender, sendResponse) => {
+  (message, sender, sendResponse) => {
+    // Only the extension's own owner-facing popup can grant a site.
+    // Never route remote bridge commands into local approval messages.
+    if (message && typeof message === "object" &&
+        ("type" in message) &&
+        (message.type === "tetherplane.approve_owned_site" ||
+         message.type === "tetherplane.revoke_owned_site") &&
+        sender.url !== chrome.runtime.getURL("pair.html")) {
+      sendResponse({ ok: false, error: "site approval must originate from the owner popup" });
+      return false;
+    }
     if (isBrowserConnectMessage(message)) {
       void bridgeLoop.ensureRunning().then(
         (started) => {
