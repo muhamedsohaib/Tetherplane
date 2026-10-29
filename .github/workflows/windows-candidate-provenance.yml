@@ -1,0 +1,97 @@
+name: Windows Candidate Provenance (Unsigned Quarantine)
+on:
+  push:
+    branches:
+      - test/windows-provenance-quarantine-20261030
+permissions:
+  contents: read
+jobs:
+  build-attest:
+    if: github.event_name == 'push' && github.ref == 'refs/heads/test/windows-provenance-quarantine-20261030'
+    runs-on: windows-latest
+    timeout-minutes: 55
+    permissions:
+      contents: read
+      id-token: write
+      attestations: write
+      artifact-metadata: write
+    steps:
+      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
+        with:
+          persist-credentials: false
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4.4.0
+        with:
+          node-version: '22'
+      - name: Install Rust and build package dependencies
+        shell: pwsh
+        run: |
+          rustup toolchain install stable --profile minimal
+          if ($LASTEXITCODE -ne 0) { throw 'rustup failed' }
+          rustup default stable
+          if ($LASTEXITCODE -ne 0) { throw 'rustup default failed' }
+          corepack enable
+          if ($LASTEXITCODE -ne 0) { throw 'corepack failed' }
+          corepack prepare pnpm@10 --activate
+          if ($LASTEXITCODE -ne 0) { throw 'pnpm failed' }
+          pnpm install --frozen-lockfile
+          if ($LASTEXITCODE -ne 0) { throw 'dependency install failed' }
+          pnpm -r build
+          if ($LASTEXITCODE -ne 0) { throw 'workspace build failed' }
+          & ./scripts/build-windows-agent-binaries.ps1
+          if ($LASTEXITCODE -ne 0) { throw 'native build failed' }
+      - name: Package, inventory and archive round-trip verification
+        id: candidate
+        shell: pwsh
+        run: |
+          $root = Join-Path $env:RUNNER_TEMP ('tetherplane-quarantine-{0}-{1}' -f $env:GITHUB_RUN_ID, $env:GITHUB_RUN_ATTEMPT)
+          & ./scripts/release/prepare-windows-quarantine.ps1 -WorkRoot $root
+          if ($LASTEXITCODE -ne 0) { throw 'candidate preparation failed' }
+      - name: Attest exact unsigned archive (not Authenticode signing)
+        uses: actions/attest@1e69f48acb82d1966a394da916b4c1698aa569d6 # v4.2.2
+        with:
+          subject-path: ${{ steps.candidate.outputs.archive_path }}
+      - name: Retain short-lived unsigned quarantine evidence (NOT a release)
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        with:
+          name: UNSIGNED-DO-NOT-INSTALL-${{ github.sha }}
+          path: ${{ steps.candidate.outputs.evidence_dir }}/*
+          if-no-files-found: error
+          retention-days: 1
+          compression-level: 0
+  independent-verify:
+    needs: build-attest
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    permissions:
+      contents: read
+      attestations: read
+    steps:
+      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
+        with:
+          persist-credentials: false
+      - name: Download quarantined bytes to independent runner
+        uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4.3.0
+        with:
+          name: UNSIGNED-DO-NOT-INSTALL-${{ github.sha }}
+          path: ${{ runner.temp }}/quarantine-evidence
+      - name: Verify downloaded hashes and deny release
+        env:
+          EVIDENCE_DIR: ${{ runner.temp }}/quarantine-evidence
+        run: |
+          node scripts/release/verify-quarantine-evidence.mjs "$EVIDENCE_DIR" "$GITHUB_SHA" "$GITHUB_REF" "$GITHUB_RUN_ID" "$GITHUB_RUN_ATTEMPT"
+      - name: Verify GitHub/Sigstore provenance and exact signer workflow
+        env:
+          GH_TOKEN: ${{ github.token }}
+          EVIDENCE_DIR: ${{ runner.temp }}/quarantine-evidence
+        run: |
+          set -euo pipefail
+          archive="$EVIDENCE_DIR/tetherplane-windows-x64-unsigned-$GITHUB_SHA.zip"
+          gh attestation verify "$archive" \
+            --repo "$GITHUB_REPOSITORY" \
+            --signer-workflow "$GITHUB_REPOSITORY/.github/workflows/windows-candidate-provenance.yml" \
+            --source-ref "$GITHUB_REF" \
+            --source-digest "$GITHUB_SHA" \
+            --deny-self-hosted-runners \
+            --format json > "$RUNNER_TEMP/verified-attestation.json"
+          node scripts/release/verify-quarantine-evidence.mjs "$EVIDENCE_DIR" "$GITHUB_SHA" "$GITHUB_REF" "$GITHUB_RUN_ID" "$GITHUB_RUN_ATTEMPT" "$RUNNER_TEMP/verified-attestation.json"
+          echo 'QUARANTINED_UNSIGNED_PROVENANCE_VERIFIED_NO_GO'
