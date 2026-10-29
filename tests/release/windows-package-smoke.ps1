@@ -65,10 +65,11 @@ try {
     }
 
     $stagedInstallScript = Get-Content -LiteralPath (Join-Path $stage "install-windows.ps1") -Raw
-    foreach ($requiredArgument in @("-NonInteractive", "-WindowStyle Hidden")) {
-        if (-not $stagedInstallScript.Contains($requiredArgument)) {
-            throw "scheduled agent action is missing required background argument: $requiredArgument"
-        }
+    if ($stagedInstallScript -match 'New-ScheduledTaskAction\s+-Execute\s+"powershell.exe"') {
+        throw "scheduled agent still uses an orphan-prone PowerShell launcher"
+    }
+    if (-not $stagedInstallScript.Contains('New-ScheduledTaskAction -Execute (Join-Path $install "bin\tetherd.exe")')) {
+        throw "native task ownership is missing from the packaged installer"
     }
 
     $supervisorRoot = Join-Path $root "supervisor"
