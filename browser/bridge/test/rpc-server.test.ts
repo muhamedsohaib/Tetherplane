@@ -128,3 +128,20 @@ test("authenticated browser RPC refuses a revoked human tab before backend obser
     await server.close();
   }
 });
+
+
+test("authenticated browser.pages never returns unshared human-tab metadata even if backend lists it", async () => {
+  const backend = new FakeBackend();
+  backend.pagesState[0]!.url = "https://personal.example/private?secret=hidden";
+  backend.pagesState.push({
+    page_id:"owned-1",ownership:"tetherplane",active:false,
+    url:"https://approved.example/home",
+  });
+  const service = new BrowserBridgeService({
+    backend, ownership:new BrowserOwnershipRegistry(),
+  });
+  const response = await service.invoke("browser.pages",{});
+  const pages = (response.data as {pages:BrowserServicePage[]}).pages;
+  assert.deepEqual(pages.map(p=>p.page_id),["owned-1"]);
+  assert.equal(JSON.stringify(response).includes("personal.example"),false);
+});
