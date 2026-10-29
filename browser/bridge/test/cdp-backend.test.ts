@@ -39,6 +39,7 @@ class FakeCdpControl implements CdpControl {
     },
   ];
   observations = new Map<string, CdpFrameObservation>();
+  readonly observedFrameCalls: string[] = [];
   nextTarget = 1;
 
   async createTarget(
@@ -85,6 +86,7 @@ class FakeCdpControl implements CdpControl {
     _targetId: string,
     frameId: string,
   ): Promise<CdpFrameObservation> {
+    this.observedFrameCalls.push(frameId);
     const observed = this.observations.get(frameId);
     if (!observed) {
       throw new Error(`missing observation for ${frameId}`);
@@ -488,4 +490,49 @@ test("CDP site authorization is exact-origin, revocable, and checked before brow
     (e: unknown) => e instanceof CdpBackendError && e.code === "permission_denied",
   );
   assert.deepEqual(control.performed, []);
+});
+
+
+test("CDP site grant never observes or acts inside a foreign-origin iframe", async () => {
+  const control = new FakeCdpControl();
+  control.frameList = [
+    { frame_id: "top", document_id: "top-doc",
+      parent_frame_id: null, url: "https://fixture.example/editor" },
+    { frame_id: "foreign", document_id: "foreign-doc",
+      parent_frame_id: "top", url: "https://private.example/account" },
+  ] as CdpFrame[];
+  control.observations.set("top", observation());
+  control.observations.set("foreign", observation({
+    url: "https://private.example/account",
+    nodes: [{ backend_id: "css:#secret", role: "textbox",
+      accessible_name: "OTHER ACCOUNT SECRET", value: "PRIVATE" }],
+  }));
+  const backend = fixtureBackend(control);
+  const page = await backend.createTab("https://fixture.example/editor");
+  const observed = await backend.observe(page.page_id);
+  assert.deepEqual(observed.nodes.map(node => node.accessible_name), ["Project value"]);
+  assert.deepEqual(control.observedFrameCalls, ["top"],
+    "foreign-origin frame was evaluated before authorization");
+  await assert.rejects(
+    () => backend.perform(page.page_id, {
+      kind: "fill", backend_id: "frame:foreign|css:#secret", value: "blocked",
+    }),
+    (e: unknown) => e instanceof CdpBackendError && e.code === "permission_denied",
+  );
+  assert.deepEqual(control.performed, []);
+});
+
+test("CDP semantic snapshot fails closed when top document redirects after target lookup", async () => {
+  const control = new FakeCdpControl();
+  control.observations.set("top", observation({
+    url: "https://private.example/account",
+    nodes: [{ backend_id: "css:#secret", role: "textbox",
+      accessible_name: "SECRET", value: "PRIVATE" }],
+  }));
+  const backend = fixtureBackend(control);
+  const page = await backend.createTab("https://fixture.example/editor");
+  await assert.rejects(
+    () => backend.observe(page.page_id),
+    (e: unknown) => e instanceof CdpBackendError && e.code === "permission_denied",
+  );
 });
