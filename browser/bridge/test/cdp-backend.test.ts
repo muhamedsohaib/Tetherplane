@@ -537,3 +537,23 @@ test("CDP semantic snapshot fails closed when top document redirects after targe
     (e: unknown) => e instanceof CdpBackendError && e.code === "permission_denied",
   );
 });
+
+
+test("CDP upload cannot attach a file to a foreign-origin iframe", async () => {
+  const control = new FakeCdpControl();
+  control.frameList = [
+    {frame_id: "top", document_id: "top", parent_frame_id: null,
+      url: "https://fixture.example/editor"},
+    {frame_id: "foreign", document_id: "foreign", parent_frame_id: "top",
+      url: "https://other.test/upload"},
+  ];
+  const backend = fixtureBackend(control);
+  const page = await backend.createTab("https://fixture.example/editor");
+  await assert.rejects(
+    () => backend.uploadFile(
+      page.page_id, "frame:foreign|css:#file", "C:\\fixture\\secret.txt",
+    ),
+    (e: unknown) => e instanceof CdpBackendError && e.code === "permission_denied",
+  );
+  assert.deepEqual(control.uploads, [], "CDP file input was mutated in an unapproved frame");
+});
