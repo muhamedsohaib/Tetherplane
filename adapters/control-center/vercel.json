@@ -1,0 +1,7 @@
+{
+  "git": {
+    "deploymentEnabled": {
+      "test/remote-core-browser-outage-20261029": false
+    }
+  }
+}
