@@ -230,6 +230,26 @@ try {
     if ($task.Settings.MultipleInstances.ToString() -ne "IgnoreNew" -or $task.Settings.RestartCount -ne 99) {
         throw "single-instance and restart controls were not registered"
     }
+    # Surface's live 2026-10-29 Canary is Highest privilege with only 3
+    # restarts. The new candidate must not reproduce either configuration.
+    if ([string]$task.Principal.RunLevel -ne "Limited") {
+        throw "native agent task unexpectedly requests elevated Windows privileges"
+    }
+    if ([string]$task.Principal.LogonType -ne "Interactive") {
+        throw "per-user native task must retain an interactive logon identity"
+    }
+    if (-not $task.Settings.StartWhenAvailable -or
+        [string]$task.Settings.ExecutionTimeLimit -ne "PT0S" -or
+        [string]$task.Settings.RestartInterval -ne "PT1M" -or
+        $task.Settings.DisallowStartIfOnBatteries -or
+        $task.Settings.StopIfGoingOnBatteries) {
+        throw "native startup resilience settings are incomplete"
+    }
+    if (@($task.Triggers).Count -ne 1 -or
+        [string]$task.Triggers[0].CimClass.CimClassName -ne "MSFT_TaskLogonTrigger") {
+        throw "native per-user task has an unexpected startup trigger"
+    }
+    Write-Output "WINDOWS_TASK_LEAST_PRIVILEGE_RESTART_POLICY_OK"
     # Test that -Force cannot replace an existing scheduled agent.
     $forceTaskRejected = $false
     try {
