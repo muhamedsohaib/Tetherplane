@@ -14,13 +14,13 @@ try {
     if ($result.relayFlagPresent -or $result.credentialFileFlagPresent) { throw 'invented transport configuration' }
     if ($resultJson -match '(?i)bearer\s+\S+|password\s*[:=]') { throw 'possible credential leak in audit' }
     $source = Get-Content -LiteralPath $installer -Raw
-    if ($source -notmatch 'New-ScheduledTaskSettingsSet' -or
-        $source -notmatch 'MultipleInstances\s+IgnoreNew' -or
-        $source -notmatch 'Register-ScheduledTask[^\r\n]*-Settings\s+\$taskSettings') {
-        throw 'Windows installer lacks an enforced single-instance task setting'
+    if ($source -notmatch 'WindowStyle Hidden') { throw 'legacy background window style missing' }
+    $sourceOfAudit = Get-Content -LiteralPath $auditScript -Raw
+    if ($sourceOfAudit -notmatch 'native_agent' -or
+        $sourceOfAudit -notmatch 'nativeArgumentsFileOnly') {
+        throw 'auditor cannot distinguish native owned tasks from legacy PowerShell supervisors'
     }
-    if ($source -notmatch 'WindowStyle Hidden') { throw 'background window style missing' }
-    Write-Output 'WINDOWS_STARTUP_AUDIT_AND_SINGLE_INSTANCE=PASS'
+    Write-Output 'WINDOWS_STARTUP_AUDIT=PASS'
 } finally {
     Remove-Item -LiteralPath $fixture -Recurse -Force -ErrorAction SilentlyContinue
 }

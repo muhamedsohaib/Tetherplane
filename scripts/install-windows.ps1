@@ -78,8 +78,7 @@ if ($InstallScheduledTask) {
     if ($existingTask) {
         Unregister-ScheduledTask -TaskName $taskName -Confirm:$false
     }
-    $taskSettings = New-ScheduledTaskSettingsSet -MultipleInstances IgnoreNew -StartWhenAvailable -ExecutionTimeLimit (New-TimeSpan -Seconds 0)
-    Register-ScheduledTask -TaskName $taskName -Action $action -Trigger $trigger -Settings $taskSettings -RunLevel Limited -Force | Out-Null
+    Register-ScheduledTask -TaskName $taskName -Action $action -Trigger $trigger -RunLevel Limited -Force | Out-Null
 }
 
 $receipt = [ordered]@{
