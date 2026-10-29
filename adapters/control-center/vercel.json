@@ -5,7 +5,8 @@
       "review/browser-token-relay-lifecycle-20261029": false,
       "test/windows-native-agent-task-20261029": false,
       "test/release-relay-heartbeat-20261029": false,
-      "test/release-agent-reader-isolation-20261029": false
+      "test/release-agent-reader-isolation-20261029": false,
+      "test/windows-no-console-agent-20261029": false
     }
   }
 }

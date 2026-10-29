@@ -12,6 +12,38 @@ foreach ($required in @($packageScript, $installScript, $uninstallScript)) {
     }
 }
 
+# Inspect the packaged PE header rather than treating Task Scheduler's
+# Hidden flag as evidence that a console-subsystem process is windowless.
+# No executable launch or device/registry mutation is needed for this check.
+function Get-TetherplanePeSubsystem {
+    param([Parameter(Mandatory = $true)][string]$Executable)
+    $stream = [IO.File]::OpenRead($Executable)
+    try {
+        $reader = [IO.BinaryReader]::new($stream)
+        if ($stream.Length -lt 256 -or $reader.ReadUInt16() -ne 0x5A4D) {
+            throw "Tetherplane agent is not a valid MZ executable"
+        }
+        $stream.Position = 0x3C
+        $peOffset = $reader.ReadInt32()
+        if ($peOffset -lt 64 -or $peOffset -gt ($stream.Length - 94)) {
+            throw "Tetherplane agent has an invalid PE header location"
+        }
+        $stream.Position = $peOffset
+        if ($reader.ReadUInt32() -ne 0x00004550) {
+            throw "Tetherplane agent PE signature is invalid"
+        }
+        $stream.Position = $peOffset + 24
+        if ($reader.ReadUInt16() -notin @(0x010B, 0x020B)) {
+            throw "Tetherplane agent has an unsupported PE optional header"
+        }
+        $stream.Position = $peOffset + 24 + 0x44
+        return $reader.ReadUInt16()
+    }
+    finally {
+        $stream.Dispose()
+    }
+}
+
 $root = Join-Path ([IO.Path]::GetTempPath()) ("tetherplane-release-smoke-" + [guid]::NewGuid().ToString("N"))
 $stage = Join-Path $root "package"
 $install = Join-Path $root "install"
@@ -127,6 +159,11 @@ try {
     }
 
     $installedTetherd = Join-Path $install "bin\tetherd.exe"
+    $subsystem = Get-TetherplanePeSubsystem -Executable $installedTetherd
+    if ($subsystem -ne 2) {
+        throw "RELEASE_NO_GO: installed tetherd.exe uses PE subsystem $subsystem, not GUI subsystem 2; scheduled startup may create a console window"
+    }
+    Write-Output "WINDOWS_AGENT_GUI_SUBSYSTEM_OK"
     $installedSmoke = Join-Path $install "adapters\compact-mcp\smoke-six-tools.mjs"
     $installedWorker = Join-Path $install "adapters\model-client\dist\worker-main.js"
     $installedWorkerInstaller = Join-Path $install "install-model-worker-windows.ps1"
