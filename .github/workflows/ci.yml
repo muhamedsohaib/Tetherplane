@@ -39,6 +39,11 @@ jobs:
         shell: pwsh
         run: ./tests/release/windows-uninstall-task-ownership.ps1
 
+      - name: Preserve unrelated model-worker autorun entries
+        if: runner.os == 'Windows'
+        shell: pwsh
+        run: ./tests/release/windows-uninstall-isolation.ps1
+
       - name: Install Rust toolchain
         uses: dtolnay/rust-toolchain@stable
         with:
