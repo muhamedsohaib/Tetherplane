@@ -500,7 +500,7 @@ test("CDP site grant never observes or acts inside a foreign-origin iframe", asy
       parent_frame_id: null, url: "https://fixture.example/editor" },
     { frame_id: "foreign", document_id: "foreign-doc",
       parent_frame_id: "top", url: "https://private.example/account" },
-  ] as CdpFrame[];
+  ] as unknown as CdpFrame[];
   control.observations.set("top", observation());
   control.observations.set("foreign", observation({
     url: "https://private.example/account",
