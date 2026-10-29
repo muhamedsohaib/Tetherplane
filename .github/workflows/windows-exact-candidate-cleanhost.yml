@@ -1,0 +1,59 @@
+name: Exact Candidate Fresh Windows Host (No Release)
+on:
+  push:
+    branches:
+      - test/windows-exact-candidate-cleanhost-20261030
+permissions:
+  contents: read
+jobs:
+  disposable-fresh-host:
+    if: github.event_name == 'push' && github.repository == 'muhamedsohaib/Tetherplane' && github.ref == 'refs/heads/test/windows-exact-candidate-cleanhost-20261030'
+    runs-on: windows-latest
+    timeout-minutes: 18
+    permissions:
+      contents: read
+      actions: read
+      attestations: read
+    env:
+      TP_EXACT_SOURCE: 9c0cf237609c282c169537f89de25bc7fe697532
+      TP_ORIGIN_REF: refs/heads/test/windows-provenance-quarantine-20261030
+      TP_PROVENANCE_RUN: '40962012801'
+      TP_PROVENANCE_ATTEMPT: '1'
+    steps:
+      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
+        with:
+          persist-credentials: false
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4.4.0
+        with:
+          node-version: '22'
+      - name: Verify fixed candidate and permissions contract
+        run: node --test tests/release/windows-exact-candidate-cleanhost-contract.test.mjs
+      - name: Download the already-attested candidate (no rebuild)
+        uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4.3.0
+        with:
+          repository: muhamedsohaib/Tetherplane
+          run-id: 40962012801
+          name: UNSIGNED-DO-NOT-INSTALL-9c0cf237609c282c169537f89de25bc7fe697532
+          github-token: ${{ github.token }}
+          path: ${{ runner.temp }}/tetherplane-exact-candidate
+      - name: Verify immutable archive hash and original signed provenance BEFORE extraction
+        shell: pwsh
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          $evidence = Join-Path $env:RUNNER_TEMP 'tetherplane-exact-candidate'
+          & node scripts/release/verify-quarantine-evidence.mjs $evidence $env:TP_EXACT_SOURCE $env:TP_ORIGIN_REF $env:TP_PROVENANCE_RUN $env:TP_PROVENANCE_ATTEMPT
+          if ($LASTEXITCODE -ne 0) { throw 'candidate metadata/hash verification failed' }
+          $archive = Join-Path $evidence ('tetherplane-windows-x64-unsigned-' + $env:TP_EXACT_SOURCE + '.zip')
+          $attestation = Join-Path $env:RUNNER_TEMP 'tetherplane-cleanhost-verified-attestation.json'
+          & gh attestation verify $archive --repo $env:GITHUB_REPOSITORY --signer-workflow "$env:GITHUB_REPOSITORY/.github/workflows/windows-candidate-provenance.yml" --source-ref $env:TP_ORIGIN_REF --source-digest $env:TP_EXACT_SOURCE --deny-self-hosted-runners --format json > $attestation
+          if ($LASTEXITCODE -ne 0) { throw 'independent Sigstore/source/workflow verification failed' }
+          & node scripts/release/verify-quarantine-evidence.mjs $evidence $env:TP_EXACT_SOURCE $env:TP_ORIGIN_REF $env:TP_PROVENANCE_RUN $env:TP_PROVENANCE_ATTEMPT $attestation
+          if ($LASTEXITCODE -ne 0) { throw 'signed attestation subject mismatch' }
+          Write-Output 'EXACT_CANDIDATE_AUTHENTICATED_BEFORE_INSTALL_OK'
+      - name: Fresh-host install / negative preflight / smoke / uninstall / reinstall
+        shell: pwsh
+        run: |
+          & ./tests/release/windows-exact-candidate-cleanhost.ps1 -EvidenceDir (Join-Path $env:RUNNER_TEMP 'tetherplane-exact-candidate') -ExpectedSource $env:TP_EXACT_SOURCE
+          if ($LASTEXITCODE -ne 0) { throw 'disposable Windows acceptance failed' }
+          Write-Output 'EXACT_CANDIDATE_FRESH_HOST_ACCEPTANCE_OK'

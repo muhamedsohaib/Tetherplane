@@ -44,8 +44,10 @@ The observed local phase requires the operator physically present at Leno:
 
 A separate authenticated remote MCP call to Leno must also pass while the operator observes that human-owned foreground state is not disrupted. The acceptance runner does not handle or print relay credentials.
 
-## Tagged release automation
+## Tagged release automation (currently disabled)
 
-.github/workflows/release.yml builds a Windows x64 package for version tags, produces a ZIP and SHA-256 checksum, and creates the corresponding GitHub Release. No release tag is created by ordinary CI.
+`.github/workflows/release.yml` is intentionally **fail-closed**: any `v*` tag invokes a job that throws `UNSIGNED_PUBLIC_RELEASE_BLOCKED`. It does **not** create a ZIP, sign a binary, or publish a GitHub Release. Creating `v0.1.0` while this block is in place is not an authorized release path.
 
-Do not create `v0.1.0` until both local and remote live acceptance have passed.
+The isolated evidence in draft PRs #105–#106 establishes package self-consistency and independently verifiable GitHub/Sigstore workflow provenance for a quarantined **unsigned** archive only. It is not Windows Authenticode signing, a trusted promotion procedure, proof of a clean authorized machine, human-observed coexistence, or authenticated four-device acceptance.
+
+Before an owner-approved release: settle code-signing identity/key custody, verify an exact signed candidate independently, complete disposable upgrade/rollback and operator-observed Windows acceptance, and validate authenticated operation and denial behavior on the required four devices. Preserve the publication block until these gates are explicitly approved.
