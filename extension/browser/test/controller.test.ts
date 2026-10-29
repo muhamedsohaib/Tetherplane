@@ -446,3 +446,24 @@ test("owner revoking a site blocks already-created agent tab actions", async () 
     (e: unknown) => e instanceof BrowserPolicyError && e.code === "permission_denied",
   );
 });
+
+
+test("an uncommitted agent-owned about:blank tab is denied without permanently losing its site grant", async () => {
+  const tabs = new FakeTabs([humanTab()]);
+  const controller = new ExtensionTabController({tabs, store:new MemoryStore()});
+  await controller.initialize();
+  await controller.approveOwnedOriginFromTab(1, {
+    ttl_ms:60_000, operations:["act","navigate"],
+  });
+  const created = await controller.createOwnedTab("https://human.example/ready");
+  tabs.tabs.get(created.tab_id)!.url = "about:blank";
+  await assert.rejects(
+    () => controller.authorizeLivePage(created.page_id, "snapshot"),
+    (e:unknown) => e instanceof BrowserPolicyError && e.code === "permission_denied",
+  );
+  // The site approval is still live; the initial navigation has not committed.
+  tabs.tabs.get(created.tab_id)!.url = "https://human.example/ready";
+  const approved = await controller.authorizeLivePage(created.page_id, "snapshot");
+  assert.equal(approved.ownership, "tetherplane");
+  assert.equal(approved.url, "https://human.example/ready");
+});
