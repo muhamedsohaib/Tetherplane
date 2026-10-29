@@ -23,6 +23,25 @@ export async function shareCurrentTab(
   });
 }
 
+export async function approveOwnedSite(
+  api: PopupBrowserApi,
+  options: ShareCurrentTabOptions,
+): Promise<unknown> {
+  const tabId = await activeTabId(api);
+  return api.sendMessage({
+    type: "tetherplane.approve_owned_site",
+    tab_id: tabId,
+    ttl_ms: options.ttl_ms,
+    allow_navigate: options.allow_navigate,
+    allow_upload: options.allow_upload,
+  });
+}
+
+export async function revokeOwnedSite(api: PopupBrowserApi): Promise<unknown> {
+  const tabId = await activeTabId(api);
+  return api.sendMessage({type: "tetherplane.revoke_owned_site", tab_id: tabId});
+}
+
 export async function detachCurrentTab(
   api: PopupBrowserApi,
 ): Promise<unknown> {

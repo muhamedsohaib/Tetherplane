@@ -15,6 +15,8 @@ type OperationalPageRecord = {
     | "shared-authorized";
   grant?: {
     operations: BrowserOperation[];
+    origin?: string;
+    expires_at_ms?: number;
   };
 };
 
@@ -59,6 +61,10 @@ export type ChromeDownloadsApi = {
 
 export type OperationalController = {
   pages(): OperationalPageRecord[];
+  authorizeLivePage?(
+    pageId: string,
+    operation: BrowserOperation,
+  ): Promise<OperationalPageRecord>;
 };
 
 export class ChromeOperationalError extends Error {
@@ -107,7 +113,7 @@ export class ChromeOperationalAgent {
     backendId: string,
     filePath: string,
   ): Promise<void> {
-    const page = this.#requireAuthorizedPage(pageId, "upload");
+    const page = await this.#requireAuthorizedPage(pageId, "upload");
     if (!filePath.trim()) {
       throw new ChromeOperationalError(
         "invalid_arguments",
@@ -154,6 +160,9 @@ export class ChromeOperationalAgent {
       );
     }
 
+    if (page.ownership !== "tetherplane") {
+      await this.#requireAuthorizedPage(pageId, "upload");
+    }
     await this.#debugger.sendCommand(
       target,
       "DOM.setFileInputFiles",
@@ -192,8 +201,17 @@ export class ChromeOperationalAgent {
   async downloads(
     pageId?: string,
   ): Promise<RawBrowserDownload[]> {
-    const page = pageId ? this.#requirePage(pageId) : null;
-    const origin = page ? originOf(page.url) : null;
+    if (!pageId) {
+      throw new ChromeOperationalError(
+        "permission_denied",
+        "an authorized page ID is required for downloads",
+      );
+    }
+    const page = await this.#requireAuthorizedPage(pageId, "downloads");
+    const origin = originOf(page.url);
+    if (!origin) {
+      throw new ChromeOperationalError("permission_denied", "page origin is unavailable");
+    }
     const items = await this.#downloads.search({});
 
     return items
@@ -208,7 +226,7 @@ export class ChromeOperationalAgent {
       })
       .map((item) => ({
         backend_id: `chrome:${item.id}`,
-        page_id: page?.page_id ?? "browser",
+        page_id: page.page_id,
         filename:
           portableBasename(item.filename) ||
           `download-${item.id}`,
@@ -224,7 +242,7 @@ export class ChromeOperationalAgent {
     pageId: string,
     limit: number,
   ): Promise<RawBrowserDiagnosticEvent[]> {
-    const page = this.#requireAuthorizedPage(
+    const page = await this.#requireAuthorizedPage(
       pageId,
       "diagnostics",
     );
@@ -332,23 +350,25 @@ export class ChromeOperationalAgent {
     return structuredClone(page);
   }
 
-  #requireAuthorizedPage(
+  async #requireAuthorizedPage(
     pageId: string,
     operation: BrowserOperation,
-  ): OperationalPageRecord {
+  ): Promise<OperationalPageRecord> {
     const page = this.#requirePage(pageId);
-    if (page.ownership === "tetherplane") {
-      return page;
-    }
-    if (
-      page.ownership === "shared-authorized" &&
-      page.grant?.operations.includes(operation)
-    ) {
-      return page;
+    if (page.ownership !== "human" && this.#controller.authorizeLivePage &&
+        (page.ownership === "tetherplane" ||
+          (page.ownership === "shared-authorized" &&
+           page.grant?.operations.includes(operation)))) {
+      const live = await this.#controller.authorizeLivePage(pageId, operation);
+      if (live.grant?.origin &&
+          typeof live.grant.expires_at_ms === "number" &&
+          live.grant.expires_at_ms > Date.now()) {
+        return live;
+      }
     }
     throw new ChromeOperationalError(
       "permission_denied",
-      `browser ${operation} requires a Tetherplane-owned or explicitly shared-authorized tab`,
+      `browser ${operation} requires a current owner-approved grant`,
     );
   }
 }

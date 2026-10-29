@@ -27,7 +27,12 @@ test("private CDP pipe drives owned Browser Lab tab without a TCP debugger", {
       launchTimeoutMs: 20_000,
     });
     profileDir = control.profile_dir;
-    const backend = new CdpBrowserBackend({ control, pollIntervalMs: 20 });
+    const backend = new CdpBrowserBackend({
+      control, pollIntervalMs: 20,
+      authorizeSite: (_operation, url) => {
+        if (new URL(url).origin !== lab.origin) throw new Error("out of test origin");
+      },
+    });
     try {
       assert.equal(
         existsSync(path.join(profileDir, "DevToolsActivePort")),

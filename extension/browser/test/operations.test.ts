@@ -19,6 +19,10 @@ class FakeController {
         url: "https://fixture.example/editor",
         active: false,
         ownership: "tetherplane" as const,
+        grant: {
+          operations: ["upload" as const, "downloads" as const, "diagnostics" as const],
+          origin: "https://fixture.example", expires_at_ms: Date.now() + 60_000,
+        },
       },
     ],
     [
@@ -38,6 +42,11 @@ class FakeController {
     return [...this.records.values()].map((record) =>
       structuredClone(record),
     );
+  }
+  async authorizeLivePage(pageId: string) {
+    const page = this.records.get(pageId);
+    if (!page) throw new Error("missing");
+    return structuredClone(page);
   }
 }
 
@@ -289,5 +298,86 @@ test("debugger diagnostics refuse attaching to ordinary human tab", async () => 
       "code" in error &&
       (error as { code: unknown }).code === "permission_denied",
   );
+  assert.equal(debuggerApi.attached.length, 0);
+});
+
+
+test("unscoped downloads cannot enumerate the human browser download history", async () => {
+  const { agent } = setup();
+  await assert.rejects(
+    () => agent.downloads(),
+    (error: unknown) => typeof error === "object" && error !== null &&
+      "code" in error && (error as { code: string }).code === "permission_denied",
+  );
+});
+
+test("unshared human tab cannot request even its own download filenames", async () => {
+  const { agent } = setup();
+  await assert.rejects(
+    () => agent.downloads("tab:1"),
+    (error: unknown) => typeof error === "object" && error !== null &&
+      "code" in error && (error as { code: string }).code === "permission_denied",
+  );
+});
+
+test("shared upload revalidates owner origin before attaching debugger", async () => {
+  const debuggerApi = new FakeDebugger();
+  const controller = {
+    pages: () => [{
+      page_id: "tab:17", tab_id: 17, url: "https://fixture.example/editor",
+      ownership: "shared-authorized" as const,
+      grant: { operations: ["upload" as const], origin: "https://fixture.example" },
+    }],
+    authorizeLivePage: async () => {
+      throw Object.assign(new Error("tab redirected since approval"), { code: "permission_denied" });
+    },
+  };
+  const agent = new ChromeOperationalAgent({
+    controller, debuggerApi, downloadsApi: new FakeDownloads(),
+  });
+  await assert.rejects(
+    () => agent.uploadFile("tab:17", "frame:0|css:#upload", "C:\\test-only\\file.txt"),
+    (error: unknown) => typeof error === "object" && error !== null &&
+      "code" in error && (error as { code: string }).code === "permission_denied",
+  );
+  assert.equal(debuggerApi.attached.length, 0);
+  assert.equal(debuggerApi.commands.length, 0);
+});
+
+test("shared diagnostics revalidates owner origin before reading browser events", async () => {
+  const debuggerApi = new FakeDebugger();
+  const controller = {
+    pages: () => [{
+      page_id: "tab:17", tab_id: 17, url: "https://fixture.example/editor",
+      ownership: "shared-authorized" as const,
+      grant: { operations: ["diagnostics" as const], origin: "https://fixture.example" },
+    }],
+    authorizeLivePage: async () => {
+      throw Object.assign(new Error("owner grant was revoked"), { code: "permission_denied" });
+    },
+  };
+  const agent = new ChromeOperationalAgent({
+    controller, debuggerApi, downloadsApi: new FakeDownloads(),
+  });
+  await assert.rejects(
+    () => agent.diagnostics("tab:17", 10),
+    (error: unknown) => typeof error === "object" && error !== null &&
+      "code" in error && (error as { code: string }).code === "permission_denied",
+  );
+  assert.equal(debuggerApi.attached.length, 0);
+});
+
+
+test("agent-owned tab cannot read native downloads after its website grant was revoked", async () => {
+  const debuggerApi = new FakeDebugger();
+  const downloadsApi = new FakeDownloads();
+  const controller = {
+    pages: () => [{ page_id:"tab:42", tab_id:42,
+      url:"https://approved.example/path", ownership:"tetherplane" as const }],
+  };
+  const agent = new ChromeOperationalAgent({controller,debuggerApi,downloadsApi});
+  await assert.rejects(() => agent.downloads("tab:42"), (e:unknown) =>
+    typeof e === "object" && e !== null && "code" in e &&
+    (e as {code:string}).code === "permission_denied");
   assert.equal(debuggerApi.attached.length, 0);
 });

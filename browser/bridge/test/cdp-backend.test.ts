@@ -39,6 +39,7 @@ class FakeCdpControl implements CdpControl {
     },
   ];
   observations = new Map<string, CdpFrameObservation>();
+  readonly observedFrameCalls: string[] = [];
   nextTarget = 1;
 
   async createTarget(
@@ -85,6 +86,7 @@ class FakeCdpControl implements CdpControl {
     _targetId: string,
     frameId: string,
   ): Promise<CdpFrameObservation> {
+    this.observedFrameCalls.push(frameId);
     const observed = this.observations.get(frameId);
     if (!observed) {
       throw new Error(`missing observation for ${frameId}`);
@@ -160,6 +162,19 @@ function observation(
   };
 }
 
+// Fixture-only local authorization. This is not user consent or a
+// production way to grant arbitrary website access.
+function fixtureBackend(control: FakeCdpControl): CdpBrowserBackend {
+  return new CdpBrowserBackend({
+    control,
+    authorizeSite: (_operation, url) => {
+      if (new URL(url).origin !== "https://fixture.example") {
+        throw new CdpBackendError("permission_denied", "out of synthetic test scope");
+      }
+    },
+  });
+}
+
 test("CDP fallback advertises reduced Tetherplane-owned capability surface truthfully", () => {
   const backend = new CdpBrowserBackend({
     control: new FakeCdpControl(),
@@ -217,7 +232,7 @@ test("isolated Chromium args always use a dedicated profile and ephemeral debugg
 
 test("CDP backend creates only owned background targets and rejects unknown targets", async () => {
   const control = new FakeCdpControl();
-  const backend = new CdpBrowserBackend({ control });
+  const backend = fixtureBackend(control);
 
   const page = await backend.createTab(
     "https://fixture.example/editor",
@@ -267,6 +282,7 @@ test("CDP semantic observation preserves frame and document identity", async () 
       frame_id: "child",
       document_id: "loader-child",
       parent_frame_id: "top",
+      url: "https://fixture.example/frame",
     },
   ];
   control.observations.set(
@@ -292,7 +308,7 @@ test("CDP semantic observation preserves frame and document identity", async () 
     }),
   );
 
-  const backend = new CdpBrowserBackend({ control });
+  const backend = fixtureBackend(control);
   const page = await backend.createTab(
     "https://fixture.example/editor",
   );
@@ -317,7 +333,7 @@ test("CDP semantic observation preserves frame and document identity", async () 
 test("CDP semantic action returns to the exact observed frame", async () => {
   const control = new FakeCdpControl();
   control.observations.set("top", observation());
-  const backend = new CdpBrowserBackend({ control });
+  const backend = fixtureBackend(control);
   const page = await backend.createTab(
     "https://fixture.example/editor",
   );
@@ -344,7 +360,7 @@ test("CDP semantic action returns to the exact observed frame", async () => {
 
 test("CDP backend exposes native upload downloads and diagnostics for owned targets", async () => {
   const control = new FakeCdpControl();
-  const backend = new CdpBrowserBackend({ control });
+  const backend = fixtureBackend(control);
   const page = await backend.createTab(
     "https://fixture.example/editor",
   );
@@ -394,7 +410,7 @@ test("CDP backend exposes native upload downloads and diagnostics for owned targ
 
 test("CDP operational methods reject unowned target IDs", async () => {
   const control = new FakeCdpControl();
-  const backend = new CdpBrowserBackend({ control });
+  const backend = fixtureBackend(control);
 
   await assert.rejects(
     () =>
@@ -419,4 +435,125 @@ test("CDP operational methods reject unowned target IDs", async () => {
       error instanceof CdpBackendError &&
       error.code === "permission_denied",
   );
+});
+
+
+test("raw CDP backend has no implicit authority to create tabs or enumerate downloads", async () => {
+  const control = new FakeCdpControl();
+  const backend = new CdpBrowserBackend({control});
+
+  await assert.rejects(
+    () => backend.createTab("https://fixture.example/editor"),
+    (e: unknown) => e instanceof CdpBackendError && e.code === "permission_denied",
+  );
+  assert.deepEqual(control.created, [], "unapproved target reached Chromium");
+  await assert.rejects(
+    () => backend.downloads(),
+    (e: unknown) => e instanceof CdpBackendError && e.code === "permission_denied",
+  );
+});
+
+test("CDP site authorization is exact-origin, revocable, and checked before browser access", async () => {
+  const control = new FakeCdpControl();
+  let approved = true;
+  const backend = new CdpBrowserBackend({
+    control,
+    authorizeSite: (_operation: string, url: string) => {
+      if (!approved || new URL(url).origin !== "https://fixture.example") {
+        throw new CdpBackendError("permission_denied", "local site permission denied");
+      }
+    },
+  } as unknown as ConstructorParameters<typeof CdpBrowserBackend>[0]);
+  await assert.rejects(
+    () => backend.createTab("https://fixture.example.evil.test/"),
+    (e: unknown) => e instanceof CdpBackendError && e.code === "permission_denied",
+  );
+  assert.equal(control.created.length, 0);
+  const page = await backend.createTab("https://fixture.example/editor");
+  assert.equal(control.created.length, 1);
+  await assert.rejects(
+    () => backend.navigate(page.page_id, "https://unapproved.test/private"),
+    (e: unknown) => e instanceof CdpBackendError && e.code === "permission_denied",
+  );
+  assert.deepEqual(control.navigations, []);
+  approved = false;
+  control.observations.set("top", observation());
+  await assert.rejects(
+    () => backend.observe(page.page_id),
+    (e: unknown) => e instanceof CdpBackendError && e.code === "permission_denied",
+  );
+  await assert.rejects(
+    () => backend.perform(page.page_id, {
+      kind: "fill",
+      backend_id: "frame:top|css:#value-input",
+      value: "never-run",
+    }),
+    (e: unknown) => e instanceof CdpBackendError && e.code === "permission_denied",
+  );
+  assert.deepEqual(control.performed, []);
+});
+
+
+test("CDP site grant never observes or acts inside a foreign-origin iframe", async () => {
+  const control = new FakeCdpControl();
+  control.frameList = [
+    { frame_id: "top", document_id: "top-doc",
+      parent_frame_id: null, url: "https://fixture.example/editor" },
+    { frame_id: "foreign", document_id: "foreign-doc",
+      parent_frame_id: "top", url: "https://private.example/account" },
+  ] as unknown as CdpFrame[];
+  control.observations.set("top", observation());
+  control.observations.set("foreign", observation({
+    url: "https://private.example/account",
+    nodes: [{ backend_id: "css:#secret", role: "textbox",
+      accessible_name: "OTHER ACCOUNT SECRET", value: "PRIVATE" }],
+  }));
+  const backend = fixtureBackend(control);
+  const page = await backend.createTab("https://fixture.example/editor");
+  const observed = await backend.observe(page.page_id);
+  assert.deepEqual(observed.nodes.map(node => node.accessible_name), ["Project value"]);
+  assert.deepEqual(control.observedFrameCalls, ["top"],
+    "foreign-origin frame was evaluated before authorization");
+  await assert.rejects(
+    () => backend.perform(page.page_id, {
+      kind: "fill", backend_id: "frame:foreign|css:#secret", value: "blocked",
+    }),
+    (e: unknown) => e instanceof CdpBackendError && e.code === "permission_denied",
+  );
+  assert.deepEqual(control.performed, []);
+});
+
+test("CDP semantic snapshot fails closed when top document redirects after target lookup", async () => {
+  const control = new FakeCdpControl();
+  control.observations.set("top", observation({
+    url: "https://private.example/account",
+    nodes: [{ backend_id: "css:#secret", role: "textbox",
+      accessible_name: "SECRET", value: "PRIVATE" }],
+  }));
+  const backend = fixtureBackend(control);
+  const page = await backend.createTab("https://fixture.example/editor");
+  await assert.rejects(
+    () => backend.observe(page.page_id),
+    (e: unknown) => e instanceof CdpBackendError && e.code === "permission_denied",
+  );
+});
+
+
+test("CDP upload cannot attach a file to a foreign-origin iframe", async () => {
+  const control = new FakeCdpControl();
+  control.frameList = [
+    {frame_id: "top", document_id: "top", parent_frame_id: null,
+      url: "https://fixture.example/editor"},
+    {frame_id: "foreign", document_id: "foreign", parent_frame_id: "top",
+      url: "https://other.test/upload"},
+  ];
+  const backend = fixtureBackend(control);
+  const page = await backend.createTab("https://fixture.example/editor");
+  await assert.rejects(
+    () => backend.uploadFile(
+      page.page_id, "frame:foreign|css:#file", "C:\\fixture\\secret.txt",
+    ),
+    (e: unknown) => e instanceof CdpBackendError && e.code === "permission_denied",
+  );
+  assert.deepEqual(control.uploads, [], "CDP file input was mutated in an unapproved frame");
 });

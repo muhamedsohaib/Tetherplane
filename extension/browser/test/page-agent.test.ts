@@ -14,7 +14,10 @@ class FakeController {
     url: "https://fixture.example/editor",
     active: false,
     ownership: "tetherplane" as const,
+    grant: { operations: ["act", "navigate"], origin: "https://fixture.example",
+      expires_at_ms: Date.now() + 60_000 },
   };
+  async authorizeLivePage() { return structuredClone(this.page); }
   navigations: Array<{ pageId: string; url: string }> = [];
 
   pages() {
@@ -53,7 +56,7 @@ class FakeScripting implements ChromeScriptingApi {
   }
 }
 
-test("Chrome page agent aggregates frame-aware semantic observation", async () => {
+test("site-approved agent page observes only the top frame", async () => {
   const controller = new FakeController();
   const scripting = new FakeScripting();
   scripting.nextResults = [
@@ -103,26 +106,23 @@ test("Chrome page agent aggregates frame-aware semantic observation", async () =
   assert.equal(observed.url, "https://fixture.example/editor");
   assert.equal(observed.semantic_revision, 9);
   assert.equal(observed.resource_revision, "4");
-  assert.equal(observed.nodes.length, 2);
+  assert.equal(observed.nodes.length, 1);
   assert.equal(
     observed.nodes[0]?.backend_id,
     "frame:0|css:#value-input",
   );
   assert.equal(observed.nodes[0]?.document_id, "document-top");
   assert.equal(observed.nodes[0]?.frame_id, "frame:0");
-  assert.equal(
-    observed.nodes[1]?.backend_id,
-    "frame:2|css:#frame-action",
-  );
+  assert.deepEqual(scripting.calls[0]?.target, { tabId: 7, frameIds: [0] });
   assert.deepEqual(observed.toasts, ["Saved"]);
 });
 
-test("Chrome page agent performs semantic action in encoded target frame", async () => {
+test("site-approved agent page acts in permitted top frame", async () => {
   const controller = new FakeController();
   const scripting = new FakeScripting();
   scripting.nextResults = [
     {
-      frameId: 2,
+      frameId: 0,
       result: { ok: true },
     },
   ];
@@ -130,22 +130,23 @@ test("Chrome page agent performs semantic action in encoded target frame", async
 
   await agent.perform("tab:7", {
     kind: "fill",
-    backend_id: "frame:2|css:#value-input",
+    backend_id: "frame:0|css:#value-input",
     value: "updated",
   });
 
   assert.equal(scripting.calls.length, 1);
   assert.deepEqual(scripting.calls[0]?.target, {
     tabId: 7,
-    frameIds: [2],
+    frameIds: [0],
   });
   assert.deepEqual(scripting.calls[0]?.args, [
     "css:#value-input",
     {
       kind: "fill",
-      backend_id: "frame:2|css:#value-input",
+      backend_id: "frame:0|css:#value-input",
       value: "updated",
     },
+    "https://fixture.example",
   ]);
 });
 
@@ -228,4 +229,143 @@ test("extension denies human-owned observation before injecting scripts into a t
       (error as { code: unknown }).code === "permission_denied",
   );
   assert.equal(scripting.calls.length, 0, "revoked human tab must not reach Chrome scripting");
+});
+
+
+test("shared tab observation excludes cross-origin iframes", async () => {
+  const scripting = new FakeScripting();
+  scripting.nextResults = [
+    { frameId: 0, result: {
+      url: "https://fixture.example/owner",
+      semantic_revision: 8, resource_revision: null,
+      nodes: [{ backend_id: "css:#visible", role: "textbox", accessible_name: "Permitted" }],
+      validation_messages: [], toasts: [],
+    }},
+    { frameId: 3, result: {
+      url: "https://other-account.test/private",
+      semantic_revision: 9, resource_revision: null,
+      nodes: [{ backend_id: "css:#secret", role: "textbox", accessible_name: "SECRET" }],
+      validation_messages: [], toasts: [],
+    }},
+  ];
+  const controller = {
+    pages: () => [{
+      page_id: "tab:13", tab_id: 13, url: "https://fixture.example/owner",
+      ownership: "shared-authorized" as const,
+      grant: { operations: ["act"], origin: "https://fixture.example",
+        expires_at_ms: Date.now() + 60_000 },
+    }],
+    navigate: async () => ({}),
+    authorizeLivePage: async () => ({
+      page_id: "tab:13", tab_id: 13,
+      url: "https://fixture.example/owner",
+      ownership: "shared-authorized" as const,
+      grant: { operations: ["act"], origin: "https://fixture.example",
+        expires_at_ms: Date.now() + 60_000 },
+    }),
+  };
+  const observed = await new ChromePageAgent({ controller, scripting }).observe("tab:13");
+  assert.deepEqual(observed.nodes.map(n => n.accessible_name), ["Permitted"]);
+  assert.deepEqual(scripting.calls[0]?.target, { tabId: 13, frameIds: [0] });
+});
+
+test("shared tab cannot mutate an embedded frame even with act permission", async () => {
+  const scripting = new FakeScripting();
+  scripting.nextResults = [{ frameId: 3, result: { ok: true } }];
+  const controller = {
+    pages: () => [{
+      page_id: "tab:13", tab_id: 13, url: "https://fixture.example/owner",
+      ownership: "shared-authorized" as const,
+      grant: { operations: ["act"], origin: "https://fixture.example",
+        expires_at_ms: Date.now() + 60_000 },
+    }],
+    navigate: async () => ({}),
+    authorizeLivePage: async () => ({
+      page_id: "tab:13", tab_id: 13,
+      url: "https://fixture.example/owner",
+      ownership: "shared-authorized" as const,
+      grant: { operations: ["act"], origin: "https://fixture.example",
+        expires_at_ms: Date.now() + 60_000 },
+    }),
+  };
+  await assert.rejects(
+    () => new ChromePageAgent({ controller, scripting }).perform("tab:13", {
+      kind: "fill", backend_id: "frame:3|css:#secret", value: "should-never-run",
+    }),
+    (error: unknown) => typeof error === "object" && error !== null &&
+      "code" in error && (error as { code: string }).code === "permission_denied",
+  );
+  assert.equal(scripting.calls.length, 0, "cross-origin frame received an injection");
+});
+
+test("shared tab may not return content from a silently redirected document", async () => {
+  const scripting = new FakeScripting();
+  scripting.nextResults = [{ frameId: 0, result: {
+    url: "https://unapproved.test/private", semantic_revision: 12,
+    resource_revision: null,
+    nodes: [{ backend_id: "css:#secret", role: "textbox", accessible_name: "PRIVATE" }],
+    validation_messages: [], toasts: [],
+  }}];
+  const controller = {
+    pages: () => [{
+      page_id: "tab:13", tab_id: 13, url: "https://fixture.example/owner",
+      ownership: "shared-authorized" as const,
+      grant: { operations: ["act"], origin: "https://fixture.example",
+        expires_at_ms: Date.now() + 60_000 },
+    }],
+    navigate: async () => ({}),
+    authorizeLivePage: async () => ({
+      page_id: "tab:13", tab_id: 13,
+      url: "https://fixture.example/owner",
+      ownership: "shared-authorized" as const,
+      grant: { operations: ["act"], origin: "https://fixture.example",
+        expires_at_ms: Date.now() + 60_000 },
+    }),
+  };
+  await assert.rejects(
+    () => new ChromePageAgent({ controller, scripting }).observe("tab:13"),
+    (error: unknown) => typeof error === "object" && error !== null &&
+      "code" in error && (error as { code: string }).code === "permission_denied",
+  );
+});
+
+
+test("agent-owned page without a live website grant cannot be observed", async () => {
+  const scripting = new FakeScripting();
+  const controller = {
+    pages: () => [{ page_id: "tab:98", tab_id: 98,
+      url: "https://private.example/", ownership: "tetherplane" as const }],
+    navigate: async () => ({}),
+  };
+  await assert.rejects(
+    () => new ChromePageAgent({controller, scripting}).observe("tab:98"),
+    (e: unknown) => typeof e === "object" && e !== null &&
+      "code" in e && (e as {code:string}).code === "permission_denied",
+  );
+  assert.equal(scripting.calls.length, 0);
+});
+
+test("agent-owned website grant cannot observe a cross-origin embedded frame", async () => {
+  const scripting = new FakeScripting();
+  scripting.nextResults = [
+    {frameId:0, result: { url:"https://approved.example/",
+      semantic_revision:1, resource_revision:null,
+      nodes:[{backend_id:"css:#public",role:"textbox",accessible_name:"PUBLIC"}],
+      validation_messages:[],toasts:[] }},
+    {frameId:4, result: { url:"https://private.example/account",
+      semantic_revision:2, resource_revision:null,
+      nodes:[{backend_id:"css:#private",role:"textbox",accessible_name:"SECRET"}],
+      validation_messages:[],toasts:[] }},
+  ];
+  const page = { page_id:"tab:98", tab_id:98, url:"https://approved.example/",
+    ownership:"tetherplane" as const, grant:{ operations:["act","navigate"],
+      origin:"https://approved.example", expires_at_ms:Date.now()+60_000 } };
+  const controller = {
+    pages:() => [page],
+    navigate:async () => ({}),
+    authorizeLivePage:async () => page,
+  };
+  const observed = await new ChromePageAgent({controller,scripting}).observe("tab:98");
+  assert.deepEqual(observed.nodes.map(n => n.accessible_name), ["PUBLIC"]);
+  assert.deepEqual(scripting.calls[0]?.target, {tabId:98,frameIds:[0]});
 });

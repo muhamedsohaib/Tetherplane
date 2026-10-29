@@ -1,7 +1,4 @@
-import {
-  BrowserPolicyError,
-  type BrowserOperation,
-} from "@tetherplane/browser-bridge/policy";
+import { BrowserPolicyError } from "@tetherplane/browser-bridge/policy";
 
 import type {
   RawBrowserDiagnosticEvent,
@@ -18,11 +15,6 @@ export type ExtensionCommandController = {
   createOwnedTab(url: string): Promise<unknown>;
   navigate(pageId: string, url: string): Promise<unknown>;
   close(pageId: string): Promise<void>;
-  attachHumanTab(
-    tabId: number,
-    grant: { operations: BrowserOperation[] },
-  ): Promise<unknown>;
-  detachHumanTab(tabId: number): Promise<unknown>;
 };
 
 export type ExtensionPageAgent = {
@@ -129,7 +121,14 @@ export class ExtensionCommandRuntime {
     switch (operation) {
       case "pages":
         return {
-          pages: this.#controller.pages(),
+          // The owner can inspect unshared tabs in the popup. A remote
+          // bridge may only enumerate explicitly approved/owned pages.
+          pages: this.#controller.pages().filter((page) =>
+            isRecord(page) &&
+            (page.ownership === "tetherplane" ||
+              page.ownership === "shared-observe" ||
+              page.ownership === "shared-authorized"),
+          ),
         };
 
       case "create_tab":
@@ -150,16 +149,12 @@ export class ExtensionCommandRuntime {
         return { closed: true };
 
       case "attach":
-        return this.#controller.attachHumanTab(
-          requiredInteger(args, "tab_id"),
-          {
-            operations: requiredOperations(args, "operations"),
-          },
-        );
-
       case "detach":
-        return this.#controller.detachHumanTab(
-          requiredInteger(args, "tab_id"),
+        // Changing human-tab sharing state requires the owner-facing
+        // local extension approval path, never an authenticated RPC.
+        throw new BrowserPolicyError(
+          "permission_denied",
+          "human-tab sharing is controlled by the local owner only",
         );
 
       case "observe":
@@ -257,41 +252,6 @@ class RuntimeCommandError extends Error {
   }
 }
 
-const BROWSER_OPERATIONS = new Set<BrowserOperation>([
-  "status",
-  "pages",
-  "snapshot",
-  "navigate",
-  "close",
-  "act",
-  "wait",
-  "upload",
-  "downloads",
-  "diagnostics",
-  "checkpoint",
-]);
-
-function requiredOperations(
-  value: Record<string, unknown>,
-  key: string,
-): BrowserOperation[] {
-  const raw = value[key];
-  if (
-    !Array.isArray(raw) ||
-    !raw.every(
-      (item): item is BrowserOperation =>
-        typeof item === "string" &&
-        BROWSER_OPERATIONS.has(item as BrowserOperation),
-    )
-  ) {
-    throw new RuntimeCommandError(
-      "invalid_arguments",
-      `${key} must contain valid browser operations`,
-    );
-  }
-  return [...raw];
-}
-
 function requiredString(
   value: Record<string, unknown>,
   key: string,
@@ -339,24 +299,6 @@ function optionalPositiveInteger(
     throw new RuntimeCommandError(
       "invalid_arguments",
       `${key} must be a positive integer when provided`,
-    );
-  }
-  return raw;
-}
-
-function requiredInteger(
-  value: Record<string, unknown>,
-  key: string,
-): number {
-  const raw = value[key];
-  if (
-    typeof raw !== "number" ||
-    !Number.isSafeInteger(raw) ||
-    raw < 0
-  ) {
-    throw new RuntimeCommandError(
-      "invalid_arguments",
-      `${key} must be a non-negative integer`,
     );
   }
   return raw;

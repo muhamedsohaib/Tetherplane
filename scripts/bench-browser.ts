@@ -24,6 +24,10 @@ const control = await launchCdpOwnedBrowser({ executablePath });
 const backend = new CdpBrowserBackend({
   control,
   pollIntervalMs: 20,
+  // Benchmark fixture grant only; not a user-consent implementation.
+  authorizeSite: (_operation, url) => {
+    if (new URL(url).origin !== lab.origin) throw new Error("non-fixture site");
+  },
 });
 const bridge = await startBrowserRpcServer({
   service: new BrowserBridgeService({ backend }),

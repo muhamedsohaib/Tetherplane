@@ -394,6 +394,7 @@ class OwnedChromiumControl implements LaunchedCdpControl {
   async observeFrame(
     targetId: string,
     frameId: string,
+    expectedOrigin?: string,
   ): Promise<CdpFrameObservation> {
     const sessionId = await this.#sessionForTarget(targetId);
     const contextId = await this.#isolatedWorld(
@@ -403,7 +404,7 @@ class OwnedChromiumControl implements LaunchedCdpControl {
     const result = await this.#wire.send(
       "Runtime.evaluate",
       {
-        expression: `(${collectCdpFrameObservation.toString()})()`,
+        expression: `(${collectCdpFrameObservation.toString()})(${JSON.stringify(expectedOrigin)})`,
         contextId,
         returnByValue: true,
         awaitPromise: true,
@@ -420,6 +421,7 @@ class OwnedChromiumControl implements LaunchedCdpControl {
     frameId: string,
     selectorToken: string,
     action: Record<string, unknown>,
+    expectedOrigin?: string,
   ): Promise<void> {
     const sessionId = await this.#sessionForTarget(targetId);
     const contextId = await this.#isolatedWorld(
@@ -428,7 +430,7 @@ class OwnedChromiumControl implements LaunchedCdpControl {
     );
     const expression =
       `(${performCdpFrameAction.toString()})` +
-      `(${JSON.stringify(selectorToken)},${JSON.stringify(action)})`;
+      `(${JSON.stringify(selectorToken)},${JSON.stringify(action)},${JSON.stringify(expectedOrigin)})`;
     const result = await this.#wire.send(
       "Runtime.evaluate",
       {
@@ -1196,6 +1198,7 @@ function flattenFrameTree(
         ? frame.loaderId
         : frameId,
     parent_frame_id: parentFrameId,
+    ...(typeof frame.url === "string" ? { url: frame.url } : {}),
   });
 
   const children = tree.childFrames;
@@ -1533,7 +1536,16 @@ function sleep(delayMs: number): Promise<void> {
   );
 }
 
-function collectCdpFrameObservation() {
+function collectCdpFrameObservation(expectedOrigin?: string) {
+  // Check inside Chrome before traversing any page DOM. A redirect after
+  // Page.getFrameTree may not disclose a foreign document.
+  if (expectedOrigin && location.origin !== expectedOrigin) {
+    return {
+      url: location.href,
+      semantic_revision: 0, resource_revision: null,
+      nodes: [], validation_messages: [], toasts: [],
+    };
+  }
   const maxNodes = 500;
   const candidates = Array.from(
     document.querySelectorAll(
@@ -1877,7 +1889,14 @@ function collectCdpFrameObservation() {
 function performCdpFrameAction(
   selectorToken: string,
   action: Record<string, unknown>,
+  expectedOrigin?: string,
 ) {
+  if (expectedOrigin && location.origin !== expectedOrigin) {
+    return {
+      ok: false, code: "permission_denied",
+      message: "CDP frame is outside its locally approved origin",
+    };
+  }
   if (!selectorToken.startsWith("css:")) {
     return {
       ok: false,

@@ -64,6 +64,9 @@ test(
     const backend = new CdpBrowserBackend({
       control,
       pollIntervalMs: 20,
+      authorizeSite: (_operation, url) => {
+        if (new URL(url).origin !== lab.origin) throw new Error("non-fixture site");
+      },
     });
     const ownership = new BrowserOwnershipRegistry();
     const semantics = new SemanticSnapshotEngine();
