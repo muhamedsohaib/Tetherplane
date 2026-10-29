@@ -65,6 +65,7 @@ try {
 
     foreach ($relative in @(
         "bin\tetherd.exe",
+        "bin\tetherd-agentw.exe",
         "adapters\compact-mcp\dist\stdio-server.js",
         "adapters\compact-mcp\node_modules",
         "adapters\model-client\dist\worker-main.js",
@@ -100,7 +101,7 @@ try {
     if ($stagedInstallScript -match 'New-ScheduledTaskAction\s+-Execute\s+"powershell.exe"') {
         throw "scheduled agent still uses an orphan-prone PowerShell launcher"
     }
-    if (-not $stagedInstallScript.Contains('New-ScheduledTaskAction -Execute (Join-Path $install "bin\tetherd.exe")')) {
+    if (-not $stagedInstallScript.Contains('New-ScheduledTaskAction -Execute (Join-Path $install "bin\tetherd-agentw.exe")')) {
         throw "native task ownership is missing from the packaged installer"
     }
 
@@ -159,10 +160,16 @@ try {
     }
 
     $installedTetherd = Join-Path $install "bin\tetherd.exe"
-    $subsystem = Get-TetherplanePeSubsystem -Executable $installedTetherd
-    if ($subsystem -ne 2) {
-        throw "RELEASE_NO_GO: installed tetherd.exe uses PE subsystem $subsystem, not GUI subsystem 2; scheduled startup may create a console window"
+    $stdioSubsystem = Get-TetherplanePeSubsystem -Executable $installedTetherd
+    if ($stdioSubsystem -ne 3) {
+        throw "RELEASE_NO_GO: tetherd.exe must remain a console-subsystem executable for existing stdio and CLI callers"
     }
+    $installedBackground = Join-Path $install "bin\tetherd-agentw.exe"
+    $backgroundSubsystem = Get-TetherplanePeSubsystem -Executable $installedBackground
+    if ($backgroundSubsystem -ne 2) {
+        throw "RELEASE_NO_GO: tetherd-agentw.exe uses PE subsystem $backgroundSubsystem, not windowless GUI subsystem 2"
+    }
+    Write-Output "WINDOWS_CLI_STDIO_SUBSYSTEM_OK"
     Write-Output "WINDOWS_AGENT_GUI_SUBSYSTEM_OK"
     $installedSmoke = Join-Path $install "adapters\compact-mcp\smoke-six-tools.mjs"
     $installedWorker = Join-Path $install "adapters\model-client\dist\worker-main.js"
@@ -257,7 +264,7 @@ try {
     & $installScript -PackagePath $stage -InstallPrefix $taskInstall -StateDir (Join-Path $root "task-state") -InstallScheduledTask -AgentTaskName $taskName -AgentArgumentsFile $taskArgs
 
     $task = Get-ScheduledTask -TaskName $taskName -ErrorAction Stop
-    $nativeExe = [IO.Path]::GetFullPath((Join-Path $taskInstall "bin\tetherd.exe"))
+    $nativeExe = [IO.Path]::GetFullPath((Join-Path $taskInstall "bin\tetherd-agentw.exe"))
     if ([IO.Path]::GetFullPath([string]$task.Actions[0].Execute) -ine $nativeExe) {
         throw "scheduled task does not directly own the installed tetherd executable"
     }
@@ -305,7 +312,7 @@ try {
     $deadline = [DateTime]::UtcNow.AddSeconds(25)
     $taskAgent = @()
     do {
-        $taskAgent = @(Get-CimInstance Win32_Process -Filter "Name='tetherd.exe'" |
+        $taskAgent = @(Get-CimInstance Win32_Process -Filter "Name='tetherd-agentw.exe'" |
             Where-Object { [string]$_.ExecutablePath -ieq $nativeExe })
         if ($taskAgent.Count -eq 1) { break }
         Start-Sleep -Milliseconds 250
@@ -382,7 +389,7 @@ finally {
     }
     if ($taskProcessId -and $nativeExe) {
         $candidate = Get-CimInstance Win32_Process -Filter "ProcessId=$taskProcessId" -ErrorAction SilentlyContinue
-        if ($candidate -and $candidate.Name -eq "tetherd.exe" -and
+        if ($candidate -and $candidate.Name -eq "tetherd-agentw.exe" -and
             [string]$candidate.ExecutablePath -ieq $nativeExe) {
             Stop-Process -Id $taskProcessId -Force -ErrorAction SilentlyContinue
         }
