@@ -420,3 +420,59 @@ test("CDP operational methods reject unowned target IDs", async () => {
       error.code === "permission_denied",
   );
 });
+
+
+test("raw CDP backend has no implicit authority to create tabs or enumerate downloads", async () => {
+  const control = new FakeCdpControl();
+  const backend = new CdpBrowserBackend({control});
+
+  await assert.rejects(
+    () => backend.createTab("https://fixture.example/editor"),
+    (e: unknown) => e instanceof CdpBackendError && e.code === "permission_denied",
+  );
+  assert.deepEqual(control.created, [], "unapproved target reached Chromium");
+  await assert.rejects(
+    () => backend.downloads(),
+    (e: unknown) => e instanceof CdpBackendError && e.code === "permission_denied",
+  );
+});
+
+test("CDP site authorization is exact-origin, revocable, and checked before browser access", async () => {
+  const control = new FakeCdpControl();
+  let approved = true;
+  const backend = new CdpBrowserBackend({
+    control,
+    authorizeSite: (operation, url) => {
+      if (!approved || new URL(url).origin !== "https://fixture.example") {
+        throw new CdpBackendError("permission_denied", "local site permission denied");
+      }
+    },
+  });
+  await assert.rejects(
+    () => backend.createTab("https://fixture.example.evil.test/"),
+    (e: unknown) => e instanceof CdpBackendError && e.code === "permission_denied",
+  );
+  assert.equal(control.created.length, 0);
+  const page = await backend.createTab("https://fixture.example/editor");
+  assert.equal(control.created.length, 1);
+  await assert.rejects(
+    () => backend.navigate(page.page_id, "https://unapproved.test/private"),
+    (e: unknown) => e instanceof CdpBackendError && e.code === "permission_denied",
+  );
+  assert.deepEqual(control.navigations, []);
+  approved = false;
+  control.observations.set("top", observation());
+  await assert.rejects(
+    () => backend.observe(page.page_id),
+    (e: unknown) => e instanceof CdpBackendError && e.code === "permission_denied",
+  );
+  await assert.rejects(
+    () => backend.perform(page.page_id, {
+      kind: "fill",
+      backend_id: "frame:top|css:#value-input",
+      value: "never-run",
+    }),
+    (e: unknown) => e instanceof CdpBackendError && e.code === "permission_denied",
+  );
+  assert.deepEqual(control.performed, []);
+});
