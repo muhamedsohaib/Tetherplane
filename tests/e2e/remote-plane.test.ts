@@ -64,6 +64,7 @@ for (const authMode of ["static", "oidc"] as const) test(`${authMode} black-box 
         allowed_capabilities: [
           "device.status",
           "device.capabilities",
+          "browser.status",
           "filesystem.read",
           "filesystem.write",
           "filesystem.append",
@@ -174,6 +175,8 @@ for (const authMode of ["static", "oidc"] as const) test(`${authMode} black-box 
         principalFile,
         "--state-dir",
         stateDir,
+        "--browser-bridge",
+        "127.0.0.1:1",
       ],
       {
         cwd: repoRoot,
@@ -202,6 +205,31 @@ for (const authMode of ["static", "oidc"] as const) test(`${authMode} black-box 
       tokenB,
       "remote-account-b",
     );
+
+    const coreStatus = await clientA.callTool({
+      name: "device",
+      arguments: { op: "status", device: "Leno" },
+    });
+    assert.equal(coreStatus.isError, undefined);
+
+    const capsWhileBrowserOffline = await clientA.callTool({
+      name: "device",
+      arguments: { op: "capabilities", device: "Leno" },
+    });
+    assert.equal(capsWhileBrowserOffline.isError, undefined);
+    const providers = structured(capsWhileBrowserOffline).providers as
+      Array<Record<string, unknown>>;
+    const browserProvider = providers.find(p => p.namespace === "browser");
+    assert.ok(browserProvider);
+    assert.equal(browserProvider.available, false);
+    assert.deepEqual(browserProvider.operations, []);
+
+    const browserDenied = await clientA.callTool({
+      name: "browser",
+      arguments: { op: "status", device: "Leno" },
+    });
+    assert.equal(browserDenied.isError, true);
+    assert.equal(errorCode(browserDenied), "capability_unavailable");
 
     const remoteFile = path.join(allowedRoot, "remote.txt");
     const writeResult = await clientA.callTool({
@@ -330,6 +358,12 @@ for (const authMode of ["static", "oidc"] as const) test(`${authMode} black-box 
       7_000,
       () => childStateError(child, stderr),
     );
+
+    const statusAfterReconnect = await clientA.callTool({
+      name: "device",
+      arguments: { op: "status", device: "Leno" },
+    });
+    assert.equal(statusAfterReconnect.isError, undefined);
 
     const replayedAppend =
       await clientA.callTool(appendArguments);
