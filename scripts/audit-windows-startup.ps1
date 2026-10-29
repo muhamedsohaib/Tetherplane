@@ -35,6 +35,27 @@ if (Test-Path -LiteralPath $RunKeyPath) {
             }
         })
 }
+function TaskCleanupDisposition($task) {
+    $name = [string]$task.TaskName
+    if ($name -in @('Tetherplane Emergency Relay',
+                    'Tetherplane Browser Bridge',
+                    'Tethrd - Device Gateway')) {
+        return 'preserve_protected'
+    }
+    if ($name -eq 'Tetherplane Agent') { return 'hold_canonical_recovery' }
+    if ($name -in @(
+        'Tetherplane Leno Agent',
+        'Tetherplane Leno Canary',
+        'Tetherplane Leno Canary V2',
+        'Tetherplane Leno Canary Rollback',
+        'Tetherplane Leno Canary Rollback V2'
+    )) {
+        # Names are only hints. Their actual ownership and usefulness
+        # must be proven; never infer that a running canary is obsolete.
+        return 'review_legacy_after_accepted_migration'
+    }
+    return 'hold_unknown'
+}
 $tasks = @(
     Get-ScheduledTask -ErrorAction Stop |
     Where-Object {
@@ -47,6 +68,7 @@ $tasks = @(
         $launcher = if ($a.Count -eq 1) { TaskScript $a[0] } else { $null }
         [ordered]@{
             name = [string]$_.TaskName
+            cleanupDisposition = TaskCleanupDisposition $_
             state = [string]$_.State
             actionCount = $a.Count
             actionProgram = if ($a.Count -eq 1) {
