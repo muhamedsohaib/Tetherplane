@@ -56,7 +56,7 @@ class FakeScripting implements ChromeScriptingApi {
   }
 }
 
-test("Chrome page agent aggregates frame-aware semantic observation", async () => {
+test("site-approved agent page observes only the top frame", async () => {
   const controller = new FakeController();
   const scripting = new FakeScripting();
   scripting.nextResults = [
@@ -106,26 +106,23 @@ test("Chrome page agent aggregates frame-aware semantic observation", async () =
   assert.equal(observed.url, "https://fixture.example/editor");
   assert.equal(observed.semantic_revision, 9);
   assert.equal(observed.resource_revision, "4");
-  assert.equal(observed.nodes.length, 2);
+  assert.equal(observed.nodes.length, 1);
   assert.equal(
     observed.nodes[0]?.backend_id,
     "frame:0|css:#value-input",
   );
   assert.equal(observed.nodes[0]?.document_id, "document-top");
   assert.equal(observed.nodes[0]?.frame_id, "frame:0");
-  assert.equal(
-    observed.nodes[1]?.backend_id,
-    "frame:2|css:#frame-action",
-  );
+  assert.equal(scripting.calls[0]?.target?.frameIds?.[0], 0);
   assert.deepEqual(observed.toasts, ["Saved"]);
 });
 
-test("Chrome page agent performs semantic action in encoded target frame", async () => {
+test("site-approved agent page acts in permitted top frame", async () => {
   const controller = new FakeController();
   const scripting = new FakeScripting();
   scripting.nextResults = [
     {
-      frameId: 2,
+      frameId: 0,
       result: { ok: true },
     },
   ];
@@ -133,20 +130,20 @@ test("Chrome page agent performs semantic action in encoded target frame", async
 
   await agent.perform("tab:7", {
     kind: "fill",
-    backend_id: "frame:2|css:#value-input",
+    backend_id: "frame:0|css:#value-input",
     value: "updated",
   });
 
   assert.equal(scripting.calls.length, 1);
   assert.deepEqual(scripting.calls[0]?.target, {
     tabId: 7,
-    frameIds: [2],
+    frameIds: [0],
   });
   assert.deepEqual(scripting.calls[0]?.args, [
     "css:#value-input",
     {
       kind: "fill",
-      backend_id: "frame:2|css:#value-input",
+      backend_id: "frame:0|css:#value-input",
       value: "updated",
     },
     "https://fixture.example",
