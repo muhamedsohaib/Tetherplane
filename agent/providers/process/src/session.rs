@@ -625,7 +625,6 @@ fn provider_error_message(message: &str, program: &str) -> CapabilityError {
     }
 }
 
-
 #[cfg(all(test, windows))]
 mod no_console_tests {
     use super::*;
