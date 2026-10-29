@@ -14,6 +14,20 @@ class FakeController implements LocalApprovalController {
     grant: { operations: string[]; ttl_ms: number };
   }> = [];
   detachCalls: number[] = [];
+  siteGrants: Array<{tabId: number; ttl_ms: number; operations: string[]}> = [];
+  siteRevokes: number[] = [];
+
+  async approveOwnedOriginFromTab(tabId: number, grant: {
+    ttl_ms: number; operations: string[];
+  }) {
+    this.siteGrants.push({tabId, ...structuredClone(grant)});
+    return {origin: "https://synthetic.example"};
+  }
+
+  async revokeOwnedOriginFromTab(tabId: number) {
+    this.siteRevokes.push(tabId);
+    return null;
+  }
 
   async attachHumanTab(
     tabId: number,
@@ -103,4 +117,39 @@ test("unrelated extension messages are ignored", async () => {
   assert.deepEqual(result, { handled: false });
   assert.equal(controller.attachCalls.length, 0);
   assert.equal(controller.detachCalls.length, 0);
+});
+
+
+test("site-origin permission is a separate explicit owner approval", async () => {
+  const controller = new FakeController();
+  const response = await handleLocalApprovalMessage(controller, {
+    type: "tetherplane.approve_owned_site",
+    tab_id: 7, ttl_ms: 300_000, allow_navigate: true, allow_upload: false,
+  });
+  assert.equal(response.handled, true);
+  assert.deepEqual(controller.siteGrants, [
+    { tabId: 7, ttl_ms: 300_000, operations: ["act", "navigate"] },
+  ]);
+  assert.equal(controller.attachCalls.length, 0, "site approval must not silently share a human tab");
+});
+
+test("site-origin grant can be revoked separately from human-tab sharing", async () => {
+  const controller = new FakeController();
+  await handleLocalApprovalMessage(controller, {
+    type: "tetherplane.revoke_owned_site", tab_id: 5,
+  });
+  assert.deepEqual(controller.siteRevokes, [5]);
+  assert.equal(controller.detachCalls.length, 0);
+});
+
+test("site-origin grants reject invalid TTL before reaching the controller", async () => {
+  const controller = new FakeController();
+  await assert.rejects(
+    () => handleLocalApprovalMessage(controller, {
+      type: "tetherplane.approve_owned_site",
+      tab_id: 7, ttl_ms: 3_600_001, allow_navigate: true,
+    }),
+    (e: unknown) => e instanceof BrowserPolicyError && e.code === "invalid_arguments",
+  );
+  assert.equal(controller.siteGrants.length, 0);
 });
