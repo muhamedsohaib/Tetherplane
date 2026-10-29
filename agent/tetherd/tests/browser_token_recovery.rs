@@ -1,9 +1,9 @@
 use std::io::{BufRead, BufReader, Write};
 use std::net::TcpListener;
 use std::path::PathBuf;
-use std::sync::atomic::{AtomicBool, Ordering};
-use std::sync::Arc;
 use std::process::{Child, Command, Stdio};
+use std::sync::Arc;
+use std::sync::atomic::{AtomicBool, Ordering};
 use std::thread;
 use std::time::{Duration, Instant};
 
@@ -108,8 +108,14 @@ fn serve_synthetic_browser(listener: &TcpListener, stop: &AtomicBool) {
             invoked = true;
         }
     }
-    assert!(stop.load(Ordering::SeqCst), "synthetic browser was not shut down by test");
-    assert!(invoked, "no authenticated browser action after late token provisioning");
+    assert!(
+        stop.load(Ordering::SeqCst),
+        "synthetic browser was not shut down by test"
+    );
+    assert!(
+        invoked,
+        "no authenticated browser action after late token provisioning"
+    );
 }
 
 #[test]
@@ -185,11 +191,20 @@ fn late_browser_token_file_recovers_without_agent_restart_or_anonymous_browser_a
         }
         thread::sleep(Duration::from_millis(70));
     }
-    assert!(revoked, "RELEASE_NO_GO: removed browser token remained authorized");
-    assert!(!server.is_finished(), "synthetic browser exited before revocation check");
+    assert!(
+        revoked,
+        "RELEASE_NO_GO: removed browser token remained authorized"
+    );
+    assert!(
+        !server.is_finished(),
+        "synthetic browser exited before revocation check"
+    );
     let denied_after_removal = invoke(&mut stdin, &mut stdout, "browser.status");
     assert_eq!(denied_after_removal["status"], "error");
-    assert_eq!(denied_after_removal["error"]["code"], "capability_unavailable");
+    assert_eq!(
+        denied_after_removal["error"]["code"],
+        "capability_unavailable"
+    );
     let core_after_revocation = invoke(&mut stdin, &mut stdout, "device.status");
     assert_eq!(core_after_revocation["status"], "success");
 
