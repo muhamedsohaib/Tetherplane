@@ -2,7 +2,8 @@
   "git": {
     "deploymentEnabled": {
       "test/remote-core-browser-outage-20261029": false,
-      "review/browser-token-relay-lifecycle-20261029": false
+      "review/browser-token-relay-lifecycle-20261029": false,
+      "test/windows-native-agent-task-20261029": false
     }
   }
 }

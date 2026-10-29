@@ -18,6 +18,10 @@ $install = Join-Path $root "install"
 $state = Join-Path $root "state"
 $allow = Join-Path $root "allowed"
 $supervisorProcess = $null
+$taskName = $null
+$taskProcessId = $null
+$duplicateTaskName = $null
+$nativeExe = $null
 
 try {
     New-Item -ItemType Directory -Force -Path $root,$allow | Out-Null
@@ -61,10 +65,11 @@ try {
     }
 
     $stagedInstallScript = Get-Content -LiteralPath (Join-Path $stage "install-windows.ps1") -Raw
-    foreach ($requiredArgument in @("-NonInteractive", "-WindowStyle Hidden")) {
-        if (-not $stagedInstallScript.Contains($requiredArgument)) {
-            throw "scheduled agent action is missing required background argument: $requiredArgument"
-        }
+    if ($stagedInstallScript -match 'New-ScheduledTaskAction\s+-Execute\s+"powershell.exe"') {
+        throw "scheduled agent still uses an orphan-prone PowerShell launcher"
+    }
+    if (-not $stagedInstallScript.Contains('New-ScheduledTaskAction -Execute (Join-Path $install "bin\tetherd.exe")')) {
+        throw "native task ownership is missing from the packaged installer"
     }
 
     $supervisorRoot = Join-Path $root "supervisor"
@@ -197,6 +202,124 @@ try {
         throw "installed six-tool smoke failed with exit code $LASTEXITCODE"
     }
 
+    # A real native Windows task owns the agent process. Stopping the task
+    # must terminate the exact test-owned process, not leave an orphan.
+    $taskName = "Tetherplane CI-" + [guid]::NewGuid().ToString("N")
+    $taskInstall = Join-Path $root "task-install"
+    $taskArgs = Join-Path $root "task-args.json"
+    $taskCredential = Join-Path $root "synthetic-credential.txt"
+    [IO.File]::WriteAllText($taskCredential, "tetherplane-ci-nonproduction-test-secret", [Text.UTF8Encoding]::new($false))
+    $arguments = @(
+        "--relay-url", "ws://127.0.0.1:65534/device",
+        "--relay-allow-insecure-localhost",
+        "--device-id", "CI-Test-Only",
+        "--device-credential-file", $taskCredential,
+        "--allow", $allow
+    )
+    [IO.File]::WriteAllText($taskArgs, (ConvertTo-Json -InputObject $arguments -Compress), [Text.UTF8Encoding]::new($false))
+    & $installScript -PackagePath $stage -InstallPrefix $taskInstall -StateDir (Join-Path $root "task-state") -InstallScheduledTask -AgentTaskName $taskName -AgentArgumentsFile $taskArgs
+
+    $task = Get-ScheduledTask -TaskName $taskName -ErrorAction Stop
+    $nativeExe = [IO.Path]::GetFullPath((Join-Path $taskInstall "bin\tetherd.exe"))
+    if ([IO.Path]::GetFullPath([string]$task.Actions[0].Execute) -ine $nativeExe) {
+        throw "scheduled task does not directly own the installed tetherd executable"
+    }
+    if ([string]$task.Actions[0].Arguments -ne ('--arguments-file "' + (Join-Path $taskInstall "config\agent-args.json") + '"')) {
+        throw "native task arguments do not reference the local args file exclusively"
+    }
+    if ($task.Settings.MultipleInstances.ToString() -ne "IgnoreNew" -or $task.Settings.RestartCount -ne 99) {
+        throw "single-instance and restart controls were not registered"
+    }
+    # Surface's live 2026-10-29 Canary is Highest privilege with only 3
+    # restarts. The new candidate must not reproduce either configuration.
+    if ([string]$task.Principal.RunLevel -ne "Limited") {
+        throw "native agent task unexpectedly requests elevated Windows privileges"
+    }
+    if ([string]$task.Principal.LogonType -ne "Interactive") {
+        throw "per-user native task must retain an interactive logon identity"
+    }
+    if (-not $task.Settings.StartWhenAvailable -or
+        [string]$task.Settings.ExecutionTimeLimit -ne "PT0S" -or
+        [string]$task.Settings.RestartInterval -ne "PT1M" -or
+        $task.Settings.DisallowStartIfOnBatteries -or
+        $task.Settings.StopIfGoingOnBatteries) {
+        throw "native startup resilience settings are incomplete"
+    }
+    if (@($task.Triggers).Count -ne 1 -or
+        [string]$task.Triggers[0].CimClass.CimClassName -ne "MSFT_TaskLogonTrigger") {
+        throw "native per-user task has an unexpected startup trigger"
+    }
+    Write-Output "WINDOWS_TASK_LEAST_PRIVILEGE_RESTART_POLICY_OK"
+    # Test that -Force cannot replace an existing scheduled agent.
+    $forceTaskRejected = $false
+    try {
+        & $installScript -PackagePath $stage -InstallPrefix (Join-Path $root "forced-task-install") -StateDir (Join-Path $root "forced-task-state") -InstallScheduledTask -AgentTaskName $taskName -AgentArgumentsFile $taskArgs -Force
+    }
+    catch {
+        if ([string]$_.Exception.Message -like "*existing scheduled task*" -or [string]$_.Exception.Message -like "*existing Tetherplane agent task*") {
+            $forceTaskRejected = $true
+        }
+        else { throw }
+    }
+    if (-not $forceTaskRejected) {
+        throw "installer accepted -Force over a registered Tetherplane agent task"
+    }
+    Start-ScheduledTask -TaskName $taskName
+    $deadline = [DateTime]::UtcNow.AddSeconds(25)
+    $taskAgent = @()
+    do {
+        $taskAgent = @(Get-CimInstance Win32_Process -Filter "Name='tetherd.exe'" |
+            Where-Object { [string]$_.ExecutablePath -ieq $nativeExe })
+        if ($taskAgent.Count -eq 1) { break }
+        Start-Sleep -Milliseconds 250
+    } while ([DateTime]::UtcNow -lt $deadline)
+    if ($taskAgent.Count -ne 1) {
+        throw "scheduled native test agent did not start exactly once"
+    }
+    $taskProcessId = [int]$taskAgent[0].ProcessId
+    $duplicateTaskName = "Tetherplane CI-" + [guid]::NewGuid().ToString("N")
+    $duplicateRejected = $false
+    try {
+        & $installScript -PackagePath $stage -InstallPrefix (Join-Path $root "duplicate-install") -StateDir (Join-Path $root "duplicate-state") -InstallScheduledTask -AgentTaskName $duplicateTaskName -AgentArgumentsFile $taskArgs
+    }
+    catch {
+        if ([string]$_.Exception.Message -like "*a tetherd process is already running*") {
+            $duplicateRejected = $true
+        }
+        else {
+            throw
+        }
+    }
+    if (-not $duplicateRejected) {
+        throw "installer accepted a second scheduled agent while one was live"
+    }
+    Stop-ScheduledTask -TaskName $taskName
+    $deadline = [DateTime]::UtcNow.AddSeconds(15)
+    do {
+        if (-not (Get-Process -Id $taskProcessId -ErrorAction SilentlyContinue)) { break }
+        Start-Sleep -Milliseconds 250
+    } while ([DateTime]::UtcNow -lt $deadline)
+    if (Get-Process -Id $taskProcessId -ErrorAction SilentlyContinue) {
+        throw "stopping the native scheduled task left an orphaned tetherd child"
+    }
+    # A stopped task is still dangerous: both tasks could start at next logon.
+    $stoppedTaskRejected = $false
+    try {
+        & $installScript -PackagePath $stage -InstallPrefix (Join-Path $root "duplicate-install") -StateDir (Join-Path $root "duplicate-state") -InstallScheduledTask -AgentTaskName $duplicateTaskName -AgentArgumentsFile $taskArgs
+    }
+    catch {
+        if ([string]$_.Exception.Message -like "*existing Tetherplane agent task*") {
+            $stoppedTaskRejected = $true
+        }
+        else {
+            throw
+        }
+    }
+    if (-not $stoppedTaskRejected) {
+        throw "installer accepted another task despite a registered stopped agent task"
+    }
+    Write-Output "WINDOWS_NATIVE_TASK_STOP_NO_ORPHAN_OK"
+
     $sentinel = Join-Path $state "preserve-me.txt"
     Set-Content -LiteralPath $sentinel -Value "preserve" -NoNewline
 
@@ -214,6 +337,19 @@ try {
     Write-Output "WINDOWS_PACKAGE_SMOKE_OK"
 }
 finally {
+    foreach ($registeredName in @($duplicateTaskName, $taskName)) {
+        if ($registeredName -and (Get-ScheduledTask -TaskName $registeredName -ErrorAction SilentlyContinue)) {
+            Stop-ScheduledTask -TaskName $registeredName -ErrorAction SilentlyContinue
+            Unregister-ScheduledTask -TaskName $registeredName -Confirm:$false -ErrorAction SilentlyContinue
+        }
+    }
+    if ($taskProcessId -and $nativeExe) {
+        $candidate = Get-CimInstance Win32_Process -Filter "ProcessId=$taskProcessId" -ErrorAction SilentlyContinue
+        if ($candidate -and $candidate.Name -eq "tetherd.exe" -and
+            [string]$candidate.ExecutablePath -ieq $nativeExe) {
+            Stop-Process -Id $taskProcessId -Force -ErrorAction SilentlyContinue
+        }
+    }
     if ($supervisorProcess -and -not $supervisorProcess.HasExited) {
         Stop-Process -Id $supervisorProcess.Id -Force -ErrorAction SilentlyContinue
     }
