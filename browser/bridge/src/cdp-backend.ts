@@ -338,15 +338,18 @@ export class CdpBrowserBackend implements BrowserBridgeBackend {
     const targetId = await this.#requireAuthorizedTarget(pageIdValue, "upload");
     const parsed = parseBackendId(backendId);
     const frames = await this.#control.frames(targetId);
-    if (
-      !frames.some(
-        (frame) => frame.frame_id === parsed.frameId,
-      )
-    ) {
-      throw new CdpBackendError(
-        "stale_reference",
-        "CDP upload frame no longer exists",
-      );
+    const frame = frames.find((item) => item.frame_id === parsed.frameId);
+    if (!frame) {
+      throw new CdpBackendError("stale_reference",
+        "CDP upload frame no longer exists");
+    }
+    const pinnedOrigin = this.#ownedTargets.get(targetId)!;
+    if (frame.parent_frame_id !== null && !frame.url) {
+      throw new CdpBackendError("permission_denied",
+        "CDP upload frame has no approved website origin");
+    }
+    if (frame.url) {
+      this.#requireSitePermission("upload", frame.url, pinnedOrigin);
     }
     await this.#control.uploadFile(
       targetId,
