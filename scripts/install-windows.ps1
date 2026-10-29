@@ -74,6 +74,45 @@ if (Test-Path -LiteralPath $install) {
         throw "install prefix is not empty; use -Force to replace a prior Tetherplane install"
     }
     if ($Force) {
+        if ($existing.Count -gt 0) {
+            # Caller-supplied InstallPrefix must never authorize arbitrary removal.
+            $existingReceipt = Join-Path $install "config\install.json"
+            $ownershipError = "refusing -Force: populated prefix lacks a verified Tetherplane install receipt"
+            if (-not (Test-Path -LiteralPath $existingReceipt -PathType Leaf)) {
+                throw $ownershipError
+            }
+            if (((Get-Item -LiteralPath $install -Force).Attributes -band [IO.FileAttributes]::ReparsePoint) -ne 0) {
+                throw "refusing -Force: install prefix is a reparse point"
+            }
+            try {
+                $previousReceipt = Get-Content -LiteralPath $existingReceipt -Raw -ErrorAction Stop | ConvertFrom-Json -ErrorAction Stop
+                if (-not $previousReceipt -or
+                    $previousReceipt.PSObject.Properties.Name -notcontains "install_prefix") {
+                    throw $ownershipError
+                }
+                $claimedPath = [IO.Path]::GetFullPath([string]$previousReceipt.install_prefix)
+                if (-not [string]::Equals($claimedPath, $install, [StringComparison]::OrdinalIgnoreCase)) {
+                    throw $ownershipError
+                }
+            }
+            catch {
+                throw $ownershipError
+            }
+            foreach ($ownedFile in @(
+                "bin\tetherd.exe",
+                "bin\tetherd-agentw.exe",
+                "manifest.json",
+                "uninstall-windows.ps1"
+            )) {
+                if (-not (Test-Path -LiteralPath (Join-Path $install $ownedFile) -PathType Leaf)) {
+                    throw $ownershipError
+                }
+            }
+            if ($previousReceipt.PSObject.Properties.Name -contains "scheduled_task" -and
+                [string]$previousReceipt.scheduled_task) {
+                throw "refusing -Force: installed scheduled agent requires explicit migration"
+            }
+        }
         Remove-Item -LiteralPath $install -Recurse -Force
     }
 }

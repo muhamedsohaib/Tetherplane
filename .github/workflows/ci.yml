@@ -29,6 +29,11 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
+      - name: Reject foreign -Force install prefix (disposable Windows)
+        if: runner.os == 'Windows'
+        shell: pwsh
+        run: ./tests/release/windows-install-prefix-ownership.ps1
+
       - name: Install Rust toolchain
         uses: dtolnay/rust-toolchain@stable
         with:
