@@ -384,3 +384,56 @@ test("browser restart cannot resurrect a grant after origin redirect", async () 
   assert.equal(page?.ownership, "human");
   assert.equal(page?.grant, undefined);
 });
+
+
+test("agent-created tab cannot open any origin without a locally approved site grant", async () => {
+  const tabs = new FakeTabs([humanTab()]);
+  const controller = new ExtensionTabController({ tabs, store: new MemoryStore() });
+  await controller.initialize();
+  await assert.rejects(
+    () => controller.createOwnedTab("https://other.example/private"),
+    (e: unknown) => e instanceof BrowserPolicyError && e.code === "permission_denied",
+  );
+  assert.equal(tabs.lastCreate, null, "denied URL reached real tab-creation boundary");
+});
+
+test("locally approved site permits only its exact origin for new agent tabs", async () => {
+  const tabs = new FakeTabs([humanTab()]);
+  const controller = new ExtensionTabController({ tabs, store: new MemoryStore() });
+  await controller.initialize();
+  // The site origin is obtained from the actual owner tab, never an agent URL.
+  await controller.approveOwnedOriginFromTab(1, {
+    ttl_ms: 60_000, operations: ["act", "navigate"],
+  });
+  const page = await controller.createOwnedTab("https://human.example/project");
+  assert.equal(page.ownership, "tetherplane");
+  assert.equal(page.grant?.origin, "https://human.example");
+  await assert.rejects(
+    () => controller.createOwnedTab("https://human.example.attacker.test/private"),
+    (e: unknown) => e instanceof BrowserPolicyError && e.code === "permission_denied",
+  );
+  await assert.rejects(
+    () => controller.navigate(page.page_id, "https://other.example/private"),
+    (e: unknown) => e instanceof BrowserPolicyError && e.code === "permission_denied",
+  );
+  assert.equal((await tabs.get(page.tab_id))?.url, "https://human.example/project");
+});
+
+test("owner revoking a site blocks already-created agent tab actions", async () => {
+  const tabs = new FakeTabs([humanTab()]);
+  const controller = new ExtensionTabController({ tabs, store: new MemoryStore() });
+  await controller.initialize();
+  await controller.approveOwnedOriginFromTab(1, {
+    ttl_ms: 60_000, operations: ["act", "navigate"],
+  });
+  const page = await controller.createOwnedTab("https://human.example/inside");
+  await controller.revokeOwnedOriginFromTab(1);
+  await assert.rejects(
+    () => controller.authorizeLivePage(page.page_id, "act"),
+    (e: unknown) => e instanceof BrowserPolicyError && e.code === "permission_denied",
+  );
+  await assert.rejects(
+    () => controller.createOwnedTab("https://human.example/inside"),
+    (e: unknown) => e instanceof BrowserPolicyError && e.code === "permission_denied",
+  );
+});
