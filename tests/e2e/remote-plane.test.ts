@@ -174,6 +174,8 @@ for (const authMode of ["static", "oidc"] as const) test(`${authMode} black-box 
         principalFile,
         "--state-dir",
         stateDir,
+        "--browser-bridge",
+        "127.0.0.1:1",
       ],
       {
         cwd: repoRoot,
