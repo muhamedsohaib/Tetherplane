@@ -264,7 +264,9 @@ export class ExtensionTabController {
     this.#approvedOwnedOrigins.delete(origin);
     for (const page of this.#pages.values()) {
       if (page.ownership === "tetherplane" && page.grant?.origin === origin) {
-        this.#record({ ...page, ownership: "human", grant: undefined });
+        this.#record({ page_id: page.page_id, tab_id: page.tab_id,
+          window_id: page.window_id, url: page.url,
+          active: page.active, ownership: "human" });
       }
     }
     await this.#persist();
@@ -283,8 +285,10 @@ export class ExtensionTabController {
       const currentGrant = origin ? this.#approvedOwnedOrigins.get(origin) : undefined;
       if (!live || !origin || approvedOrigin(live.url) !== origin ||
           !currentGrant || currentGrant.expires_at_ms <= this.#now()) {
-        this.#record({ ...page, ownership: "human", grant: undefined,
-          ...(live ? { url: live.url, active: live.active, window_id: live.window_id } : {}) });
+        this.#record({ page_id: page.page_id, tab_id: page.tab_id,
+          window_id: live?.window_id ?? page.window_id,
+          url: live?.url ?? page.url, active: live?.active ?? page.active,
+          ownership: "human" });
         await this.#persist();
         throw new BrowserPolicyError("permission_denied",
           "AI-owned tab left the approved website or the site grant was revoked");
