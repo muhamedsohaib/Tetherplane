@@ -1,7 +1,8 @@
 # Read-only Windows Task Scheduler / process audit. No secrets in output.
 [CmdletBinding()]
 param(
-    [string]$InstallPrefix = (Join-Path $env:LOCALAPPDATA 'Programs\Tetherplane')
+    [string]$InstallPrefix = (Join-Path $env:LOCALAPPDATA 'Programs\Tetherplane'),
+    [string]$RunKeyPath = 'HKCU:\Software\Microsoft\Windows\CurrentVersion\Run'
 )
 $ErrorActionPreference = 'Stop'
 Set-StrictMode -Version Latest
@@ -13,6 +14,26 @@ function TaskScript($action) {
     $m = [regex]::Match([string]$action.Arguments, '(?i)(?:^|\s)-File\s+(?:"([^"]+)"|(\S+))')
     if (-not $m.Success) { return $null }
     return ($m.Groups[1].Value + $m.Groups[2].Value)
+}
+# HKCU autoruns launch independent user-session supervisors, not Scheduled Tasks.
+# Report known registration names and coarse startup properties only. Never
+# serialize Run value data, paths, arguments, usernames, or credential content.
+$autoruns = @()
+if (Test-Path -LiteralPath $RunKeyPath) {
+    $values = Get-ItemProperty -LiteralPath $RunKeyPath -ErrorAction Stop
+    $knownNames = @('TetherplaneModelWorker', 'TetherplaneAuthenticatedBrowserHost')
+    $autoruns = @($values.PSObject.Properties |
+        Where-Object { $_.Name -in $knownNames } |
+        Sort-Object Name |
+        ForEach-Object {
+            $cmd = [string]$_.Value
+            [ordered]@{
+                name = [string]$_.Name
+                usesPowerShell = [bool]($cmd -match '(?i)^\s*(?:"[^"]*(?:powershell|pwsh)\.exe"|(?:[^\s]+[\\/])?(?:powershell|pwsh)\.exe)(?:\s|$)')
+                requestsHiddenWindow = [bool]($cmd -match '(?i)(?:^|\s)-WindowStyle\s+Hidden(?:\s|$)')
+                # The Run value is intentionally never included in output.
+            }
+        })
 }
 $tasks = @(
     Get-ScheduledTask -ErrorAction Stop |
@@ -134,6 +155,7 @@ try {
     configuredArgumentFlags = $argumentFlags
     relayFlagPresent = $relayConfigured
     credentialFileFlagPresent = $credentialFileConfigured
+    autoruns = $autoruns
     tasks = $tasks
     processInventoryAvailable = $processInventoryAvailable
     tetherdProcesses = $agentProcesses
