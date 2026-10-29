@@ -38,6 +38,9 @@ const result = {
   hostAuthenticatedExtension: false,
   browserRpcAuthenticated: false,
   realOwnedTabCreated: false,
+  unapprovedOwnedCreationDenied: false,
+  ownedSiteGrantedLocally: false,
+  ownedSiteRevocationDenied: false,
   verifiedBrowserAction: false,
   humanTabDenied: false,
   sharedOriginPinned: false,
@@ -274,6 +277,29 @@ try {
   assert.ok(handshake.data.operations.includes("create_tab"));
   result.browserRpcAuthenticated = true;
 
+  // Remote ownership must not authorize a site. Only the owner's local
+  // popup can approve an exact website origin for AI-created tabs.
+  const deniedOwned = await rpc(rpcPort, "create_tab", {url: fixtureUrl});
+  assert.equal(deniedOwned.status, "error", "unapproved site opened an AI tab");
+  assert.equal(deniedOwned.error?.code, "permission_denied");
+  result.unapprovedOwnedCreationDenied = true;
+
+  const approvalTab = await evaluatePage(extensionTarget.webSocketDebuggerUrl,
+    "chrome.tabs.create({url:" + JSON.stringify(fixtureUrl) +
+    ",active:false}).then(t=>({id:t.id}))");
+  const approvalTabId = approvalTab.result?.value?.id;
+  assert.ok(Number.isSafeInteger(approvalTabId));
+  await until(async () => {
+    const tab = await evaluatePage(popup.webSocketDebuggerUrl,
+      "chrome.tabs.get(" + approvalTabId + ").then(t=>t.url)");
+    return tab.result?.value?.startsWith(fixtureUrl) === true;
+  }, 10000, "local owner site tab was not ready");
+  const siteApproval = await evaluatePage(popup.webSocketDebuggerUrl,
+    "chrome.runtime.sendMessage({type:'tetherplane.approve_owned_site',tab_id:" +
+    approvalTabId + ",ttl_ms:300000,allow_navigate:true,allow_upload:false})");
+  assert.equal(siteApproval.result?.value?.ok, true, "owner site approval rejected");
+  result.ownedSiteGrantedLocally = true;
+
   const created = await rpc(rpcPort, "create_tab", {url: fixtureUrl});
   assert.equal(created.status, "success", JSON.stringify(created.error));
   const pageId = created.data.page_id;
@@ -368,8 +394,20 @@ try {
   assert.equal(forbidden.error.code, "permission_denied");
   result.humanTabDenied = true;
 
+  const ownedUnshared = await rpc(rpcPort, "create_tab", {url: fixtureUrl});
+  assert.equal(ownedUnshared.status, "success");
+  const siteRevoked = await evaluatePage(popup.webSocketDebuggerUrl,
+    "chrome.runtime.sendMessage({type:'tetherplane.revoke_owned_site',tab_id:" +
+    approvalTabId + "})");
+  assert.equal(siteRevoked.result?.value?.ok, true, "local site revoke failed");
+  const afterSiteRevoke = await rpc(rpcPort, "snapshot", {
+    page_id: ownedUnshared.data.page_id,
+  });
+  assert.equal(afterSiteRevoke.status, "error", "revoked AI site still readable");
+  assert.equal(afterSiteRevoke.error?.code, "permission_denied");
+  result.ownedSiteRevocationDenied = true;
   const closed = await rpc(rpcPort, "close", {page_id: pageId});
-  assert.equal(closed.status, "success");
+  assert.equal(closed.status, "error", "revoked AI tab must no longer allow remote close");
   result.tokenRedacted = ![...seen, ...errors].some(x =>
     x.includes(token) || x.includes(launchToken));
 } catch (error) {
@@ -394,6 +432,8 @@ try {
 if (result.cleaned && result.actualExtensionLoaded && result.hostAuthenticatedExtension &&
     result.pinnedLocalPairing && result.browserRpcAuthenticated && result.realOwnedTabCreated &&
     result.verifiedBrowserAction && result.humanTabDenied &&
+    result.unapprovedOwnedCreationDenied && result.ownedSiteGrantedLocally &&
+    result.ownedSiteRevocationDenied &&
     result.sharedOriginPinned && result.crossOriginNavigationDenied &&
     result.redirectRevoked && result.tokenRedacted &&
     !result.error) result.verdict = "PASS";
