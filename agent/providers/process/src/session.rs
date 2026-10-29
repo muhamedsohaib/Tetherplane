@@ -624,3 +624,42 @@ fn provider_error_message(message: &str, program: &str) -> CapabilityError {
         details: json!({ "program": program }),
     }
 }
+
+
+#[cfg(all(test, windows))]
+mod no_console_tests {
+    use super::*;
+
+    #[tokio::test]
+    async fn non_pty_windows_child_has_no_console_and_preserves_pipes() {
+        // Real Windows kernel32 GetConsoleWindow inside the subprocess, not
+        // a source-text check or a mocked process creation API.
+        let probe = r#"$definition = '[DllImport("kernel32.dll")] public static extern System.IntPtr GetConsoleWindow();'; Add-Type -Namespace TetherplaneTest -Name ConsoleProbe -MemberDefinition $definition; Write-Output ('CONSOLE_HANDLE=' + [TetherplaneTest.ConsoleProbe]::GetConsoleWindow().ToInt64()); Write-Output 'PIPED_IO_OK'"#;
+        let args = vec![
+            "-NoProfile".to_owned(),
+            "-NonInteractive".to_owned(),
+            "-Command".to_owned(),
+            probe.to_owned(),
+        ];
+        let session = ProcessSession::spawn("powershell.exe", &args, false)
+            .await
+            .expect("Windows process provider must launch a piped child");
+        assert!(
+            session
+                .wait_for_exit(Duration::from_secs(35))
+                .await
+                .expect("Windows child exit status must be inspectable"),
+            "Windows child did not exit"
+        );
+        let (stdout, stderr) = session.output_tail(8192);
+        assert!(stderr.trim().is_empty(), "probe error: {stderr}");
+        assert!(
+            stdout.contains("PIPED_IO_OK"),
+            "provider must preserve child stdout: {stdout}"
+        );
+        assert!(
+            stdout.contains("CONSOLE_HANDLE=0"),
+            "RELEASE_NO_GO: non-PTY process.run child attached a physical console: {stdout}"
+        );
+    }
+}
