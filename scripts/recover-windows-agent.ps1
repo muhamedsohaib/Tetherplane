@@ -8,7 +8,8 @@ param(
   [string]$ApprovedAgentSha256,
   [string]$ApprovedLauncherSha256,
   [switch]$Apply,
-  [switch]$RemoveVerifiedLegacy
+  [switch]$RemoveVerifiedLegacy,
+  [switch]$AuthenticatedAcceptanceConfirmed
 )
 $ErrorActionPreference = 'Stop'
 Set-StrictMode -Version Latest
@@ -83,6 +84,15 @@ foreach ($flag in @('--relay-url','--device-id','--device-credential-file')) {
     throw 'STOP_AGENT_CONNECTION_ARGUMENTS_INVALID'
   }
 }
+$relayIndex = [Array]::IndexOf([string[]]$arguments,'--relay-url')
+if ($relayIndex + 1 -ge $arguments.Count) { throw 'STOP_RELAY_URL_MISSING' }
+$relayUri = $null
+if (-not [Uri]::TryCreate([string]$arguments[$relayIndex + 1],
+     [UriKind]::Absolute, [ref]$relayUri) -or
+    $relayUri.Scheme -notin @('wss','https') -or
+    $relayUri.UserInfo) {
+  throw 'STOP_UNAPPROVED_RELAY_SCHEME_OR_CREDENTIALS_IN_URL'
+}
 $credentialIndex = [Array]::IndexOf([string[]]$arguments,'--device-credential-file')
 if ($credentialIndex + 1 -ge $arguments.Count -or
     -not (Test-Path -LiteralPath ([string]$arguments[$credentialIndex+1]) -PathType Leaf)) {
@@ -94,6 +104,16 @@ if ((ActionFile $task) -ine $launcher -or
     [string]$a.Arguments -notmatch '(?i)-NonInteractive' -or
     @($task.Actions).Count -ne 1) {
   throw 'STOP_AGENT_LAUNCH_ACTION_NOT_APPROVED'
+}
+$principal = [Security.Principal.WindowsIdentity]::GetCurrent()
+if ([string]$task.Principal.UserId -notin @($principal.Name, $principal.User.Value)) {
+  throw 'STOP_TASK_PRINCIPAL_MISMATCH'
+}
+if ([string]$task.Settings.MultipleInstances -ne 'IgnoreNew') {
+  throw 'STOP_TASK_MAY_LAUNCH_DUPLICATE_INSTANCES'
+}
+if ($RemoveVerifiedLegacy -and -not $AuthenticatedAcceptanceConfirmed) {
+  throw 'STOP_REMOTE_AUTHENTICATED_ACCEPTANCE_NOT_CONFIRMED'
 }
 $running = @(LiveAgents)
 if ($running.Count -gt 1 -or
