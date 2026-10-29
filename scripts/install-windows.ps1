@@ -89,6 +89,22 @@ if ($InstallScheduledTask) {
         $agentArgs -notcontains "--device-credential-file") {
         throw "scheduled agent requires relay identity and a credential-file reference"
     }
+    # Presence of three flags is insufficient: duplicates and missing values
+    # can make a scheduled native agent exit after the old install is replaced.
+    # Inspect flags only; never open or display the credential-file contents.
+    foreach ($requiredFlag in @("--relay-url", "--device-id", "--device-credential-file")) {
+        $positions = @()
+        for ($index = 0; $index -lt $agentArgs.Count; $index++) {
+            if ($agentArgs[$index] -ceq $requiredFlag) {
+                $positions += $index
+            }
+        }
+        if ($positions.Count -ne 1 -or $positions[0] -ge ($agentArgs.Count - 1) -or
+            [string]::IsNullOrWhiteSpace([string]$agentArgs[$positions[0] + 1]) -or
+            [string]$agentArgs[$positions[0] + 1] -like "--*") {
+            throw "SCHEDULED_AGENT_PREFLIGHT_NO_GO: incomplete or duplicate remote device argument"
+        }
+    }
 }
 
 if (Test-Path -LiteralPath $install) {
