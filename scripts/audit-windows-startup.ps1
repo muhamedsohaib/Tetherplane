@@ -39,7 +39,8 @@ $tasks = @(
                 else { 'unknown' }
             nativeArgumentsFileOnly = [bool]($a.Count -eq 1 -and
                 [IO.Path]::GetFileName([string]$a[0].Execute) -ieq 'tetherd.exe' -and
-                [string]$a[0].Arguments -match '^\s*--arguments-file\s+"[^"]+"\s* = [bool]($a.Count -eq 1 -and
+                [string]$a[0].Arguments -match '^\s*--arguments-file\s+"[^"]+"\s*$')
+            requestsHiddenWindow = [bool]($a.Count -eq 1 -and
                 [string]$a[0].Arguments -match '(?i)(?:^|\s)-WindowStyle\s+Hidden(?:\s|$)')
             requestedNonInteractive = [bool]($a.Count -eq 1 -and
                 [string]$a[0].Arguments -match '(?i)(?:^|\s)-NonInteractive(?:\s|$)')
