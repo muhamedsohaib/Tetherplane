@@ -68,6 +68,29 @@ foreach ($required in @(
     }
 }
 
+$agentArgs = $null
+if ($InstallScheduledTask) {
+    if (-not $AgentArgumentsFile) {
+        throw "-InstallScheduledTask requires -AgentArgumentsFile"
+    }
+    $agentArgsSource = (Resolve-Path -LiteralPath $AgentArgumentsFile).Path
+    $agentArgs = Get-Content -LiteralPath $agentArgsSource -Raw | ConvertFrom-Json
+    if (-not ($agentArgs -is [System.Array])) {
+        throw "AgentArgumentsFile must contain a JSON array of tetherd arguments"
+    }
+    if (@($agentArgs | Where-Object { $_ -isnot [string] }).Count -ne 0) {
+        throw "AgentArgumentsFile must contain only string arguments"
+    }
+    if ($agentArgs.Count -eq 0 -or
+        $agentArgs -contains "--stdio-rpc" -or
+        $agentArgs -contains "--arguments-file" -or
+        $agentArgs -notcontains "--relay-url" -or
+        $agentArgs -notcontains "--device-id" -or
+        $agentArgs -notcontains "--device-credential-file") {
+        throw "scheduled agent requires relay identity and a credential-file reference"
+    }
+}
+
 if (Test-Path -LiteralPath $install) {
     $existing = @(Get-ChildItem -LiteralPath $install -Force -ErrorAction SilentlyContinue)
     if ($existing.Count -gt 0 -and -not $Force) {
@@ -137,25 +160,6 @@ New-Item -ItemType Directory -Force -Path $configDir | Out-Null
 
 $taskName = $null
 if ($InstallScheduledTask) {
-    if (-not $AgentArgumentsFile) {
-        throw "-InstallScheduledTask requires -AgentArgumentsFile"
-    }
-    $agentArgsSource = (Resolve-Path -LiteralPath $AgentArgumentsFile).Path
-    $agentArgs = Get-Content -LiteralPath $agentArgsSource -Raw | ConvertFrom-Json
-    if (-not ($agentArgs -is [System.Array])) {
-        throw "AgentArgumentsFile must contain a JSON array of tetherd arguments"
-    }
-    if (@($agentArgs | Where-Object { $_ -isnot [string] }).Count -ne 0) {
-        throw "AgentArgumentsFile must contain only string arguments"
-    }
-    if ($agentArgs.Count -eq 0 -or
-        $agentArgs -contains "--stdio-rpc" -or
-        $agentArgs -contains "--arguments-file" -or
-        $agentArgs -notcontains "--relay-url" -or
-        $agentArgs -notcontains "--device-id" -or
-        $agentArgs -notcontains "--device-credential-file") {
-        throw "scheduled agent requires relay identity and a credential-file reference"
-    }
     $argsPath = Join-Path $configDir "agent-args.json"
     $json = ConvertTo-Json -InputObject $agentArgs -Depth 4 -Compress
     [IO.File]::WriteAllText($argsPath, $json, [Text.UTF8Encoding]::new($false))
