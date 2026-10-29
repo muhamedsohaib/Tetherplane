@@ -34,6 +34,21 @@ jobs:
         shell: pwsh
         run: ./tests/release/windows-install-prefix-ownership.ps1
 
+      - name: Reject foreign uninstaller task ownership (disposable Windows)
+        if: runner.os == 'Windows'
+        shell: pwsh
+        run: ./tests/release/windows-uninstall-task-ownership.ps1
+
+      - name: Preserve unrelated model-worker autorun entries
+        if: runner.os == 'Windows'
+        shell: pwsh
+        run: ./tests/release/windows-uninstall-isolation.ps1
+
+      - name: Reject state purge before destructive uninstall
+        if: runner.os == 'Windows'
+        shell: pwsh
+        run: ./tests/release/windows-uninstall-state-preflight.ps1
+
       - name: Install Rust toolchain
         uses: dtolnay/rust-toolchain@stable
         with:
