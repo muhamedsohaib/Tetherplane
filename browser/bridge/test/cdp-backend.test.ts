@@ -282,6 +282,7 @@ test("CDP semantic observation preserves frame and document identity", async () 
       frame_id: "child",
       document_id: "loader-child",
       parent_frame_id: "top",
+      url: "https://fixture.example/frame",
     },
   ];
   control.observations.set(
