@@ -97,6 +97,42 @@ try {
         throw "packaged manifest.json is not directly parseable UTF-8 JSON"
     }
 
+    # Verify bytes of the REAL Windows package produced in this CI run,
+    # rather than relying only on the verifier's inert unit-test fixtures.
+    # This job generates its own expected digest: self-consistency ONLY.
+    $digestScript = Join-Path $repo "scripts\release\windows-candidate-digests.mjs"
+    if (-not (Test-Path -LiteralPath $digestScript -PathType Leaf)) {
+        throw "read-only Windows candidate byte verifier is absent"
+    }
+    $sourceCommit = (& git -C $repo rev-parse HEAD).Trim()
+    if ($LASTEXITCODE -ne 0 -or $sourceCommit -cnotmatch '^[0-9a-f]{40}$') {
+        throw "could not establish checked-out commit for staged candidate"
+    }
+    $recordLines = @(& node $digestScript record $stage $sourceCommit)
+    if ($LASTEXITCODE -ne 0 -or $recordLines.Count -eq 0) {
+        throw "RELEASE_NO_GO: byte verifier rejected actual Windows package"
+    }
+    $inventoryPath = Join-Path $root "candidate-inventory.json"
+    $inventoryText = ($recordLines -join [char]10) + [char]10
+    [IO.File]::WriteAllText($inventoryPath, $inventoryText, [Text.UTF8Encoding]::new($false))
+    $recordSha = (Get-FileHash -LiteralPath $inventoryPath -Algorithm SHA256).Hash.ToLowerInvariant()
+    $verifiedLines = @(& node $digestScript verify $stage $sourceCommit $inventoryPath $recordSha)
+    if ($LASTEXITCODE -ne 0 -or $verifiedLines.Count -eq 0) {
+        throw "RELEASE_NO_GO: actual Windows package failed byte-inventory verification"
+    }
+    $byteVerdict = ($verifiedLines -join [char]10) | ConvertFrom-Json
+    if ($byteVerdict.byte_identity -cne "MATCH" -or
+        $byteVerdict.source_commit -cne $sourceCommit -or
+        $byteVerdict.build_provenance -cne "UNVERIFIED" -or
+        $byteVerdict.authenticode -cne "UNVERIFIED" -or
+        $byteVerdict.windows_acceptance -cne "NOT_RUN" -or
+        $byteVerdict.release -cne "NO_GO") {
+        throw "RELEASE_NO_GO: candidate byte verdict makes an unsupported provenance or release claim"
+    }
+    $packagedConsoleHash = (Get-FileHash -LiteralPath (Join-Path $stage "bin\tetherd.exe") -Algorithm SHA256).Hash
+    $packagedWindowlessHash = (Get-FileHash -LiteralPath (Join-Path $stage "bin\tetherd-agentw.exe") -Algorithm SHA256).Hash
+    Write-Output "WINDOWS_REAL_PACKAGE_BYTE_EVIDENCE_OK"
+
     $stagedInstallScript = Get-Content -LiteralPath (Join-Path $stage "install-windows.ps1") -Raw
     if ($stagedInstallScript -match 'New-ScheduledTaskAction\s+-Execute\s+"powershell.exe"') {
         throw "scheduled agent still uses an orphan-prone PowerShell launcher"
@@ -160,6 +196,12 @@ try {
     }
 
     $installedTetherd = Join-Path $install "bin\tetherd.exe"
+    $installedWindowless = Join-Path $install "bin\tetherd-agentw.exe"
+    if ((Get-FileHash -LiteralPath $installedTetherd -Algorithm SHA256).Hash -cne $packagedConsoleHash -or
+        (Get-FileHash -LiteralPath $installedWindowless -Algorithm SHA256).Hash -cne $packagedWindowlessHash) {
+        throw "RELEASE_NO_GO: installed agent binaries differ from recorded Windows package"
+    }
+    Write-Output "WINDOWS_INSTALLED_AGENT_BYTE_IDENTITY_OK"
     $stdioSubsystem = Get-TetherplanePeSubsystem -Executable $installedTetherd
     if ($stdioSubsystem -ne 3) {
         throw "RELEASE_NO_GO: tetherd.exe must remain a console-subsystem executable for existing stdio and CLI callers"
