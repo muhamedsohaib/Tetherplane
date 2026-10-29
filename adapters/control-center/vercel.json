@@ -9,7 +9,8 @@
       "test/windows-no-console-agent-20261029": false,
       "fix/windows-native-windowless-agent-20261029": false,
       "test/windows-force-prefix-ownership-20261029": false,
-      "test/windows-uninstall-task-ownership-20261029": false
+      "test/windows-uninstall-task-ownership-20261029": false,
+      "test/windows-agent-args-preflight-20261029": false
     }
   }
 }

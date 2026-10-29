@@ -109,6 +109,54 @@ try {
         throw "RELEASE_NO_GO: upgraded owned install did not receive a new receipt"
     }
     Write-Output "WINDOWS_OWNED_PREFIX_FORCE_UPGRADE_OK"
+
+    # A malformed scheduled-agent argument file must be rejected BEFORE the
+    # installer deletes an otherwise valid, task-free previous installation.
+    $preflightInstall = Join-Path $root "preflight-install"
+    $preflightState = Join-Path $root "preflight-state"
+    $preflightArgs = Join-Path $root "invalid-agent-args.json"
+    $preflightTask = "Tetherplane CI-" + [guid]::NewGuid().ToString("N")
+    foreach ($relative in @(
+        "config\install.json",
+        "bin\tetherd.exe",
+        "bin\tetherd-agentw.exe",
+        "manifest.json",
+        "uninstall-windows.ps1"
+    )) {
+        $file = Join-Path $preflightInstall $relative
+        New-Item -ItemType Directory -Force -Path (Split-Path -Parent $file) | Out-Null
+        [IO.File]::WriteAllText($file, "owned-before-install")
+    }
+    $preflightMarker = Join-Path $preflightInstall "previous-content.txt"
+    [IO.File]::WriteAllText($preflightMarker, "PRESERVE-UNTIL-VALIDATED")
+    [ordered]@{
+        install_prefix = $preflightInstall
+        state_dir = $preflightState
+        state_created_by_installer = $false
+        scheduled_task = $null
+    } | ConvertTo-Json | Set-Content -LiteralPath (Join-Path $preflightInstall "config\install.json")
+    $receiptBefore = Get-Content -LiteralPath (Join-Path $preflightInstall "config\install.json") -Raw
+    [IO.File]::WriteAllText($preflightArgs, '["--stdio-rpc"]')
+    $preflightRejected = $false
+    try {
+        & $installer -PackagePath $package -InstallPrefix $preflightInstall -StateDir $preflightState -Force -InstallScheduledTask -AgentTaskName $preflightTask -AgentArgumentsFile $preflightArgs
+    }
+    catch {
+        if ([string]$_.Exception.Message -match "scheduled agent requires relay identity") {
+            $preflightRejected = $true
+        } else { throw }
+    }
+    if (-not $preflightRejected) {
+        throw "RELEASE_NO_GO: invalid scheduled-agent arguments were accepted"
+    }
+    if (-not (Test-Path -LiteralPath $preflightMarker -PathType Leaf) -or
+        (Get-Content -LiteralPath $preflightMarker -Raw) -ne "PRESERVE-UNTIL-VALIDATED" -or
+        (Get-Content -LiteralPath (Join-Path $preflightInstall "config\install.json") -Raw) -cne $receiptBefore -or
+        (Test-Path -LiteralPath $preflightState) -or
+        (Get-ScheduledTask -TaskName $preflightTask -ErrorAction SilentlyContinue)) {
+        throw "RELEASE_NO_GO: invalid scheduled-agent arguments deleted a previous installation before preflight"
+    }
+    Write-Output "WINDOWS_AGENT_ARGS_FORCE_PREDELETE_REJECTED_OK"
 }
 finally {
     Remove-Item -LiteralPath $root -Recurse -Force -ErrorAction SilentlyContinue
