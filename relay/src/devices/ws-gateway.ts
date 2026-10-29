@@ -19,7 +19,10 @@ const DEVICE_ID_HEADER = "x-tetherplane-device-id";
 type LiveDevice = {
   socket: WebSocket;
   connection: DeviceConnectionHandle;
+  awaitingPong: boolean;
 };
+
+const DEFAULT_HEARTBEAT_INTERVAL_MS = 15_000;
 
 export class DeviceWebSocketGateway {
   readonly #registry: DeviceRegistry;
@@ -27,6 +30,8 @@ export class DeviceWebSocketGateway {
   readonly #server = new WebSocketServer({ noServer: true });
   readonly #live = new Map<string, LiveDevice>();
   #attachedServer: Server | null = null;
+  #heartbeatTimer: NodeJS.Timeout | null = null;
+  readonly #heartbeatIntervalMs: number;
   #upgradeHandler:
     | ((request: IncomingMessage, socket: any, head: Buffer) => void)
     | null = null;
@@ -34,9 +39,16 @@ export class DeviceWebSocketGateway {
   constructor(options: {
     registry: DeviceRegistry;
     router: DeviceRouter;
+    heartbeatIntervalMs?: number;
   }) {
     this.#registry = options.registry;
     this.#router = options.router;
+    this.#heartbeatIntervalMs =
+      options.heartbeatIntervalMs ?? DEFAULT_HEARTBEAT_INTERVAL_MS;
+    if (!Number.isSafeInteger(this.#heartbeatIntervalMs) ||
+        this.#heartbeatIntervalMs < 10) {
+      throw new Error("device heartbeat interval must be at least 10 ms");
+    }
   }
 
   attach(server: Server, pathname = "/device"): void {
@@ -49,6 +61,11 @@ export class DeviceWebSocketGateway {
       void this.#handleUpgrade(request, socket, head, pathname);
     };
     server.on("upgrade", this.#upgradeHandler);
+    this.#heartbeatTimer = setInterval(
+      () => this.#checkHeartbeats(),
+      this.#heartbeatIntervalMs,
+    );
+    this.#heartbeatTimer.unref();
   }
 
   disconnectDevice(deviceId: string): void {
@@ -63,6 +80,8 @@ export class DeviceWebSocketGateway {
   }
 
   async close(): Promise<void> {
+    if (this.#heartbeatTimer) clearInterval(this.#heartbeatTimer);
+    this.#heartbeatTimer = null;
     if (this.#attachedServer && this.#upgradeHandler) {
       this.#attachedServer.off("upgrade", this.#upgradeHandler);
     }
@@ -76,6 +95,33 @@ export class DeviceWebSocketGateway {
     await new Promise<void>((resolve) => {
       this.#server.close(() => resolve());
     });
+  }
+
+  // Registration is not liveness. Poll only authenticated sockets, and
+  // disconnect the old router generation when its reader stops answering
+  // WebSocket Ping. Never cancel, resend or replay an uncertain mutation.
+  #checkHeartbeats(): void {
+    for (const [deviceId, live] of this.#live) {
+      if (live.socket.readyState !== WebSocket.OPEN || live.awaitingPong) {
+        this.#evictUnresponsiveSocket(deviceId, live);
+        continue;
+      }
+      live.awaitingPong = true;
+      try {
+        live.socket.ping();
+      } catch {
+        this.#evictUnresponsiveSocket(deviceId, live);
+      }
+    }
+  }
+
+  #evictUnresponsiveSocket(deviceId: string, live: LiveDevice): void {
+    if (this.#live.get(deviceId)?.socket !== live.socket) return;
+    this.#live.delete(deviceId);
+    live.connection.disconnect();
+    // terminate, rather than waiting indefinitely for a close handshake
+    // from the socket whose WebSocket reader is no longer responsive.
+    live.socket.terminate();
   }
 
   async #handleUpgrade(
@@ -149,6 +195,12 @@ export class DeviceWebSocketGateway {
     this.#live.set(input.deviceId, {
       socket: input.socket,
       connection,
+      awaitingPong: false,
+    });
+
+    input.socket.on("pong", () => {
+      const current = this.#live.get(input.deviceId);
+      if (current?.socket === input.socket) current.awaitingPong = false;
     });
 
     input.socket.on("message", (raw: RawData) => {
