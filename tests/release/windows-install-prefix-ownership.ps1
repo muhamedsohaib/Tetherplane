@@ -157,6 +157,49 @@ try {
         throw "RELEASE_NO_GO: invalid scheduled-agent arguments deleted a previous installation before preflight"
     }
     Write-Output "WINDOWS_AGENT_ARGS_FORCE_PREDELETE_REJECTED_OK"
+
+    # Two superficially present flag sets that must not be treated as valid:
+    # duplicate device identity and a URL flag followed directly by another
+    # flag instead of a value. This uses a REAL installed-file replacement
+    # path, while replacing only the external task-action creation boundary.
+    function New-ScheduledTaskAction {
+        param([string]$Execute,[string]$Argument)
+        throw "RELEASE_NO_GO: invalid scheduled-agent arguments reached task creation"
+    }
+    $invalidRemoteConfigurations = @(
+        [pscustomobject]@{
+            label = "duplicate-device-id"
+            json = '["--relay-url","wss://localhost.invalid/device","--device-id","Leno","--device-id","Leno","--device-credential-file","C:\\synthetic.credential"]'
+        },
+        [pscustomobject]@{
+            label = "missing-relay-url-value"
+            json = '["--relay-url","--device-id","Leno","--device-credential-file","C:\\synthetic.credential"]'
+        }
+    )
+    foreach ($case in $invalidRemoteConfigurations) {
+        [IO.File]::WriteAllText($preflightArgs, [string]$case.json)
+        $rejectedBeforeTask = $false
+        try {
+            & $installer -PackagePath $package -InstallPrefix $preflightInstall -StateDir $preflightState -Force -InstallScheduledTask -AgentTaskName $preflightTask -AgentArgumentsFile $preflightArgs
+        } catch {
+            if ([string]$_.Exception.Message -match "SCHEDULED_AGENT_PREFLIGHT_NO_GO|incomplete or duplicate remote device argument") {
+                $rejectedBeforeTask = $true
+            } else {
+                throw ("RELEASE_NO_GO: invalid remote configuration " + $case.label + " reached a later install or task creation step")
+            }
+        }
+        if (-not $rejectedBeforeTask) {
+            throw ("RELEASE_NO_GO: invalid remote configuration " + $case.label + " was accepted")
+        }
+        if (-not (Test-Path -LiteralPath $preflightMarker -PathType Leaf) -or
+            (Get-Content -LiteralPath $preflightMarker -Raw) -cne "PRESERVE-UNTIL-VALIDATED" -or
+            (Get-Content -LiteralPath (Join-Path $preflightInstall "config\install.json") -Raw) -cne $receiptBefore -or
+            (Test-Path -LiteralPath $preflightState) -or
+            (Get-ScheduledTask -TaskName $preflightTask -ErrorAction SilentlyContinue)) {
+            throw ("RELEASE_NO_GO: invalid " + $case.label + " changed prior install or created task/state")
+        }
+        Write-Output ("WINDOWS_INVALID_AGENT_FLAG_PREFLIGHT_REJECTED_OK " + $case.label)
+    }
 }
 finally {
     Remove-Item -LiteralPath $root -Recurse -Force -ErrorAction SilentlyContinue
