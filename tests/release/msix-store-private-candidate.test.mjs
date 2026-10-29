@@ -19,13 +19,34 @@ function identityOf(xml) {
   return xml.match(/<Identity\b[^>]*\/>/s)?.[0] ?? null;
 }
 
+// Windows 10/11 Store MSIX uses four numeric parts. The Store reserves the
+// fourth part as zero, and a zero major would fail Store version admission.
+// Store package version is independent of the Rust/Node 0.1.0 product version.
+function isValidStorePackageVersion(value) {
+  const parts = value?.split(".") ?? [];
+  return parts.length === 4
+    && parts.every((part) => /^\d{1,5}$/.test(part) && Number(part) <= 65535)
+    && Number(parts[0]) > 0
+    && Number(parts[3]) === 0;
+}
+
+test("Store version is valid and remains pinned across manifest and operator packaging", () => {
+  const version = attr(identityOf(manifest), "Version");
+  assert.equal(version, "1.0.0.0");
+  assert.equal(isValidStorePackageVersion(version), true);
+  assert.match(builder, /\$version = '1\.0\.0\.0'/);
+  for (const invalid of ["0.1.0.0", "1.0.0.1", "65536.0.0.0", "1.65536.0.0", "1.0.0", "1.-1.0.0", "1.0.0.65536"]) {
+    assert.equal(isValidStorePackageVersion(invalid), false, invalid);
+  }
+});
+
 test("Partner Center reserved identity, publisher and Store package version are exact", () => {
   const identity = identityOf(manifest);
   assert.ok(identity, "package identity missing");
   assert.equal(attr(identity, "Name"), "ARCUSLabs.Tetherplane");
   assert.equal(attr(identity, "Publisher"), "CN=6CCCFC81-2F0A-49BE-9027-A03BCF427F43");
   assert.equal(attr(identity, "ProcessorArchitecture"), "x64");
-  assert.equal(attr(identity, "Version"), "0.1.0.0");
+  assert.equal(attr(identity, "Version"), "1.0.0.0");
   assert.match(manifest, /<PublisherDisplayName>ARCUS Labs<\/PublisherDisplayName>/);
   assert.match(manifest, /<DisplayName>Tetherplane<\/DisplayName>/);
   assert.match(manifest, /<Resource Language="en-us"/);

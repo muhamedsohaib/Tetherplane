@@ -10,11 +10,13 @@
 | `Package/Identity/Publisher` | `CN=6CCCFC81-2F0A-49BE-9027-A03BCF427F43` |
 | `PublisherDisplayName` | `ARCUS Labs` |
 | `Identity/ProcessorArchitecture` | `x64` |
-| First submitted version proposed | `0.1.0.0` |
+| First Store MSIX package version proposed (not yet uploaded) | `1.0.0.0` |
 | Desktop minimum OS inherited from reviewed prototype | `10.0.22000.0` (Windows 11) |
 | Resource language | `en-us` |
 
 Partner Center owner reports an **Active Individual** developer enrollment with public publisher name **ARCUS Labs**, a reserved product name **Tetherplane**, private audience group **Tetherplane Internal Testers**, direct-link-only discoverability, while Pricing, Properties and Age ratings were shown Complete. Packages are Not started, and the English Store listing (including its required description and genuine screenshot) was not confirmed saved. Group membership and region eligibility should be verified before delivery; publisher-name/account-policy eligibility remains a separate Partner Center review.
+
+The original `0.1.0.0` Store-package version proposal was corrected to `1.0.0.0` for Microsoft Store four-part package-version admission (nonzero major, reserved fourth component `0`). This changes **only the proposed MSIX package version**; it does not rebrand Tetherplane, change the application/runtime's `0.1.0` version, change the existing reserved Package Name/Publisher, modify a Partner Center submission, or claim a certified package. Before any submission, independently verify the exact version shown in Partner Center; no package was uploaded in this branch. See https://learn.microsoft.com/en-us/windows/apps/publish/publish-your-app/package-version-numbering .
 
 The product identity is taken from the owner's actual Product Identity screenshot, **not generated or inferred**. It is public package metadata; it is not an OAuth principal, a new relay account, a device credential, or an authorization grant.
 

@@ -20,7 +20,7 @@ Set-StrictMode -Version Latest
 $identity = 'ARCUSLabs.Tetherplane'
 $publisher = 'CN=6CCCFC81-2F0A-49BE-9027-A03BCF427F43'
 $displayPublisher = 'ARCUS Labs'
-$version = '0.1.0.0'
+$version = '1.0.0.0'
 $report = [ordered]@{
     schema = 'tetherplane.store-private-candidate.v1'
     mode = if ($CiValidationOnly) { 'CI_SYNTHETIC_PREVIEW_NOT_SUBMITTABLE' } else { 'OWNER_REVIEW_UNSIGNED_CANDIDATE' }
