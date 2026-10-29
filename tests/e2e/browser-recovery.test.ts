@@ -281,13 +281,10 @@ test(
         },
       });
       assert.equal(lost.isError, true);
-      assert.ok(
-        ["invalid_arguments", "stale_reference"].includes(
-          String(
-            (structured(lost).error as Record<string, unknown>)
-              .code,
-          ),
-        ),
+      assert.equal(
+        (structured(lost).error as Record<string, unknown>).code,
+        "permission_denied",
+        "lost and unshared page identities must not disclose their existence",
       );
       assert.equal(backend.mutationCount, 0);
 
