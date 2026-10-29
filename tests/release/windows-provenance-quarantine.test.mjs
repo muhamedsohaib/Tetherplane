@@ -1,7 +1,7 @@
 import assert from "node:assert/strict";
 import { readFileSync } from "node:fs";
 import test from "node:test";
-const workflow = readFileSync(new URL("../../.github/workflows/windows-candidate-provenance.yml", import.meta.url), "utf8");
+const workflow = readFileSync(new URL("../../.github/workflows/windows-candidate-provenance.yml", import.meta.url), "utf8");.replace(/\r\n/g, "\n");
 
 function check(w) {
   assert.match(w, /^on:\n  push:\n    branches:\n      - test\/windows-provenance-quarantine-20261030$/m);
@@ -26,6 +26,10 @@ function check(w) {
   assert.doesNotMatch(verify, /id-token: write|attestations: write|contents: write/);
 }
 test("isolate unsigned attestation to authorized test branch", () => check(workflow));
+test("Windows CRLF checkout is normalized before contract matching", () => {
+  const asWindows = workflow.replace(/\n/g, "\r\n");
+  assert.doesNotThrow(() => check(asWindows.replace(/\r\n/g, "\n")));
+});
 test("reject expanded triggers, release capability and excess retention", () => {
   const mutations = [
     w => w.replace("      - test/windows-provenance-quarantine-20261030", "      - main"),
