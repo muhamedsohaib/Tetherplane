@@ -70,6 +70,10 @@ jobs:
         with:
           node-version: 22
 
+      - name: Test Windows candidate byte evidence on Node 22
+        if: runner.os == 'Windows'
+        run: node --test tests/release/windows-candidate-digests.test.mjs
+
       - name: Enable Corepack
         run: corepack enable
 
