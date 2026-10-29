@@ -19,6 +19,10 @@ class FakeController {
         url: "https://fixture.example/editor",
         active: false,
         ownership: "tetherplane" as const,
+        grant: {
+          operations: ["upload" as const, "downloads" as const, "diagnostics" as const],
+          origin: "https://fixture.example", expires_at_ms: Date.now() + 60_000,
+        },
       },
     ],
     [
@@ -38,6 +42,11 @@ class FakeController {
     return [...this.records.values()].map((record) =>
       structuredClone(record),
     );
+  }
+  async authorizeLivePage(pageId: string) {
+    const page = this.records.get(pageId);
+    if (!page) throw new Error("missing");
+    return structuredClone(page);
   }
 }
 
