@@ -64,6 +64,7 @@ for (const authMode of ["static", "oidc"] as const) test(`${authMode} black-box 
         allowed_capabilities: [
           "device.status",
           "device.capabilities",
+          "process.run",
           "browser.status",
           "filesystem.read",
           "filesystem.write",
@@ -114,7 +115,7 @@ for (const authMode of ["static", "oidc"] as const) test(`${authMode} black-box 
       },
     ]),
     allowInsecureLocalhost: true,
-    routeTimeoutMs: 3_000,
+    routeTimeoutMs: 5_000,
   });
   const address = await relay.listen({
     host: "127.0.0.1",
@@ -124,6 +125,7 @@ for (const authMode of ["static", "oidc"] as const) test(`${authMode} black-box 
   let child: ChildProcess | null = null;
   let clientA: Client | null = null;
   let clientB: Client | null = null;
+  let controlClient: Client | null = null;
 
   try {
     const started = await jsonRequest(
@@ -205,6 +207,7 @@ for (const authMode of ["static", "oidc"] as const) test(`${authMode} black-box 
       tokenB,
       "remote-account-b",
     );
+    controlClient = await connectRemoteClient(address.mcpUrl, tokenA, "remote-control-a");
 
     const coreStatus = await clientA.callTool({
       name: "device",
@@ -230,6 +233,40 @@ for (const authMode of ["static", "oidc"] as const) test(`${authMode} black-box 
     });
     assert.equal(browserDenied.isError, true);
     assert.equal(errorCode(browserDenied), "capability_unavailable");
+
+    // RED: a pending authorized data-plane invocation must not monopolize
+    // the device WebSocket reader or an independent authenticated status call.
+    const holdMarker = path.join(allowedRoot, "work-began.txt");
+    const holdScript =
+      `require("node:fs").writeFileSync(${JSON.stringify(holdMarker)}, "ready"); setTimeout(() => {}, 3400)`;
+    const heldWork = clientA.callTool({
+      name: "process",
+      arguments: {
+        op: "run",
+        device: "Leno",
+        args: { program: process.execPath, args: ["-e", holdScript], wait_ms: 4_500 },
+      },
+    });
+    await until(async () => {
+      try {
+        return (await readFile(holdMarker, "utf8")) === "ready";
+      } catch {
+        return false;
+      }
+    }, 4_000, () => childStateError(child, stderr));
+    const controlStarted = Date.now();
+    const independentStatus = await controlClient.callTool({
+      name: "device",
+      arguments: { op: "status", device: "Leno" },
+    });
+    const statusElapsedMs = Date.now() - controlStarted;
+    const heldResult = await heldWork;
+    assert.equal(heldResult.isError, undefined, "test work must be authorized");
+    assert.equal(independentStatus.isError, undefined, "status must remain callable");
+    assert.ok(
+      statusElapsedMs < 1_500,
+      `RELEASE_NO_GO: status blocked behind unrelated running process for ${statusElapsedMs}ms`,
+    );
 
     const remoteFile = path.join(allowedRoot, "remote.txt");
     const writeResult = await clientA.callTool({
@@ -400,6 +437,7 @@ for (const authMode of ["static", "oidc"] as const) test(`${authMode} black-box 
       "revoked tetherd must fail future relay authentication",
     );
   } finally {
+    await controlClient?.close().catch(() => undefined);
     await clientB?.close().catch(() => undefined);
     await clientA?.close().catch(() => undefined);
     if (child && child.exitCode === null) {
