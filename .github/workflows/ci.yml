@@ -32,7 +32,9 @@ jobs:
       - name: Windows startup ownership and single-instance smoke
         if: runner.os == 'Windows'
         shell: pwsh
-        run: ./tests/release/windows-startup-audit.ps1
+        run: |
+          ./tests/release/windows-startup-audit.ps1
+          ./tests/release/windows-agent-recovery-guard.ps1
 
       - name: Install Rust toolchain
         uses: dtolnay/rust-toolchain@stable
