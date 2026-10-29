@@ -81,6 +81,19 @@ export type CdpCapabilities = {
   unavailable_operations: string[];
 };
 
+export type CdpSiteOperation =
+  | "pages" | "create_tab" | "snapshot" | "navigate" | "close"
+  | "act" | "upload" | "downloads" | "diagnostics";
+
+/**
+ * Trusted local owner authorization only: never accept or construct this
+ * callback from authenticated model RPC arguments. Absence means deny.
+ */
+export type CdpSiteAuthorizer = (
+  operation: CdpSiteOperation,
+  url: string,
+) => void;
+
 export class CdpBackendError extends Error {
   readonly code: string;
 
@@ -93,14 +106,17 @@ export class CdpBackendError extends Error {
 
 export class CdpBrowserBackend implements BrowserBridgeBackend {
   readonly #control: CdpControl;
-  readonly #ownedTargets = new Set<string>();
+  readonly #ownedTargets = new Map<string, string>();
+  readonly #authorizeSite: CdpSiteAuthorizer | undefined;
   readonly #pollIntervalMs: number;
 
   constructor(options: {
     control: CdpControl;
     pollIntervalMs?: number;
+    authorizeSite?: CdpSiteAuthorizer;
   }) {
     this.#control = options.control;
+    this.#authorizeSite = options.authorizeSite;
     this.#pollIntervalMs = normalizePollInterval(
       options.pollIntervalMs,
     );
@@ -136,7 +152,9 @@ export class CdpBrowserBackend implements BrowserBridgeBackend {
       .filter(
         (target) =>
           target.type === "page" &&
-          this.#ownedTargets.has(target.target_id),
+          this.#ownedTargets.has(target.target_id) &&
+          this.#isAuthorized("pages", target.url,
+            this.#ownedTargets.get(target.target_id)),
       )
       .map((target) => ({
         page_id: pageId(target.target_id),
@@ -150,8 +168,9 @@ export class CdpBrowserBackend implements BrowserBridgeBackend {
 
   async createTab(url: string): Promise<CdpPageInfo> {
     requireHttpUrl(url);
+    this.#requireSitePermission("create_tab", url);
     const targetId = await this.#control.createTarget(url, true);
-    this.#ownedTargets.add(targetId);
+    this.#ownedTargets.set(targetId, new URL(url).origin);
     return {
       page_id: pageId(targetId),
       target_id: targetId,
@@ -167,8 +186,10 @@ export class CdpBrowserBackend implements BrowserBridgeBackend {
     url: string,
   ): Promise<CdpPageInfo> {
     requireHttpUrl(url);
-    const targetId = this.#requireOwnedTarget(pageIdValue);
+    const targetId = await this.#requireAuthorizedTarget(pageIdValue, "navigate");
+    this.#requireSitePermission("navigate", url, this.#ownedTargets.get(targetId));
     await this.#control.navigateTarget(targetId, url);
+    await this.#requireAuthorizedTarget(pageIdValue, "navigate");
     return {
       page_id: pageIdValue,
       target_id: targetId,
@@ -180,7 +201,7 @@ export class CdpBrowserBackend implements BrowserBridgeBackend {
   }
 
   async close(pageIdValue: string): Promise<void> {
-    const targetId = this.#requireOwnedTarget(pageIdValue);
+    const targetId = await this.#requireAuthorizedTarget(pageIdValue, "close");
     await this.#control.closeTarget(targetId);
     this.#ownedTargets.delete(targetId);
   }
@@ -188,7 +209,7 @@ export class CdpBrowserBackend implements BrowserBridgeBackend {
   async observe(
     pageIdValue: string,
   ): Promise<BrowserObservedState> {
-    const targetId = this.#requireOwnedTarget(pageIdValue);
+    const targetId = await this.#requireAuthorizedTarget(pageIdValue, "snapshot");
     const frames = await this.#control.frames(targetId);
     if (frames.length === 0) {
       throw new CdpBackendError(
@@ -255,7 +276,7 @@ export class CdpBrowserBackend implements BrowserBridgeBackend {
       return;
     }
 
-    const targetId = this.#requireOwnedTarget(pageIdValue);
+    const targetId = await this.#requireAuthorizedTarget(pageIdValue, "act");
     const parsed = parseBackendId(action.backend_id);
     const frames = await this.#control.frames(targetId);
     if (
@@ -288,7 +309,7 @@ export class CdpBrowserBackend implements BrowserBridgeBackend {
         "file_path must be non-empty",
       );
     }
-    const targetId = this.#requireOwnedTarget(pageIdValue);
+    const targetId = await this.#requireAuthorizedTarget(pageIdValue, "upload");
     const parsed = parseBackendId(backendId);
     const frames = await this.#control.frames(targetId);
     if (
@@ -312,10 +333,11 @@ export class CdpBrowserBackend implements BrowserBridgeBackend {
   async downloads(
     pageIdValue?: string,
   ): Promise<RawBrowserDownload[]> {
-    const targetId =
-      pageIdValue === undefined
-        ? undefined
-        : this.#requireOwnedTarget(pageIdValue);
+    if (pageIdValue === undefined) {
+      throw new CdpBackendError("permission_denied",
+        "a locally authorized page is required for CDP downloads");
+    }
+    const targetId = await this.#requireAuthorizedTarget(pageIdValue, "downloads");
     return this.#control.downloads(targetId);
   }
 
@@ -323,7 +345,7 @@ export class CdpBrowserBackend implements BrowserBridgeBackend {
     pageIdValue: string,
     limit: number,
   ): Promise<RawBrowserDiagnosticEvent[]> {
-    const targetId = this.#requireOwnedTarget(pageIdValue);
+    const targetId = await this.#requireAuthorizedTarget(pageIdValue, "diagnostics");
     return this.#control.diagnostics(targetId, limit);
   }
 
@@ -355,6 +377,57 @@ export class CdpBrowserBackend implements BrowserBridgeBackend {
   async shutdown(): Promise<void> {
     await this.#control.close();
     this.#ownedTargets.clear();
+  }
+
+  #requireSitePermission(
+    operation: CdpSiteOperation,
+    url: string,
+    pinnedOrigin?: string,
+  ): void {
+    let parsed: URL;
+    try { parsed = new URL(url); } catch {
+      throw new CdpBackendError("permission_denied",
+        "CDP website origin is not authorized");
+    }
+    if (parsed.username || parsed.password ||
+        (pinnedOrigin && parsed.origin !== pinnedOrigin) ||
+        !this.#authorizeSite) {
+      throw new CdpBackendError("permission_denied",
+        "CDP website origin is not authorized by the local owner");
+    }
+    try {
+      this.#authorizeSite(operation, url);
+    } catch {
+      throw new CdpBackendError("permission_denied",
+        "CDP website operation has no current local site grant");
+    }
+  }
+
+  #isAuthorized(
+    operation: CdpSiteOperation, url: string, pinnedOrigin?: string,
+  ): boolean {
+    try {
+      this.#requireSitePermission(operation, url, pinnedOrigin);
+      return true;
+    } catch { return false; }
+  }
+
+  async #requireAuthorizedTarget(
+    pageIdValue: string, operation: CdpSiteOperation,
+  ): Promise<string> {
+    const targetId = this.#requireOwnedTarget(pageIdValue);
+    const target = (await this.#control.listTargets()).find(
+      (candidate) => candidate.target_id === targetId &&
+        candidate.type === "page",
+    );
+    if (!target) {
+      throw new CdpBackendError("permission_denied",
+        "CDP owned target is unavailable");
+    }
+    this.#requireSitePermission(
+      operation, target.url, this.#ownedTargets.get(targetId),
+    );
+    return targetId;
   }
 
   #requireOwnedTarget(pageIdValue: string): string {
