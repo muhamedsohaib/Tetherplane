@@ -44,6 +44,44 @@ try {
     } finally {
         Remove-Item -LiteralPath $runKey -Recurse -Force -ErrorAction SilentlyContinue
     }
+    # A never-started, GUID-scoped scheduled task proves actual Scheduler
+    # classification. Cleanup occurs even when an assertion fails.
+    if ($env:GITHUB_ACTIONS -cne 'true' -or $env:RUNNER_OS -cne 'Windows') {
+        throw 'synthetic task fixture must run only on hosted Windows CI'
+    }
+    $name = 'Tetherplane CI-Audit-' + [guid]::NewGuid().ToString('N')
+    $created = $false
+    try {
+        $dummyLauncher = Join-Path $fixture 'ci-supervisor.ps1'
+        Set-Content -LiteralPath $dummyLauncher -Value '# never executed'
+        $dummySecret = 'SYNTHETIC_TASK_ARGUMENT_PRIVATE'
+        $action = New-ScheduledTaskAction -Execute 'powershell.exe' -Argument (
+            '-NoProfile -NonInteractive -WindowStyle Hidden -File "' +
+            $dummyLauncher + '" --token ' + $dummySecret
+        )
+        $trigger = New-ScheduledTaskTrigger -AtLogOn
+        $settings = New-ScheduledTaskSettingsSet -Disable -MultipleInstances IgnoreNew
+        Register-ScheduledTask -TaskName $name -Action $action -Trigger $trigger -Settings $settings -RunLevel Limited -Force | Out-Null
+        $created = $true
+        $json = & $auditScript -InstallPrefix $fixture | Out-String
+        $report = $json | ConvertFrom-Json
+        $entry = @($report.tasks | Where-Object { $_.name -ceq $name })
+        if ($entry.Count -ne 1) { throw 'synthetic scheduled task not discovered' }
+        if ($entry[0].taskKind -cne 'powershell_supervisor' -or
+            -not $entry[0].requestsHiddenWindow) {
+            throw 'real Task Scheduler action was misclassified'
+        }
+        if ($entry[0].cleanupDisposition -cne 'hold_unknown') {
+            throw 'unknown scheduled tasks must not be eligible for automatic deletion'
+        }
+        if ($json.Contains($dummySecret)) {
+            throw 'private scheduled action arguments leaked'
+        }
+    } finally {
+        if ($created) {
+            Unregister-ScheduledTask -TaskName $name -Confirm:$false -ErrorAction Stop
+        }
+    }
     Write-Output 'WINDOWS_STARTUP_AUDIT=PASS'
 } finally {
     Remove-Item -LiteralPath $fixture -Recurse -Force -ErrorAction SilentlyContinue
