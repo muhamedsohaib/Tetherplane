@@ -42,7 +42,7 @@ jobs:
       - name: Verify browser ownership, RPC and extension privacy regression tests
         shell: pwsh
         run: |
-          node --test browser/bridge/test/ownership.test.ts browser/bridge/test/rpc-server.test.ts extension/browser/test/page-agent.test.ts extension/browser/test/controller.test.ts extension/browser/test/operations.test.ts
+          node --test browser/bridge/test/ownership.test.ts browser/bridge/test/rpc-server.test.ts extension/browser/test/runtime.test.ts extension/browser/test/page-agent.test.ts extension/browser/test/controller.test.ts extension/browser/test/operations.test.ts
           if ($LASTEXITCODE -ne 0) { throw "BROWSER_POLICY_REGRESSION=FAIL" }
       - name: Stage browser-only distribution without Rust or installing services
         shell: pwsh
