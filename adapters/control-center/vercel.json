@@ -1,0 +1,7 @@
+{
+  "git": {
+    "deploymentEnabled": {
+      "fix/windows-single-agent-startup-20261029": false
+    }
+  }
+}
