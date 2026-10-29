@@ -68,6 +68,45 @@ foreach ($required in @(
     }
 }
 
+$agentArgs = $null
+if ($InstallScheduledTask) {
+    if (-not $AgentArgumentsFile) {
+        throw "-InstallScheduledTask requires -AgentArgumentsFile"
+    }
+    $agentArgsSource = (Resolve-Path -LiteralPath $AgentArgumentsFile).Path
+    $agentArgs = Get-Content -LiteralPath $agentArgsSource -Raw | ConvertFrom-Json
+    if (-not ($agentArgs -is [System.Array])) {
+        throw "AgentArgumentsFile must contain a JSON array of tetherd arguments"
+    }
+    if (@($agentArgs | Where-Object { $_ -isnot [string] }).Count -ne 0) {
+        throw "AgentArgumentsFile must contain only string arguments"
+    }
+    if ($agentArgs.Count -eq 0 -or
+        $agentArgs -contains "--stdio-rpc" -or
+        $agentArgs -contains "--arguments-file" -or
+        $agentArgs -notcontains "--relay-url" -or
+        $agentArgs -notcontains "--device-id" -or
+        $agentArgs -notcontains "--device-credential-file") {
+        throw "scheduled agent requires relay identity and a credential-file reference"
+    }
+    # Presence of three flags is insufficient: duplicates and missing values
+    # can make a scheduled native agent exit after the old install is replaced.
+    # Inspect flags only; never open or display the credential-file contents.
+    foreach ($requiredFlag in @("--relay-url", "--device-id", "--device-credential-file")) {
+        $positions = @()
+        for ($index = 0; $index -lt $agentArgs.Count; $index++) {
+            if ($agentArgs[$index] -ceq $requiredFlag) {
+                $positions += $index
+            }
+        }
+        if ($positions.Count -ne 1 -or $positions[0] -ge ($agentArgs.Count - 1) -or
+            [string]::IsNullOrWhiteSpace([string]$agentArgs[$positions[0] + 1]) -or
+            [string]$agentArgs[$positions[0] + 1] -like "--*") {
+            throw "SCHEDULED_AGENT_PREFLIGHT_NO_GO: incomplete or duplicate remote device argument"
+        }
+    }
+}
+
 if (Test-Path -LiteralPath $install) {
     $existing = @(Get-ChildItem -LiteralPath $install -Force -ErrorAction SilentlyContinue)
     if ($existing.Count -gt 0 -and -not $Force) {
@@ -137,25 +176,6 @@ New-Item -ItemType Directory -Force -Path $configDir | Out-Null
 
 $taskName = $null
 if ($InstallScheduledTask) {
-    if (-not $AgentArgumentsFile) {
-        throw "-InstallScheduledTask requires -AgentArgumentsFile"
-    }
-    $agentArgsSource = (Resolve-Path -LiteralPath $AgentArgumentsFile).Path
-    $agentArgs = Get-Content -LiteralPath $agentArgsSource -Raw | ConvertFrom-Json
-    if (-not ($agentArgs -is [System.Array])) {
-        throw "AgentArgumentsFile must contain a JSON array of tetherd arguments"
-    }
-    if (@($agentArgs | Where-Object { $_ -isnot [string] }).Count -ne 0) {
-        throw "AgentArgumentsFile must contain only string arguments"
-    }
-    if ($agentArgs.Count -eq 0 -or
-        $agentArgs -contains "--stdio-rpc" -or
-        $agentArgs -contains "--arguments-file" -or
-        $agentArgs -notcontains "--relay-url" -or
-        $agentArgs -notcontains "--device-id" -or
-        $agentArgs -notcontains "--device-credential-file") {
-        throw "scheduled agent requires relay identity and a credential-file reference"
-    }
     $argsPath = Join-Path $configDir "agent-args.json"
     $json = ConvertTo-Json -InputObject $agentArgs -Depth 4 -Compress
     [IO.File]::WriteAllText($argsPath, $json, [Text.UTF8Encoding]::new($false))
