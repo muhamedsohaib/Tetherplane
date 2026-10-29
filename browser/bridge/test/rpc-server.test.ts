@@ -145,3 +145,20 @@ test("authenticated browser.pages never returns unshared human-tab metadata even
   assert.deepEqual(pages.map(p=>p.page_id),["owned-1"]);
   assert.equal(JSON.stringify(response).includes("personal.example"),false);
 });
+
+
+test("unknown and unshared page IDs deny without revealing private existence", async () => {
+  const backend = new FakeBackend();
+  const service = new BrowserBridgeService({
+    backend, ownership: new BrowserOwnershipRegistry(),
+  });
+  for (const pageId of ["human-1", "not-visible-999"]) {
+    await assert.rejects(
+      () => service.invoke("browser.snapshot", {page_id:pageId}),
+      (error: unknown) =>
+        typeof error === "object" && error !== null &&
+        "code" in error && error.code === "permission_denied" &&
+        !String((error as Error).message).includes("https://human.test"),
+    );
+  }
+});

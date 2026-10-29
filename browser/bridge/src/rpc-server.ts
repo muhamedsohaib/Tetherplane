@@ -316,9 +316,11 @@ export class BrowserBridgeService {
   async #syncPage(pageId: string): Promise<void> {
     const pages = await this.#syncPages();
     if (!pages.some((page) => page.page_id === pageId)) {
+      // Unknown and unshared page IDs must be indistinguishable to a
+      // remote caller. Do not confirm that a private tab exists.
       throw codedError(
-        "invalid_arguments",
-        "unknown browser page: " + pageId,
+        "permission_denied",
+        "browser page is unavailable or has not been shared",
       );
     }
   }
