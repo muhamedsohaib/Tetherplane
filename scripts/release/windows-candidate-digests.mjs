@@ -43,7 +43,7 @@ function inventory(packagePath, source) {
   function visit(directory, parent = "") {
     for (const name of readdirSync(directory).sort()) {
       if (/[<>:"/\\|?*\u0000-\u001f]/.test(name) || /[ .]$/.test(name) ||
-          /^(?:CON|PRN|AUX|NUL|COM[1-9]|LPT[1-9])(?:\.|$)/i.test(name)) {
+          /^(?:CON|PRN|AUX|NUL|COM[1-9\u00b9\u00b2\u00b3]|LPT[1-9\u00b9\u00b2\u00b3])(?:\.|$)/i.test(name)) {
         reject("unsupported Windows payload name");
       }
       const relative = parent + name;

@@ -2,7 +2,7 @@ import assert from "node:assert/strict";
 import { createHash } from "node:crypto";
 import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, symlinkSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
-import { join } from "node:path";
+import { join, toNamespacedPath } from "node:path";
 import { spawnSync } from "node:child_process";
 import test from "node:test";
 import { fileURLToPath } from "node:url";
@@ -143,3 +143,14 @@ test("case-distinct Windows path aliases are rejected on a case-sensitive filesy
   writeFileSync(join(f.packagePath, "BIN", "other.dll"), "bytes");
   assert.notEqual(invoke("record", f.packagePath, source).status, 0);
 });
+
+for (const name of ["COM\u00b9.txt", "LPT\u00b2.txt", "COM\u00b3.txt"]) {
+  test(`Windows superscript device name ${name} is rejected`, (t) => {
+    const f = fixture(t);
+    // Namespaced Windows paths let this inert fixture create reserved names.
+    writeFileSync(toNamespacedPath(join(f.packagePath, name)), "inert bytes");
+    const result = invoke("record", f.packagePath, source);
+    assert.notEqual(result.status, 0, "reserved Windows device alias must be rejected");
+    assert.match(result.stderr, /unsupported Windows payload name/);
+  });
+}
