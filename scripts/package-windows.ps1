@@ -13,8 +13,8 @@ $output = [IO.Path]::GetFullPath($OutputPath)
 if (-not $SkipBuild) {
     Push-Location $repo
     try {
-        cargo build --release -p tetherd
-        if ($LASTEXITCODE -ne 0) { throw "cargo release build failed" }
+        & (Join-Path $repo "scripts\build-windows-agent-binaries.ps1")
+        if ($LASTEXITCODE -ne 0) { throw "Windows native agent build failed" }
         pnpm.cmd --filter @tetherplane/compact-mcp build
         if ($LASTEXITCODE -ne 0) { throw "Compact MCP build failed" }
         pnpm.cmd --filter @tetherplane/model-client build
@@ -30,6 +30,7 @@ if (-not $SkipBuild) {
 }
 
 $tetherd = Join-Path $repo "target\release\tetherd.exe"
+$tetherdWindowless = Join-Path $repo "target\release\tetherd-agentw.exe"
 $compactDist = Join-Path $repo "adapters\compact-mcp\dist\stdio-server.js"
 $modelWorkerDist = Join-Path $repo "adapters\model-client\dist\worker-main.js"
 $relayDist = Join-Path $repo "relay\dist\cli.js"
@@ -37,7 +38,7 @@ $browserBridgeDist = Join-Path $repo "browser\bridge\dist\index.js"
 $browserExtensionDist = Join-Path $repo "extension\browser\dist\background.js"
 $browserPairDist = Join-Path $repo "extension\browser\dist\pair.js"
 $browserHostSource = Join-Path $repo "scripts\browser-extension-host.ts"
-foreach ($required in @($tetherd, $compactDist, $modelWorkerDist, $relayDist, $browserBridgeDist, $browserExtensionDist, $browserPairDist, $browserHostSource)) {
+foreach ($required in @($tetherd, $tetherdWindowless, $compactDist, $modelWorkerDist, $relayDist, $browserBridgeDist, $browserExtensionDist, $browserPairDist, $browserHostSource)) {
     if (-not (Test-Path -LiteralPath $required -PathType Leaf)) {
         throw "release artifact is missing: $required"
     }
@@ -48,6 +49,7 @@ New-Item -ItemType Directory -Force -Path $output | Out-Null
 New-Item -ItemType Directory -Force -Path (Join-Path $output "bin"),(Join-Path $output "launch"),(Join-Path $output "adapters"),(Join-Path $output "protocol\schemas") | Out-Null
 
 Copy-Item -LiteralPath $tetherd -Destination (Join-Path $output "bin\tetherd.exe")
+Copy-Item -LiteralPath $tetherdWindowless -Destination (Join-Path $output "bin\tetherd-agentw.exe")
 
 $deployStage = Join-Path $repo "target\windows-package-deploy"
 $compactDeploy = Join-Path $deployStage "compact-mcp"

@@ -28,7 +28,7 @@ if ($InstallScheduledTask) {
     }
 }
 if ($InstallScheduledTask -or $Force) {
-    $runningAgents = @(Get-CimInstance Win32_Process -Filter "Name='tetherd.exe'" -ErrorAction Stop)
+    $runningAgents = @(Get-CimInstance Win32_Process -Filter "Name='tetherd.exe' OR Name='tetherd-agentw.exe'" -ErrorAction Stop)
     if ($runningAgents.Count -ne 0) {
         throw "a tetherd process is already running; reconcile old agent before replacing or installing"
     }
@@ -39,7 +39,7 @@ if ($InstallScheduledTask -or $Force) {
         $actionMatches = @($_.Actions | Where-Object {
             $exe = $_.PSObject.Properties['Execute']
             $arguments = $_.PSObject.Properties['Arguments']
-            ($null -ne $exe -and [string]$exe.Value -match '(?i)(?:^|[\\/])tetherd\.exe$') -or
+            ($null -ne $exe -and [string]$exe.Value -match '(?i)(?:^|[\\/])tetherd(?:-agentw)?\.exe$') -or
             ($null -ne $arguments -and [string]$arguments.Value -match '(?i)tetherplane-agent\.ps1')
         }).Count -gt 0
         $taskNameMatches -or $actionMatches
@@ -51,6 +51,7 @@ if ($InstallScheduledTask -or $Force) {
 
 foreach ($required in @(
     "bin\tetherd.exe",
+    "bin\tetherd-agentw.exe",
     "adapters\compact-mcp\dist\stdio-server.js",
     "protocol\schemas\result.schema.json",
     "launch\tetherplane-mcp.ps1",
@@ -122,7 +123,7 @@ if ($InstallScheduledTask) {
 
     # Task Scheduler owns tetherd directly, not a PowerShell-spawned child.
     $taskName = $AgentTaskName
-    $action = New-ScheduledTaskAction -Execute (Join-Path $install "bin\tetherd.exe") -Argument ('--arguments-file "' + $argsPath + '"')
+    $action = New-ScheduledTaskAction -Execute (Join-Path $install "bin\tetherd-agentw.exe") -Argument ('--arguments-file "' + $argsPath + '"')
     $trigger = New-ScheduledTaskTrigger -AtLogOn
     $settings = New-ScheduledTaskSettingsSet -MultipleInstances IgnoreNew -RestartCount 99 -RestartInterval (New-TimeSpan -Minutes 1) -ExecutionTimeLimit ([TimeSpan]::Zero) -StartWhenAvailable -AllowStartIfOnBatteries -DontStopIfGoingOnBatteries
     Register-ScheduledTask -TaskName $taskName -Action $action -Trigger $trigger -Settings $settings -RunLevel Limited | Out-Null

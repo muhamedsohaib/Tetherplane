@@ -1,3 +1,4 @@
+#![cfg_attr(all(windows, feature = "windows-headless-agent"), windows_subsystem = "windows")]
 #![forbid(unsafe_code)]
 
 mod audit;
