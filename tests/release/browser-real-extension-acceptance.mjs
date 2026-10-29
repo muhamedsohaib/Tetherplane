@@ -333,6 +333,13 @@ try {
   const humanTabId = humanCreated.result?.value?.id;
   assert.ok(Number.isSafeInteger(humanTabId),
     "disposable browser did not create an unshared ordinary tab");
+  // chrome.tabs.create can resolve before the requested document URL is
+  // committed. Do not ask the owner-approval controller to share about:blank.
+  await until(async () => {
+    const live = await evaluatePage(popup.webSocketDebuggerUrl,
+      "chrome.tabs.get(" + humanTabId + ").then(tab=>tab.url)");
+    return live.result?.value?.startsWith(fixtureUrl) === true;
+  }, 10000, "ordinary owner test tab has not committed its website origin");
   const locallyShared = await evaluatePage(popup.webSocketDebuggerUrl,
     "chrome.runtime.sendMessage({type:'tetherplane.share_current_tab',tab_id:" +
     humanTabId + ",ttl_ms:300000,allow_navigate:true,allow_upload:false})");
