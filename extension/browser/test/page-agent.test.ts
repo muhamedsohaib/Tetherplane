@@ -14,7 +14,10 @@ class FakeController {
     url: "https://fixture.example/editor",
     active: false,
     ownership: "tetherplane" as const,
+    grant: { operations: ["act", "navigate"], origin: "https://fixture.example",
+      expires_at_ms: Date.now() + 60_000 },
   };
+  async authorizeLivePage() { return structuredClone(this.page); }
   navigations: Array<{ pageId: string; url: string }> = [];
 
   pages() {
@@ -146,6 +149,7 @@ test("Chrome page agent performs semantic action in encoded target frame", async
       backend_id: "frame:2|css:#value-input",
       value: "updated",
     },
+    "https://fixture.example",
   ]);
 });
 
