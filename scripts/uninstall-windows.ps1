@@ -79,10 +79,15 @@ if ($taskName) {
 
 $modelWorkerRunKey = "HKCU:\Software\Microsoft\Windows\CurrentVersion\Run"
 $modelWorkerRunValue = "TetherplaneModelWorker"
-Remove-ItemProperty -Path $modelWorkerRunKey -Name $modelWorkerRunValue -ErrorAction SilentlyContinue
-
 $modelWorkerSupervisor = Join-Path $install "config\model-worker-supervisor.ps1"
 $modelWorkerMain = Join-Path $install "adapters\model-client\dist\worker-main.js"
+
+# Do not remove a different installation's globally named Run registration.
+$expectedRunCommand = 'powershell.exe -NoProfile -NonInteractive -WindowStyle Hidden -ExecutionPolicy Bypass -File "' + $modelWorkerSupervisor + '"'
+$existingRunValue = Get-ItemProperty -Path $modelWorkerRunKey -Name $modelWorkerRunValue -ErrorAction SilentlyContinue
+if ($existingRunValue -and [string]$existingRunValue.$modelWorkerRunValue -ceq $expectedRunCommand) {
+    Remove-ItemProperty -Path $modelWorkerRunKey -Name $modelWorkerRunValue -ErrorAction SilentlyContinue
+}
 $modelWorkerProcesses =
     @(
         Get-CimInstance Win32_Process -ErrorAction SilentlyContinue |
