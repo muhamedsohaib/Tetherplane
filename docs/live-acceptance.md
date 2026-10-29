@@ -1,6 +1,6 @@
 # Tetherplane v0.1.0 Live Acceptance
 
-This is the final operator-observed gate before creating the public `v0.1.0` release tag.
+This is the operator-observed coexistence gate. It is necessary but not sufficient for a future approved public `v0.1.0` release.
 
 The gate is intentionally split so preparation can finish without a person sitting at Leno, while the coexistence-sensitive steps only run when the operator is physically present.
 
@@ -112,6 +112,4 @@ Expected marker:
 
 Only after both the operator-observed local phase and the separate remote-plane proof pass should `v0.1.0` be created.
 
-Pushing that tag triggers `.github/workflows/release.yml`, which rebuilds and re-verifies the Windows package, creates the ZIP/checksum, and publishes the GitHub Release.
-
-Do not create the tag merely because CI is green; live acceptance is the final publication gate.
+Pushing that tag currently triggers `.github/workflows/release.yml`, which **refuses unsigned publication** and does not create a ZIP or GitHub Release. The signed-candidate promotion mechanism has not been approved or implemented. Do not create the tag merely because CI or operator-observed acceptance is green; approved signing, independent artifact verification, rollback and four-device acceptance are also mandatory release gates.
