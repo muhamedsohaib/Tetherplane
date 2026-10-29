@@ -94,11 +94,19 @@ try {
     $powershellProcesses = @($p |
         Where-Object { $_.Name -in @('powershell.exe','pwsh.exe') } |
         ForEach-Object {
+            $cmdline = [string]$_.CommandLine
+            $owningTasks = @($tasks | Where-Object {
+                $scriptPath = [string]$_.launcherPath
+                $scriptPath -and $cmdline.IndexOf(
+                    $scriptPath, [StringComparison]::OrdinalIgnoreCase
+                ) -ge 0
+            } | ForEach-Object { $_.name })
             [ordered]@{
                 pid = [int]$_.ProcessId
                 parentPid = [int]$_.ParentProcessId
+                matchingTetherplaneTaskNames = $owningTasks
                 cmdMentionsTetherplane = [bool](
-                    [string]$_.CommandLine -match '(?i:tetherplane|tethrd)')
+                    $cmdline -match '(?i:tetherplane|tethrd)')
                 # A process alone cannot establish a visible terminal.
                 visibleWindowVerified = $false
             }
