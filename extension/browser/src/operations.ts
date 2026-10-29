@@ -355,12 +355,10 @@ export class ChromeOperationalAgent {
     operation: BrowserOperation,
   ): Promise<OperationalPageRecord> {
     const page = this.#requirePage(pageId);
-    if (page.ownership === "tetherplane") {
-      return page;
-    }
-    if (page.ownership === "shared-authorized" &&
-        page.grant?.operations.includes(operation) &&
-        this.#controller.authorizeLivePage) {
+    if (page.ownership !== "human" && this.#controller.authorizeLivePage &&
+        (page.ownership === "tetherplane" ||
+          (page.ownership === "shared-authorized" &&
+           page.grant?.operations.includes(operation)))) {
       const live = await this.#controller.authorizeLivePage(pageId, operation);
       if (live.grant?.origin &&
           typeof live.grant.expires_at_ms === "number" &&
