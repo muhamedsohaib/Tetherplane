@@ -113,7 +113,7 @@ test("site-approved agent page observes only the top frame", async () => {
   );
   assert.equal(observed.nodes[0]?.document_id, "document-top");
   assert.equal(observed.nodes[0]?.frame_id, "frame:0");
-  assert.equal(scripting.calls[0]?.target?.frameIds?.[0], 0);
+  assert.deepEqual(scripting.calls[0]?.target, { tabId: 7, frameIds: [0] });
   assert.deepEqual(observed.toasts, ["Saved"]);
 });
 
