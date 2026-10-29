@@ -357,3 +357,18 @@ test("shared diagnostics revalidates owner origin before reading browser events"
   );
   assert.equal(debuggerApi.attached.length, 0);
 });
+
+
+test("agent-owned tab cannot read native downloads after its website grant was revoked", async () => {
+  const debuggerApi = new FakeDebugger();
+  const downloadsApi = new FakeDownloads();
+  const controller = {
+    pages: () => [{ page_id:"tab:42", tab_id:42,
+      url:"https://approved.example/path", ownership:"tetherplane" as const }],
+  };
+  const agent = new ChromeOperationalAgent({controller,debuggerApi,downloadsApi});
+  await assert.rejects(() => agent.downloads("tab:42"), (e:unknown) =>
+    typeof e === "object" && e !== null && "code" in e &&
+    (e as {code:string}).code === "permission_denied");
+  assert.equal(debuggerApi.attached.length, 0);
+});
