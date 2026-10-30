@@ -125,8 +125,7 @@ mod windows {
         let stamp = SystemTime::now()
             .duration_since(UNIX_EPOCH)
             .map_or(0, |span| span.as_secs());
-        writeln!(file, "{stamp} {event}")
-            .map_err(|_| "browser supervisor log write failed")
+        writeln!(file, "{stamp} {event}").map_err(|_| "browser supervisor log write failed")
     }
 
     fn open_child_log(state: &Path, file: &str) -> Result<File, &'static str> {
@@ -185,7 +184,10 @@ mod windows {
                     "TETHERPLANE_EXTENSION_ID_FILE",
                     settings.state.join("browser-extension.id"),
                 )
-                .env("TETHERPLANE_BROWSER_LAUNCHER_PID", process::id().to_string())
+                .env(
+                    "TETHERPLANE_BROWSER_LAUNCHER_PID",
+                    process::id().to_string(),
+                )
                 .creation_flags(CREATE_NO_WINDOW)
                 .stdin(Stdio::null())
                 .stdout(Stdio::from(stdout))
