@@ -382,7 +382,38 @@ async function verifyPackage() {
 if (process.argv[1] && resolve(process.argv[1]) === fileURLToPath(import.meta.url)) {
   if (process.argv.slice(2).includes("--self-test")) await verifyPackage();
   else {
+    const parentValue = process.env.TETHERPLANE_STORE_LAUNCHER_PID;
+    const ownerLauncherPid = parentValue === undefined ? null : Number(parentValue);
+    if (ownerLauncherPid !== null && (
+      !Number.isSafeInteger(ownerLauncherPid) ||
+      ownerLauncherPid <= 0 ||
+      ownerLauncherPid !== process.ppid
+    )) {
+      throw new Error("Unexpected Store setup parent process binding");
+    }
     const wizard = await createWizard();
+    if (ownerLauncherPid !== null) {
+      let shutdownStarted = false;
+      const monitor = setInterval(() => {
+        try {
+          process.kill(ownerLauncherPid, 0);
+        } catch {
+          if (shutdownStarted) return;
+          shutdownStarted = true;
+          if (wizard.state.agent && wizard.state.agent.exitCode === null) {
+            wizard.state.agent.kill();
+          }
+          // Server shutdown can encounter a tab with an open HTTP connection;
+          // bound teardown so an orphaned setup process cannot survive forever.
+          const emergency = setTimeout(() => process.exit(1), 2500);
+          void wizard.close().then(
+            () => { clearTimeout(emergency); process.exit(0); },
+            () => { clearTimeout(emergency); process.exit(1); }
+          );
+        }
+      }, 750);
+      monitor.unref();
+    }
     if (process.platform === "win32") {
       const child = spawn("explorer.exe", [wizard.url], { windowsHide: true, stdio: "ignore" });
       child.on("error", () => console.error("Open the Store app again if the browser did not launch."));

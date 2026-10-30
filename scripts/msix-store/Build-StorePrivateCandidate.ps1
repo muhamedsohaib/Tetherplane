@@ -1,5 +1,6 @@
 param(
     [Parameter(Mandatory = $true)][string]$AgentBinary,
+    [Parameter(Mandatory = $true)][string]$SetupLauncherBinary,
     [Parameter(Mandatory = $true)][string]$NodeExecutable,
     [Parameter(Mandatory = $true)][string]$OnboardingDirectory,
     [Parameter(Mandatory = $true)][string]$CompactDeployDirectory,
@@ -29,6 +30,9 @@ $report = [ordered]@{
     version = $version
     source_commit = 'NOT_VERIFIED'
     agent_sha256 = 'NOT_VERIFIED'
+    setup_launcher_sha256 = 'NOT_VERIFIED'
+    setup_launcher_subsystem = 'NOT_VERIFIED'
+    setup_launcher_authenticode = 'NOT_CHECKED'
     agent_authenticode = 'NOT_CHECKED'
     agent_launch_subsystem = 'NOT_VERIFIED'
     node_sha256 = 'NOT_VERIFIED'
@@ -104,7 +108,7 @@ function Assert-StoreManifest([string]$Path) {
     if (@($manifest.Package.Applications.Application).Count -ne 2 -or
         $manifest.Package.Applications.Application[0].Id -cne 'Runtime' -or
         $manifest.Package.Applications.Application[1].Id -cne 'Agent' -or
-        $manifest.Package.Applications.Application[0].Executable -cne 'runtime\node.exe' -or
+        $manifest.Package.Applications.Application[0].Executable -cne 'bin\tetherplane-setupw.exe' -or
         $manifest.Package.Applications.Application[1].Executable -cne 'bin\tetherd-agentw.exe' -or
         $manifest.Package.Applications.Application[1].VisualElements.AppListEntry -cne 'none') {
         throw 'STORE_PROFILE_UNEXPECTED_LAUNCHERS'
@@ -114,7 +118,7 @@ function Assert-StoreManifest([string]$Path) {
         throw 'STORE_PROFILE_ASSET_NAMES_INVALID'
     }
     $xmlText = $manifest.OuterXml
-    if ($xmlText -match '(?i)startupTask|packagedServices|localSystemServices|Tetherplane.StoreRuntime.DevOnly|Development Probe') {
+    if ($xmlText -match '(?i)startupTask|packagedServices|localSystemServices|uap11:Parameters|Tetherplane.StoreRuntime.DevOnly|Development Probe') {
         throw 'STORE_PROFILE_DEVELOPMENT_IDENTITY_OR_STARTUP_CAPABILITY'
     }
     # Use XML namespace-aware fields rather than PowerShell's adapted .Name
@@ -141,7 +145,8 @@ try {
         # Do not authorize any other fix/ branch or expand runner privileges.
         $candidateHead = [string]$env:GITHUB_HEAD_REF
         $approvedCiRef = $candidateHead.StartsWith('feature/msix-store-private-candidate-') -or
-            $candidateHead -ceq 'fix/windows-zero-console-model-worker-20261030'
+            $candidateHead -ceq 'fix/windows-zero-console-model-worker-20261030' -or
+            $candidateHead -ceq 'fix/store-windowless-owner-setup-20261030'
         if ($env:GITHUB_ACTIONS -cne 'true' -or
             $env:GITHUB_EVENT_NAME -cne 'pull_request' -or
             $env:RUNNER_OS -cne 'Windows' -or
@@ -162,10 +167,13 @@ try {
     }
 
     $agentPath = (Resolve-Path -LiteralPath $AgentBinary -ErrorAction Stop).Path
+    $setupPath = (Resolve-Path -LiteralPath $SetupLauncherBinary -ErrorAction Stop).Path
     $nodePath = (Resolve-Path -LiteralPath $NodeExecutable -ErrorAction Stop).Path
     $appSource = (Resolve-Path -LiteralPath $OnboardingDirectory -ErrorAction Stop).Path
     $compactSource = (Resolve-Path -LiteralPath $CompactDeployDirectory -ErrorAction Stop).Path
-    if ((Split-Path -Leaf $agentPath) -cne 'tetherd-agentw.exe' -or
+    if ((Split-Path -Leaf $setupPath) -cne 'tetherplane-setupw.exe' -or
+        (Get-Item -LiteralPath $setupPath).Length -lt 100000 -or
+        (Split-Path -Leaf $agentPath) -cne 'tetherd-agentw.exe' -or
         (Get-Item -LiteralPath $agentPath).Length -lt 100000 -or
         (Split-Path -Leaf $nodePath) -cne 'node.exe' -or
         -not (Test-Path -LiteralPath (Join-Path $appSource 'runtime-app.mjs') -PathType Leaf) -or
@@ -179,6 +187,10 @@ try {
         throw 'STORE_CANDIDATE_NODE_LICENSE_OR_SIGNATURE_INVALID'
     }
     Assert-WindowlessAgentBinary -Path $agentPath
+    Assert-WindowlessAgentBinary -Path $setupPath
+    $report.setup_launcher_subsystem = 'WindowsGUI'
+    $report.setup_launcher_sha256 = Get-Sha256Hex -Path $setupPath
+    $report.setup_launcher_authenticode = [string](Get-AuthenticodeSignature -LiteralPath $setupPath).Status
     $report.agent_launch_subsystem = 'WindowsGUI'
     $report.agent_sha256 = Get-Sha256Hex -Path $agentPath
     $report.agent_authenticode = [string](Get-AuthenticodeSignature -LiteralPath $agentPath).Status
@@ -217,6 +229,7 @@ try {
     $report.last_phase = 'PAYLOAD_CREATED'
     Copy-Item -LiteralPath $manifestFile -Destination (Join-Path $payload 'AppxManifest.xml')
     Copy-Item -LiteralPath $agentPath -Destination (Join-Path $payload 'bin\tetherd-agentw.exe')
+    Copy-Item -LiteralPath $setupPath -Destination (Join-Path $payload 'bin\tetherplane-setupw.exe')
     Copy-Item -LiteralPath $nodePath -Destination (Join-Path $payload 'runtime\node.exe')
     Copy-Item -LiteralPath $nodeLicense -Destination (Join-Path $payload 'runtime\LICENSE')
     Copy-Item -Path (Join-Path $appSource '*') -Destination (Join-Path $payload 'app') -Recurse -Force
@@ -291,6 +304,8 @@ try {
         package_identity = $identity
         version = $version
         native_agent_sha256 = $report.agent_sha256
+        native_setup_launcher_sha256 = $report.setup_launcher_sha256
+        setup_launcher_subsystem = $report.setup_launcher_subsystem
         agent_launch_subsystem = $report.agent_launch_subsystem
         node_sha256 = $report.node_sha256
         manifest_sha256 = $report.manifest_sha256
@@ -354,6 +369,7 @@ try {
     } finally { Pop-Location }
     foreach ($entry in @(
         @{ Name = 'bin\tetherd-agentw.exe'; Hash = $report.agent_sha256 },
+        @{ Name = 'bin\tetherplane-setupw.exe'; Hash = $report.setup_launcher_sha256 },
         @{ Name = 'runtime\node.exe'; Hash = $report.node_sha256 },
         @{ Name = 'AppxManifest.xml'; Hash = $report.manifest_sha256 },
         @{ Name = 'app\runtime-app.mjs'; Hash = $report.store_runtime_sha256 },
@@ -372,6 +388,8 @@ try {
     $unpackedProvenance = Get-Content -LiteralPath (Join-Path $unpack 'tetherplane-provenance.json') -Raw | ConvertFrom-Json
     if ($unpackedProvenance.source_commit -cne $report.source_commit -or
         $unpackedProvenance.native_agent_sha256 -cne $report.agent_sha256 -or
+        $unpackedProvenance.native_setup_launcher_sha256 -cne $report.setup_launcher_sha256 -or
+        $unpackedProvenance.setup_launcher_subsystem -cne 'WindowsGUI' -or
         $unpackedProvenance.agent_launch_subsystem -cne 'WindowsGUI' -or
         $unpackedProvenance.package_identity -cne $identity -or
         $unpackedProvenance.store_runtime_sha256 -cne $report.store_runtime_sha256 -or
