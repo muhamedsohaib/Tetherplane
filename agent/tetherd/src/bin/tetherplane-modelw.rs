@@ -56,23 +56,20 @@ mod windows {
         if !supplied.is_absolute() {
             return Err("model arguments path must be absolute");
         }
-        let actual = fs::canonicalize(supplied)
-            .map_err(|_| "model arguments file unavailable")?;
-        let canonical_expected = fs::canonicalize(expected)
-            .map_err(|_| "installed model arguments file unavailable")?;
+        let actual = fs::canonicalize(supplied).map_err(|_| "model arguments file unavailable")?;
+        let canonical_expected =
+            fs::canonicalize(expected).map_err(|_| "installed model arguments file unavailable")?;
         if !actual
             .to_string_lossy()
             .eq_ignore_ascii_case(&canonical_expected.to_string_lossy())
         {
             return Err("model arguments must be the installed owned file");
         }
-        let meta = fs::metadata(&actual)
-            .map_err(|_| "cannot inspect model worker arguments")?;
+        let meta = fs::metadata(&actual).map_err(|_| "cannot inspect model worker arguments")?;
         if !meta.is_file() || meta.len() == 0 || meta.len() > MAX_ARGS_BYTES {
             return Err("model worker arguments file size or type invalid");
         }
-        let bytes = fs::read(&actual)
-            .map_err(|_| "cannot read model worker arguments file")?;
+        let bytes = fs::read(&actual).map_err(|_| "cannot read model worker arguments file")?;
         let args: Vec<String> = serde_json::from_slice(&bytes)
             .map_err(|_| "model worker arguments must be JSON strings")?;
         if args.len() < 12 || args.len() > 96 {
