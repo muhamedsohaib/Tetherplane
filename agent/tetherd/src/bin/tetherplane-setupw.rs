@@ -52,7 +52,7 @@ mod windows {
     }
 
     pub(super) fn run() -> Result<(), &'static str> {
-        if env::args_os().skip(1).next().is_some() {
+        if env::args_os().nth(1).is_some() {
             return Err("unexpected setup arguments");
         }
         let executable = env::current_exe().map_err(|_| "setup executable unavailable")?;
