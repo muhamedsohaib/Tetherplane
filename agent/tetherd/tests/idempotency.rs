@@ -307,9 +307,7 @@ fn completed_replay_record_retains_result_envelope_and_not_raw_append_arguments(
     let record: Value = serde_json::from_slice(&bytes).unwrap();
     assert!(record["fingerprint"].is_string());
     assert_eq!(record["result"], first);
-    assert!(
-        !String::from_utf8_lossy(&bytes).contains("PRIVATE-INPUT-FIXTURE-DO-NOT-LOG")
-    );
+    assert!(!String::from_utf8_lossy(&bytes).contains("PRIVATE-INPUT-FIXTURE-DO-NOT-LOG"));
 
     let retry = rpc(
         &profile,
