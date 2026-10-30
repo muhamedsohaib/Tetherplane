@@ -41,8 +41,8 @@ mod windows {
     }
 
     fn read_spec() -> Result<Spec, &'static str> {
-        let argv: Vec<_> = env::args_os().skip(1).collect();
-        if argv.len() != 2 || argv[0] != "--arguments-file" {
+        let launch_tokens: Vec<_> = env::args_os().skip(1).collect();
+        if launch_tokens.len() != 2 || launch_tokens[0] != "--arguments-file" {
             return Err("model launcher requires one --arguments-file path");
         }
         let executable = env::current_exe().map_err(|_| "model launcher path unavailable")?;
@@ -52,7 +52,7 @@ mod windows {
             .ok_or("model launcher must be in installed bin")?
             .to_path_buf();
         let expected = root.join("config").join("model-worker-args.json");
-        let supplied = PathBuf::from(&argv[1]);
+        let supplied = PathBuf::from(&launch_tokens[1]);
         if !supplied.is_absolute() {
             return Err("model arguments path must be absolute");
         }
@@ -163,12 +163,12 @@ mod windows {
     }
 
     pub(super) fn record_error(error: &str) {
-        if let Ok(exe) = env::current_exe() {
-            if let Some(root) = exe.parent().and_then(Path::parent) {
-                let config = root.join("config");
-                if config.is_dir() {
-                    let _ = event(&config, error);
-                }
+        if let Ok(exe) = env::current_exe()
+            && let Some(root) = exe.parent().and_then(Path::parent)
+        {
+            let config = root.join("config");
+            if config.is_dir() {
+                let _ = event(&config, error);
             }
         }
     }
