@@ -290,6 +290,7 @@ fn acquire_owner_instance_lock(options: &CliOptions) -> Result<Option<std::fs::F
         .read(true)
         .write(true)
         .create(true)
+        .truncate(false)
         .share_mode(0)
         .open(&lock)
         .map_err(|error| match error.raw_os_error() {
@@ -564,8 +565,7 @@ mod arguments_file_tests {
             .expect("lock");
         assert_eq!(
             acquire_owner_instance_lock(&opts)
-                .err()
-                .expect("second denied"),
+                .expect_err("second denied"),
             "AGENT_OWNER_INSTANCE_ALREADY_RUNNING"
         );
         drop(first);
