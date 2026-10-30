@@ -186,7 +186,6 @@ fn parse_arg_tokens(mut arguments: impl Iterator<Item = String>) -> Result<CliOp
     })
 }
 
-
 fn parse_transport_mode(
     stdio_rpc: bool,
     relay_url: Option<String>,
