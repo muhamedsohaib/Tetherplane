@@ -21,9 +21,9 @@
     <TargetDeviceFamily Name="Windows.Desktop" MinVersion="10.0.22000.0" MaxVersionTested="10.0.26100.0" />
   </Dependencies>
   <Applications>
-    <Application Id="Runtime" Executable="runtime\node.exe"
+    <Application Id="Runtime" Executable="bin\tetherplane-setupw.exe"
                  uap10:RuntimeBehavior="packagedClassicApp" uap10:TrustLevel="mediumIL"
-                 uap11:CurrentDirectoryPath="$(package.installedPath)" uap11:Parameters="app\runtime-app.mjs">
+                 uap11:CurrentDirectoryPath="$(package.installedPath)">
       <uap:VisualElements DisplayName="Tetherplane"
                           Description="Owner-approved device pairing and setup"
                           Square150x150Logo="Assets\Logo150.png"

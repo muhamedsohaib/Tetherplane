@@ -25,7 +25,7 @@ permissions:
 
 jobs:
   source-contract:
-    if: ${{ github.event.pull_request.head.repo.full_name == github.repository && (startsWith(github.head_ref, 'feature/msix-store-private-candidate-') || github.head_ref == 'fix/windows-zero-console-model-worker-20261030') }}
+    if: ${{ github.event.pull_request.head.repo.full_name == github.repository && (startsWith(github.head_ref, 'feature/msix-store-private-candidate-') || github.head_ref == 'fix/windows-zero-console-model-worker-20261030' || github.head_ref == 'fix/store-windowless-owner-setup-20261030') }}
     runs-on: ubuntu-latest
     timeout-minutes: 5
     steps:
@@ -39,7 +39,7 @@ jobs:
         run: node --test tests/release/msix-store-private-candidate.test.mjs tests/release/msix-store-runtime.test.mjs
 
   windows-source-package:
-    if: ${{ github.event.pull_request.head.repo.full_name == github.repository && (startsWith(github.head_ref, 'feature/msix-store-private-candidate-') || github.head_ref == 'fix/windows-zero-console-model-worker-20261030') }}
+    if: ${{ github.event.pull_request.head.repo.full_name == github.repository && (startsWith(github.head_ref, 'feature/msix-store-private-candidate-') || github.head_ref == 'fix/windows-zero-console-model-worker-20261030' || github.head_ref == 'fix/store-windowless-owner-setup-20261030') }}
     needs: source-contract
     runs-on: windows-latest
     timeout-minutes: 30
@@ -90,6 +90,8 @@ jobs:
       - name: Compile exact checkout windowless and CLI native agents
         shell: pwsh
         run: ./scripts/build-windows-agent-binaries.ps1
+      - name: Verify disposable GUI Store owner setup launcher (no terminal or install)
+        run: node tests/release/windows-store-setupw-lifecycle.mjs target/release/tetherplane-setupw.exe
       - name: Require real agent / relay denial and reconnection on ephemeral localhost
         env:
           TETHERPLANE_REQUIRE_MSIX_REAL_RELAY: '1'
@@ -103,6 +105,7 @@ jobs:
           $args = @(
             '-NoProfile', '-NonInteractive', '-File', 'scripts/msix-store/Build-StorePrivateCandidate.ps1',
             '-AgentBinary', 'target/release/tetherd-agentw.exe',
+            '-SetupLauncherBinary', 'target/release/tetherplane-setupw.exe',
             '-NodeExecutable', $nodeExe,
             '-OnboardingDirectory', 'packaging/msix-store-runtime/app',
             '-CompactDeployDirectory', (Join-Path $env:RUNNER_TEMP 'store-private-deploy\compact-mcp'),
@@ -120,6 +123,21 @@ jobs:
               $evidence.trusted_Store_signature -ne 'NOT_RUN' -or
               $evidence.owner_approved_Store_submission -ne $false -or
               $evidence.agent_launch_subsystem -ne 'WindowsGUI' -or
+              $evidence.setup_launcher_subsystem -ne 'WindowsGUI' -or
+              $evidence.setup_launcher_sha256 -notmatch '^[0-9a-f]{64}
+              $evidence.source_commit -notmatch '^[0-9a-f]{40}$') {
+            throw 'STORE_CANDIDATE_FALSE_ACCEPTANCE_CLAIM'
+          }
+          Write-Output 'STORE_PRIVATE_CANDIDATE_CI_PREVIEW_PACK_UNPACK_PASS; STORE_AND_SAC_NOT_TESTED'
+      - name: Upload JSON proof only (no package, source binaries, credentials or certificates)
+        if: always()
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        with:
+          name: store-private-preview-report-${{ github.run_id }}-${{ github.run_attempt }}
+          path: ${{ runner.temp }}/tetherplane-store-private-preview.json
+          if-no-files-found: warn
+          retention-days: 7
+ -or
               $evidence.source_commit -notmatch '^[0-9a-f]{40}$') {
             throw 'STORE_CANDIDATE_FALSE_ACCEPTANCE_CLAIM'
           }

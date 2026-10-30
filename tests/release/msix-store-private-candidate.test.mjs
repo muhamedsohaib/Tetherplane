@@ -57,7 +57,8 @@ test("all Store executable and UI entries retain existing restricted app archite
   const apps = [...manifest.matchAll(/<Application\b[^>]*>/g)].map((match) => match[0]);
   assert.equal(apps.length, 2);
   assert.equal(attr(apps[0], "Id"), "Runtime");
-  assert.equal(attr(apps[0], "Executable"), "runtime\\node.exe");
+  assert.equal(attr(apps[0], "Executable"), "bin\\tetherplane-setupw.exe");
+  assert.equal(attr(apps[0], "uap11:Parameters"), null);
   assert.equal(attr(apps[0], "uap10:RuntimeBehavior"), "packagedClassicApp");
   assert.equal(attr(apps[0], "uap10:TrustLevel"), "mediumIL");
   assert.equal(attr(apps[1], "Id"), "Agent");
@@ -90,6 +91,9 @@ test("Store art is required as real assets, never silently inherited from dev sq
   assert.match(builder, /STORE_CANDIDATE_AGENT_MUST_HAVE_GUI_SUBSYSTEM/);
   assert.match(workflow, /scripts\/build-windows-agent-binaries\.ps1/);
   assert.match(workflow, /tetherd-agentw\.exe/);
+  assert.match(workflow, /windows-store-setupw-lifecycle\.mjs/);
+  assert.match(workflow, /-SetupLauncherBinary/);
+  assert.match(builder, /setup_launcher_sha256/);
 });
 
 
@@ -133,6 +137,8 @@ test("new packaging CI cannot publish, install packages, alter trust, or upload 
   // Require the two Store jobs to run for this exact reviewed combined head.
   const exactReviewBranch = "fix/windows-zero-console-model-worker-20261030";
   assert.equal(workflow.split("github.head_ref == '" + exactReviewBranch + "'").length - 1, 2);
+  assert.equal(workflow.split("github.head_ref == 'fix/store-windowless-owner-setup-20261030'").length - 1, 2);
+  assert.ok(builder.includes("$candidateHead -ceq 'fix/store-windowless-owner-setup-20261030'"));
   assert.ok(builder.includes("$candidateHead -ceq '" + exactReviewBranch + "'"));
   assert.ok(builder.includes("-not $approvedCiRef"));
   assert.ok(read("tests/release/msix-store-runtime-real-relay.test.mjs")
@@ -181,4 +187,7 @@ test("real relay Windows integration targets the reviewed windowless executable"
   assert.match(smoke, /resolve\("target", "release", "tetherd-agentw\.exe"\)/);
   assert.match(smoke, /MSIX_REAL_RELAY_REQUIRED_TEST_INELIGIBLE/);
   assert.match(workflow, /TETHERPLANE_REQUIRE_MSIX_REAL_RELAY: '1'/);
+  assert.ok(smoke.includes('process.env.GITHUB_HEAD_REF === "fix/store-windowless-owner-setup-20261030"'));
+  assert.match(manifest, /Executable="bin\\tetherplane-setupw\.exe"/);
+  assert.doesNotMatch(manifest, /Executable="runtime\\node\.exe"/);
 });
