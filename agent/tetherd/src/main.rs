@@ -564,8 +564,7 @@ mod arguments_file_tests {
             .expect("first lock")
             .expect("lock");
         assert_eq!(
-            acquire_owner_instance_lock(&opts)
-                .expect_err("second denied"),
+            acquire_owner_instance_lock(&opts).expect_err("second denied"),
             "AGENT_OWNER_INSTANCE_ALREADY_RUNNING"
         );
         drop(first);
