@@ -171,7 +171,7 @@ test("owner review MSIX is not exported until scratch package passes every integ
 
 test("real relay Windows integration targets the reviewed windowless executable", () => {
   const smoke = read("tests/release/msix-store-runtime-real-relay.test.mjs");
-  assert.match(smoke, /resolve\("target", "release", "tetherd-agentw\\.exe"\)/);
+  assert.match(smoke, /resolve\("target", "release", "tetherd-agentw\.exe"\)/);
   assert.match(smoke, /MSIX_REAL_RELAY_REQUIRED_TEST_INELIGIBLE/);
   assert.match(workflow, /TETHERPLANE_REQUIRE_MSIX_REAL_RELAY: '1'/);
 });
