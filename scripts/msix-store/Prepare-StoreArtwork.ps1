@@ -1,4 +1,4 @@
-# Creates only UNAPPROVED mechanical exports from an exact, owner-supplied PNG.
+# Creates only UNAPPROVED mechanical exports from an exact, owner-supplied PNG or JPEG.
 # No Store/MSIX submission, owner approval, identity changes, or device changes.
 [CmdletBinding()]
 param(
@@ -16,8 +16,11 @@ if ($ExpectedSourceSha256 -cnotmatch '^[0-9a-fA-F]{64}$') {
     throw 'STORE_ARTWORK_EXPECTED_SOURCE_HASH_REQUIRED'
 }
 $source = (Resolve-Path -LiteralPath $SourceEmblem -ErrorAction Stop).Path
-if (-not $source.EndsWith('.png', [StringComparison]::OrdinalIgnoreCase)) {
-    throw 'STORE_ARTWORK_PNG_SOURCE_REQUIRED'
+$isPng = $source.EndsWith('.png', [StringComparison]::OrdinalIgnoreCase)
+$isJpeg = $source.EndsWith('.jpg', [StringComparison]::OrdinalIgnoreCase) -or
+          $source.EndsWith('.jpeg', [StringComparison]::OrdinalIgnoreCase)
+if (-not $isPng -and -not $isJpeg) {
+    throw 'STORE_ARTWORK_PNG_OR_JPEG_SOURCE_REQUIRED'
 }
 if ((Get-Item -LiteralPath $source -ErrorAction Stop).Length -gt 20MB) {
     throw 'STORE_ARTWORK_SOURCE_TOO_LARGE'
@@ -48,17 +51,28 @@ try {
         if ($input.Width -ne $input.Height -or $input.Width -lt 512 -or $input.Width -gt 8192) {
             throw 'STORE_ARTWORK_SQUARE_HIGH_RES_SOURCE_REQUIRED'
         }
-        if (-not [Drawing.Image]::IsAlphaPixelFormat($input.PixelFormat)) {
-            throw 'STORE_ARTWORK_TRANSPARENT_PNG_REQUIRED'
-        }
-        $corners = @(
-            $input.GetPixel(0, 0).A,
-            $input.GetPixel($input.Width - 1, 0).A,
-            $input.GetPixel(0, $input.Height - 1).A,
-            $input.GetPixel($input.Width - 1, $input.Height - 1).A
-        )
-        if (@($corners | Where-Object { $_ -gt 15 }).Count -ne 0) {
-            throw 'STORE_ARTWORK_CLEAR_CORNER_PADDING_REQUIRED'
+        # PNG: preserve genuinely transparent artwork. JPEG: preserve its
+        # opaque printed/halftone background; NEVER infer or remove a background.
+        $sourceFormat = if ($isJpeg) { 'jpeg_opaque' } else { 'png_alpha' }
+        if ($isJpeg) {
+            if ($input.RawFormat.Guid -ne [Drawing.Imaging.ImageFormat]::Jpeg.Guid -or
+                [Drawing.Image]::IsAlphaPixelFormat($input.PixelFormat)) {
+                throw 'STORE_ARTWORK_JPEG_FORMAT_MISMATCH'
+            }
+        } else {
+            if ($input.RawFormat.Guid -ne [Drawing.Imaging.ImageFormat]::Png.Guid -or
+                -not [Drawing.Image]::IsAlphaPixelFormat($input.PixelFormat)) {
+                throw 'STORE_ARTWORK_TRANSPARENT_PNG_REQUIRED'
+            }
+            $corners = @(
+                $input.GetPixel(0, 0).A,
+                $input.GetPixel($input.Width - 1, 0).A,
+                $input.GetPixel(0, $input.Height - 1).A,
+                $input.GetPixel($input.Width - 1, $input.Height - 1).A
+            )
+            if (@($corners | Where-Object { $_ -gt 15 }).Count -ne 0) {
+                throw 'STORE_ARTWORK_CLEAR_CORNER_PADDING_REQUIRED'
+            }
         }
         [void][IO.Directory]::CreateDirectory($scratch)
         $ownedScratch = $true
@@ -95,10 +109,11 @@ try {
             $hashes[$name] = (Get-FileHash -LiteralPath (Join-Path $scratch $name) -Algorithm SHA256).Hash.ToLowerInvariant()
         }
         $evidence = [ordered]@{
-            schema = 'tetherplane.store-artwork-preflight.v1'
+            schema = 'tetherplane.store-artwork-preflight.v2'
             package_identity = 'ARCUSLabs.Tetherplane'
             disposition = 'UNAPPROVED_SOURCE_TRANSFORM'
             source_sha256 = $actualSourceSha
+            source_format = $sourceFormat
             source_square_pixels = $input.Width
             files = $hashes
             screenshot = 'NOT_CAPTURED'
