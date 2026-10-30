@@ -30,6 +30,7 @@ $report = [ordered]@{
     source_commit = 'NOT_VERIFIED'
     agent_sha256 = 'NOT_VERIFIED'
     agent_authenticode = 'NOT_CHECKED'
+    agent_launch_subsystem = 'NOT_VERIFIED'
     node_sha256 = 'NOT_VERIFIED'
     manifest_sha256 = 'NOT_VERIFIED'
     store_runtime_sha256 = 'NOT_VERIFIED'
@@ -60,6 +61,36 @@ function Get-Sha256Hex([string]$Path) {
     }
 }
 
+function Assert-WindowlessAgentBinary([string]$Path) {
+    # Verify actual x64 Windows GUI PE subsystem; a renamed console binary is
+    # not an acceptable background-only agent. This never executes the file.
+    $stream = [IO.File]::OpenRead($Path)
+    $reader = [IO.BinaryReader]::new($stream)
+    try {
+        if ($reader.ReadUInt16() -ne 0x5a4d) { throw 'STORE_CANDIDATE_AGENT_INVALID_PE' }
+        [void]$stream.Seek(0x3c, [IO.SeekOrigin]::Begin)
+        $peOffset = $reader.ReadInt32()
+        if ($peOffset -lt 0x40 -or $peOffset -gt ($stream.Length - 100)) {
+            throw 'STORE_CANDIDATE_AGENT_INVALID_PE_OFFSET'
+        }
+        [void]$stream.Seek($peOffset, [IO.SeekOrigin]::Begin)
+        if ($reader.ReadUInt32() -ne 0x4550 -or $reader.ReadUInt16() -ne 0x8664) {
+            throw 'STORE_CANDIDATE_AGENT_NOT_WINDOWS_X64'
+        }
+        [void]$stream.Seek(($peOffset + 24), [IO.SeekOrigin]::Begin)
+        if ($reader.ReadUInt16() -ne 0x20b) {
+            throw 'STORE_CANDIDATE_AGENT_NOT_PE32_PLUS'
+        }
+        [void]$stream.Seek(($peOffset + 24 + 68), [IO.SeekOrigin]::Begin)
+        if ($reader.ReadUInt16() -ne 2) {
+            throw 'STORE_CANDIDATE_AGENT_MUST_HAVE_GUI_SUBSYSTEM'
+        }
+    } finally {
+        $reader.Dispose()
+        $stream.Dispose()
+    }
+}
+
 function Assert-StoreManifest([string]$Path) {
     [xml]$manifest = Get-Content -LiteralPath $Path -Raw -ErrorAction Stop
     if ($manifest.Package.Identity.Name -cne $identity -or
@@ -74,7 +105,7 @@ function Assert-StoreManifest([string]$Path) {
         $manifest.Package.Applications.Application[0].Id -cne 'Runtime' -or
         $manifest.Package.Applications.Application[1].Id -cne 'Agent' -or
         $manifest.Package.Applications.Application[0].Executable -cne 'runtime\node.exe' -or
-        $manifest.Package.Applications.Application[1].Executable -cne 'bin\tetherd.exe' -or
+        $manifest.Package.Applications.Application[1].Executable -cne 'bin\tetherd-agentw.exe' -or
         $manifest.Package.Applications.Application[1].VisualElements.AppListEntry -cne 'none') {
         throw 'STORE_PROFILE_UNEXPECTED_LAUNCHERS'
     }
@@ -129,7 +160,7 @@ try {
     $nodePath = (Resolve-Path -LiteralPath $NodeExecutable -ErrorAction Stop).Path
     $appSource = (Resolve-Path -LiteralPath $OnboardingDirectory -ErrorAction Stop).Path
     $compactSource = (Resolve-Path -LiteralPath $CompactDeployDirectory -ErrorAction Stop).Path
-    if ((Split-Path -Leaf $agentPath) -cne 'tetherd.exe' -or
+    if ((Split-Path -Leaf $agentPath) -cne 'tetherd-agentw.exe' -or
         (Get-Item -LiteralPath $agentPath).Length -lt 100000 -or
         (Split-Path -Leaf $nodePath) -cne 'node.exe' -or
         -not (Test-Path -LiteralPath (Join-Path $appSource 'runtime-app.mjs') -PathType Leaf) -or
@@ -142,6 +173,8 @@ try {
         [string](Get-AuthenticodeSignature -LiteralPath $nodePath -ErrorAction Stop).Status -cne 'Valid') {
         throw 'STORE_CANDIDATE_NODE_LICENSE_OR_SIGNATURE_INVALID'
     }
+    Assert-WindowlessAgentBinary -Path $agentPath
+    $report.agent_launch_subsystem = 'WindowsGUI'
     $report.agent_sha256 = Get-Sha256Hex -Path $agentPath
     $report.agent_authenticode = [string](Get-AuthenticodeSignature -LiteralPath $agentPath).Status
     $report.node_sha256 = Get-Sha256Hex -Path $nodePath
@@ -178,7 +211,7 @@ try {
     }
     $report.last_phase = 'PAYLOAD_CREATED'
     Copy-Item -LiteralPath $manifestFile -Destination (Join-Path $payload 'AppxManifest.xml')
-    Copy-Item -LiteralPath $agentPath -Destination (Join-Path $payload 'bin\tetherd.exe')
+    Copy-Item -LiteralPath $agentPath -Destination (Join-Path $payload 'bin\tetherd-agentw.exe')
     Copy-Item -LiteralPath $nodePath -Destination (Join-Path $payload 'runtime\node.exe')
     Copy-Item -LiteralPath $nodeLicense -Destination (Join-Path $payload 'runtime\LICENSE')
     Copy-Item -Path (Join-Path $appSource '*') -Destination (Join-Path $payload 'app') -Recurse -Force
@@ -253,6 +286,7 @@ try {
         package_identity = $identity
         version = $version
         native_agent_sha256 = $report.agent_sha256
+        agent_launch_subsystem = $report.agent_launch_subsystem
         node_sha256 = $report.node_sha256
         manifest_sha256 = $report.manifest_sha256
         store_runtime_sha256 = $report.store_runtime_sha256
@@ -314,7 +348,7 @@ try {
         if ($selfTestData.success -ne $true) { throw 'STORE_CANDIDATE_RUNTIME_SELFTEST_FAILED' }
     } finally { Pop-Location }
     foreach ($entry in @(
-        @{ Name = 'bin\tetherd.exe'; Hash = $report.agent_sha256 },
+        @{ Name = 'bin\tetherd-agentw.exe'; Hash = $report.agent_sha256 },
         @{ Name = 'runtime\node.exe'; Hash = $report.node_sha256 },
         @{ Name = 'AppxManifest.xml'; Hash = $report.manifest_sha256 },
         @{ Name = 'app\runtime-app.mjs'; Hash = $report.store_runtime_sha256 },
@@ -333,6 +367,7 @@ try {
     $unpackedProvenance = Get-Content -LiteralPath (Join-Path $unpack 'tetherplane-provenance.json') -Raw | ConvertFrom-Json
     if ($unpackedProvenance.source_commit -cne $report.source_commit -or
         $unpackedProvenance.native_agent_sha256 -cne $report.agent_sha256 -or
+        $unpackedProvenance.agent_launch_subsystem -cne 'WindowsGUI' -or
         $unpackedProvenance.package_identity -cne $identity -or
         $unpackedProvenance.store_runtime_sha256 -cne $report.store_runtime_sha256 -or
         $unpackedProvenance.store_setup_sha256 -cne $report.store_setup_sha256) {

@@ -9,6 +9,8 @@ import { fileURLToPath } from "node:url";
 
 const changes = new Map([
   ["runtime-app.mjs", [
+    ['join(packageRoot, "bin", "tetherd.exe")', 'join(packageRoot, "bin", "tetherd-agentw.exe")'],
+    ['"bin/tetherd.exe"', '"bin/tetherd-agentw.exe"'],
     ['join(process.env.LOCALAPPDATA || "", "TetherplaneStoreDevOnly")',
      'join(process.env.LOCALAPPDATA || "", "TetherplaneStore")'],
   ]],

@@ -31,7 +31,7 @@
                           BackgroundColor="#20252A" />
     </Application>
     <!-- Keep the agent hidden: it must not become a second public launch entry. -->
-    <Application Id="Agent" Executable="bin\tetherd.exe"
+    <Application Id="Agent" Executable="bin\tetherd-agentw.exe"
                  uap10:RuntimeBehavior="packagedClassicApp" uap10:TrustLevel="mediumIL">
       <uap:VisualElements AppListEntry="none" DisplayName="Tetherplane Agent"
                           Description="Internal agent: starts only after owner approval"

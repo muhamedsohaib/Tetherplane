@@ -14,6 +14,7 @@ on:
       - 'Cargo.lock'
       - 'scripts/msix-store/Build-StorePrivateCandidate.ps1'
       - 'scripts/msix-store/stage-store-runtime.mjs'
+      - 'scripts/build-windows-agent-binaries.ps1'
       - 'tests/release/msix-store-private-candidate.test.mjs'
       - 'tests/release/msix-store-runtime*.mjs'
       - 'docs/release/MSIX_STORE_PRIVATE_CANDIDATE_20261028.md'
@@ -83,8 +84,12 @@ jobs:
           $out = Join-Path $env:RUNNER_TEMP 'store-private-deploy\compact-mcp'
           pnpm --config.node-linker=hoisted --filter @tetherplane/compact-mcp deploy --legacy --prod $out
           if ($LASTEXITCODE -ne 0) { throw 'COMPACT_MCP_DEPLOY_FAILED' }
-      - name: Compile exact checkout native agent
-        run: cargo build --release --locked -p tetherd
+      - name: Exercise Windows onboarding ACL and denial unit tests
+        shell: pwsh
+        run: node --test tests/release/msix-store-runtime.test.mjs
+      - name: Compile exact checkout windowless and CLI native agents
+        shell: pwsh
+        run: ./scripts/build-windows-agent-binaries.ps1
       - name: Require real agent / relay denial and reconnection on ephemeral localhost
         env:
           TETHERPLANE_REQUIRE_MSIX_REAL_RELAY: '1'
@@ -97,7 +102,7 @@ jobs:
           $nodeExe = node -p 'process.execPath'
           $args = @(
             '-NoProfile', '-NonInteractive', '-File', 'scripts/msix-store/Build-StorePrivateCandidate.ps1',
-            '-AgentBinary', 'target/release/tetherd.exe',
+            '-AgentBinary', 'target/release/tetherd-agentw.exe',
             '-NodeExecutable', $nodeExe,
             '-OnboardingDirectory', 'packaging/msix-store-runtime/app',
             '-CompactDeployDirectory', (Join-Path $env:RUNNER_TEMP 'store-private-deploy\compact-mcp'),
@@ -114,7 +119,20 @@ jobs:
               $evidence.native_SAC_On_acceptance -ne 'NOT_RUN' -or
               $evidence.trusted_Store_signature -ne 'NOT_RUN' -or
               $evidence.owner_approved_Store_submission -ne $false -or
-              $evidence.source_commit -notmatch '^[0-9a-f]{40}$') {
+              $evidence.agent_launch_subsystem -ne 'WindowsGUI' -or
+              $evidence.source_commit -notmatch '^[0-9a-f]{40}
+            throw 'STORE_CANDIDATE_FALSE_ACCEPTANCE_CLAIM'
+          }
+          Write-Output 'STORE_PRIVATE_CANDIDATE_CI_PREVIEW_PACK_UNPACK_PASS; STORE_AND_SAC_NOT_TESTED'
+      - name: Upload JSON proof only (no package, source binaries, credentials or certificates)
+        if: always()
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        with:
+          name: store-private-preview-report-${{ github.run_id }}-${{ github.run_attempt }}
+          path: ${{ runner.temp }}/tetherplane-store-private-preview.json
+          if-no-files-found: warn
+          retention-days: 7
+) {
             throw 'STORE_CANDIDATE_FALSE_ACCEPTANCE_CLAIM'
           }
           Write-Output 'STORE_PRIVATE_CANDIDATE_CI_PREVIEW_PACK_UNPACK_PASS; STORE_AND_SAC_NOT_TESTED'

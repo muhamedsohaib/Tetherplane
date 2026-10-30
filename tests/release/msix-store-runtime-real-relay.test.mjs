@@ -123,7 +123,7 @@ test("new authorized device: owner approval, real agent, authenticated MCP, deni
   const allowedRoot = join(root, "allowed-documents");
   await mkdir(allowedRoot, { recursive: true });
   await mkdir(agentState, { recursive: true });
-  const exe = resolve("target", "release", "tetherd.exe");
+  const exe = resolve("target", "release", "tetherd-agentw.exe");
   const secret = randomBytes(32).toString("base64url");
   const deviceId = "ci-msix-" + randomBytes(5).toString("hex");
   const credentialPath = join(root, "device-credential.txt");

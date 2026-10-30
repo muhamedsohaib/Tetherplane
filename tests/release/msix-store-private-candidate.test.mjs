@@ -61,7 +61,7 @@ test("all Store executable and UI entries retain existing restricted app archite
   assert.equal(attr(apps[0], "uap10:RuntimeBehavior"), "packagedClassicApp");
   assert.equal(attr(apps[0], "uap10:TrustLevel"), "mediumIL");
   assert.equal(attr(apps[1], "Id"), "Agent");
-  assert.equal(attr(apps[1], "Executable"), "bin\\tetherd.exe");
+  assert.equal(attr(apps[1], "Executable"), "bin\\tetherd-agentw.exe");
   assert.equal(attr(apps[1], "uap10:RuntimeBehavior"), "packagedClassicApp");
   assert.equal(attr(apps[1], "uap10:TrustLevel"), "mediumIL");
   assert.match(manifest, /<uap:VisualElements AppListEntry="none" DisplayName="Tetherplane Agent"/);
@@ -87,6 +87,9 @@ test("Store art is required as real assets, never silently inherited from dev sq
   assert.match(builder, /TetherplaneStore/);
   assert.match(builder, /STORE_CANDIDATE_UNPACKED_DEVELOPMENT_TEXT_OR_STATE/);
   assert.match(builder, /STORE_CANDIDATE_RUNTIME_SELFTEST_FAILED/);
+  assert.match(builder, /STORE_CANDIDATE_AGENT_MUST_HAVE_GUI_SUBSYSTEM/);
+  assert.match(workflow, /scripts\/build-windows-agent-binaries\.ps1/);
+  assert.match(workflow, /tetherd-agentw\.exe/);
 });
 
 
@@ -98,6 +101,10 @@ test("Store-only overlay is deterministic, fail-closed and never alters developm
   assert.ok(devJs.includes("TetherplaneStoreDevOnly"));
   assert.ok(devUi.includes("DEVELOPMENT PREVIEW"));
   assert.ok(storeJs.includes('"TetherplaneStore"'));
+  assert.ok(devJs.includes('join(packageRoot, "bin", "tetherd.exe")'));
+  assert.ok(storeJs.includes('join(packageRoot, "bin", "tetherd-agentw.exe")'));
+  assert.ok(storeJs.includes('"bin/tetherd-agentw.exe"'));
+  assert.doesNotMatch(storeJs, /"bin\/tetherd\.exe"/);
   assert.doesNotMatch(storeJs, /TetherplaneStoreDevOnly/);
   assert.match(storeUi, /OWNER-APPROVED SETUP/);
   assert.doesNotMatch(storeUi, /DEVELOPMENT PREVIEW|Store-preview|not Microsoft Store-certified/);
@@ -159,4 +166,12 @@ test("owner review MSIX is not exported until scratch package passes every integ
   assert.match(builder, /\$exportOwned = true|\$exportOwned = \$true/);
   assert.match(builder, /if \(\$exportOwned -and \(Test-Path -LiteralPath \$exportTemp -PathType Leaf\)\)/);
   assert.doesNotMatch(builder, /& \$makeAppx pack \/d \$payload \/p \$ownerOutput/);
+});
+
+
+test("real relay Windows integration targets the reviewed windowless executable", () => {
+  const smoke = read("tests/release/msix-store-runtime-real-relay.test.mjs");
+  assert.match(smoke, /resolve\("target", "release", "tetherd-agentw\\.exe"\)/);
+  assert.match(smoke, /MSIX_REAL_RELAY_REQUIRED_TEST_INELIGIBLE/);
+  assert.match(workflow, /TETHERPLANE_REQUIRE_MSIX_REAL_RELAY: '1'/);
 });
