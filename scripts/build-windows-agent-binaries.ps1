@@ -20,7 +20,7 @@ try {
 
     # Same core policy/transport, but use the Windows GUI subsystem so a
     # scheduled background process does not allocate a visible console.
-    & cargo build --release -p tetherd --features windows-headless-agent
+    & cargo build --release --locked -p tetherd --features windows-headless-agent
     if ($LASTEXITCODE -ne 0 -or -not (Test-Path -LiteralPath $consoleExe -PathType Leaf)) {
         throw "windowless agent build failed"
     }
@@ -28,7 +28,7 @@ try {
 
     # Restore the ordinary Cargo-managed console executable for existing
     # MCP stdin/stdout users and developer commands.
-    & cargo build --release -p tetherd
+    & cargo build --release --locked -p tetherd
     if ($LASTEXITCODE -ne 0 -or
         -not (Test-Path -LiteralPath $consoleExe -PathType Leaf) -or
         -not (Test-Path -LiteralPath $browserWindowlessExe -PathType Leaf) -or

@@ -1,10 +1,10 @@
-$ErrorActionPreference = "Stop"
-Set-StrictMode -Version Latest
-
 param(
     [Parameter(ValueFromRemainingArguments = $true)]
     [string[]]$RemainingArgs
 )
+
+$ErrorActionPreference = "Stop"
+Set-StrictMode -Version Latest
 
 $root = (Resolve-Path (Join-Path $PSScriptRoot "..")).Path
 $tetherd = Join-Path $root "bin\tetherd.exe"

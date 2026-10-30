@@ -51,3 +51,21 @@ A separate authenticated remote MCP call to Leno must also pass while the operat
 The isolated evidence in draft PRs #105–#106 establishes package self-consistency and independently verifiable GitHub/Sigstore workflow provenance for a quarantined **unsigned** archive only. It is not Windows Authenticode signing, a trusted promotion procedure, proof of a clean authorized machine, human-observed coexistence, or authenticated four-device acceptance.
 
 Before an owner-approved release: settle code-signing identity/key custody, verify an exact signed candidate independently, complete disposable upgrade/rollback and operator-observed Windows acceptance, and validate authenticated operation and denial behavior on the required four devices. Preserve the publication block until these gates are explicitly approved.
+
+## Prepared GitHub candidate procedure (2026-10-30)
+
+See [GitHub release-readiness evidence and candidate procedure](release/GITHUB_RELEASE_READINESS_20261030.md).
+The new manual-only workflow prepares two independent unsigned quarantine builds,
+compares normalized archives and all payload hashes, authenticates their GitHub
+provenance, then exercises the exact archive on a fresh hosted Windows runner.
+It has **not been dispatched**. It cannot authorize public release or certify
+Windows 11 Smart App Control. Artifact uploads in this public repository are
+potentially public; dispatch needs separate approval under the current no-binary-
+publication restriction.
+
+Installer replacement now stages files beside the final prefix and retains the
+previous install until copy, receipt and optional task registration succeed.
+Injected failures restore the previous binary and receipt. State must be outside
+and non-overlapping with the install prefix; legacy overlapping receipts require
+owner migration before upgrade or uninstall. This error recovery is not a
+power-loss transaction or proof of previous-version state compatibility.

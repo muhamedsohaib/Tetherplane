@@ -78,6 +78,11 @@ $stateDir = $null
 $stateManaged = $false
 if ($receipt.PSObject.Properties.Name -contains "state_dir" -and [string]$receipt.state_dir) {
     $stateDir = [IO.Path]::GetFullPath([string]$receipt.state_dir)
+    if ([string]::Equals($install.TrimEnd('\'), $stateDir.TrimEnd('\'), [StringComparison]::OrdinalIgnoreCase) -or
+        $stateDir.StartsWith($install.TrimEnd('\') + '\', [StringComparison]::OrdinalIgnoreCase) -or
+        $install.StartsWith($stateDir.TrimEnd('\') + '\', [StringComparison]::OrdinalIgnoreCase)) {
+        throw 'refusing uninstall: state and install directories overlap; owner migration required'
+    }
 }
 if ($receipt.PSObject.Properties.Name -contains "state_created_by_installer") {
     $stateManaged = [bool]$receipt.state_created_by_installer

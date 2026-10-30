@@ -16,6 +16,11 @@ Set-StrictMode -Version Latest
 $package = (Resolve-Path -LiteralPath $PackagePath).Path
 $install = [IO.Path]::GetFullPath($InstallPrefix)
 $state = [IO.Path]::GetFullPath($StateDir)
+if ([string]::Equals($install.TrimEnd('\'), $state.TrimEnd('\'), [StringComparison]::OrdinalIgnoreCase) -or
+    $state.StartsWith($install.TrimEnd('\') + '\', [StringComparison]::OrdinalIgnoreCase) -or
+    $install.StartsWith($state.TrimEnd('\') + '\', [StringComparison]::OrdinalIgnoreCase)) {
+    throw 'state and install directories must be separate, non-overlapping paths'
+}
 
 # Existing agent registrations must be migrated explicitly. These checks
 # precede all file replacement, including -Force without -InstallScheduledTask.
@@ -71,6 +76,7 @@ foreach ($required in @(
 }
 
 $agentArgs = $null
+$previousReceipt = $null
 if ($InstallScheduledTask) {
     if (-not $AgentArgumentsFile) {
         throw "-InstallScheduledTask requires -AgentArgumentsFile"
@@ -153,49 +159,140 @@ if (Test-Path -LiteralPath $install) {
                 [string]$previousReceipt.scheduled_task) {
                 throw "refusing -Force: installed scheduled agent requires explicit migration"
             }
+            if ($previousReceipt.PSObject.Properties.Name -contains 'state_dir' -and [string]$previousReceipt.state_dir) {
+                $previousState = [IO.Path]::GetFullPath([string]$previousReceipt.state_dir)
+                if ([string]::Equals($install.TrimEnd('\'), $previousState.TrimEnd('\'), [StringComparison]::OrdinalIgnoreCase) -or
+                    $previousState.StartsWith($install.TrimEnd('\') + '\', [StringComparison]::OrdinalIgnoreCase) -or
+                    $install.StartsWith($previousState.TrimEnd('\') + '\', [StringComparison]::OrdinalIgnoreCase)) {
+                    throw 'refusing -Force: previous state and install directories overlap; owner migration required'
+                }
+            }
         }
-        Remove-Item -LiteralPath $install -Recurse -Force
     }
 }
 
 $stateExisted = Test-Path -LiteralPath $state
-New-Item -ItemType Directory -Force -Path $install,$state | Out-Null
-foreach ($directory in @("bin","adapters","protocol","launch","browser")) {
-    Copy-Item -LiteralPath (Join-Path $package $directory) -Destination $install -Recurse -Force
+if ($stateExisted -and -not (Test-Path -LiteralPath $state -PathType Container)) {
+    throw 'existing state path must be a directory'
 }
-foreach ($file in @("manifest.json","README.md","SECURITY.md","CONTRIBUTING.md","LICENSE-MIT","LICENSE-APACHE","install-model-worker-windows.ps1","uninstall-windows.ps1")) {
-    $source = Join-Path $package $file
-    if (Test-Path -LiteralPath $source -PathType Leaf) {
-        Copy-Item -LiteralPath $source -Destination (Join-Path $install $file) -Force
+# Prepare a complete replacement beside the final prefix. A failed copy must
+# never destroy the prior install or expose a partially copied new install.
+$parent = Split-Path -Parent $install
+$staging = Join-Path $parent ('.tetherplane-install-' + [guid]::NewGuid().ToString('N'))
+$backup = Join-Path $parent ('.tetherplane-backup-' + [guid]::NewGuid().ToString('N'))
+$priorMoved = $false
+$candidateMoved = $false
+$stateCreated = $false
+$taskAttempted = $false
+$committed = $false
+$taskName = $null
+try {
+    New-Item -ItemType Directory -Force -Path $staging | Out-Null
+    foreach ($directory in @("bin","adapters","protocol","launch","browser")) {
+        Copy-Item -LiteralPath (Join-Path $package $directory) -Destination $staging -Recurse -Force
+    }
+    foreach ($file in @("manifest.json","README.md","SECURITY.md","CONTRIBUTING.md","LICENSE-MIT","LICENSE-APACHE","install-model-worker-windows.ps1","uninstall-windows.ps1")) {
+        $source = Join-Path $package $file
+        if (Test-Path -LiteralPath $source -PathType Leaf) {
+            Copy-Item -LiteralPath $source -Destination (Join-Path $staging $file) -Force
+        }
+    }
+    if ($IncludeRelay -and (Test-Path -LiteralPath (Join-Path $package "relay"))) {
+        Copy-Item -LiteralPath (Join-Path $package "relay") -Destination $staging -Recurse -Force
+    }
+
+    $configDir = Join-Path $staging "config"
+    New-Item -ItemType Directory -Force -Path $configDir | Out-Null
+
+    if ($InstallScheduledTask) {
+        $argsPath = Join-Path $configDir "agent-args.json"
+        $json = ConvertTo-Json -InputObject $agentArgs -Depth 4 -Compress
+        [IO.File]::WriteAllText($argsPath, $json, [Text.UTF8Encoding]::new($false))
+
+        $taskName = $AgentTaskName
+    }
+
+    $stateOwned = -not $stateExisted
+    if ($previousReceipt -and
+        $previousReceipt.PSObject.Properties.Name -contains 'state_dir' -and
+        $previousReceipt.PSObject.Properties.Name -contains 'state_created_by_installer' -and
+        [string]::Equals([IO.Path]::GetFullPath([string]$previousReceipt.state_dir), $state, [StringComparison]::OrdinalIgnoreCase)) {
+        $stateOwned = [bool]$previousReceipt.state_created_by_installer
+    }
+    $receipt = [ordered]@{
+        install_prefix = $install
+        state_dir = $state
+        state_created_by_installer = $stateOwned
+        scheduled_task = $taskName
+    }
+    $receipt | ConvertTo-Json -Depth 4 | Set-Content -LiteralPath (Join-Path $configDir "install.json") -Encoding UTF8
+
+    if (Test-Path -LiteralPath $install) {
+        Move-Item -LiteralPath $install -Destination $backup
+        $priorMoved = $true
+    }
+    Move-Item -LiteralPath $staging -Destination $install
+    $candidateMoved = $true
+    if (-not $stateExisted) {
+        New-Item -ItemType Directory -Path $state | Out-Null
+        $stateCreated = $true
+    }
+    if ($InstallScheduledTask) {
+        # Task Scheduler owns tetherd directly, not a PowerShell-spawned child.
+        $argsPath = Join-Path $install 'config\agent-args.json'
+        $action = New-ScheduledTaskAction -Execute (Join-Path $install "bin\tetherd-agentw.exe") -Argument ('--arguments-file "' + $argsPath + '"')
+        $trigger = New-ScheduledTaskTrigger -AtLogOn
+        $settings = New-ScheduledTaskSettingsSet -MultipleInstances IgnoreNew -RestartCount 99 -RestartInterval (New-TimeSpan -Minutes 1) -ExecutionTimeLimit ([TimeSpan]::Zero) -StartWhenAvailable -AllowStartIfOnBatteries -DontStopIfGoingOnBatteries
+        $taskAttempted = $true
+        Register-ScheduledTask -TaskName $taskName -Action $action -Trigger $trigger -Settings $settings -RunLevel Limited | Out-Null
+    }
+    $committed = $true
+}
+catch {
+    $installError = $_
+    # Registration can throw after creating a task. Remove only the exact
+    # stopped action just attempted; any ambiguity preserves recovery files.
+    if ($taskAttempted) {
+        # A direct -TaskName lookup throws NotFound when registration failed
+        # before creating anything. Enumeration preserves that empty outcome
+        # while still treating a real scheduler access failure as a blocker.
+        $createdTasks = @(Get-ScheduledTask -ErrorAction Stop | Where-Object TaskName -CEQ $taskName)
+        if ($createdTasks.Count -gt 0) {
+            if ($createdTasks.Count -ne 1 -or @($createdTasks[0].Actions).Count -ne 1 -or
+                [string]$createdTasks[0].Actions[0].Execute -ine (Join-Path $install 'bin\tetherd-agentw.exe') -or
+                [string]$createdTasks[0].Actions[0].Arguments -cne ('--arguments-file "' + (Join-Path $install 'config\agent-args.json') + '"') -or
+                [string]$createdTasks[0].Principal.RunLevel -ne 'Limited' -or
+                [string]$createdTasks[0].State -eq 'Running') {
+                throw 'INSTALL_ROLLBACK_REQUIRES_OWNER_REVIEW: task ownership or stopped state is unverified; backup preserved'
+            }
+            Unregister-ScheduledTask -TaskName $taskName -Confirm:$false -ErrorAction Stop
+        }
+    }
+    if ($candidateMoved -and (Test-Path -LiteralPath $install)) {
+        Remove-Item -LiteralPath $install -Recurse -Force
+    }
+    if ($priorMoved) { Move-Item -LiteralPath $backup -Destination $install }
+    # Never recursively delete state. Only remove a still-empty new directory.
+    if ($stateCreated -and (Test-Path -LiteralPath $state) -and
+        @(Get-ChildItem -LiteralPath $state -Force).Count -eq 0) {
+        [IO.Directory]::Delete($state)
+    }
+    throw $installError
+}
+finally {
+    # Both scratch paths are fixed GUID siblings computed above. Validate the
+    # resolved targets before recursive cleanup; failed rollback retains backup.
+    foreach ($scratch in @($staging, $backup)) {
+        if ($scratch -eq $backup -and -not $committed) { continue }
+        $resolved = [IO.Path]::GetFullPath($scratch)
+        if (-not [string]::Equals((Split-Path -Parent $resolved), $parent, [StringComparison]::OrdinalIgnoreCase) -or
+            (Split-Path -Leaf $resolved) -notmatch '^\.tetherplane-(install|backup)-[a-f0-9]{32}$') {
+            throw 'unsafe installer scratch cleanup path'
+        }
+        if (Test-Path -LiteralPath $resolved) {
+            Remove-Item -LiteralPath $resolved -Recurse -Force -ErrorAction Continue
+        }
     }
 }
-if ($IncludeRelay -and (Test-Path -LiteralPath (Join-Path $package "relay"))) {
-    Copy-Item -LiteralPath (Join-Path $package "relay") -Destination $install -Recurse -Force
-}
-
-$configDir = Join-Path $install "config"
-New-Item -ItemType Directory -Force -Path $configDir | Out-Null
-
-$taskName = $null
-if ($InstallScheduledTask) {
-    $argsPath = Join-Path $configDir "agent-args.json"
-    $json = ConvertTo-Json -InputObject $agentArgs -Depth 4 -Compress
-    [IO.File]::WriteAllText($argsPath, $json, [Text.UTF8Encoding]::new($false))
-
-    # Task Scheduler owns tetherd directly, not a PowerShell-spawned child.
-    $taskName = $AgentTaskName
-    $action = New-ScheduledTaskAction -Execute (Join-Path $install "bin\tetherd-agentw.exe") -Argument ('--arguments-file "' + $argsPath + '"')
-    $trigger = New-ScheduledTaskTrigger -AtLogOn
-    $settings = New-ScheduledTaskSettingsSet -MultipleInstances IgnoreNew -RestartCount 99 -RestartInterval (New-TimeSpan -Minutes 1) -ExecutionTimeLimit ([TimeSpan]::Zero) -StartWhenAvailable -AllowStartIfOnBatteries -DontStopIfGoingOnBatteries
-    Register-ScheduledTask -TaskName $taskName -Action $action -Trigger $trigger -Settings $settings -RunLevel Limited | Out-Null
-}
-
-$receipt = [ordered]@{
-    install_prefix = $install
-    state_dir = $state
-    state_created_by_installer = (-not $stateExisted)
-    scheduled_task = $taskName
-}
-$receipt | ConvertTo-Json -Depth 4 | Set-Content -LiteralPath (Join-Path $configDir "install.json") -Encoding UTF8
 
 Write-Output "TETHERPLANE_INSTALL_OK $install"

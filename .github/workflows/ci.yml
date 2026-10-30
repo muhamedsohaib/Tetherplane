@@ -22,6 +22,9 @@ jobs:
       - name: Test read-only Windows candidate byte evidence
         run: node --test tests/release/windows-candidate-digests.test.mjs
 
+      - name: Test reproducible candidate and manual workflow boundaries
+        run: node --test tests/release/github-candidate*.test.mjs
+
   quality:
     strategy:
       fail-fast: false
@@ -36,6 +39,16 @@ jobs:
         if: runner.os == 'Windows'
         shell: pwsh
         run: ./tests/release/windows-install-prefix-ownership.ps1
+
+      - name: Preserve installation and state after injected replacement failure
+        if: runner.os == 'Windows'
+        shell: pwsh
+        run: ./tests/release/windows-install-rollback.ps1
+
+      - name: Exercise packaged PowerShell MCP launcher argument forwarding
+        if: runner.os == 'Windows'
+        shell: pwsh
+        run: ./tests/release/windows-mcp-launcher.ps1
 
       - name: Reject foreign uninstaller task ownership (disposable Windows)
         if: runner.os == 'Windows'

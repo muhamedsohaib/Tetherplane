@@ -1,0 +1,149 @@
+name: GitHub Windows candidate (unsigned, no release)
+# Prepared only. Manual dispatch uploads PUBLICLY ACCESSIBLE quarantine bytes;
+# obtain separate owner approval before dispatch. Never a tag/release publisher.
+on:
+  workflow_dispatch:
+permissions:
+  contents: read
+jobs:
+  build:
+    if: github.event_name == 'workflow_dispatch' && github.repository == 'muhamedsohaib/Tetherplane' && github.ref == 'refs/heads/work/github-release-readiness-20261030'
+    strategy:
+      fail-fast: false
+      matrix:
+        lane: [first, second]
+    runs-on: windows-2025
+    timeout-minutes: 55
+    permissions:
+      contents: read
+      id-token: write
+      attestations: write
+      artifact-metadata: write
+    env:
+      RUSTUP_TOOLCHAIN: '1.99.1'
+    steps:
+      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
+        with:
+          ref: ${{ github.sha }}
+          persist-credentials: false
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4.4.0
+        with:
+          node-version: '22.23.4'
+      - name: Lock dependency and compiler inputs
+        shell: pwsh
+        run: |
+          rustup toolchain install 1.99.1 --profile minimal --component clippy --component rustfmt
+          if ($LASTEXITCODE -ne 0) { throw 'rustup failed' }
+          corepack enable
+          if ($LASTEXITCODE -ne 0) { throw 'corepack failed' }
+          corepack prepare pnpm@10.34.5 --activate
+          if ($LASTEXITCODE -ne 0) { throw 'pnpm activation failed' }
+          pnpm install --frozen-lockfile
+          if ($LASTEXITCODE -ne 0) { throw 'locked dependency install failed' }
+      - name: Require source and failure-recovery gates
+        shell: pwsh
+        run: |
+          node --test tests/release/github-candidate*.test.mjs tests/release/windows-main-publication-block.test.mjs
+          if ($LASTEXITCODE -ne 0) { throw 'candidate policy failed' }
+          & ./tests/release/windows-install-rollback.ps1
+          & ./tests/release/windows-mcp-launcher.ps1
+          cargo fmt --all -- --check
+          if ($LASTEXITCODE -ne 0) { throw 'format failed' }
+          cargo clippy --workspace --all-targets --locked -- -D warnings
+          if ($LASTEXITCODE -ne 0) { throw 'Clippy failed' }
+          cargo test --workspace --locked
+          if ($LASTEXITCODE -ne 0) { throw 'Rust tests failed' }
+          pnpm -r typecheck
+          if ($LASTEXITCODE -ne 0) { throw 'typecheck failed' }
+          pnpm -r build
+          if ($LASTEXITCODE -ne 0) { throw 'TypeScript build failed' }
+          pnpm -r test
+          if ($LASTEXITCODE -ne 0) { throw 'TypeScript tests failed' }
+          python scripts/check-no-unsafe.py
+          if ($LASTEXITCODE -ne 0) { throw 'unsafe scan failed' }
+      - name: Independently compile and normalize exact unsigned candidate
+        shell: pwsh
+        run: ./scripts/release/build-github-windows-candidate.ps1
+      - name: Attest unsigned archive only (not Windows signing)
+        uses: actions/attest@1e69f48acb82d1966a394da916b4c1698aa569d6 # v4.2.2
+        with:
+          subject-path: ${{ runner.temp }}/github-candidate/evidence/*.zip
+      - name: Quarantine bytes for independent verification only
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        with:
+          name: UNSIGNED-DO-NOT-INSTALL-${{ matrix.lane }}-${{ github.sha }}
+          path: ${{ runner.temp }}/github-candidate/evidence/*
+          if-no-files-found: error
+          retention-days: 1
+          compression-level: 0
+
+  independent-verify:
+    needs: build
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    permissions:
+      contents: read
+      attestations: read
+    steps:
+      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
+        with:
+          ref: ${{ github.sha }}
+          persist-credentials: false
+      - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4.3.0
+        with:
+          pattern: UNSIGNED-DO-NOT-INSTALL-*-${{ github.sha }}
+          path: ${{ runner.temp }}/rebuilds
+      - name: Authenticate both archives, then compare every payload byte
+        env:
+          GH_TOKEN: ${{ github.token }}
+          EVIDENCE: ${{ runner.temp }}/rebuilds
+        run: |
+          set -euo pipefail
+          for lane in first second; do
+            dir="$EVIDENCE/UNSIGNED-DO-NOT-INSTALL-$lane-$GITHUB_SHA"
+            python scripts/release/github_candidate.py verify "$dir" "$GITHUB_SHA"
+            gh attestation verify "$dir/tetherplane-windows-x64-unsigned-$GITHUB_SHA.zip" \
+              --repo "$GITHUB_REPOSITORY" \
+              --signer-workflow "$GITHUB_REPOSITORY/.github/workflows/github-windows-candidate.yml" \
+              --source-ref "$GITHUB_REF" --source-digest "$GITHUB_SHA" \
+              --deny-self-hosted-runners --format json > "$RUNNER_TEMP/$lane-verified.json"
+            python scripts/release/github_candidate.py attested "$dir" "$GITHUB_SHA" "$RUNNER_TEMP/$lane-verified.json" "$GITHUB_RUN_ID" "$GITHUB_RUN_ATTEMPT"
+          done
+          python scripts/release/github_candidate.py compare "$EVIDENCE/UNSIGNED-DO-NOT-INSTALL-first-$GITHUB_SHA" "$EVIDENCE/UNSIGNED-DO-NOT-INSTALL-second-$GITHUB_SHA" "$GITHUB_SHA"
+
+  fresh-host:
+    needs: independent-verify
+    runs-on: windows-2025
+    timeout-minutes: 15
+    permissions:
+      contents: read
+      attestations: read
+    steps:
+      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
+        with:
+          ref: ${{ github.sha }}
+          persist-credentials: false
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4.4.0
+        with:
+          node-version: '22.23.4'
+      - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4.3.0
+        with:
+          name: UNSIGNED-DO-NOT-INSTALL-first-${{ github.sha }}
+          path: ${{ runner.temp }}/exact-candidate
+      - name: Independently authenticate before extraction or execution
+        env:
+          GH_TOKEN: ${{ github.token }}
+        shell: pwsh
+        run: |
+          $dir = Join-Path $env:RUNNER_TEMP 'exact-candidate'
+          python scripts/release/github_candidate.py verify $dir $env:GITHUB_SHA
+          if ($LASTEXITCODE -ne 0) { throw 'archive hash failure' }
+          $archive = Join-Path $dir ('tetherplane-windows-x64-unsigned-' + $env:GITHUB_SHA + '.zip')
+          $verified = Join-Path $env:RUNNER_TEMP 'fresh-host-verified.json'
+          gh attestation verify $archive --repo $env:GITHUB_REPOSITORY --signer-workflow "$env:GITHUB_REPOSITORY/.github/workflows/github-windows-candidate.yml" --source-ref $env:GITHUB_REF --source-digest $env:GITHUB_SHA --deny-self-hosted-runners --format json > $verified
+          if ($LASTEXITCODE -ne 0) { throw 'cryptographic provenance verification failed' }
+          python scripts/release/github_candidate.py attested $dir $env:GITHUB_SHA $verified $env:GITHUB_RUN_ID $env:GITHUB_RUN_ATTEMPT
+          if ($LASTEXITCODE -ne 0) { throw 'attestation run/subject mismatch' }
+      - name: Install exact authenticated archive in disposable prefix, deny outside access, uninstall and recover
+        shell: pwsh
+        run: ./tests/release/github-candidate-cleanhost.ps1
