@@ -70,6 +70,15 @@ jobs:
         with:
           node-version: 22
 
+      - name: Inspect disposable Store agent-state ACLs (Windows)
+        if: runner.os == 'Windows'
+        shell: pwsh
+        run: |
+          cargo build -p tetherd --bin tetherd --locked
+          if ($LASTEXITCODE -ne 0) { throw 'DISPOSABLE_ACL_AGENT_BUILD_FAILED' }
+          node --test tests/release/msix-store-agent-state-acl.test.mjs
+          if ($LASTEXITCODE -ne 0) { throw 'DISPOSABLE_ACL_TEST_FAILED' }
+
       - name: Test Windows candidate byte evidence on Node 22
         if: runner.os == 'Windows'
         run: node --test tests/release/windows-candidate-digests.test.mjs
