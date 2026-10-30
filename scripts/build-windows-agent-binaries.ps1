@@ -11,6 +11,7 @@ $windowlessExe = Join-Path $repo "target\release\tetherd-agentw.exe"
 $browserWindowlessExe = Join-Path $repo "target\release\tetherplane-browserw.exe"
 $modelWindowlessExe = Join-Path $repo "target\release\tetherplane-modelw.exe"
 $storeSetupWindowlessExe = Join-Path $repo "target\release\tetherplane-setupw.exe"
+$storeAutostartWindowlessExe = Join-Path $repo "target\release\tetherplane-autostartw.exe"
 
 Push-Location $repo
 try {
@@ -32,7 +33,8 @@ try {
         -not (Test-Path -LiteralPath $consoleExe -PathType Leaf) -or
         -not (Test-Path -LiteralPath $browserWindowlessExe -PathType Leaf) -or
         -not (Test-Path -LiteralPath $modelWindowlessExe -PathType Leaf) -or
-        -not (Test-Path -LiteralPath $storeSetupWindowlessExe -PathType Leaf)) {
+        -not (Test-Path -LiteralPath $storeSetupWindowlessExe -PathType Leaf) -or
+        -not (Test-Path -LiteralPath $storeAutostartWindowlessExe -PathType Leaf)) {
         throw "stdio agent or native browser launcher build failed"
     }
 }
@@ -48,4 +50,5 @@ Write-Output "WINDOWS_DUAL_AGENT_BINARY_BUILD_OK"
 Write-Output "WINDOWS_NATIVE_BROWSER_GUI_BUILD_OK"
 Write-Output "WINDOWS_NATIVE_MODEL_GUI_BUILD_OK"
 Write-Output "WINDOWS_STORE_SETUP_GUI_BUILD_OK"
+Write-Output "WINDOWS_STORE_AUTOSTART_GUI_BUILD_OK"
 

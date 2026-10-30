@@ -39,6 +39,15 @@
        reopen Tetherplane. Do not change Windows security settings to force a connection.</p>
   </section>
   <section><h2>Agent</h2><p id="status">Not started</p><button id="stop">Stop this session's agent</button></section>
+  <section id="startup" aria-label="Optional startup control">
+    <h2>Optional — reconnect after Windows sign-in</h2>
+    <p>After the device owner has verified an authenticated <code>device.status</code>,
+       open <strong>Windows Settings &gt; Apps &gt; Startup</strong> and enable
+       <strong>Tetherplane Agent</strong>. Startup is disabled by default
+       and never starts without the existing approved identity. Windows lets
+       you turn it off at any time. This applies after sign-in, not before login.
+       Do not disable Windows security or create a second Tetherplane task.</p>
+  </section>
   <p id="feedback" role="status"></p>
   <p class="foot">A started process is not proof that the relay accepted it. Confirm authenticated device.status independently before trusting a connection.</p>
 </main>

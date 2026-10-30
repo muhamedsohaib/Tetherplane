@@ -25,7 +25,7 @@ permissions:
 
 jobs:
   source-contract:
-    if: ${{ github.event.pull_request.head.repo.full_name == github.repository && (startsWith(github.head_ref, 'feature/msix-store-private-candidate-') || github.head_ref == 'fix/windows-zero-console-model-worker-20261030' || github.head_ref == 'fix/store-windowless-owner-setup-20261030') }}
+    if: ${{ github.event.pull_request.head.repo.full_name == github.repository && (startsWith(github.head_ref, 'feature/msix-store-private-candidate-') || github.head_ref == 'fix/windows-zero-console-model-worker-20261030' || github.head_ref == 'fix/store-windowless-owner-setup-20261030' || github.head_ref == 'fix/store-owner-opt-in-autostart-20261030') }}
     runs-on: ubuntu-latest
     timeout-minutes: 5
     steps:
@@ -39,7 +39,7 @@ jobs:
         run: node --test tests/release/msix-store-private-candidate.test.mjs tests/release/msix-store-runtime.test.mjs
 
   windows-source-package:
-    if: ${{ github.event.pull_request.head.repo.full_name == github.repository && (startsWith(github.head_ref, 'feature/msix-store-private-candidate-') || github.head_ref == 'fix/windows-zero-console-model-worker-20261030' || github.head_ref == 'fix/store-windowless-owner-setup-20261030') }}
+    if: ${{ github.event.pull_request.head.repo.full_name == github.repository && (startsWith(github.head_ref, 'feature/msix-store-private-candidate-') || github.head_ref == 'fix/windows-zero-console-model-worker-20261030' || github.head_ref == 'fix/store-windowless-owner-setup-20261030' || github.head_ref == 'fix/store-owner-opt-in-autostart-20261030') }}
     needs: source-contract
     runs-on: windows-latest
     timeout-minutes: 30
@@ -92,6 +92,8 @@ jobs:
         run: ./scripts/build-windows-agent-binaries.ps1
       - name: Verify disposable GUI Store owner setup launcher (no terminal or install)
         run: node tests/release/windows-store-setupw-lifecycle.mjs target/release/tetherplane-setupw.exe
+      - name: Verify opt-in Windows startup is inert without pairing, owner-only, and orphan-free
+        run: node tests/release/windows-store-autostartw-lifecycle.mjs target/release/tetherplane-autostartw.exe target/release/tetherd-agentw.exe
       - name: Require real agent / relay denial and reconnection on ephemeral localhost
         env:
           TETHERPLANE_REQUIRE_MSIX_REAL_RELAY: '1'
@@ -106,6 +108,7 @@ jobs:
             '-NoProfile', '-NonInteractive', '-File', 'scripts/msix-store/Build-StorePrivateCandidate.ps1',
             '-AgentBinary', 'target/release/tetherd-agentw.exe',
             '-SetupLauncherBinary', 'target/release/tetherplane-setupw.exe',
+            '-AutostartLauncherBinary', 'target/release/tetherplane-autostartw.exe',
             '-NodeExecutable', $nodeExe,
             '-OnboardingDirectory', 'packaging/msix-store-runtime/app',
             '-CompactDeployDirectory', (Join-Path $env:RUNNER_TEMP 'store-private-deploy\compact-mcp'),
@@ -124,6 +127,9 @@ jobs:
               $evidence.owner_approved_Store_submission -ne $false -or
               $evidence.agent_launch_subsystem -ne 'WindowsGUI' -or
               $evidence.setup_launcher_subsystem -ne 'WindowsGUI' -or
+              $evidence.autostart_launcher_subsystem -ne 'WindowsGUI' -or
+              $evidence.autostart_task_default -ne 'DisabledOwnerOptIn' -or
+              $evidence.autostart_launcher_sha256 -notmatch '^[0-9a-f]{64}$' -or
               $evidence.setup_launcher_sha256 -notmatch '^[0-9a-f]{64}$' -or
               $evidence.source_commit -notmatch '^[0-9a-f]{40}$') {
             throw 'STORE_CANDIDATE_FALSE_ACCEPTANCE_CLAIM'
