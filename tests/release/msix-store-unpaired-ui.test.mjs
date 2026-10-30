@@ -47,6 +47,30 @@ async function captureBrowser(browser, png, profile, url) {
   assert.equal(code,0,"STORE_UI_BROWSER_NONZERO_EXIT");
 }
 
+async function verifyBrowserDom(browser,profile,url) {
+  // A PNG of a Chromium network error would satisfy dimension checks.
+  // Independently verify the headless browser really loaded the app form.
+  const args=["--headless=new","--disable-gpu","--disable-background-networking",
+    "--disable-extensions","--no-first-run","--no-default-browser-check",
+    "--virtual-time-budget=5000","--user-data-dir="+profile,"--dump-dom",url];
+  const child=spawn(browser,args,{windowsHide:true,stdio:["ignore","pipe","ignore"],timeout:45000});
+  let dom="";
+  child.stdout.on("data",chunk=>{
+    if(dom.length<400000)dom+=chunk.toString("utf8");
+  });
+  const code=await new Promise((resolveExit,rejectExit)=>{
+    child.once("error",rejectExit);
+    child.once("exit",(c,signal)=>
+      signal?rejectExit(new Error("STORE_UI_DOM_BROWSER_TERMINATED")):resolveExit(c));
+  });
+  assert.equal(code,0,"STORE_UI_DOM_BROWSER_NONZERO_EXIT");
+  assert.match(dom,/<form\b[^>]*id="setup"/,"STORE_UI_REAL_FORM_NOT_RENDERED");
+  assert.match(dom,/OWNER-APPROVED SETUP/,"STORE_UI_PRODUCTION_OVERLAY_NOT_RENDERED");
+  assert.match(dom,/Relay endpoint/,"STORE_UI_RELAY_FIELD_NOT_RENDERED");
+  assert.doesNotMatch(dom,/chrome-error:\/\/chromewebdata|ERR_CONNECTION_REFUSED/,
+    "STORE_UI_ERROR_PAGE_CAPTURED");
+}
+
 test("real unpaired runtime screen from ephemeral Windows; screenshot discarded",
   {skip:!eligible},async ()=>{
   const browser=findBrowser();
@@ -89,6 +113,7 @@ test("real unpaired runtime screen from ephemeral Windows; screenshot discarded"
     assert.equal(state.hasSavedIdentity,false);
     assert.equal(state.pending,null);
     await captureBrowser(browser,screenshot,profile,wizard.url);
+    await verifyBrowserDom(browser,profile,wizard.url);
     const bytes=await readFile(screenshot);
     const pixel=pngSize(bytes);
     assert.ok(pixel.width>=1366&&pixel.height>=768,
@@ -102,6 +127,7 @@ test("real unpaired runtime screen from ephemeral Windows; screenshot discarded"
       gate:"ACTUAL_UNPAIRED_WINDOWS_BROWSER_RENDER_PASS",
       pixels:pixel.width+"x"+pixel.height,
       wizard:"IDLE_UNPAIRED_NOT_CONNECTED",
+      actual_dom_form_verified:true,
       screenshot:"DISCARDED_NOT_REVIEWED_NOT_FOR_STORE_SUBMISSION",
       installed_msix:false,owner_devices_touched:false
     }));
