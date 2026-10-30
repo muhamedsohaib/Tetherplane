@@ -1,0 +1,42 @@
+<?xml version="1.0" encoding="utf-8"?>
+<Package xmlns="http://schemas.microsoft.com/appx/manifest/foundation/windows10"
+         xmlns:uap="http://schemas.microsoft.com/appx/manifest/uap/windows10"
+         xmlns:uap10="http://schemas.microsoft.com/appx/manifest/uap/windows10/10"
+         xmlns:uap11="http://schemas.microsoft.com/appx/manifest/uap/windows10/11"
+         xmlns:rescap="http://schemas.microsoft.com/appx/manifest/foundation/windows10/restrictedcapabilities"
+         IgnorableNamespaces="uap uap10 uap11 rescap">
+  <!-- DEV ONLY: synthetic identity, no Store approval or startup registration. -->
+  <Identity Name="Tetherplane.StoreRuntime.DevOnly" Publisher="CN=Tetherplane MSIX Development Probe"
+            Version="0.2.0.0" ProcessorArchitecture="x64" />
+  <Properties>
+    <DisplayName>Tetherplane Store Runtime (DEV ONLY)</DisplayName>
+    <PublisherDisplayName>Tetherplane MSIX Development Probe</PublisherDisplayName>
+    <Description>Disposable first-run runtime feasibility experiment</Description>
+    <Logo>Assets\Logo50.png</Logo>
+  </Properties>
+  <Resources><Resource Language="en-us" /></Resources>
+  <Dependencies><TargetDeviceFamily Name="Windows.Desktop" MinVersion="10.0.22000.0" MaxVersionTested="10.0.26100.0" /></Dependencies>
+  <Applications>
+    <Application Id="Runtime" Executable="runtime\node.exe"
+                 uap10:RuntimeBehavior="packagedClassicApp" uap10:TrustLevel="mediumIL"
+                 uap11:CurrentDirectoryPath="$(package.installedPath)" uap11:Parameters="app\runtime-app.mjs">
+      <uap:VisualElements DisplayName="Tetherplane (DEV ONLY)"
+                          Description="First-run owner pairing prototype, not production-ready"
+                          Square150x150Logo="Assets\Logo150.png"
+                          Square44x44Logo="Assets\Logo44.png"
+                          BackgroundColor="#20252A" />
+    </Application>
+    <!-- The Windows packaged-classic-app launch model requires native helper
+         executables to be declared even when they have no Start menu entry.
+         Do not enable startup, grant capabilities, or expose a second tile. -->
+    <Application Id="Agent" Executable="bin\tetherd.exe"
+                 uap10:RuntimeBehavior="packagedClassicApp" uap10:TrustLevel="mediumIL">
+      <uap:VisualElements AppListEntry="none" DisplayName="Tetherplane Agent (DEV ONLY)"
+                          Description="Internal agent launched only after owner approval"
+                          Square150x150Logo="Assets\Logo150.png"
+                          Square44x44Logo="Assets\Logo44.png"
+                          BackgroundColor="#20252A" />
+    </Application>
+  </Applications>
+  <Capabilities><rescap:Capability Name="runFullTrust" /></Capabilities>
+</Package>
