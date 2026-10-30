@@ -328,7 +328,10 @@ async fn main() {
         }
     };
 
+    #[cfg(windows)]
     let _owner_instance_guard = hold_owner_instance_guard(&options);
+    #[cfg(not(windows))]
+    hold_owner_instance_guard(&options);
 
     let transport = options.transport;
 
