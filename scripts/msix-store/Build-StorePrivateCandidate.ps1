@@ -137,11 +137,16 @@ try {
     $report.manifest_sha256 = Get-Sha256Hex -Path $manifestFile
 
     if ($CiValidationOnly) {
+        # Exact review branch may run only the disposable nonrelease test.
+        # Do not authorize any other fix/ branch or expand runner privileges.
+        $candidateHead = [string]$env:GITHUB_HEAD_REF
+        $approvedCiRef = $candidateHead.StartsWith('feature/msix-store-private-candidate-') -or
+            $candidateHead -ceq 'fix/windows-zero-console-model-worker-20261030'
         if ($env:GITHUB_ACTIONS -cne 'true' -or
             $env:GITHUB_EVENT_NAME -cne 'pull_request' -or
             $env:RUNNER_OS -cne 'Windows' -or
             $env:RUNNER_ENVIRONMENT -cne 'github-hosted' -or
-            -not ([string]$env:GITHUB_HEAD_REF).StartsWith('feature/msix-store-private-candidate-') -or
+            -not $approvedCiRef -or
             [string]::IsNullOrWhiteSpace($env:RUNNER_TEMP)) {
             throw 'CI_SYNTHETIC_PREVIEW_DENIED_OUTSIDE_DISPOSABLE_WINDOWS_PR'
         }

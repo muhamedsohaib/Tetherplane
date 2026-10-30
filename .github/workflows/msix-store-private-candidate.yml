@@ -25,7 +25,7 @@ permissions:
 
 jobs:
   source-contract:
-    if: ${{ github.event.pull_request.head.repo.full_name == github.repository && startsWith(github.head_ref, 'feature/msix-store-private-candidate-') }}
+    if: ${{ github.event.pull_request.head.repo.full_name == github.repository && (startsWith(github.head_ref, 'feature/msix-store-private-candidate-') || github.head_ref == 'fix/windows-zero-console-model-worker-20261030') }}
     runs-on: ubuntu-latest
     timeout-minutes: 5
     steps:
@@ -39,7 +39,7 @@ jobs:
         run: node --test tests/release/msix-store-private-candidate.test.mjs tests/release/msix-store-runtime.test.mjs
 
   windows-source-package:
-    if: ${{ github.event.pull_request.head.repo.full_name == github.repository && startsWith(github.head_ref, 'feature/msix-store-private-candidate-') }}
+    if: ${{ github.event.pull_request.head.repo.full_name == github.repository && (startsWith(github.head_ref, 'feature/msix-store-private-candidate-') || github.head_ref == 'fix/windows-zero-console-model-worker-20261030') }}
     needs: source-contract
     runs-on: windows-latest
     timeout-minutes: 30

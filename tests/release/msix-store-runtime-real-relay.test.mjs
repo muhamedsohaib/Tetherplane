@@ -25,7 +25,8 @@ const eligible = process.env.GITHUB_ACTIONS === "true" &&
   process.env.RUNNER_OS === "Windows" &&
   process.env.RUNNER_ENVIRONMENT === "github-hosted" &&
   (process.env.GITHUB_HEAD_REF?.startsWith("feature/msix-store-runtime-") ||
-   process.env.GITHUB_HEAD_REF?.startsWith("feature/msix-store-private-candidate-"));
+   process.env.GITHUB_HEAD_REF?.startsWith("feature/msix-store-private-candidate-") ||
+   process.env.GITHUB_HEAD_REF === "fix/windows-zero-console-model-worker-20261030");
 
 if (process.env.TETHERPLANE_REQUIRE_MSIX_REAL_RELAY === "1" && !eligible) {
   throw new Error("MSIX_REAL_RELAY_REQUIRED_TEST_INELIGIBLE");
