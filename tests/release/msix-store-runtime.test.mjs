@@ -14,6 +14,7 @@ import {
   requestPairing, readSavedConfig, persistApprovedConfig, createWizard, probeApprovedDevice
 } from "../../packaging/msix-store-runtime/app/runtime-app.mjs";
 import { windowsPowerShell51Environment } from "../../scripts/msix-store/windows-powershell-env.mjs";
+import { requireNativeStartupParent } from "../../packaging/msix-store-runtime/app/agent-autostart.mjs";
 
 const paired = { pairingId: "synthetic-pair", userCode: "ABCD-1234", expiresAt: new Date(Date.now() + 600000).toISOString() };
 function goodRelay() { return "wss://relay.example.test/device"; }
@@ -76,6 +77,16 @@ test("device name and access root reject malicious and missing input", async t =
   await assert.rejects(()=>validateAllowedRoot("relative-path"));
   await assert.rejects(()=>validateAllowedRoot(join(f.root, "missing")));
   assert.equal(await validateAllowedRoot(f.allowRoot), f.allowRoot);
+});
+
+test("Windows opt-in startup never accepts a forged native parent PID", () => {
+  assert.equal(requireNativeStartupParent("1044", 1044), 1044);
+  for (const [input, actual] of [
+    [undefined, 1044], ["0", 1044], ["NaN", 1044], ["1043", 1044],
+    ["-1", 1044], ["1.5", 1044], ["999999999999999999999", 1044]
+  ]) {
+    assert.throws(() => requireNativeStartupParent(input, actual), /exact native parent/);
+  }
 });
 
 test("pairing uses only a SHA-256 hash over HTTPS and does not transmit credential or owner token", async () => {

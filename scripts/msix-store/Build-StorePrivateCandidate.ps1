@@ -1,6 +1,7 @@
 param(
     [Parameter(Mandatory = $true)][string]$AgentBinary,
     [Parameter(Mandatory = $true)][string]$SetupLauncherBinary,
+    [Parameter(Mandatory = $true)][string]$AutostartLauncherBinary,
     [Parameter(Mandatory = $true)][string]$NodeExecutable,
     [Parameter(Mandatory = $true)][string]$OnboardingDirectory,
     [Parameter(Mandatory = $true)][string]$CompactDeployDirectory,
@@ -31,6 +32,10 @@ $report = [ordered]@{
     source_commit = 'NOT_VERIFIED'
     agent_sha256 = 'NOT_VERIFIED'
     setup_launcher_sha256 = 'NOT_VERIFIED'
+    autostart_launcher_sha256 = 'NOT_VERIFIED'
+    autostart_launcher_subsystem = 'NOT_VERIFIED'
+    autostart_task_default = 'NOT_VERIFIED'
+    autostart_runtime_sha256 = 'NOT_VERIFIED'
     setup_launcher_subsystem = 'NOT_VERIFIED'
     setup_launcher_authenticode = 'NOT_CHECKED'
     agent_authenticode = 'NOT_CHECKED'
@@ -118,8 +123,29 @@ function Assert-StoreManifest([string]$Path) {
         throw 'STORE_PROFILE_ASSET_NAMES_INVALID'
     }
     $xmlText = $manifest.OuterXml
-    if ($xmlText -match '(?i)startupTask|packagedServices|localSystemServices|uap11:Parameters|Tetherplane.StoreRuntime.DevOnly|Development Probe') {
-        throw 'STORE_PROFILE_DEVELOPMENT_IDENTITY_OR_STARTUP_CAPABILITY'
+    if ($xmlText -match '(?i)packagedServices|localSystemServices|uap11:Parameters|Tetherplane.StoreRuntime.DevOnly|Development Probe') {
+        throw 'STORE_PROFILE_DEVELOPMENT_IDENTITY_OR_UNAPPROVED_CAPABILITY'
+    }
+    # Only one user-managed startup task, attached to the already visible
+    # owner-initiated Runtime app. Never grant a start-on-install exemption.
+    $extensions = @($manifest.SelectNodes("//*[local-name()='Extension']"))
+    $tasks = @($manifest.SelectNodes("//*[local-name()='StartupTask']"))
+    if ($extensions.Count -ne 1 -or $tasks.Count -ne 1) {
+        throw 'STORE_PROFILE_STARTUP_TASK_CARDINALITY'
+    }
+    $extension = $extensions[0]
+    $task = $tasks[0]
+    $expectedNs = 'http://schemas.microsoft.com/appx/manifest/uap/windows10/5'
+    if ($extension.NamespaceURI -cne $expectedNs -or
+        $extension.GetAttribute('Category') -cne 'windows.startupTask' -or
+        $extension.GetAttribute('Executable') -cne 'bin\tetherplane-autostartw.exe' -or
+        $extension.GetAttribute('EntryPoint') -cne 'Windows.FullTrustApplication' -or
+        $task.NamespaceURI -cne $expectedNs -or
+        $task.GetAttribute('TaskId') -cne 'TetherplaneOwnerAgentLogon' -or
+        $task.GetAttribute('Enabled') -cne 'false' -or
+        $task.GetAttribute('DisplayName') -cne 'Tetherplane Agent' -or
+        $extension.ParentNode.ParentNode.GetAttribute('Id') -cne 'Runtime') {
+        throw 'STORE_PROFILE_STARTUP_REQUIRES_EXPLICIT_OWNER_OPT_IN'
     }
     # Use XML namespace-aware fields rather than PowerShell's adapted .Name
     # or .ChildNodes properties (which do not behave consistently in PS 5.1).
@@ -146,7 +172,8 @@ try {
         $candidateHead = [string]$env:GITHUB_HEAD_REF
         $approvedCiRef = $candidateHead.StartsWith('feature/msix-store-private-candidate-') -or
             $candidateHead -ceq 'fix/windows-zero-console-model-worker-20261030' -or
-            $candidateHead -ceq 'fix/store-windowless-owner-setup-20261030'
+            $candidateHead -ceq 'fix/store-windowless-owner-setup-20261030' -or
+            $candidateHead -ceq 'fix/store-owner-opt-in-autostart-20261030'
         if ($env:GITHUB_ACTIONS -cne 'true' -or
             $env:GITHUB_EVENT_NAME -cne 'pull_request' -or
             $env:RUNNER_OS -cne 'Windows' -or
@@ -168,14 +195,18 @@ try {
 
     $agentPath = (Resolve-Path -LiteralPath $AgentBinary -ErrorAction Stop).Path
     $setupPath = (Resolve-Path -LiteralPath $SetupLauncherBinary -ErrorAction Stop).Path
+    $autostartPath = (Resolve-Path -LiteralPath $AutostartLauncherBinary -ErrorAction Stop).Path
     $nodePath = (Resolve-Path -LiteralPath $NodeExecutable -ErrorAction Stop).Path
     $appSource = (Resolve-Path -LiteralPath $OnboardingDirectory -ErrorAction Stop).Path
     $compactSource = (Resolve-Path -LiteralPath $CompactDeployDirectory -ErrorAction Stop).Path
-    if ((Split-Path -Leaf $setupPath) -cne 'tetherplane-setupw.exe' -or
+    if ((Split-Path -Leaf $autostartPath) -cne 'tetherplane-autostartw.exe' -or
+        (Get-Item -LiteralPath $autostartPath).Length -lt 100000 -or
+        (Split-Path -Leaf $setupPath) -cne 'tetherplane-setupw.exe' -or
         (Get-Item -LiteralPath $setupPath).Length -lt 100000 -or
         (Split-Path -Leaf $agentPath) -cne 'tetherd-agentw.exe' -or
         (Get-Item -LiteralPath $agentPath).Length -lt 100000 -or
         (Split-Path -Leaf $nodePath) -cne 'node.exe' -or
+        -not (Test-Path -LiteralPath (Join-Path $appSource 'agent-autostart.mjs') -PathType Leaf) -or
         -not (Test-Path -LiteralPath (Join-Path $appSource 'runtime-app.mjs') -PathType Leaf) -or
         -not (Test-Path -LiteralPath (Join-Path $compactSource 'dist\stdio-server.js') -PathType Leaf) -or
         -not (Test-Path -LiteralPath (Join-Path $compactSource 'node_modules\@modelcontextprotocol\sdk\package.json') -PathType Leaf)) {
@@ -188,6 +219,10 @@ try {
     }
     Assert-WindowlessAgentBinary -Path $agentPath
     Assert-WindowlessAgentBinary -Path $setupPath
+    Assert-WindowlessAgentBinary -Path $autostartPath
+    $report.autostart_launcher_subsystem = 'WindowsGUI'
+    $report.autostart_task_default = 'DisabledOwnerOptIn'
+    $report.autostart_launcher_sha256 = Get-Sha256Hex -Path $autostartPath
     $report.setup_launcher_subsystem = 'WindowsGUI'
     $report.setup_launcher_sha256 = Get-Sha256Hex -Path $setupPath
     $report.setup_launcher_authenticode = [string](Get-AuthenticodeSignature -LiteralPath $setupPath).Status
@@ -230,6 +265,7 @@ try {
     Copy-Item -LiteralPath $manifestFile -Destination (Join-Path $payload 'AppxManifest.xml')
     Copy-Item -LiteralPath $agentPath -Destination (Join-Path $payload 'bin\tetherd-agentw.exe')
     Copy-Item -LiteralPath $setupPath -Destination (Join-Path $payload 'bin\tetherplane-setupw.exe')
+    Copy-Item -LiteralPath $autostartPath -Destination (Join-Path $payload 'bin\tetherplane-autostartw.exe')
     Copy-Item -LiteralPath $nodePath -Destination (Join-Path $payload 'runtime\node.exe')
     Copy-Item -LiteralPath $nodeLicense -Destination (Join-Path $payload 'runtime\LICENSE')
     Copy-Item -Path (Join-Path $appSource '*') -Destination (Join-Path $payload 'app') -Recurse -Force
@@ -241,6 +277,7 @@ try {
     & $nodePath $stageScript '--stage' (Join-Path $payload 'app')
     if ($LASTEXITCODE -ne 0) { throw 'STORE_CANDIDATE_STAGE_UI_FAILED' }
     $report.store_runtime_sha256 = Get-Sha256Hex -Path (Join-Path $payload 'app\runtime-app.mjs')
+    $report.autostart_runtime_sha256 = Get-Sha256Hex -Path (Join-Path $payload 'app\agent-autostart.mjs')
     $report.store_setup_sha256 = Get-Sha256Hex -Path (Join-Path $payload 'app\setup.html')
 
     $requiredArtwork = [ordered]@{ 'Logo44.png' = 44; 'Logo50.png' = 50; 'Logo150.png' = 150 }
@@ -305,6 +342,9 @@ try {
         version = $version
         native_agent_sha256 = $report.agent_sha256
         native_setup_launcher_sha256 = $report.setup_launcher_sha256
+        native_autostart_launcher_sha256 = $report.autostart_launcher_sha256
+        autostart_runtime_sha256 = $report.autostart_runtime_sha256
+        autostart_task_default = $report.autostart_task_default
         setup_launcher_subsystem = $report.setup_launcher_subsystem
         agent_launch_subsystem = $report.agent_launch_subsystem
         node_sha256 = $report.node_sha256
@@ -370,6 +410,8 @@ try {
     foreach ($entry in @(
         @{ Name = 'bin\tetherd-agentw.exe'; Hash = $report.agent_sha256 },
         @{ Name = 'bin\tetherplane-setupw.exe'; Hash = $report.setup_launcher_sha256 },
+        @{ Name = 'bin\tetherplane-autostartw.exe'; Hash = $report.autostart_launcher_sha256 },
+        @{ Name = 'app\agent-autostart.mjs'; Hash = $report.autostart_runtime_sha256 },
         @{ Name = 'runtime\node.exe'; Hash = $report.node_sha256 },
         @{ Name = 'AppxManifest.xml'; Hash = $report.manifest_sha256 },
         @{ Name = 'app\runtime-app.mjs'; Hash = $report.store_runtime_sha256 },
@@ -389,6 +431,9 @@ try {
     if ($unpackedProvenance.source_commit -cne $report.source_commit -or
         $unpackedProvenance.native_agent_sha256 -cne $report.agent_sha256 -or
         $unpackedProvenance.native_setup_launcher_sha256 -cne $report.setup_launcher_sha256 -or
+        $unpackedProvenance.native_autostart_launcher_sha256 -cne $report.autostart_launcher_sha256 -or
+        $unpackedProvenance.autostart_runtime_sha256 -cne $report.autostart_runtime_sha256 -or
+        $unpackedProvenance.autostart_task_default -cne 'DisabledOwnerOptIn' -or
         $unpackedProvenance.setup_launcher_subsystem -cne 'WindowsGUI' -or
         $unpackedProvenance.agent_launch_subsystem -cne 'WindowsGUI' -or
         $unpackedProvenance.package_identity -cne $identity -or

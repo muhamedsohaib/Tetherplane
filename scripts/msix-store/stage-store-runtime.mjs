@@ -11,6 +11,9 @@ const changes = new Map([
   ["runtime-app.mjs", [
     ['join(packageRoot, "bin", "tetherd.exe")', 'join(packageRoot, "bin", "tetherd-agentw.exe")'],
     ['"bin/tetherd.exe"', '"bin/tetherd-agentw.exe"'],
+    // Same Windows single-instance guard for manual wizard and logon agent.
+    ['const args = agentArgs(config, join(stateRoot, "device-credential.txt"), join(stateRoot, "agent-state"));',
+     'const args = [...agentArgs(config, join(stateRoot, "device-credential.txt"), join(stateRoot, "agent-state")), "--owner-instance-lock"];'],
     ['join(process.env.LOCALAPPDATA || "", "TetherplaneStoreDevOnly")',
      'join(process.env.LOCALAPPDATA || "", "TetherplaneStore")'],
   ]],

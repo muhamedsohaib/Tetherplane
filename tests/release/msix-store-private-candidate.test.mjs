@@ -68,7 +68,21 @@ test("all Store executable and UI entries retain existing restricted app archite
   assert.match(manifest, /<uap:VisualElements AppListEntry="none" DisplayName="Tetherplane Agent"/);
   assert.equal((manifest.match(/<rescap:Capability\b/g) ?? []).length, 1);
   assert.match(manifest, /<Capabilities><rescap:Capability Name="runFullTrust" \/><\/Capabilities>/);
-  assert.doesNotMatch(manifest, /startupTask|packagedServices|localSystemServices|ExecutionAlias|windows\.fullTrustApplication/i);
+  assert.doesNotMatch(manifest, /packagedServices|localSystemServices|ExecutionAlias/i);
+  const startupExtensions = [...manifest.matchAll(/<uap5:Extension\b[^>]*>/g)];
+  const tasks = [...manifest.matchAll(/<uap5:StartupTask\b[^>]*\/>/g)];
+  assert.equal(startupExtensions.length, 1, "exactly one startup extension");
+  assert.equal(tasks.length, 1, "exactly one startup task");
+  assert.equal(attr(startupExtensions[0][0], "Category"), "windows.startupTask");
+  assert.equal(attr(startupExtensions[0][0], "Executable"), "bin\\tetherplane-autostartw.exe");
+  assert.equal(attr(startupExtensions[0][0], "EntryPoint"), "Windows.FullTrustApplication");
+  assert.equal(attr(tasks[0][0], "TaskId"), "TetherplaneOwnerAgentLogon");
+  assert.equal(attr(tasks[0][0], "Enabled"), "false");
+  assert.equal(attr(tasks[0][0], "DisplayName"), "Tetherplane Agent");
+  const runtimeTag = manifest.match(/<Application Id="Runtime"[\s\S]*?<\/Application>/)?.[0];
+  assert.ok(runtimeTag?.includes("windows.startupTask"),
+    "startup must belong to owner-visible Runtime rather than hidden Agent");
+  assert.doesNotMatch(manifest, /ImmediateRegistration|nonUserConfigurableStartupTasks/);
   assert.doesNotMatch(manifest, /Development Probe|DevOnly|\(DEV ONLY\)/i);
 });
 
@@ -92,6 +106,10 @@ test("Store art is required as real assets, never silently inherited from dev sq
   assert.match(workflow, /scripts\/build-windows-agent-binaries\.ps1/);
   assert.match(workflow, /tetherd-agentw\.exe/);
   assert.match(workflow, /windows-store-setupw-lifecycle\.mjs/);
+  assert.match(workflow, /windows-store-autostartw-lifecycle\.mjs/);
+  assert.match(workflow, /-AutostartLauncherBinary/);
+  assert.match(builder, /autostart_launcher_sha256/);
+  assert.match(builder, /STORE_PROFILE_STARTUP_REQUIRES_EXPLICIT_OWNER_OPT_IN/);
   assert.match(workflow, /-SetupLauncherBinary/);
   assert.match(builder, /setup_launcher_sha256/);
 });
@@ -108,6 +126,10 @@ test("Store-only overlay is deterministic, fail-closed and never alters developm
   assert.ok(devJs.includes('join(packageRoot, "bin", "tetherd.exe")'));
   assert.ok(storeJs.includes('join(packageRoot, "bin", "tetherd-agentw.exe")'));
   assert.ok(storeJs.includes('"bin/tetherd-agentw.exe"'));
+  assert.ok(storeJs.includes('"--owner-instance-lock"'));
+  assert.ok(!devJs.includes('"--owner-instance-lock"'));
+  assert.ok(read("packaging/msix-store-runtime/app/agent-autostart.mjs")
+    .includes("readSavedConfig(stateRoot)"));
   assert.doesNotMatch(storeJs, /"bin\/tetherd\.exe"/);
   assert.doesNotMatch(storeJs, /TetherplaneStoreDevOnly/);
   assert.match(storeUi, /OWNER-APPROVED SETUP/);
@@ -138,12 +160,17 @@ test("new packaging CI cannot publish, install packages, alter trust, or upload 
   const exactReviewBranch = "fix/windows-zero-console-model-worker-20261030";
   assert.equal(workflow.split("github.head_ref == '" + exactReviewBranch + "'").length - 1, 2);
   assert.equal(workflow.split("github.head_ref == 'fix/store-windowless-owner-setup-20261030'").length - 1, 2);
+  assert.equal(workflow.split("github.head_ref == 'fix/store-owner-opt-in-autostart-20261030'").length - 1, 2);
+  assert.ok(builder.includes("$candidateHead -ceq 'fix/store-owner-opt-in-autostart-20261030'"));
   assert.ok(builder.includes("$candidateHead -ceq 'fix/store-windowless-owner-setup-20261030'"));
   assert.ok(builder.includes("$candidateHead -ceq '" + exactReviewBranch + "'"));
   assert.ok(builder.includes("-not $approvedCiRef"));
   assert.ok(read("tests/release/msix-store-runtime-real-relay.test.mjs")
     .includes('process.env.GITHUB_HEAD_REF === "' + exactReviewBranch + '"'));
   assert.match(workflow, /CI_PACKAGE_STRUCTURE_PASS_NOT_SUBMITTABLE/);
+  const ownerInstructions = read("packaging/msix-store-runtime/app/setup.html");
+  assert.match(ownerInstructions, /Windows Settings &gt; Apps &gt; Startup/);
+  assert.match(ownerInstructions, /disabled by default/);
   assert.doesNotMatch(workflow, /^\s*(?:&\s*)?(?:Add-AppxPackage|Import-Certificate|New-SelfSignedCertificate)\b/gim);
   assert.doesNotMatch(workflow, /workflow_dispatch|push:\s*\n|contents: write|SignTool sign/i);
   assert.doesNotMatch(workflow, /\.msix\b.*upload-artifact|upload-artifact.*\.msix\b/i);
@@ -188,6 +215,7 @@ test("real relay Windows integration targets the reviewed windowless executable"
   assert.match(smoke, /MSIX_REAL_RELAY_REQUIRED_TEST_INELIGIBLE/);
   assert.match(workflow, /TETHERPLANE_REQUIRE_MSIX_REAL_RELAY: '1'/);
   assert.ok(smoke.includes('process.env.GITHUB_HEAD_REF === "fix/store-windowless-owner-setup-20261030"'));
+  assert.ok(smoke.includes('process.env.GITHUB_HEAD_REF === "fix/store-owner-opt-in-autostart-20261030"'));
   assert.match(manifest, /Executable="bin\\tetherplane-setupw\.exe"/);
   assert.doesNotMatch(manifest, /Executable="runtime\\node\.exe"/);
 });

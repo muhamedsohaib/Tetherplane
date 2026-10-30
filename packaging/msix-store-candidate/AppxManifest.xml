@@ -3,8 +3,9 @@
          xmlns:uap="http://schemas.microsoft.com/appx/manifest/uap/windows10"
          xmlns:uap10="http://schemas.microsoft.com/appx/manifest/uap/windows10/10"
          xmlns:uap11="http://schemas.microsoft.com/appx/manifest/uap/windows10/11"
+         xmlns:uap5="http://schemas.microsoft.com/appx/manifest/uap/windows10/5"
          xmlns:rescap="http://schemas.microsoft.com/appx/manifest/foundation/windows10/restrictedcapabilities"
-         IgnorableNamespaces="uap uap10 uap11 rescap">
+         IgnorableNamespaces="uap uap10 uap11 uap5 rescap">
   <!-- Store-bound, source-review candidate. No Store certification or signed release is implied. -->
   <Identity Name="ARCUSLabs.Tetherplane"
             Publisher="CN=6CCCFC81-2F0A-49BE-9027-A03BCF427F43"
@@ -29,6 +30,16 @@
                           Square150x150Logo="Assets\Logo150.png"
                           Square44x44Logo="Assets\Logo44.png"
                           BackgroundColor="#20252A" />
+      <!-- Owner may opt in after approval. Windows default is disabled. -->
+      <Extensions>
+        <uap5:Extension Category="windows.startupTask"
+                        Executable="bin\tetherplane-autostartw.exe"
+                        EntryPoint="Windows.FullTrustApplication">
+          <uap5:StartupTask TaskId="TetherplaneOwnerAgentLogon"
+                            Enabled="false"
+                            DisplayName="Tetherplane Agent" />
+        </uap5:Extension>
+      </Extensions>
     </Application>
     <!-- Keep the agent hidden: it must not become a second public launch entry. -->
     <Application Id="Agent" Executable="bin\tetherd-agentw.exe"

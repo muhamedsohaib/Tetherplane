@@ -37,6 +37,7 @@ struct CliOptions {
     browser_bridge: Option<String>,
     browser_bridge_token_file: Option<PathBuf>,
     browser_only: bool,
+    owner_instance_lock: bool,
 }
 
 // The Windows Task Scheduler action owns tetherd directly. It passes a path
@@ -93,6 +94,7 @@ fn parse_arg_tokens(mut arguments: impl Iterator<Item = String>) -> Result<CliOp
     let mut browser_bridge = None;
     let mut browser_bridge_token_file = None;
     let mut browser_only = false;
+    let mut owner_instance_lock = false;
     let mut relay_url = None;
     let mut device_id = None;
     let mut device_credential_file = None;
@@ -102,6 +104,7 @@ fn parse_arg_tokens(mut arguments: impl Iterator<Item = String>) -> Result<CliOp
         match argument.as_str() {
             "--stdio-rpc" => stdio_rpc = true,
             "--browser-only" => browser_only = true,
+            "--owner-instance-lock" => owner_instance_lock = true,
             "--allow" => {
                 let path = arguments
                     .next()
@@ -157,6 +160,39 @@ fn parse_arg_tokens(mut arguments: impl Iterator<Item = String>) -> Result<CliOp
         }
     }
 
+    let transport = parse_transport_mode(
+        stdio_rpc,
+        relay_url,
+        device_id,
+        device_credential_file,
+        relay_allow_insecure_localhost,
+    )?;
+
+    if owner_instance_lock
+        && (!matches!(&transport, TransportMode::Relay { .. }) || state_dir.is_none())
+    {
+        return Err("--owner-instance-lock requires relay transport and --state-dir".into());
+    }
+
+    Ok(CliOptions {
+        transport,
+        allowed_roots,
+        principal_profile,
+        state_dir,
+        browser_bridge,
+        browser_bridge_token_file,
+        browser_only,
+        owner_instance_lock,
+    })
+}
+
+fn parse_transport_mode(
+    stdio_rpc: bool,
+    relay_url: Option<String>,
+    device_id: Option<String>,
+    device_credential_file: Option<PathBuf>,
+    relay_allow_insecure_localhost: bool,
+) -> Result<TransportMode, String> {
     let transport = match (stdio_rpc, relay_url) {
         (true, None) => {
             if device_id.is_some() || device_credential_file.is_some() {
@@ -178,16 +214,7 @@ fn parse_arg_tokens(mut arguments: impl Iterator<Item = String>) -> Result<CliOp
             return Err("tetherd requires either --stdio-rpc or --relay-url".into());
         }
     };
-
-    Ok(CliOptions {
-        transport,
-        allowed_roots,
-        principal_profile,
-        state_dir,
-        browser_bridge,
-        browser_bridge_token_file,
-        browser_only,
-    })
+    Ok(transport)
 }
 
 fn load_principal_profile(path: Option<&PathBuf>) -> Result<Option<PrincipalProfile>, String> {
@@ -230,6 +257,68 @@ fn validate_browser_only_launch(
     profile.validate_browser_only(launched_device_id)
 }
 
+// The Store-only opt-in flag protects the same owner identity from a second
+// wizard/logon agent. Exclusive Windows sharing releases on crash; no PID
+// deletion, replacement credential, new security principal or service.
+#[cfg(windows)]
+fn acquire_owner_instance_lock(options: &CliOptions) -> Result<Option<std::fs::File>, String> {
+    use std::fs::{OpenOptions, symlink_metadata};
+    use std::os::windows::fs::OpenOptionsExt;
+
+    if !options.owner_instance_lock {
+        return Ok(None);
+    }
+    let state = options
+        .state_dir
+        .as_ref()
+        .ok_or("AGENT_OWNER_LOCK_REQUIRES_STATE")?;
+    let metadata = symlink_metadata(state).map_err(|_| "AGENT_OWNER_STATE_UNAVAILABLE")?;
+    if !metadata.is_dir() || metadata.file_type().is_symlink() {
+        return Err("AGENT_OWNER_STATE_REPARSE_OR_INVALID".into());
+    }
+    let lock = state.join(".tetherplane-owner-agent.lock");
+    match symlink_metadata(&lock) {
+        Ok(meta) if !meta.is_file() || meta.file_type().is_symlink() => {
+            return Err("AGENT_OWNER_LOCK_PATH_INVALID".into());
+        }
+        Err(error) if error.kind() != std::io::ErrorKind::NotFound => {
+            return Err("AGENT_OWNER_LOCK_PATH_UNAVAILABLE".into());
+        }
+        _ => {}
+    }
+    let file = OpenOptions::new()
+        .read(true)
+        .write(true)
+        .create(true)
+        .truncate(false)
+        .share_mode(0)
+        .open(&lock)
+        .map_err(|error| match error.raw_os_error() {
+            Some(32) => "AGENT_OWNER_INSTANCE_ALREADY_RUNNING".to_owned(),
+            _ => "AGENT_OWNER_LOCK_OPEN_FAILED".to_owned(),
+        })?;
+    Ok(Some(file))
+}
+
+#[cfg(windows)]
+fn hold_owner_instance_guard(options: &CliOptions) -> Option<std::fs::File> {
+    acquire_owner_instance_lock(options).unwrap_or_else(|message| {
+        if message == "AGENT_OWNER_INSTANCE_ALREADY_RUNNING" {
+            std::process::exit(73);
+        }
+        eprintln!("{message}");
+        std::process::exit(2);
+    })
+}
+
+#[cfg(not(windows))]
+fn hold_owner_instance_guard(options: &CliOptions) {
+    if options.owner_instance_lock {
+        eprintln!("--owner-instance-lock is Windows-only");
+        std::process::exit(2);
+    }
+}
+
 #[tokio::main]
 async fn main() {
     let options = match parse_args() {
@@ -239,6 +328,11 @@ async fn main() {
             std::process::exit(2);
         }
     };
+
+    #[cfg(windows)]
+    let _owner_instance_guard = hold_owner_instance_guard(&options);
+    #[cfg(not(windows))]
+    hold_owner_instance_guard(&options);
 
     let transport = options.transport;
 
@@ -411,6 +505,71 @@ mod arguments_file_tests {
         with_file(&" ".repeat(16 * 1024 + 1), |file| {
             assert!(parse_args_from(vec!["--arguments-file".into(), file]).is_err());
         });
+    }
+
+    #[test]
+    fn owner_instance_lock_requires_remote_transport_and_state() {
+        assert!(
+            parse_args_from(vec!["--stdio-rpc".into(), "--owner-instance-lock".into()]).is_err()
+        );
+        assert!(
+            parse_args_from(vec![
+                "--relay-url".into(),
+                "wss://example.test/device".into(),
+                "--device-id".into(),
+                "ci".into(),
+                "--device-credential-file".into(),
+                "fake".into(),
+                "--owner-instance-lock".into()
+            ])
+            .is_err()
+        );
+        let parsed = parse_args_from(vec![
+            "--relay-url".into(),
+            "wss://example.test/device".into(),
+            "--device-id".into(),
+            "ci".into(),
+            "--device-credential-file".into(),
+            "fake".into(),
+            "--state-dir".into(),
+            "state".into(),
+            "--owner-instance-lock".into(),
+        ])
+        .expect("owner remote lock must be parsed");
+        assert!(parsed.owner_instance_lock);
+    }
+
+    #[cfg(windows)]
+    #[test]
+    fn owner_instance_lock_is_exclusive_and_recoverable() {
+        use super::{CliOptions, TransportMode, acquire_owner_instance_lock};
+        let state = std::env::temp_dir().join(format!("tp-lock-test-{}", uuid::Uuid::new_v4()));
+        std::fs::create_dir(&state).expect("test directory");
+        let opts = CliOptions {
+            transport: TransportMode::Relay {
+                url: "wss://127.0.0.1/device".into(),
+                device_id: "synthetic".into(),
+                credential_file: state.join("secret"),
+                allow_insecure_localhost: false,
+            },
+            allowed_roots: vec![],
+            principal_profile: None,
+            state_dir: Some(state.clone()),
+            browser_bridge: None,
+            browser_bridge_token_file: None,
+            browser_only: false,
+            owner_instance_lock: true,
+        };
+        let first = acquire_owner_instance_lock(&opts)
+            .expect("first lock")
+            .expect("lock");
+        assert_eq!(
+            acquire_owner_instance_lock(&opts).expect_err("second denied"),
+            "AGENT_OWNER_INSTANCE_ALREADY_RUNNING"
+        );
+        drop(first);
+        assert!(acquire_owner_instance_lock(&opts).is_ok(), "no stale lock");
+        std::fs::remove_dir_all(state).expect("test cleanup");
     }
 
     #[test]
