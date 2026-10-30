@@ -7,6 +7,7 @@ import test from "node:test";
 import { fileURLToPath } from "node:url";
 
 import { initializeCredentialDirectory } from "../../packaging/msix-store-runtime/app/state-security.mjs";
+import { windowsPowerShell51Environment } from "../../scripts/msix-store/windows-powershell-env.mjs";
 
 const repoRoot = fileURLToPath(new URL("../../", import.meta.url));
 
@@ -110,7 +111,7 @@ test("Windows Store-sealed root protects actual agent idempotency and audit file
     timeout: 15_000,
     maxBuffer: 16_384,
     env: {
-      ...process.env,
+      ...windowsPowerShell51Environment(process.env),
       TP_ACL_ROOT: stateRoot,
       TP_ACL_AGENT: agentState,
       TP_ACL_IDEMPOTENCY: idempotencyDir,
