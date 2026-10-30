@@ -272,3 +272,59 @@ fn concurrent_identical_idempotent_mutations_execute_once() {
 
     std::fs::remove_dir_all(&root).unwrap();
 }
+
+#[test]
+fn completed_replay_record_retains_result_envelope_and_not_raw_append_arguments() {
+    // Characterization: this is NOT a confidentiality or retention guarantee.
+    // It records the privacy-relevant persistence shape so future changes must
+    // review it alongside the replay-after-restart contract above.
+    let root = unique_root();
+    let sandbox = root.join("sandbox");
+    let control = root.join("control");
+    let state_dir = control.join("state");
+    std::fs::create_dir_all(&sandbox).unwrap();
+    let profile = write_profile(&control, &sandbox);
+    let target = sandbox.join("privacy-evidence.txt");
+    let request = invocation(
+        "00000000-0000-4000-8000-000000000431",
+        "filesystem.append",
+        json!({ "path": target, "content": "PRIVATE-INPUT-FIXTURE-DO-NOT-LOG\n" }),
+        Some("privacy-result-characterization"),
+    );
+    let first = rpc(&profile, &sandbox, &state_dir, &request);
+    assert_eq!(first["status"], "success");
+
+    let entries = std::fs::read_dir(state_dir.join("idempotency"))
+        .unwrap()
+        .map(|entry| entry.unwrap().path())
+        .collect::<Vec<_>>();
+    let completed = entries
+        .iter()
+        .filter(|path| path.to_string_lossy().ends_with(".complete.json"))
+        .collect::<Vec<_>>();
+    assert_eq!(completed.len(), 1, "expected one durable completed record");
+    let bytes = std::fs::read(completed[0]).unwrap();
+    let record: Value = serde_json::from_slice(&bytes).unwrap();
+    assert!(record["fingerprint"].is_string());
+    assert_eq!(record["result"], first);
+    assert!(!String::from_utf8_lossy(&bytes).contains("PRIVATE-INPUT-FIXTURE-DO-NOT-LOG"));
+
+    let retry = rpc(
+        &profile,
+        &sandbox,
+        &state_dir,
+        &invocation(
+            "00000000-0000-4000-8000-000000000432",
+            "filesystem.append",
+            json!({ "path": target, "content": "PRIVATE-INPUT-FIXTURE-DO-NOT-LOG\n" }),
+            Some("privacy-result-characterization"),
+        ),
+    );
+    assert_eq!(retry["status"], "success");
+    assert_eq!(retry["data"], first["data"]);
+    assert_eq!(
+        std::fs::read_to_string(&target).unwrap(),
+        "PRIVATE-INPUT-FIXTURE-DO-NOT-LOG\n"
+    );
+    std::fs::remove_dir_all(&root).unwrap();
+}
