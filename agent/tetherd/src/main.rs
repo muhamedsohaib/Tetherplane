@@ -251,7 +251,10 @@ fn acquire_owner_instance_lock(options: &CliOptions) -> Result<Option<std::fs::F
     if !options.owner_instance_lock {
         return Ok(None);
     }
-    let state = options.state_dir.as_ref().ok_or("AGENT_OWNER_LOCK_REQUIRES_STATE")?;
+    let state = options
+        .state_dir
+        .as_ref()
+        .ok_or("AGENT_OWNER_LOCK_REQUIRES_STATE")?;
     let metadata = symlink_metadata(state).map_err(|_| "AGENT_OWNER_STATE_UNAVAILABLE")?;
     if !metadata.is_dir() || metadata.file_type().is_symlink() {
         return Err("AGENT_OWNER_STATE_REPARSE_OR_INVALID".into());
@@ -266,8 +269,12 @@ fn acquire_owner_instance_lock(options: &CliOptions) -> Result<Option<std::fs::F
         }
         _ => {}
     }
-    let file = OpenOptions::new().read(true).write(true).create(true)
-        .share_mode(0).open(&lock)
+    let file = OpenOptions::new()
+        .read(true)
+        .write(true)
+        .create(true)
+        .share_mode(0)
+        .open(&lock)
         .map_err(|error| match error.raw_os_error() {
             Some(32) => "AGENT_OWNER_INSTANCE_ALREADY_RUNNING".to_owned(),
             _ => "AGENT_OWNER_LOCK_OPEN_FAILED".to_owned(),
@@ -474,22 +481,33 @@ mod arguments_file_tests {
 
     #[test]
     fn owner_instance_lock_requires_remote_transport_and_state() {
-        assert!(parse_args_from(vec![
-            "--stdio-rpc".into(), "--owner-instance-lock".into()
-        ]).is_err());
-        assert!(parse_args_from(vec![
-            "--relay-url".into(), "wss://example.test/device".into(),
-            "--device-id".into(), "ci".into(),
-            "--device-credential-file".into(), "fake".into(),
-            "--owner-instance-lock".into()
-        ]).is_err());
+        assert!(
+            parse_args_from(vec!["--stdio-rpc".into(), "--owner-instance-lock".into()]).is_err()
+        );
+        assert!(
+            parse_args_from(vec![
+                "--relay-url".into(),
+                "wss://example.test/device".into(),
+                "--device-id".into(),
+                "ci".into(),
+                "--device-credential-file".into(),
+                "fake".into(),
+                "--owner-instance-lock".into()
+            ])
+            .is_err()
+        );
         let parsed = parse_args_from(vec![
-            "--relay-url".into(), "wss://example.test/device".into(),
-            "--device-id".into(), "ci".into(),
-            "--device-credential-file".into(), "fake".into(),
-            "--state-dir".into(), "state".into(),
-            "--owner-instance-lock".into()
-        ]).expect("owner remote lock must be parsed");
+            "--relay-url".into(),
+            "wss://example.test/device".into(),
+            "--device-id".into(),
+            "ci".into(),
+            "--device-credential-file".into(),
+            "fake".into(),
+            "--state-dir".into(),
+            "state".into(),
+            "--owner-instance-lock".into(),
+        ])
+        .expect("owner remote lock must be parsed");
         assert!(parsed.owner_instance_lock);
     }
 
@@ -497,8 +515,7 @@ mod arguments_file_tests {
     #[test]
     fn owner_instance_lock_is_exclusive_and_recoverable() {
         use super::{CliOptions, TransportMode, acquire_owner_instance_lock};
-        let state = std::env::temp_dir()
-            .join(format!("tp-lock-test-{}", uuid::Uuid::new_v4()));
+        let state = std::env::temp_dir().join(format!("tp-lock-test-{}", uuid::Uuid::new_v4()));
         std::fs::create_dir(&state).expect("test directory");
         let opts = CliOptions {
             transport: TransportMode::Relay {
@@ -515,9 +532,13 @@ mod arguments_file_tests {
             browser_only: false,
             owner_instance_lock: true,
         };
-        let first = acquire_owner_instance_lock(&opts).expect("first lock").expect("lock");
+        let first = acquire_owner_instance_lock(&opts)
+            .expect("first lock")
+            .expect("lock");
         assert_eq!(
-            acquire_owner_instance_lock(&opts).err().expect("second denied"),
+            acquire_owner_instance_lock(&opts)
+                .err()
+                .expect("second denied"),
             "AGENT_OWNER_INSTANCE_ALREADY_RUNNING"
         );
         drop(first);

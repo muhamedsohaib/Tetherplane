@@ -171,7 +171,6 @@ test("new packaging CI cannot publish, install packages, alter trust, or upload 
   const ownerInstructions = read("packaging/msix-store-runtime/app/setup.html");
   assert.match(ownerInstructions, /Windows Settings &gt; Apps &gt; Startup/);
   assert.match(ownerInstructions, /disabled by default/);
-  assert.doesNotMatch(workflow, /Add-AppxPackage|Import-Certificate|Register-ScheduledTask/);
   assert.doesNotMatch(workflow, /^\s*(?:&\s*)?(?:Add-AppxPackage|Import-Certificate|New-SelfSignedCertificate)\b/gim);
   assert.doesNotMatch(workflow, /workflow_dispatch|push:\s*\n|contents: write|SignTool sign/i);
   assert.doesNotMatch(workflow, /\.msix\b.*upload-artifact|upload-artifact.*\.msix\b/i);

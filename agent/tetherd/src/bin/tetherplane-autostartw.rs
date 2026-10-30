@@ -49,7 +49,10 @@ mod windows {
         let mut child = Command::new(node)
             .arg(script)
             .current_dir(package)
-            .env("TETHERPLANE_STORE_AUTOSTART_PARENT_PID", process::id().to_string())
+            .env(
+                "TETHERPLANE_STORE_AUTOSTART_PARENT_PID",
+                process::id().to_string(),
+            )
             .creation_flags(CREATE_NO_WINDOW)
             .stdin(Stdio::null())
             .stdout(Stdio::null())
