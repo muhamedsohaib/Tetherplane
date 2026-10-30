@@ -1,7 +1,8 @@
 name: Store asset intake preflight (nonrelease)
 
-# Only checks synthetic inputs on disposable runners. Never captures the
-# operator's desktop, uploads art or packages, signs, or contacts Partner Center.
+# Checks synthetic icons and an actual unpaired source UI ONLY on disposable
+# Windows PR runners. Never captures the owner's desktop, uploads screenshots,
+# signs or installs MSIX, pairs a device, or contacts Partner Center.
 on:
   pull_request:
     paths:
@@ -9,8 +10,11 @@ on:
       - 'scripts/msix-store/Prepare-StoreArtwork.ps1'
       - 'scripts/msix-store/verify-store-listing-assets.mjs'
       - 'tests/release/msix-store-artwork-preflight.test.mjs'
+      - 'tests/release/msix-store-unpaired-ui.test.mjs'
       - 'docs/release/MSIX_STORE_ASSET_INTAKE_20261030.md'
       - 'docs/release/MSIX_STORE_LISTING_DRAFT_20261030.md'
+      - 'docs/release/MSIX_STORE_PRIVACY_NOTICE_DRAFT_20261030.md'
+      - 'docs/release/MSIX_STORE_PRIVACY_DATAFLOW_AUDIT_20261030.md'
 
 permissions:
   contents: read
@@ -28,7 +32,7 @@ jobs:
         with:
           node-version: 22
       - name: Verify owner-approval denial and screenshot limits using synthetic bytes
-        run: node --test tests/release/msix-store-artwork-preflight.test.mjs
+        run: node --test tests/release/msix-store-artwork-preflight.test.mjs tests/release/msix-store-unpaired-ui.test.mjs
 
   windows-synthetic-asset-export:
     if: ${{ github.event.pull_request.head.repo.full_name == github.repository && startsWith(github.head_ref, 'feature/msix-store-artwork-') }}
@@ -101,3 +105,7 @@ jobs:
           } finally {
             if (Test-Path -LiteralPath $root) { Remove-Item -LiteralPath $root -Recurse -Force }
           }
+      - name: Render actual unpaired setup with Edge/Chrome on disposable Windows and delete screenshot
+        env:
+          TETHERPLANE_REQUIRE_UNPAIRED_CAPTURE: '1'
+        run: node --test tests/release/msix-store-unpaired-ui.test.mjs

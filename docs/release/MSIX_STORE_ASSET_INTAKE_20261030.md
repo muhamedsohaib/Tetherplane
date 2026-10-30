@@ -25,6 +25,14 @@ Use `Logo.jpg` as the source for the square Windows app/MSIX tile images (44×44
 
 ## Real desktop screenshot capture
 
+### Disposable Windows browser-render proof (source, NOT the Store install)
+
+The dedicated `tests/release/msix-store-unpaired-ui.test.mjs` test starts the **actual source wizard** from a scratch-only copy transformed by the reviewed Store overlay. It uses a brand-new empty state directory and a localhost-only HTTP server, confirms `idle`/`not_verified` with no saved identity, and captures the page viewport using an actual Edge/Chrome headless process. It checks desktop PNG dimensions and deletes the screenshot and browser profile in the same disposable Windows CI run. It never enters relay addresses, starts pairing, spawns the agent, uploads pixels, or touches an owner device. A missing browser, failed rendering, or a runner mismatch is a **test failure**, not a simulated pass.
+
+**This checks UI render/capture mechanics; it is NOT a Store-installed screenshot, private owner capture, Smart App Control acceptance or proof of device connectivity.** Do not promote the discarded screenshot to Partner Center. An actual Store submission still requires separately authorized capture, visual/privacy inspection, and owner review.
+
+
+
 **Not captured in this PR.** A real screenshot can only be recorded from an explicitly authorized disposable Windows 11 desktop running the actual owner-review app (or eventual certified Store build). We do not install the unsigned MSIX on a production owner device and do not fabricate screenshots with a mockup or AI-generated connection states.
 
 - Minimum **1366×768 PNG**, max **50 MB** for Windows desktop. A 1920×1080 capture is a useful target if genuinely produced by the app.
