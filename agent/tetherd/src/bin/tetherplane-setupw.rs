@@ -56,9 +56,14 @@ mod windows {
             return Err("unexpected setup arguments");
         }
         let executable = env::current_exe().map_err(|_| "setup executable unavailable")?;
-        let bin = executable.parent().ok_or("setup bin directory unavailable")?;
-        if !bin.file_name().and_then(|n| n.to_str())
-            .is_some_and(|name| name.eq_ignore_ascii_case("bin")) {
+        let bin = executable
+            .parent()
+            .ok_or("setup bin directory unavailable")?;
+        if !bin
+            .file_name()
+            .and_then(|n| n.to_str())
+            .is_some_and(|name| name.eq_ignore_ascii_case("bin"))
+        {
             return Err("setup executable is outside the expected bin directory");
         }
         let package = bin.parent().ok_or("package root unavailable")?;
@@ -81,7 +86,9 @@ mod windows {
             .stderr(Stdio::null())
             .spawn()
             .map_err(|_| "unable to start windowless Store setup")?;
-        let exit = child.wait().map_err(|_| "unable to supervise Store setup")?;
+        let exit = child
+            .wait()
+            .map_err(|_| "unable to supervise Store setup")?;
         if !exit.success() {
             return Err("Store setup child exited unsuccessfully");
         }

@@ -124,20 +124,7 @@ jobs:
               $evidence.owner_approved_Store_submission -ne $false -or
               $evidence.agent_launch_subsystem -ne 'WindowsGUI' -or
               $evidence.setup_launcher_subsystem -ne 'WindowsGUI' -or
-              $evidence.setup_launcher_sha256 -notmatch '^[0-9a-f]{64}
-              $evidence.source_commit -notmatch '^[0-9a-f]{40}$') {
-            throw 'STORE_CANDIDATE_FALSE_ACCEPTANCE_CLAIM'
-          }
-          Write-Output 'STORE_PRIVATE_CANDIDATE_CI_PREVIEW_PACK_UNPACK_PASS; STORE_AND_SAC_NOT_TESTED'
-      - name: Upload JSON proof only (no package, source binaries, credentials or certificates)
-        if: always()
-        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
-        with:
-          name: store-private-preview-report-${{ github.run_id }}-${{ github.run_attempt }}
-          path: ${{ runner.temp }}/tetherplane-store-private-preview.json
-          if-no-files-found: warn
-          retention-days: 7
- -or
+              $evidence.setup_launcher_sha256 -notmatch '^[0-9a-f]{64}$' -or
               $evidence.source_commit -notmatch '^[0-9a-f]{40}$') {
             throw 'STORE_CANDIDATE_FALSE_ACCEPTANCE_CLAIM'
           }
