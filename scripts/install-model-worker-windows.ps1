@@ -1,13 +1,9 @@
 param(
     [string]$InstallPrefix = (Join-Path $env:LOCALAPPDATA "Programs\Tetherplane"),
-    [Parameter(Mandatory = $true)]
-    [string]$Device,
-    [Parameter(Mandatory = $true)]
-    [string]$ModelEndpoint,
-    [Parameter(Mandatory = $true)]
-    [string]$Model,
-    [Parameter(Mandatory = $true)]
-    [string]$PrincipalProfile,
+    [Parameter(Mandatory = $true)][string]$Device,
+    [Parameter(Mandatory = $true)][string]$ModelEndpoint,
+    [Parameter(Mandatory = $true)][string]$Model,
+    [Parameter(Mandatory = $true)][string]$PrincipalProfile,
     [string]$StateDir = (Join-Path $env:LOCALAPPDATA "Tetherplane\state"),
     [string[]]$AllowRoots = @(),
     [string]$ApiKeyEnv,
@@ -22,62 +18,57 @@ Set-StrictMode -Version Latest
 
 $install = [IO.Path]::GetFullPath($InstallPrefix)
 $state = [IO.Path]::GetFullPath($StateDir)
+$configDir = Join-Path $install "config"
 $workerMain = Join-Path $install "adapters\model-client\dist\worker-main.js"
 $tetherd = Join-Path $install "bin\tetherd.exe"
-$configDir = Join-Path $install "config"
+$nativeLauncher = Join-Path $install "bin\tetherplane-modelw.exe"
 $argsFile = Join-Path $configDir "model-worker-args.json"
-$supervisor = Join-Path $configDir "model-worker-supervisor.ps1"
-$stdout = Join-Path $configDir "model-worker.stdout.log"
-$stderr = Join-Path $configDir "model-worker.stderr.log"
 $runKey = "HKCU:\Software\Microsoft\Windows\CurrentVersion\Run"
-$runValueName = "TetherplaneModelWorker"
+$runName = "TetherplaneModelWorker"
 
-foreach ($required in @($workerMain, $tetherd, $PrincipalProfile)) {
+foreach ($required in @($workerMain, $tetherd, $nativeLauncher, $PrincipalProfile)) {
     if (-not (Test-Path -LiteralPath $required -PathType Leaf)) {
-        throw "model worker required file is missing: $required"
+        throw "model worker required file missing; no startup changes made"
     }
 }
-
 $node = (Get-Command node.exe -ErrorAction Stop).Source
-
-if (-not $Device.Trim()) { throw "-Device must not be empty" }
-if (-not $Model.Trim()) { throw "-Model must not be empty" }
+if (-not (Test-Path -LiteralPath $node -PathType Leaf)) { throw "Node.js unavailable" }
+if (-not $Device.Trim() -or -not $Model.Trim()) { throw "model worker device/model cannot be empty" }
 
 $endpoint = $null
-if (-not [Uri]::TryCreate($ModelEndpoint, [UriKind]::Absolute, [ref]$endpoint)) {
-    throw "-ModelEndpoint must be an absolute URL"
+if (-not [Uri]::TryCreate($ModelEndpoint, [UriKind]::Absolute, [ref]$endpoint) -or
+    $endpoint.Scheme -notin @("http", "https") -or $endpoint.UserInfo) {
+    throw "model endpoint must be http(s) without embedded credentials"
 }
-if ($endpoint.Scheme -notin @("http", "https")) {
-    throw "-ModelEndpoint must use http or https"
+if ($PollMs -lt 100 -or $PollMs -gt 300000 -or
+    $MaxActions -lt 1 -or $MaxActions -gt 1000 -or
+    $LeaseTtlMs -lt 1 -or $LeaseTtlMs -gt 3600000) {
+    throw "invalid bounded model-worker limits"
 }
-if ($endpoint.UserInfo) {
-    throw "-ModelEndpoint must not contain credentials"
-}
-
-if ($PollMs -lt 100 -or $PollMs -gt 300000) {
-    throw "-PollMs must be between 100 and 300000"
-}
-if ($MaxActions -lt 1 -or $MaxActions -gt 1000) {
-    throw "-MaxActions must be between 1 and 1000"
-}
-if ($LeaseTtlMs -lt 1 -or $LeaseTtlMs -gt 3600000) {
-    throw "-LeaseTtlMs must be between 1 and 3600000"
-}
-
 if ($ApiKeyEnv) {
-    if ($ApiKeyEnv -notmatch "^[A-Za-z_][A-Za-z0-9_]*$") {
-        throw "-ApiKeyEnv must be a valid environment variable name"
+    if ($ApiKeyEnv -cnotmatch '^[A-Za-z_][A-Za-z0-9_]*$') {
+        throw "API key environment name is invalid"
     }
-    $apiKeyPresent =
-        [Environment]::GetEnvironmentVariable($ApiKeyEnv, "Process") -or
-        [Environment]::GetEnvironmentVariable($ApiKeyEnv, "User") -or
-        [Environment]::GetEnvironmentVariable($ApiKeyEnv, "Machine")
-    if (-not $apiKeyPresent) {
-        throw "configured model credential environment variable is not set"
-    }
+    $present = [Environment]::GetEnvironmentVariable($ApiKeyEnv,"Process") -or
+        [Environment]::GetEnvironmentVariable($ApiKeyEnv,"User") -or
+        [Environment]::GetEnvironmentVariable($ApiKeyEnv,"Machine")
+    if (-not $present) { throw "configured model credential environment name is unavailable" }
 }
 
-New-Item -ItemType Directory -Force -Path $configDir,$state | Out-Null
+$runCommand = '"' + $nativeLauncher + '" --arguments-file "' + $argsFile + '"'
+$registration = Get-ItemProperty -LiteralPath $runKey -Name $runName -ErrorAction SilentlyContinue
+$existing = if ($registration) { [string]$registration.$runName } else { $null }
+if ($existing -and $existing -cne $runCommand) {
+    throw "existing model worker autorun must be migrated with separate owner approval"
+}
+$running = @(Get-CimInstance Win32_Process -Filter "Name='tetherplane-modelw.exe'" -ErrorAction Stop |
+    Where-Object { [string]$_.ExecutablePath -ieq $nativeLauncher })
+if ($running.Count -gt 0) {
+    throw "native model worker is running; stop it in a controlled maintenance window"
+}
+if ($existing -and -not $Force) {
+    throw "model worker already registered; -Force requires a stopped owned worker"
+}
 
 $workerArgs = @(
     "--device", $Device,
@@ -90,117 +81,26 @@ $workerArgs = @(
     "--max-actions", ([string]$MaxActions),
     "--lease-ttl-ms", ([string]$LeaseTtlMs)
 )
-
-foreach ($root in $AllowRoots) {
-    if (-not $root.Trim()) {
-        throw "-AllowRoots cannot contain empty values"
-    }
-    $workerArgs += @("--allow", ([IO.Path]::GetFullPath($root)))
+foreach ($allowedRoot in $AllowRoots) {
+    if (-not $allowedRoot.Trim()) { throw "empty allowed root" }
+    $workerArgs += @("--allow", ([IO.Path]::GetFullPath($allowedRoot)))
 }
+if ($ApiKeyEnv) { $workerArgs += @("--api-key-env", $ApiKeyEnv) }
 
-if ($ApiKeyEnv) {
-    $workerArgs += @("--api-key-env", $ApiKeyEnv)
-}
-
+New-Item -ItemType Directory -Force -Path $configDir,$state | Out-Null
 $utf8NoBom = New-Object System.Text.UTF8Encoding($false)
-[IO.File]::WriteAllText($argsFile, ($workerArgs | ConvertTo-Json -Depth 4), $utf8NoBom)
-
-$supervisorLines = @(
-    '$ErrorActionPreference = "Continue"'
-    'Set-StrictMode -Version Latest'
-    ''
-    '$node = "__NODE__"'
-    '$worker = "__WORKER__"'
-    '$argsFile = "__ARGS__"'
-    '$stdout = "__STDOUT__"'
-    '$stderr = "__STDERR__"'
-    ''
-    'while ($true) {'
-    '    try {'
-    '        $workerArgs = @(Get-Content -LiteralPath $argsFile -Raw | ConvertFrom-Json)'
-    '        & $node $worker @workerArgs 1>> $stdout 2>> $stderr'
-    '    }'
-    '    catch {'
-    '        ("model worker supervisor error: " + $_.Exception.Message) | Add-Content -LiteralPath $stderr'
-    '    }'
-    '    Start-Sleep -Seconds 2'
-    '}'
-)
-
-$supervisorSource = $supervisorLines -join [Environment]::NewLine
-$supervisorSource = $supervisorSource.Replace("__NODE__", $node)
-$supervisorSource = $supervisorSource.Replace("__WORKER__", $workerMain)
-$supervisorSource = $supervisorSource.Replace("__ARGS__", $argsFile)
-$supervisorSource = $supervisorSource.Replace("__STDOUT__", $stdout)
-$supervisorSource = $supervisorSource.Replace("__STDERR__", $stderr)
-[IO.File]::WriteAllText($supervisor, $supervisorSource, $utf8NoBom)
-
-function Get-WorkerProcesses {
-    @(
-        Get-CimInstance Win32_Process |
-        Where-Object {
-            $name = [string]$_.Name
-            $commandLine = [string]$_.CommandLine
-            (
-                ($name -in @("powershell.exe", "pwsh.exe")) -and
-                ($commandLine.IndexOf($supervisor, [System.StringComparison]::OrdinalIgnoreCase) -ge 0)
-            ) -or (
-                ($name -eq "node.exe") -and
-                ($commandLine.IndexOf($workerMain, [System.StringComparison]::OrdinalIgnoreCase) -ge 0)
-            )
-        }
-    )
-}
-
-$existingRunValue = $null
-if (Test-Path -LiteralPath $runKey) {
-    $property = Get-ItemProperty -Path $runKey -Name $runValueName -ErrorAction SilentlyContinue
-    if ($property) {
-        $existingRunValue = $property.$runValueName
-    }
-}
-$existingProcesses = @(Get-WorkerProcesses)
-
-if (($existingRunValue -or $existingProcesses.Count -gt 0) -and -not $Force) {
-    throw "model worker is already installed; use -Force to replace it"
-}
-
-if ($Force) {
-    foreach ($process in $existingProcesses) {
-        Stop-Process -Id $process.ProcessId -Force -ErrorAction SilentlyContinue
-    }
-}
-
-$actionArgument =
-    '-NoProfile -NonInteractive -WindowStyle Hidden -ExecutionPolicy Bypass -File "' +
-    $supervisor +
-    '"'
-$runCommand = "powershell.exe " + $actionArgument
+$json = ConvertTo-Json -InputObject ([string[]]$workerArgs) -Depth 4 -Compress
+# Preserve the old configuration until validation is complete and never write
+# tokens or API-key values into arguments or process command lines.
+if ((ConvertFrom-Json -InputObject $json) -isnot [array]) { throw "model arguments serialization failed" }
+[IO.File]::WriteAllText($argsFile, $json, $utf8NoBom)
 
 New-Item -Path $runKey -Force | Out-Null
-New-ItemProperty -Path $runKey -Name $runValueName -Value $runCommand -PropertyType String -Force | Out-Null
-
-$persisted = (Get-ItemProperty -Path $runKey -Name $runValueName).$runValueName
-if ($persisted -ne $runCommand) {
-    throw "model worker HKCU Run persistence verification failed"
+New-ItemProperty -Path $runKey -Name $runName -Value $runCommand -PropertyType String -Force | Out-Null
+if ((Get-ItemProperty -LiteralPath $runKey -Name $runName).$runName -cne $runCommand) {
+    throw "native model-worker autorun registration failed"
 }
 
-Remove-Item $stdout,$stderr -Force -ErrorAction SilentlyContinue
-Start-Process -FilePath "powershell.exe" -ArgumentList $actionArgument -WindowStyle Hidden | Out-Null
-Start-Sleep -Seconds 3
-
-$running = @(Get-WorkerProcesses)
-$supervisorCount =
-    @(
-        $running |
-        Where-Object {
-            [string]$_.Name -in @("powershell.exe", "pwsh.exe")
-        }
-    ).Count
-
-if ($supervisorCount -ne 1) {
-    throw "expected exactly one Tetherplane model worker supervisor"
-}
-
-Write-Output "MODEL_WORKER_PERSISTENCE=HKCU_RUN"
-Write-Output "MODEL_WORKER_INSTALL=PASS"
+Start-Process -FilePath $nativeLauncher -ArgumentList ('--arguments-file "' + $argsFile + '"') | Out-Null
+Write-Output "MODEL_WORKER_PERSISTENCE=HKCU_RUN_NATIVE_GUI"
+Write-Output "MODEL_WORKER_INSTALL=WINDOWLESS_START_REQUESTED"

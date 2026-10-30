@@ -130,6 +130,13 @@ test("new packaging CI cannot publish, install packages, alter trust, or upload 
   assert.match(workflow, /contents: read/);
   assert.match(workflow, /github\.event\.pull_request\.head\.repo\.full_name == github\.repository/);
   assert.match(workflow, /feature\/msix-store-private-candidate-/);
+  // Require the two Store jobs to run for this exact reviewed combined head.
+  const exactReviewBranch = "fix/windows-zero-console-model-worker-20261030";
+  assert.equal(workflow.split("github.head_ref == '" + exactReviewBranch + "'").length - 1, 2);
+  assert.ok(builder.includes("$candidateHead -ceq '" + exactReviewBranch + "'"));
+  assert.ok(builder.includes("-not $approvedCiRef"));
+  assert.ok(read("tests/release/msix-store-runtime-real-relay.test.mjs")
+    .includes('process.env.GITHUB_HEAD_REF === "' + exactReviewBranch + '"'));
   assert.match(workflow, /CI_PACKAGE_STRUCTURE_PASS_NOT_SUBMITTABLE/);
   assert.doesNotMatch(workflow, /^\s*(?:&\s*)?(?:Add-AppxPackage|Import-Certificate|New-SelfSignedCertificate)\b/gim);
   assert.doesNotMatch(workflow, /workflow_dispatch|push:\s*\n|contents: write|SignTool sign/i);
