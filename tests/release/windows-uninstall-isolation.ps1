@@ -12,12 +12,17 @@ if (-not (Test-Path -LiteralPath $uninstaller -PathType Leaf)) {
 # Do not read, write or delete an actual Run entry. Intercept the sole
 # registry boundary while executing the real Windows uninstaller script.
 $global:tpTestRunValue = $null
+$global:tpTestBrowserRunValue = $null
 $global:tpTestRemovals = 0
+$global:tpTestBrowserRemovals = 0
 function Get-ItemProperty {
     [CmdletBinding()]
     param([string]$Path, [string]$Name)
     if ($Path -eq "HKCU:\Software\Microsoft\Windows\CurrentVersion\Run" -and $Name -eq "TetherplaneModelWorker") {
         return [pscustomobject]@{ TetherplaneModelWorker = $global:tpTestRunValue }
+    }
+    if ($Path -eq "HKCU:\Software\Microsoft\Windows\CurrentVersion\Run" -and $Name -eq "TetherplaneAuthenticatedBrowserHost") {
+        return [pscustomobject]@{ TetherplaneAuthenticatedBrowserHost = $global:tpTestBrowserRunValue }
     }
     throw "unexpected property read intercepted"
 }
@@ -26,6 +31,10 @@ function Remove-ItemProperty {
     param([string]$Path, [string]$Name)
     if ($Path -eq "HKCU:\Software\Microsoft\Windows\CurrentVersion\Run" -and $Name -eq "TetherplaneModelWorker") {
         $global:tpTestRemovals++
+        return
+    }
+    if ($Path -eq "HKCU:\Software\Microsoft\Windows\CurrentVersion\Run" -and $Name -eq "TetherplaneAuthenticatedBrowserHost") {
+        $global:tpTestBrowserRemovals++
         return
     }
     throw "unexpected registry write intercepted"
@@ -44,6 +53,7 @@ foreach ($scenario in @("foreign", "owned")) {
     $install = Join-Path $root "install"
     $state = Join-Path $root "state"
     $global:tpTestRemovals = 0
+    $global:tpTestBrowserRemovals = 0
     try {
         New-Item -ItemType Directory -Force -Path (Join-Path $install "config"),$state | Out-Null
         # Current uninstaller first verifies a complete owned package prefix.
@@ -51,6 +61,7 @@ foreach ($scenario in @("foreign", "owned")) {
         foreach ($relative in @(
             "bin\tetherd.exe",
             "bin\tetherd-agentw.exe",
+            "bin\tetherplane-browserw.exe",
             "manifest.json",
             "uninstall-windows.ps1"
         )) {
@@ -68,10 +79,14 @@ foreach ($scenario in @("foreign", "owned")) {
 
         if ($scenario -eq "foreign") {
             $global:tpTestRunValue = 'powershell.exe -NoProfile -File "C:\OtherProject\other-worker.ps1"'
+            $global:tpTestBrowserRunValue = '"C:\OtherProject\unrelated-browserw.exe" --browser-state-dir "C:\OtherProject\state"'
+            $expectedBrowserRemovals = 0
             $expectedRemovals = 0
         } else {
             $supervisor = Join-Path $install "config\model-worker-supervisor.ps1"
             $global:tpTestRunValue = 'powershell.exe -NoProfile -NonInteractive -WindowStyle Hidden -ExecutionPolicy Bypass -File "' + $supervisor + '"'
+            $global:tpTestBrowserRunValue = '"' + (Join-Path $install "bin\tetherplane-browserw.exe") + '" --browser-state-dir "' + $state + '"'
+            $expectedBrowserRemovals = 1
             $expectedRemovals = 1
         }
 
@@ -82,6 +97,9 @@ foreach ($scenario in @("foreign", "owned")) {
         }
         if ($global:tpTestRemovals -ne $expectedRemovals) {
             throw "RELEASE_NO_GO: $scenario model-worker Run entry: expected $expectedRemovals delete attempts, got $global:tpTestRemovals"
+        }
+        if ($global:tpTestBrowserRemovals -ne $expectedBrowserRemovals) {
+            throw "RELEASE_NO_GO: $scenario browser Run entry: expected $expectedBrowserRemovals delete attempts, got $global:tpTestBrowserRemovals"
         }
         Write-Output "WINDOWS_UNINSTALL_ISOLATION_CASE=$scenario;VERDICT=PASS"
     }

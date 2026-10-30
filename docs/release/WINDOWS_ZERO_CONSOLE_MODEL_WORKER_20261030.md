@@ -34,3 +34,10 @@ negative authorization; code integrity, existing user migration, four-device
 core acceptance. GitHub-hosted headless Windows smoke is not that proof.
 
 RELEASE / STORE SUBMISSION: NO-GO.
+
+The uninstaller additionally refuses removal when the exact installed native
+browser owner-session launcher is running; after that preservation check it
+removes only an exact HKCU Run registration for the matching installed browser
+binary and optional state-dir argument, never a foreign browser startup value.
+The synthetic uninstaller test protects both model worker and browser autorun
+ownership and verifies it does not remove unrelated registry entries.

@@ -100,9 +100,81 @@ if ($PurgeState) {
     }
 }
 
+# Before removing any owned files or task, prove the per-user browser
+# companion is not still running from this exact install prefix. An installer
+# uninstall must not strand an authenticated browser session or its child.
+$ownedBrowserExe = [IO.Path]::GetFullPath((Join-Path $install "bin\tetherplane-browserw.exe"))
+$liveBrowser = @(Get-CimInstance Win32_Process -Filter "Name='tetherplane-browserw.exe'" -ErrorAction Stop |
+    Where-Object {
+        $exe = [string]$_.ExecutablePath
+        $exe -and [string]::Equals($exe, $ownedBrowserExe, [StringComparison]::OrdinalIgnoreCase)
+    })
+if ($liveBrowser.Count -gt 0) {
+    throw "refusing uninstall: owned authenticated browser is running; stop in an approved maintenance step"
+}
+
 # Only a verified task action in a stopped state is eligible for unregister.
 if ($taskName) {
     Unregister-ScheduledTask -TaskName $taskName -Confirm:$false
+}
+
+# The owner-installed native browser startup is optional. Only remove an
+# exact command pointing to this *same* installed executable; foreign or
+# legacy HKCU Run values are preserved for explicit migration and audit.
+$browserRunKey = "HKCU:\Software\Microsoft\Windows\CurrentVersion\Run"
+$browserRunName = "TetherplaneAuthenticatedBrowserHost"
+$browserRegistration = Get-ItemProperty -Path $browserRunKey -Name $browserRunName -ErrorAction SilentlyContinue
+if ($browserRegistration) {
+    $registeredBrowser = [string]$browserRegistration.$browserRunName
+    $ownedPrefix = '^"' + [regex]::Escape($ownedBrowserExe) + '" --browser-state-dir "[^"]+"
+$modelWorkerRunValue = "TetherplaneModelWorker"
+$modelWorkerSupervisor = Join-Path $install "config\model-worker-supervisor.ps1"
+$modelWorkerMain = Join-Path $install "adapters\model-client\dist\worker-main.js"
+$modelWorkerNative = Join-Path $install "bin\tetherplane-modelw.exe"
+$modelWorkerArgs = Join-Path $install "config\model-worker-args.json"
+
+# Do not remove a different installation's globally named Run registration.
+$expectedRunCommand = 'powershell.exe -NoProfile -NonInteractive -WindowStyle Hidden -ExecutionPolicy Bypass -File "' + $modelWorkerSupervisor + '"'
+$expectedNativeRun = '"' + $modelWorkerNative + '" --arguments-file "' + $modelWorkerArgs + '"'
+$existingRunValue = Get-ItemProperty -Path $modelWorkerRunKey -Name $modelWorkerRunValue -ErrorAction SilentlyContinue
+if ($existingRunValue -and [string]$existingRunValue.$modelWorkerRunValue -cin @($expectedRunCommand, $expectedNativeRun)) {
+    Remove-ItemProperty -Path $modelWorkerRunKey -Name $modelWorkerRunValue -ErrorAction SilentlyContinue
+}
+$modelWorkerProcesses =
+    @(
+        Get-CimInstance Win32_Process -ErrorAction SilentlyContinue |
+        Where-Object {
+            $name = [string]$_.Name
+            $commandLine = [string]$_.CommandLine
+            (
+                ($name -eq "tetherplane-modelw.exe") -and
+                ([string]$_.ExecutablePath -ieq $modelWorkerNative)
+            ) -or (
+                ($name -in @("powershell.exe", "pwsh.exe")) -and
+                ($commandLine.IndexOf($modelWorkerSupervisor, [System.StringComparison]::OrdinalIgnoreCase) -ge 0)
+            ) -or (
+                ($name -eq "node.exe") -and
+                ($commandLine.IndexOf($modelWorkerMain, [System.StringComparison]::OrdinalIgnoreCase) -ge 0)
+            )
+        }
+    )
+
+foreach ($process in $modelWorkerProcesses) {
+    Stop-Process -Id $process.ProcessId -Force -ErrorAction SilentlyContinue
+}
+
+if (Test-Path -LiteralPath $install) {
+    Remove-Item -LiteralPath $install -Recurse -Force
+}
+if ($PurgeState) {
+    Remove-Item -LiteralPath $stateDir -Recurse -Force -ErrorAction SilentlyContinue
+}
+
+Write-Output "TETHERPLANE_UNINSTALL_OK $install"
+
+    if ($registeredBrowser -match $ownedPrefix) {
+        Remove-ItemProperty -Path $browserRunKey -Name $browserRunName -ErrorAction SilentlyContinue
+    }
 }
 
 $modelWorkerRunKey = "HKCU:\Software\Microsoft\Windows\CurrentVersion\Run"
