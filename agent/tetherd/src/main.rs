@@ -160,6 +160,40 @@ fn parse_arg_tokens(mut arguments: impl Iterator<Item = String>) -> Result<CliOp
         }
     }
 
+    let transport = parse_transport_mode(
+        stdio_rpc,
+        relay_url,
+        device_id,
+        device_credential_file,
+        relay_allow_insecure_localhost,
+    )?;
+
+    if owner_instance_lock
+        && (!matches!(&transport, TransportMode::Relay { .. }) || state_dir.is_none())
+    {
+        return Err("--owner-instance-lock requires relay transport and --state-dir".into());
+    }
+
+    Ok(CliOptions {
+        transport,
+        allowed_roots,
+        principal_profile,
+        state_dir,
+        browser_bridge,
+        browser_bridge_token_file,
+        browser_only,
+        owner_instance_lock,
+    })
+}
+
+
+fn parse_transport_mode(
+    stdio_rpc: bool,
+    relay_url: Option<String>,
+    device_id: Option<String>,
+    device_credential_file: Option<PathBuf>,
+    relay_allow_insecure_localhost: bool,
+) -> Result<TransportMode, String> {
     let transport = match (stdio_rpc, relay_url) {
         (true, None) => {
             if device_id.is_some() || device_credential_file.is_some() {
@@ -181,23 +215,7 @@ fn parse_arg_tokens(mut arguments: impl Iterator<Item = String>) -> Result<CliOp
             return Err("tetherd requires either --stdio-rpc or --relay-url".into());
         }
     };
-
-    if owner_instance_lock
-        && (!matches!(&transport, TransportMode::Relay { .. }) || state_dir.is_none())
-    {
-        return Err("--owner-instance-lock requires relay transport and --state-dir".into());
-    }
-
-    Ok(CliOptions {
-        transport,
-        allowed_roots,
-        principal_profile,
-        state_dir,
-        browser_bridge,
-        browser_bridge_token_file,
-        browser_only,
-        owner_instance_lock,
-    })
+    Ok(transport)
 }
 
 fn load_principal_profile(path: Option<&PathBuf>) -> Result<Option<PrincipalProfile>, String> {
@@ -282,6 +300,25 @@ fn acquire_owner_instance_lock(options: &CliOptions) -> Result<Option<std::fs::F
     Ok(Some(file))
 }
 
+#[cfg(windows)]
+fn hold_owner_instance_guard(options: &CliOptions) -> Option<std::fs::File> {
+    acquire_owner_instance_lock(options).unwrap_or_else(|message| {
+        if message == "AGENT_OWNER_INSTANCE_ALREADY_RUNNING" {
+            std::process::exit(73);
+        }
+        eprintln!("{message}");
+        std::process::exit(2);
+    })
+}
+
+#[cfg(not(windows))]
+fn hold_owner_instance_guard(options: &CliOptions) {
+    if options.owner_instance_lock {
+        eprintln!("--owner-instance-lock is Windows-only");
+        std::process::exit(2);
+    }
+}
+
 #[tokio::main]
 async fn main() {
     let options = match parse_args() {
@@ -292,19 +329,7 @@ async fn main() {
         }
     };
 
-    #[cfg(windows)]
-    let _owner_instance_guard = acquire_owner_instance_lock(&options).unwrap_or_else(|message| {
-        if message == "AGENT_OWNER_INSTANCE_ALREADY_RUNNING" {
-            std::process::exit(73);
-        }
-        eprintln!("{message}");
-        std::process::exit(2);
-    });
-    #[cfg(not(windows))]
-    if options.owner_instance_lock {
-        eprintln!("--owner-instance-lock is Windows-only");
-        std::process::exit(2);
-    }
+    let _owner_instance_guard = hold_owner_instance_guard(&options);
 
     let transport = options.transport;
 
