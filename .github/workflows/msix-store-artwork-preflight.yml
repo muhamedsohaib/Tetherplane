@@ -73,6 +73,31 @@ jobs:
             # Clear it only after verifying that the intentionally rejected second export failed.
             $global:LASTEXITCODE = 0
             Write-Output 'STORE_ARTWORK_SYNTHETIC_EXPORT_AND_NO_OVERWRITE_PASS_NOT_APPROVED'
+
+            # Exercise the separate opaque-JPEG code path using synthetic
+            # pixels; this is NOT the owner's artwork and is never uploaded.
+            $jpegSource = Join-Path $root 'SYNTHETIC_CI_JPEG_NOT_BRANDING.jpg'
+            $jpegBitmap = [Drawing.Bitmap]::new(800, 800, [Drawing.Imaging.PixelFormat]::Format24bppRgb)
+            $jpegGraphics = [Drawing.Graphics]::FromImage($jpegBitmap)
+            try {
+              $jpegGraphics.Clear([Drawing.Color]::FromArgb(170, 170, 170))
+              $jpegBrush = [Drawing.SolidBrush]::new([Drawing.Color]::FromArgb(55, 55, 55))
+              try { $jpegGraphics.FillRectangle($jpegBrush, 170, 170, 460, 460) }
+              finally { $jpegBrush.Dispose() }
+              $jpegBitmap.Save($jpegSource, [Drawing.Imaging.ImageFormat]::Jpeg)
+            } finally { $jpegGraphics.Dispose(); $jpegBitmap.Dispose() }
+            $jpegHash = (Get-FileHash -LiteralPath $jpegSource -Algorithm SHA256).Hash.ToLowerInvariant()
+            $jpegOutput = Join-Path $root 'mechanical-jpeg-unapproved'
+            & $ps51 -NoProfile -NonInteractive -File 'scripts/msix-store/Prepare-StoreArtwork.ps1' -SourceEmblem $jpegSource -ExpectedSourceSha256 $jpegHash -OutputDirectory $jpegOutput
+            if ($LASTEXITCODE -ne 0) { throw 'STORE_ARTWORK_JPEG_WINDOWS_EXPORT_FAILED' }
+            node scripts/msix-store/verify-store-listing-assets.mjs --source $jpegSource --assets-dir $jpegOutput --evidence (Join-Path $jpegOutput 'asset-evidence.UNAPPROVED.json')
+            if ($LASTEXITCODE -ne 0) { throw 'STORE_ARTWORK_JPEG_WINDOWS_VALIDATION_FAILED' }
+            $jpegEvidence = Get-Content -LiteralPath (Join-Path $jpegOutput 'asset-evidence.UNAPPROVED.json') -Raw | ConvertFrom-Json
+            if ($jpegEvidence.source_format -ne 'jpeg_opaque' -or $jpegEvidence.owner_approval_reference -ne $null -or
+                $jpegEvidence.disposition -ne 'UNAPPROVED_SOURCE_TRANSFORM') {
+              throw 'STORE_ARTWORK_JPEG_FALSE_APPROVAL_CLAIM'
+            }
+            Write-Output 'STORE_ARTWORK_SYNTHETIC_JPEG_EXPORT_PASS_NOT_APPROVED'
           } finally {
             if (Test-Path -LiteralPath $root) { Remove-Item -LiteralPath $root -Recurse -Force }
           }

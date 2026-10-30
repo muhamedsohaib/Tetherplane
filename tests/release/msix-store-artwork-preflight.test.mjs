@@ -5,7 +5,7 @@ import { mkdtempSync, mkdirSync, writeFileSync, rmSync, readFileSync } from "nod
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { deflateSync } from "node:zlib";
-import { pngSize, sha256, sizes, validate } from "../../scripts/msix-store/verify-store-listing-assets.mjs";
+import { pngSize, jpegSize, sha256, sizes, validate } from "../../scripts/msix-store/verify-store-listing-assets.mjs";
 
 function crc32(buffer) {
   let crc = 0xffffffff;
@@ -35,11 +35,19 @@ function png(width, height, rgb = [0, 0, 0]) {
     chunk("IEND", Buffer.alloc(0))
   ]);
 }
-function fixture() {
+// Metadata-only SOF JPEG test fixture; it is intentionally NOT a decodable
+// photograph. Windows CI separately exercises actual JPEG decoding.
+function jpegMeta(width, height) {
+  const frame = Buffer.from([0xff,0xd8,0xff,0xc0,0,0x11,8,0,0,0,0,3,1,0x11,0,2,0x11,0,3,0x11,0,0xff,0xd9]);
+  frame.writeUInt16BE(height, 7);
+  frame.writeUInt16BE(width, 9);
+  return Buffer.concat([Buffer.from([0xff,0xd8,0xff,0xe0,0,0x12]), Buffer.alloc(16), frame.subarray(2)]);
+}
+function fixture(sourceFormat = "png_alpha") {
   const root = mkdtempSync(join(tmpdir(), "tetherplane-store-asset-fixture-"));
   const assets = join(root, "assets"); mkdirSync(assets);
-  const source = join(root, "source.png");
-  const sourceBuffer = png(512, 512);
+  const source = join(root, sourceFormat === "jpeg_opaque" ? "source.jpg" : "source.png");
+  const sourceBuffer = sourceFormat === "jpeg_opaque" ? jpegMeta(512, 512) : png(512, 512);
   writeFileSync(source, sourceBuffer);
   const hashes = {};
   for (const [name, dimension] of Object.entries(sizes)) {
@@ -49,10 +57,11 @@ function fixture() {
   }
   const evidencePath = join(assets, "asset-evidence.UNAPPROVED.json");
   writeFileSync(evidencePath, JSON.stringify({
-    schema: "tetherplane.store-artwork-preflight.v1",
+    schema: "tetherplane.store-artwork-preflight.v2",
     package_identity: "ARCUSLabs.Tetherplane",
     disposition: "UNAPPROVED_SOURCE_TRANSFORM",
     source_sha256: sha256(sourceBuffer),
+    source_format: sourceFormat,
     source_square_pixels: 512,
     files: hashes,
     screenshot: "NOT_CAPTURED",
@@ -60,7 +69,7 @@ function fixture() {
   }));
   return { root, assetsDir: assets, source, evidencePath };
 }
-const withFixture = (fn) => { const f = fixture(); try { return fn(f); } finally { rmSync(f.root, {recursive: true, force: true}); } };
+const withFixture = (fn, sourceFormat = "png_alpha") => { const f = fixture(sourceFormat); try { return fn(f); } finally { rmSync(f.root, {recursive: true, force: true}); } };
 
 test("PNG metadata accepts canonical icon dimensions without interpreting pixels", () => {
   assert.deepEqual(pngSize(png(44,44)), {width:44, height:44});
@@ -75,6 +84,31 @@ test("matching source and 4 exact icon hashes are preflight-only, not approval",
   assert.equal(result.owner_approval, "NOT_GRANTED");
   assert.equal(result.screenshot_status, "NOT_PROVIDED");
 }));
+
+test("JPEG SOF dimensions are inspected without claiming image decode", () => {
+  assert.deepEqual(jpegSize(jpegMeta(1062, 1062)), {width: 1062, height: 1062});
+  assert.throws(() => jpegSize(Buffer.alloc(20)), /STORE_ASSET_INVALID_JPEG_HEADER/);
+});
+
+test("exact opaque JPEG source is allowed with hash-pinned, still-unapproved PNG exports", () =>
+  withFixture(f => {
+    const result = validate(f);
+    assert.equal(result.source_bytes_verified, true);
+    assert.equal(result.owner_approval, "NOT_GRANTED");
+    assert.equal(result.genuine_visual_review, "NOT_RUN");
+  }, "jpeg_opaque"));
+
+test("rejects source-format forgery and source byte changes", () =>
+  withFixture(f => {
+    const evidence = JSON.parse(readFileSync(f.evidencePath,"utf8"));
+    evidence.source_format = "png_alpha";
+    writeFileSync(f.evidencePath, JSON.stringify(evidence));
+    assert.throws(() => validate(f), /STORE_ASSET_SOURCE_FORMAT_MISMATCH/);
+    evidence.source_format = "jpeg_opaque";
+    writeFileSync(f.evidencePath, JSON.stringify(evidence));
+    writeFileSync(f.source, jpegMeta(900,900));
+    assert.throws(() => validate(f), /STORE_ASSET_ORIGINAL_SOURCE_MISMATCH/);
+  }, "jpeg_opaque"));
 
 test("must fail without screenshot if gate requires one", () => withFixture(f => {
   assert.throws(() => validate({...f,requireScreenshot:true}), /STORE_SCREENSHOT_REQUIRED/);
@@ -104,7 +138,13 @@ test("Windows-only exporter can never silently stamp owner approval", () => {
   assert.match(script, /STORE_ARTWORK_SOURCE_HASH_MISMATCH/);
   assert.match(script, /STORE_ARTWORK_REFUSES_EXISTING_OUTPUT/);
   assert.match(script, /STORE_ARTWORK_TRANSPARENT_PNG_REQUIRED/);
+  assert.match(script, /STORE_ARTWORK_JPEG_FORMAT_MISMATCH/);
+  assert.match(script, /jpeg_opaque/);
   assert.match(script, /UNAPPROVED_SOURCE_TRANSFORM/);
   assert.match(script, /STORE_ARTWORK_MECHANICAL_EXPORT_PASS_NOT_APPROVED/);
   assert.doesNotMatch(script, /Add-AppxPackage|Import-Certificate|New-SelfSignedCertificate|Submit-Store|Register-ScheduledTask|Set-MpPreference/);
+  const workflow = readFileSync(new URL("../../.github/workflows/msix-store-artwork-preflight.yml", import.meta.url), "utf8");
+  assert.match(workflow, /STORE_ARTWORK_SYNTHETIC_JPEG_EXPORT_PASS_NOT_APPROVED/);
+  assert.match(workflow, /STORE_ARTWORK_JPEG_FALSE_APPROVAL_CLAIM/);
+  assert.doesNotMatch(workflow, /upload-artifact|Add-AppxPackage|Import-Certificate|submit-to-store/i);
 });

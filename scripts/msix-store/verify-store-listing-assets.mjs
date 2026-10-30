@@ -2,7 +2,7 @@
 // Read-only byte/format/hash checks. These cannot authenticate artwork identity,
 // prove a screenshot depicts a real app, or perform privacy review / owner approval.
 import { readFileSync, lstatSync, realpathSync } from "node:fs";
-import { join, resolve } from "node:path";
+import { join, resolve, extname } from "node:path";
 import { createHash } from "node:crypto";
 import { fileURLToPath } from "node:url";
 
@@ -49,10 +49,37 @@ export function pngSize(bytes) {
   return { width, height };
 }
 
+/** JPEG SOF inspection only; full decode is separately exercised by the Windows exporter. */
+export function jpegSize(bytes) {
+  if (bytes.length < 18 || bytes.readUInt16BE(0) !== 0xffd8) {
+    err("STORE_ASSET_INVALID_JPEG_HEADER");
+  }
+  let index = 2;
+  while (index + 4 <= bytes.length) {
+    if (bytes[index++] !== 0xff) err("STORE_ASSET_INVALID_JPEG_MARKER");
+    while (index < bytes.length && bytes[index] === 0xff) index++;
+    if (index >= bytes.length) break;
+    const marker = bytes[index++];
+    if (marker === 0xd9 || marker === 0xda) break;
+    if (marker === 0x01 || (marker >= 0xd0 && marker <= 0xd7)) continue;
+    if (index + 2 > bytes.length) break;
+    const length = bytes.readUInt16BE(index);
+    if (length < 2 || index + length > bytes.length) err("STORE_ASSET_INVALID_JPEG_SEGMENT");
+    if ([0xc0,0xc1,0xc2,0xc3,0xc5,0xc6,0xc7,0xc9,0xca,0xcb,0xcd,0xce,0xcf].includes(marker)) {
+      if (length < 8 || bytes[index+2] !== 8 || bytes[index+7] < 1) {
+        err("STORE_ASSET_UNSUPPORTED_JPEG_FRAME");
+      }
+      return { width: bytes.readUInt16BE(index+5), height: bytes.readUInt16BE(index+3) };
+    }
+    index += length;
+  }
+  err("STORE_ASSET_JPEG_FRAME_NOT_FOUND");
+}
+
 export function validate({ source, assetsDir, evidencePath, screenshot, requireScreenshot = false }) {
   if (!source || !assetsDir || !evidencePath) err("STORE_ASSET_INPUTS_REQUIRED");
   const evidence = JSON.parse(readFileSync(evidencePath, "utf8"));
-  if (evidence.schema !== "tetherplane.store-artwork-preflight.v1" ||
+  if (evidence.schema !== "tetherplane.store-artwork-preflight.v2" ||
       evidence.package_identity !== "ARCUSLabs.Tetherplane" ||
       evidence.disposition !== "UNAPPROVED_SOURCE_TRANSFORM" ||
       evidence.owner_approval_reference !== null ||
@@ -61,7 +88,13 @@ export function validate({ source, assetsDir, evidencePath, screenshot, requireS
     err("STORE_ASSET_EVIDENCE_NOT_UNAPPROVED_PREVIEW");
   }
   const sourceBytes = safeFile(source, 20 * 1024 * 1024);
-  const sourceSize = pngSize(sourceBytes);
+  const extension = extname(source).toLowerCase();
+  const expectedFormat = extension === ".png" ? "png_alpha" :
+    [".jpg", ".jpeg"].includes(extension) ? "jpeg_opaque" : null;
+  if (!expectedFormat || evidence.source_format !== expectedFormat) {
+    err("STORE_ASSET_SOURCE_FORMAT_MISMATCH");
+  }
+  const sourceSize = expectedFormat === "png_alpha" ? pngSize(sourceBytes) : jpegSize(sourceBytes);
   if (sourceSize.width !== sourceSize.height || sourceSize.width !== evidence.source_square_pixels ||
       sourceSize.width < 512 || sha256(sourceBytes) !== evidence.source_sha256.toLowerCase()) {
     err("STORE_ASSET_ORIGINAL_SOURCE_MISMATCH");
