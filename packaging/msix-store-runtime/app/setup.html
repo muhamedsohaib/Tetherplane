@@ -1,0 +1,46 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Tetherplane — private setup preview</title>
+<link rel="stylesheet" href="/setup.css">
+<script defer src="/setup-client.js"></script>
+</head>
+<body>
+<main>
+  <div class="eyebrow">TETHERPLANE · DEVELOPMENT PREVIEW</div>
+  <h1>Connect this computer securely.</h1>
+  <p>Install once. Approve this device using your existing owner account. No new OAuth clients or device replacements.</p>
+  <div class="notice">This development build is not Microsoft Store-certified. Do not use it to replace an existing Tetherplane installation.</div>
+  <form id="setup">
+    <label>Relay endpoint <input name="relayUrl" required placeholder="wss://your-authorized-relay.example/device" autocomplete="off"></label>
+    <label>New device ID <input name="deviceId" required pattern="[A-Za-z0-9][A-Za-z0-9._-]*"></label>
+    <label>Folder permitted for this device <input name="allowRoot" required placeholder="C:\Users\You\Documents"></label>
+    <button type="submit">Request a pairing code</button>
+  </form>
+  <section id="challenge" hidden>
+    <h2>Approve this device</h2>
+    <p>In your existing, authenticated owner Control Center, approve the code below. Never paste your OAuth token here.</p>
+    <output id="code"></output>
+    <button id="start">I approved this device — start agent</button>
+  </section>
+  <section id="resume" hidden>
+    <h2>Saved identity detected</h2>
+    <p>Existing Store-preview credentials will be preserved. Confirm you authorized this device before starting.</p>
+    <button id="resumeStart">Start using saved identity</button>
+  </section>
+  <section id="blocked" hidden role="alert">
+    <h2>Saved connection needs owner review</h2>
+    <p>Tetherplane cannot verify this computer's saved device identity or its file permissions.
+       The existing files have been preserved. The agent remains stopped, and new pairing
+       is disabled to prevent accidental identity replacement.</p>
+    <p>Ask the device owner to review the installation or restore a trusted backup, then
+       reopen Tetherplane. Do not change Windows security settings to force a connection.</p>
+  </section>
+  <section><h2>Agent</h2><p id="status">Not started</p><button id="stop">Stop this session's agent</button></section>
+  <p id="feedback" role="status"></p>
+  <p class="foot">A started process is not proof that the relay accepted it. Confirm authenticated device.status independently before trusting a connection.</p>
+</main>
+</body>
+</html>

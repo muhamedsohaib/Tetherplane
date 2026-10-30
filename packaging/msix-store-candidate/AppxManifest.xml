@@ -1,0 +1,44 @@
+<?xml version="1.0" encoding="utf-8"?>
+<Package xmlns="http://schemas.microsoft.com/appx/manifest/foundation/windows10"
+         xmlns:uap="http://schemas.microsoft.com/appx/manifest/uap/windows10"
+         xmlns:uap10="http://schemas.microsoft.com/appx/manifest/uap/windows10/10"
+         xmlns:uap11="http://schemas.microsoft.com/appx/manifest/uap/windows10/11"
+         xmlns:rescap="http://schemas.microsoft.com/appx/manifest/foundation/windows10/restrictedcapabilities"
+         IgnorableNamespaces="uap uap10 uap11 rescap">
+  <!-- Store-bound, source-review candidate. No Store certification or signed release is implied. -->
+  <Identity Name="ARCUSLabs.Tetherplane"
+            Publisher="CN=6CCCFC81-2F0A-49BE-9027-A03BCF427F43"
+            Version="1.0.0.0"
+            ProcessorArchitecture="x64" />
+  <Properties>
+    <DisplayName>Tetherplane</DisplayName>
+    <PublisherDisplayName>ARCUS Labs</PublisherDisplayName>
+    <Description>Owner-authorized Windows device connectivity for compatible MCP clients</Description>
+    <Logo>Assets\Logo50.png</Logo>
+  </Properties>
+  <Resources><Resource Language="en-us" /></Resources>
+  <Dependencies>
+    <TargetDeviceFamily Name="Windows.Desktop" MinVersion="10.0.22000.0" MaxVersionTested="10.0.26100.0" />
+  </Dependencies>
+  <Applications>
+    <Application Id="Runtime" Executable="runtime\node.exe"
+                 uap10:RuntimeBehavior="packagedClassicApp" uap10:TrustLevel="mediumIL"
+                 uap11:CurrentDirectoryPath="$(package.installedPath)" uap11:Parameters="app\runtime-app.mjs">
+      <uap:VisualElements DisplayName="Tetherplane"
+                          Description="Owner-approved device pairing and setup"
+                          Square150x150Logo="Assets\Logo150.png"
+                          Square44x44Logo="Assets\Logo44.png"
+                          BackgroundColor="#20252A" />
+    </Application>
+    <!-- Keep the agent hidden: it must not become a second public launch entry. -->
+    <Application Id="Agent" Executable="bin\tetherd.exe"
+                 uap10:RuntimeBehavior="packagedClassicApp" uap10:TrustLevel="mediumIL">
+      <uap:VisualElements AppListEntry="none" DisplayName="Tetherplane Agent"
+                          Description="Internal agent: starts only after owner approval"
+                          Square150x150Logo="Assets\Logo150.png"
+                          Square44x44Logo="Assets\Logo44.png"
+                          BackgroundColor="#20252A" />
+    </Application>
+  </Applications>
+  <Capabilities><rescap:Capability Name="runFullTrust" /></Capabilities>
+</Package>
