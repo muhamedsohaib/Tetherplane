@@ -32,7 +32,7 @@ Tetherplane requires a compatible MCP client and an owner-controlled, already-co
 
 **Screenshot #1:** Genuine untouched unpaired setup form from a disposable approved Windows install, minimum 1366×768 PNG, no credentials or private data. **Status: NOT CAPTURED.**
 
-**Optional Store tile:** 300×300 from the actual approved logo source. **Status: SOURCE BYTES NOT AVAILABLE.**
+**Optional Store tile:** 300×300 PNG mechanically exported from the exact owner-selected `Logo.jpg` emblem; export review and final SHA-256 approval are still pending. The separate `Logo with word mark.jpg` is the approved design direction for larger brand media; do not shrink it into the app icon. No source JPEG is uploaded to public GitHub.
 
 **Privacy policy:** Review the repository's privacy-policy draft for accurate collection, storage, relay, and retention statements. **Status: PUBLIC FINAL URL/TEXT NOT APPROVED.** Do not claim that the app collects no data.
 

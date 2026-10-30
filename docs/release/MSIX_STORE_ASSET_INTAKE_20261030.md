@@ -2,25 +2,26 @@
 
 **Release and Store submission: NO-GO.** This is a source-asset preparation procedure only, stacked on draft PR #109. No publisher identity changes, signing, Store upload, actual device install or production runtime mutations.
 
-## Source provenance and approval
+## Canonical owner-selected source assets and approval
 
-The earlier owner-approved black/crimson logo exists in prior design work but **its exact original file bytes were not accessible** in the current development workspace. The available 1254×1254 blue-accent image and halftone/JPEG variants are **not** approved sources and must not be recolored, guessed, or silently substituted.
+On 30 October 2026, the owner identified **`Logo.jpg` (1062×1062, emblem only)** and **`Logo with word mark.jpg` (2639×2640, full logo)** as the exact final Tetherplane artwork. Both are **monochrome/halftone JPEGs**, with their original opaque background deliberately retained. They supersede the earlier unverified black/crimson source requirement. No recoloring, background extraction, 3-D reconstruction or redraw is authorized.
 
-The approved icon needs to be an emblem-only, square, high-resolution transparent PNG; do not include the wordmark in the square MSIX tiles. Resizing must be a purely mechanical high-quality RGBA transformation of owner-supplied bytes. It must not reconstruct or redesign the mark.
+Use `Logo.jpg` as the source for the square Windows app/MSIX tile images (44×44, 50×50, 150×150) and optional Store tile (300×300). Use `Logo with word mark.jpg` for separate branding/listing media **at a size where the text remains legible**; do not shrink the wordmark into tiny app icons. There is no requirement to produce transparent artwork from these JPEGs. **Do not commit the owner's source JPEG bytes or source-derived final logos to this public Git branch.** Keep them local until the owner approves their specific distribution.
 
-1. Obtain the exact finalized original emblem-only PNG from the owner and record the source SHA-256 outside the repo.
-2. On a Windows review workstation with .NET System.Drawing available, run (replace the example paths and hash with real values):
+1. Obtain the exact two JPEG files from the owner-controlled input folder and independently record their SHA-256 hashes outside the repo. Do not substitute older blue/accent variants or use filename matching as proof of content identity.
+2. On an authorized disposable Windows review machine, execute the exporter with the **actual emblem JPEG's SHA-256**. For illustration only, paths here are placeholders (do not assume the files are at these locations):
 
    ```powershell
-   $hash = (Get-FileHash -LiteralPath 'C:\Approved\Tetherplane-Emblem-Crimson.png' -Algorithm SHA256).Hash
-   .\scripts\msix-store\Prepare-StoreArtwork.ps1 -SourceEmblem 'C:\Approved\Tetherplane-Emblem-Crimson.png' -ExpectedSourceSha256 $hash -OutputDirectory 'C:\Approved\Tetherplane-Store-Review'
-   node .\scripts\msix-store\verify-store-listing-assets.mjs --source 'C:\Approved\Tetherplane-Emblem-Crimson.png' --assets-dir 'C:\Approved\Tetherplane-Store-Review' --evidence 'C:\Approved\Tetherplane-Store-Review\asset-evidence.UNAPPROVED.json'
+   $source = 'C:\Path\To\Logo.jpg'
+   $hash = (Get-FileHash -LiteralPath $source -Algorithm SHA256).Hash.ToLowerInvariant()
+   .\scripts\msix-store\Prepare-StoreArtwork.ps1 -SourceEmblem $source -ExpectedSourceSha256 $hash -OutputDirectory 'C:\Path\To\A-New-Review-Directory'
+   node .\scripts\msix-store\verify-store-listing-assets.mjs --source $source --assets-dir 'C:\Path\To\A-New-Review-Directory' --evidence 'C:\Path\To\A-New-Review-Directory\asset-evidence.UNAPPROVED.json'
    ```
 
-   The above is an **example only** and is not a command guaranteed to work on all machines. Test it on the actual authorized review machine; do not run it against existing installs. The exporter refuses a non-square or opaque source, a mismatched source hash, and any pre-existing output directory. All staging is new and isolated.
-3. Inspect the resulting `Logo44.png` (44×44), `Logo50.png` (50×50), `Logo150.png` (150×150), and optional `Logo300.png` (300×300 Store tile) **at actual pixel size on light and dark backgrounds**. The metadata-only verifier cannot establish visual correctness or catch all malformed PNG content.
-4. The output includes `asset-evidence.UNAPPROVED.json`, which deliberately has `owner_approval_reference: null` and disposition `UNAPPROVED_SOURCE_TRANSFORM`. **It is NOT** the `tetherplane.store-approved-assets.v1` manifest required by `Build-StorePrivateCandidate.ps1` owner mode. Nothing is automatically promoted.
-5. Only after actual owner review, create the separate approved-assets manifest *outside* the Git repo with the three MSIX hashes and an independent real owner review reference. Do not invent an approval reference; do not upload the logo source or private approvals to public GitHub CI.
+   Do not run from an unverified working directory or over an existing output. Windows must actually run the command successfully; isolated CI passes are not a substitute for owner-machine verification. The exporter refuses mismatched hashes, unsupported formats, non-square emblem input, and any existing destination. It accepts verified opaque JPEGs or genuinely transparent PNGs, maintaining the respective backgrounds without modification beyond mechanical resampling.
+3. Inspect **at native pixel size** the generated `Logo44.png`, `Logo50.png`, `Logo150.png`, and `Logo300.png` on both light/dark Windows backgrounds. At 44×44 a halftone image will be averaged by resampling; the emblem must remain recognizable. A review preview from the accessible JPEG shows the emblem remains discernible at these dimensions, but that is **not** owner approval of final hashes.
+4. The output includes `asset-evidence.UNAPPROVED.json` with schema `tetherplane.store-artwork-preflight.v2`, `source_format: jpeg_opaque`, disposition `UNAPPROVED_SOURCE_TRANSFORM` and `owner_approval_reference: null`. It is **not** the `tetherplane.store-approved-assets.v1` manifest required by the actual Store MSIX packager. After owner approval of the **exported PNG bytes and hashes**, prepare the separate reviewed approval record outside GitHub; no agent may fabricate approval or attach these files to a public CI artifact.
+5. The wordmark JPEG remains separate: check the exact source hash, legibility and Store image suitability independently. It is **not** an input to the 44×44 icon exporter.
 
 ## Real desktop screenshot capture
 
@@ -37,7 +38,7 @@ Microsoft reference: https://learn.microsoft.com/en-us/windows/apps/publish/publ
 ## Independent verification and limits
 
 - `node --test tests/release/msix-store-artwork-preflight.test.mjs` tests metadata constraints, hash drift, forged approval rejection, screenshot dimensions and missing-screenshot refusal without external packages.
-- `.github/workflows/msix-store-artwork-preflight.yml` runs only on same-repository draft review branches; Ubuntu runs the contract suite, Windows creates a deliberately synthetic transparent fixture to exercise actual GDI+ resizing/PNG/hash output. The CI output never uses the actual logo, creates owner approvals, uploads graphics or builds an app package.
+- `.github/workflows/msix-store-artwork-preflight.yml` runs only on same-repository draft review branches; Ubuntu runs the contract suite, Windows creates deliberately synthetic transparent PNG **and opaque JPEG** fixtures to exercise actual GDI+ decoding/resizing/PNG/hash output. The CI output never uses the actual logo, creates owner approvals, uploads graphics or builds an app package.
 - A green CI run does not prove the final logo bytes, genuine screenshot, privacy policy, Store-account eligibility, Store MSIX signing, Smart App Control, rollback or four-device acceptance.
 
 **Next external dependency:** Microsoft support case `2610290010001747` must clarify the Individual publisher identity. Do not change `ARCUSLabs.Tetherplane` or the existing publisher CN while the ticket is open.
