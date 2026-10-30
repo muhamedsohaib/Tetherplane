@@ -15,6 +15,7 @@ try {
         "bin\tetherd.exe",
         "bin\tetherd-agentw.exe",
         "bin\tetherplane-browserw.exe",
+        "bin\tetherplane-modelw.exe",
         "adapters\compact-mcp\dist\stdio-server.js",
         "protocol\schemas\result.schema.json",
         "launch\tetherplane-mcp.ps1",

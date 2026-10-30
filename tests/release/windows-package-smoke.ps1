@@ -67,6 +67,7 @@ try {
         "bin\tetherd.exe",
         "bin\tetherd-agentw.exe",
         "bin\tetherplane-browserw.exe",
+        "bin\tetherplane-modelw.exe",
         "adapters\compact-mcp\dist\stdio-server.js",
         "adapters\compact-mcp\node_modules",
         "adapters\model-client\dist\worker-main.js",
@@ -133,6 +134,7 @@ try {
     $packagedConsoleHash = (Get-FileHash -LiteralPath (Join-Path $stage "bin\tetherd.exe") -Algorithm SHA256).Hash
     $packagedWindowlessHash = (Get-FileHash -LiteralPath (Join-Path $stage "bin\tetherd-agentw.exe") -Algorithm SHA256).Hash
     $packagedBrowserWindowlessHash = (Get-FileHash -LiteralPath (Join-Path $stage "bin\tetherplane-browserw.exe") -Algorithm SHA256).Hash
+    $packagedModelWindowlessHash = (Get-FileHash -LiteralPath (Join-Path $stage "bin\tetherplane-modelw.exe") -Algorithm SHA256).Hash
     Write-Output "WINDOWS_REAL_PACKAGE_BYTE_EVIDENCE_OK"
 
     $stagedInstallScript = Get-Content -LiteralPath (Join-Path $stage "install-windows.ps1") -Raw
@@ -206,6 +208,9 @@ try {
     if ((Get-FileHash -LiteralPath (Join-Path $install "bin\tetherplane-browserw.exe") -Algorithm SHA256).Hash -cne $packagedBrowserWindowlessHash) {
         throw "RELEASE_NO_GO: installed windowless browser launcher differs from package"
     }
+    if ((Get-FileHash -LiteralPath (Join-Path $install "bin\tetherplane-modelw.exe") -Algorithm SHA256).Hash -cne $packagedModelWindowlessHash) {
+        throw "RELEASE_NO_GO: native model worker differs from the packaged binary"
+    }
     Write-Output "WINDOWS_INSTALLED_AGENT_BYTE_IDENTITY_OK"
     $stdioSubsystem = Get-TetherplanePeSubsystem -Executable $installedTetherd
     if ($stdioSubsystem -ne 3) {
@@ -222,6 +227,10 @@ try {
         throw "RELEASE_NO_GO: owner browser launcher must be Windows GUI subsystem 2"
     }
     Write-Output "WINDOWS_BROWSER_GUI_SUBSYSTEM_OK"
+    if ((Get-TetherplanePeSubsystem -Executable (Join-Path $install "bin\tetherplane-modelw.exe")) -ne 2) {
+        throw "RELEASE_NO_GO: optional model worker launcher must be Windows GUI subsystem 2"
+    }
+    Write-Output "WINDOWS_MODEL_GUI_SUBSYSTEM_OK"
     $installedSmoke = Join-Path $install "adapters\compact-mcp\smoke-six-tools.mjs"
     $installedWorker = Join-Path $install "adapters\model-client\dist\worker-main.js"
     $installedWorkerInstaller = Join-Path $install "install-model-worker-windows.ps1"
@@ -260,6 +269,12 @@ try {
         throw "RELEASE_NO_GO: native owner browser startup/shutdown acceptance failed"
     }
     Write-Output "WINDOWS_BROWSER_NO_CONSOLE_PROCESS_SMOKE_OK"
+
+    & node (Join-Path $PSScriptRoot "windows-modelw-lifecycle.mjs") $install
+    if ($LASTEXITCODE -ne 0) {
+        throw "RELEASE_NO_GO: native optional model worker launch/cleanup test failed"
+    }
+    Write-Output "WINDOWS_MODEL_NO_CONSOLE_PROCESS_SMOKE_OK"
 
     # The operator-controlled setup must generate separate, non-public, scoped
     # local token files and refuse accidental replacement or extension rebind.

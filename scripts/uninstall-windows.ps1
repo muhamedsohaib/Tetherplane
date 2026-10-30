@@ -109,11 +109,14 @@ $modelWorkerRunKey = "HKCU:\Software\Microsoft\Windows\CurrentVersion\Run"
 $modelWorkerRunValue = "TetherplaneModelWorker"
 $modelWorkerSupervisor = Join-Path $install "config\model-worker-supervisor.ps1"
 $modelWorkerMain = Join-Path $install "adapters\model-client\dist\worker-main.js"
+$modelWorkerNative = Join-Path $install "bin\tetherplane-modelw.exe"
+$modelWorkerArgs = Join-Path $install "config\model-worker-args.json"
 
 # Do not remove a different installation's globally named Run registration.
 $expectedRunCommand = 'powershell.exe -NoProfile -NonInteractive -WindowStyle Hidden -ExecutionPolicy Bypass -File "' + $modelWorkerSupervisor + '"'
+$expectedNativeRun = '"' + $modelWorkerNative + '" --arguments-file "' + $modelWorkerArgs + '"'
 $existingRunValue = Get-ItemProperty -Path $modelWorkerRunKey -Name $modelWorkerRunValue -ErrorAction SilentlyContinue
-if ($existingRunValue -and [string]$existingRunValue.$modelWorkerRunValue -ceq $expectedRunCommand) {
+if ($existingRunValue -and [string]$existingRunValue.$modelWorkerRunValue -cin @($expectedRunCommand, $expectedNativeRun)) {
     Remove-ItemProperty -Path $modelWorkerRunKey -Name $modelWorkerRunValue -ErrorAction SilentlyContinue
 }
 $modelWorkerProcesses =
@@ -123,6 +126,9 @@ $modelWorkerProcesses =
             $name = [string]$_.Name
             $commandLine = [string]$_.CommandLine
             (
+                ($name -eq "tetherplane-modelw.exe") -and
+                ([string]$_.ExecutablePath -ieq $modelWorkerNative)
+            ) -or (
                 ($name -in @("powershell.exe", "pwsh.exe")) -and
                 ($commandLine.IndexOf($modelWorkerSupervisor, [System.StringComparison]::OrdinalIgnoreCase) -ge 0)
             ) -or (

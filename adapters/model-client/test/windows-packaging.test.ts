@@ -31,12 +31,14 @@ test("Windows release packages an always-on per-user model worker", async () => 
     /HKCU:\\Software\\Microsoft\\Windows\\CurrentVersion\\Run/,
   );
   assert.match(installer, /TetherplaneModelWorker/);
-  assert.match(installer, /-WindowStyle Hidden/);
+  assert.match(installer, /tetherplane-modelw\.exe/);
+  assert.doesNotMatch(installer, /-WindowStyle Hidden/);
+  assert.doesNotMatch(installer, /model-worker-supervisor\.ps1/);
   assert.match(installer, /worker-main\.js/);
   assert.match(installer, /--api-key-env/);
   assert.doesNotMatch(installer, /--api-key(?!-env)/);
   assert.doesNotMatch(installer, /Register-ScheduledTask/);
-  assert.match(installer, /while \(\$true\)/);
+  assert.match(installer, /HKCU_RUN_NATIVE_GUI/);
 
   assert.match(uninstall, /TetherplaneModelWorker/);
 });
