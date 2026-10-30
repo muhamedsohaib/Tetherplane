@@ -8,6 +8,7 @@ if ([Environment]::OSVersion.Platform -ne [PlatformID]::Win32NT) {
 $repo = (Resolve-Path (Join-Path $PSScriptRoot "..")).Path
 $consoleExe = Join-Path $repo "target\release\tetherd.exe"
 $windowlessExe = Join-Path $repo "target\release\tetherd-agentw.exe"
+$browserWindowlessExe = Join-Path $repo "target\release\tetherplane-browserw.exe"
 
 Push-Location $repo
 try {
@@ -25,8 +26,10 @@ try {
     # Restore the ordinary Cargo-managed console executable for existing
     # MCP stdin/stdout users and developer commands.
     & cargo build --release -p tetherd
-    if ($LASTEXITCODE -ne 0 -or -not (Test-Path -LiteralPath $consoleExe -PathType Leaf)) {
-        throw "stdio agent build failed"
+    if ($LASTEXITCODE -ne 0 -or
+        -not (Test-Path -LiteralPath $consoleExe -PathType Leaf) -or
+        -not (Test-Path -LiteralPath $browserWindowlessExe -PathType Leaf)) {
+        throw "stdio agent or native browser launcher build failed"
     }
 }
 catch {
@@ -38,4 +41,5 @@ finally {
 }
 
 Write-Output "WINDOWS_DUAL_AGENT_BINARY_BUILD_OK"
+Write-Output "WINDOWS_NATIVE_BROWSER_GUI_BUILD_OK"
 

@@ -18,7 +18,8 @@
       "test/windows-exact-candidate-cleanhost-20261030": false,
       "feature/msix-store-private-candidate-core107-20261030": false,
       "feature/msix-store-artwork-preflight-20261030": false,
-      "test/msix-disposable-agent-state-acl-20261030": false
+      "test/msix-disposable-agent-state-acl-20261030": false,
+      "fix/windows-zero-console-browser-host-20261030": false
     }
   }
 }

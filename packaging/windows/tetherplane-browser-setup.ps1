@@ -1,6 +1,7 @@
 param(
     [string]$BrowserStateDir = (Join-Path $env:LOCALAPPDATA "Tetherplane"),
-    [string]$ExtensionId
+    [string]$ExtensionId,
+    [switch]$EnableBackgroundStartup
 )
 
 $ErrorActionPreference = "Stop"
@@ -105,6 +106,29 @@ if (-not (Test-Path -LiteralPath $pinPath -PathType Leaf)) {
 }
 New-LocalToken -Path $agentTokenPath
 New-LocalToken -Path $extensionTokenPath
+
+# Startup registration is explicit opt-in, never implied by token creation.
+# It must launch the GUI-subsystem owner browser host, not powershell.exe.
+if ($EnableBackgroundStartup) {
+    $launcher = Join-Path $install "bin\tetherplane-browserw.exe"
+    if (-not (Test-Path -LiteralPath $launcher -PathType Leaf)) {
+        throw "windowless browser launcher is missing"
+    }
+    $runKey = "HKCU:\Software\Microsoft\Windows\CurrentVersion\Run"
+    $runName = "TetherplaneAuthenticatedBrowserHost"
+    $runValue = '"' + $launcher + '" --browser-state-dir "' + $root + '"'
+    $existingProperty = Get-ItemProperty -LiteralPath $runKey -Name $runName -ErrorAction SilentlyContinue
+    $existing = if ($existingProperty) { [string]$existingProperty.$runName } else { $null }
+    if ($existing -and $existing -cne $runValue) {
+        throw "existing browser autorun requires explicit owner-reviewed migration"
+    }
+    New-Item -Path $runKey -Force | Out-Null
+    New-ItemProperty -Path $runKey -Name $runName -Value $runValue -PropertyType String -Force | Out-Null
+    if ((Get-ItemProperty -LiteralPath $runKey -Name $runName).$runName -cne $runValue) {
+        throw "windowless browser autorun registration failed"
+    }
+    Write-Output "BROWSER_WINDOWLESS_AUTOSTART_OPT_IN=True"
+}
 
 Write-Output "BROWSER_OWNER_SETUP_READY=True"
 Write-Output "BROWSER_PAIRING_REQUIRES_EXPLICIT_LOCAL_EXTENSION_ACTION=True"

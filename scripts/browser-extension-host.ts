@@ -90,6 +90,29 @@ const requestStop = (): void => {
 process.once("SIGINT", requestStop);
 process.once("SIGTERM", requestStop);
 
+// A GUI-subsystem launcher has no console and must not leave a live browser
+// host behind if the owner-session launcher is unexpectedly terminated.
+// This optional binding is absent for explicit developer/manual launches.
+const launcherPidRaw = process.env.TETHERPLANE_BROWSER_LAUNCHER_PID;
+if (launcherPidRaw !== undefined) {
+  const launcherPid = Number(launcherPidRaw);
+  if (
+    !Number.isSafeInteger(launcherPid) ||
+    launcherPid <= 0 ||
+    launcherPid !== process.ppid
+  ) {
+    throw new Error("browser launcher parent binding is invalid");
+  }
+  const parentWatch = setInterval(() => {
+    try {
+      process.kill(launcherPid, 0);
+    } catch {
+      requestStop();
+    }
+  }, 750);
+  parentWatch.unref();
+}
+
 try {
   while (!stopping) {
     const pinnedExtensionId =

@@ -22,4 +22,13 @@ if ($text -notmatch "TetherplaneAuthenticatedBrowserHost") {
     throw "authenticated browser companion startup value name is missing"
 }
 
+if ($text -notmatch 'tetherplane-browserw\.exe') {
+    throw "browser persistence must use the native GUI launcher"
+}
+if ($text -match '\-WindowStyle\s+Hidden' -or
+    $text -match 'browser-extension-host-supervisor\.ps1' -or
+    $text -match "'powershell\.exe '\s*\+") {
+    throw "legacy PowerShell browser autorun is forbidden"
+}
 Write-Output "AUTH_BROWSER_USER_PERSISTENCE_CONTRACT=PASS"
+Write-Output "AUTH_BROWSER_NO_POWERSHELL_AUTORUN_CONTRACT=PASS"
