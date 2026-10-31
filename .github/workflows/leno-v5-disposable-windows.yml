@@ -105,6 +105,13 @@ jobs:
           & powershell.exe -NoProfile -NonInteractive -File docs/release/VAULTER_V5_ACL_SAFE_HARDENING_20261031_v3.ps1 -Mode SelfTest
           if ($LASTEXITCODE -ne 0) { throw 'V5 receipt transition fixture failed' }
           Write-Output 'NO_PRODUCTION_ACL_OR_POLICY_CHANGES=TRUE'
+      - name: Portable V5 offline restore fixture rejects tamper and zip traversal
+        shell: powershell
+        run: |
+          $ErrorActionPreference = 'Stop'
+          & powershell.exe -NoProfile -NonInteractive -File tests/release/v5-offline-recovery-synthetic.ps1
+          if ($LASTEXITCODE -ne 0) { throw 'Synthetic offline V5 restore mechanics failed' }
+          Write-Output 'OFFLINE_RECOVERY_TEST_USES_NO_LIVE_CREDENTIALS=TRUE'
 
 
   windows-native-onboarding:
