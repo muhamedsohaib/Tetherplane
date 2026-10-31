@@ -107,3 +107,13 @@ The naive one-pass local synthetic remediation failed (the Users Write ACE remai
 - Other source release-policy contract: 4/4 PASS after new CI step; no signing or publication modification.
 
 **NO live ACL modification, service restart, OAuth adjustment, pairing, Full Control activation or RTX action took place.** Before production hardening, verify audit/journal/checkpoint paths outside immutable code subtree, store/rehearse protected rollback, and obtain explicit owner consent to change security privileges. The wider Tetherplane ProgramData parent still has a broad directory Write ACE; this scoped code-path hardening would not automatically fix unrelated state/storage directories.
+
+## 2026-10-31 VAULTER ACL prepare-script parser correction
+
+- The owner downloaded and verified the earlier SHA-256 f95fd368c4794edd70d79476d214cf40b109aba4c67057902d69740cb0ad9eaa script, but its local PowerShell AST syntax check stopped execution before SelfTest and Prepare. **No live ACL, service, credential or backup state was altered by that attempt.**
+- The exact uploaded 434-line file was independently inspected and its parser failure reproduced on Leno: two parse errors at original line 249, column 137, a mismatched-parentheses expression around protected task XML verification.
+- Correction isolated as docs/release/VAULTER_V5_ACL_SAFE_HARDENING_20261031_v2.ps1, SHA-256 e331579bbbbdbf3028a107b02b4281f2a281ba8941b8c28d1b6edcdf9c6ac13f. The fix assigns the decrypted task XML to a named local variable and compares it separately; no ACL or production permission logic was changed.
+- Validation on real Leno: Windows PowerShell 5.1 AST **0 errors**, SelfTest PASS (write mask, current-user DPAPI, two-pass synthetic ACL change/recovery); PowerShell 7 SelfTest PASS.
+- Additional isolated PrepareBackup function fixture on Leno: synthetic code tree, mocked scheduled task and XML, DPAPI round-trip, encrypted ZIP integrity hashes, receipt validity, synthetic code restoration, all PASS. The fixture was deleted.
+- New dedicated Windows CI SelfTest job step added to existing Windows quality job; **not yet executed on GitHub CI**.
+- **No VAULTER Prepare/Apply/Verify/Rollback mode of this corrected script has run.** Native VAULTER task action, audit paths, and protected rollback package remain release gates. Use only new v2 file at the exact pinned hash.

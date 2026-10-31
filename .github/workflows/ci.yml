@@ -99,6 +99,11 @@ jobs:
         shell: pwsh
         run: ./tests/release/v5-control-center-acl-isolated-rehearsal.ps1
 
+      - name: VAULTER V5 ACL prepare/apply script self-test (synthetic only)
+        if: runner.os == 'Windows'
+        shell: pwsh
+        run: ./docs/release/VAULTER_V5_ACL_SAFE_HARDENING_20261031_v2.ps1 -Mode SelfTest
+
       - name: Windows canary verifier negative contracts
         if: runner.os == 'Windows'
         shell: pwsh
