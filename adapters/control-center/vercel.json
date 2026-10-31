@@ -22,7 +22,8 @@
       "fix/windows-zero-console-browser-host-20261030": false,
       "fix/windows-zero-console-model-worker-20261030": false,
       "fix/store-windowless-owner-setup-20261030": false,
-      "fix/store-owner-opt-in-autostart-20261030": false
+      "fix/store-owner-opt-in-autostart-20261030": false,
+      "feature/msix-store-private-candidate-autostart-audit-20261031": false
     }
   }
 }
