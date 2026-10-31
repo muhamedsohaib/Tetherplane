@@ -4,6 +4,7 @@ import { fileURLToPath } from 'node:url';
 import { resolve } from 'node:path';
 import { ExactPortal } from './server.mjs';
 import { AuthorityHttp } from './authority-http.mjs';
+import { OwnerLenoPortalProxy } from './owner-leno-proxy.mjs';
 
 const TX_TTL = 300000;
 const CALLBACK = '/oauth/callback';
@@ -57,6 +58,7 @@ export class OAuthPortal extends ExactPortal {
     super(options);
     this.oauth=validateConfig(options.oauth,this.relayOrigin);
     this.authority=options.authority?new AuthorityHttp(this,options.authority):null;
+    this.ownerLeno=this.authority?new OwnerLenoPortalProxy(this):null;
     this.transactions=new Map();this.oauthTimers=new Map();this.closed=false;
   }
   async listen(port=8790) {
@@ -147,7 +149,7 @@ export class OAuthPortal extends ExactPortal {
   }
   async handle(req,res) {
     const raw=req.url||'';
-    const special=raw==='/tp-integration.js'||raw.startsWith('/api/oauth/')||(this.authority&&raw.startsWith('/api/authority/'))||raw.split('?')[0]===CALLBACK||(raw==='/api/session'&&req.method==='POST');
+    const special=raw==='/tp-integration.js'||raw.startsWith('/api/oauth/')||(this.authority&&raw.startsWith('/api/authority/'))||(this.ownerLeno&&raw.startsWith('/api/owner-leno'))||raw.split('?')[0]===CALLBACK||(raw==='/api/session'&&req.method==='POST');
     if(!special)return super.handle(req,res);
     oauthHeaders(res);
     try {
@@ -162,13 +164,15 @@ export class OAuthPortal extends ExactPortal {
       }
       if(req.headers['sec-fetch-site']==='cross-site'||(req.headers.origin&&req.headers.origin!==this.origin))throw new OAuthError(403,'origin_denied','Same-origin request required.');
       if(url.search)throw invalid();
+      if(this.ownerLeno&&raw.startsWith('/api/owner-leno'))return await this.ownerLeno.handle(req,res);
       if(raw.startsWith('/api/authority/'))return await this.authority.handle(req,res);
       if(raw==='/tp-integration.js') {
         if(!['GET','HEAD'].includes(req.method))throw new OAuthError(405,'method_not_allowed','GET only.');
         const original=await readFile(new URL('./public/tp-integration.js',import.meta.url));
         const oauth=await readFile(new URL('./public/tp-oauth.js',import.meta.url));
         const authority=this.authority?await readFile(new URL('./public/tp-authority.js',import.meta.url)):null;
-        res.writeHead(200,{'content-type':'text/javascript; charset=utf-8'});res.end(req.method==='HEAD'?undefined:Buffer.concat([original,Buffer.from('\n'),oauth,...(authority?[Buffer.from('\n'),authority]:[])]));return;
+        const ownerLeno=this.ownerLeno?await readFile(new URL('./public/tp-owner-leno.js',import.meta.url)):null;
+        res.writeHead(200,{'content-type':'text/javascript; charset=utf-8'});res.end(req.method==='HEAD'?undefined:Buffer.concat([original,Buffer.from('\n'),oauth,...(authority?[Buffer.from('\n'),authority]:[]),...(ownerLeno?[Buffer.from('\n'),ownerLeno]:[])]));return;
       }
       if(raw==='/api/oauth/config') {
         if(req.method!=='GET')throw new OAuthError(405,'method_not_allowed','GET only.');

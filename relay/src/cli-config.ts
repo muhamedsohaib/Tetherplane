@@ -18,6 +18,7 @@ export type RelayCliOptions = {
   port: number;
   stateFile: string;
   authConfig: string;
+  ownerAuthorityConfig?: string;
   tlsCert?: string;
   tlsKey?: string;
   allowInsecureLocalhost: boolean;
@@ -35,6 +36,7 @@ export function parseRelayArgs(
     "devices.json",
   );
   let authConfig: string | undefined;
+  let ownerAuthorityConfig: string | undefined;
   let tlsCert: string | undefined;
   let tlsKey: string | undefined;
   let allowInsecureLocalhost = false;
@@ -74,6 +76,9 @@ export function parseRelayArgs(
           "--auth-config",
         );
         break;
+      case "--owner-authority-config":
+        ownerAuthorityConfig = requiredValue(args, ++index, "--owner-authority-config");
+        break;
       case "--tls-cert":
         tlsCert = requiredValue(args, ++index, "--tls-cert");
         break;
@@ -112,6 +117,7 @@ export function parseRelayArgs(
     port,
     stateFile,
     authConfig,
+    ...(ownerAuthorityConfig === undefined ? {} : { ownerAuthorityConfig }),
     ...(tlsCert === undefined
       ? {}
       : { tlsCert, tlsKey: tlsKey! }),
@@ -342,4 +348,37 @@ export async function loadClientAuth(
       ),
     ),
   };
+}
+
+
+const ownerAuthorityConfigSchema = z.object({
+  owner: z.object({
+    accountId: z.string().regex(/^[A-Za-z0-9][A-Za-z0-9._:-]{0,127}$/),
+    clientId: z.string().min(1).max(1024).regex(/^[^\s\x00-\x1F\x7F]+$/u),
+    principalId: z.string().min(1).max(256).regex(/^[^\s\x00-\x1F\x7F]+$/u),
+  }).strict(),
+  stateFile: z.string().min(1).refine(value => path.isAbsolute(value)),
+}).strict();
+
+// Optional, explicit owner metadata only. No OAuth clients, credentials or
+// authority state are created. Existing policy state must be initialized by
+// the approved owner-management channel before relay startup.
+export async function loadOwnerAuthorityConfig(configPath: string): Promise<{
+  owner: { accountId: string; clientId: string; principalId: string };
+  stateFile: string;
+}> {
+  if (!path.isAbsolute(configPath))
+    throw new Error("owner authority configuration requires an absolute file path");
+  const bytes = await readFile(configPath);
+  if (bytes.length > 4096)
+    throw new Error("owner authority configuration exceeds size limit");
+  let value: unknown;
+  try { value = JSON.parse(bytes.toString("utf8")); }
+  catch { throw new Error("invalid owner authority configuration JSON"); }
+  const checked = ownerAuthorityConfigSchema.safeParse(value);
+  if (!checked.success)
+    throw new Error("invalid owner authority metadata; existing owner identity is required");
+  if (path.resolve(checked.data.stateFile) === path.resolve(configPath))
+    throw new Error("owner authority policy state must use a separate file");
+  return checked.data;
 }

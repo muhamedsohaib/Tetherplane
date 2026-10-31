@@ -13,7 +13,10 @@ import type { AddressInfo } from "node:net";
 
 import type {
   ClientAuthenticator,
+  ClientIdentity,
 } from "./auth/static-auth.ts";
+import { OwnerDeviceAuthority } from "./access/owner-authority.ts";
+import { OwnerLenoHttpGateway } from "./access/owner-leno-http.ts";
 import {
   DeviceRegistry,
 } from "./devices/registry.ts";
@@ -45,6 +48,8 @@ export type RelayListenAddress = {
 
 export class RelayServer {
   readonly registry: DeviceRegistry;
+  readonly ownerAuthority: OwnerDeviceAuthority | null;
+  readonly ownerLenoGateway: OwnerLenoHttpGateway | null;
   readonly router: DeviceRouter;
   readonly deviceGateway: DeviceWebSocketGateway;
   readonly mcpGateway: RemoteMcpHttpGateway;
@@ -62,6 +67,8 @@ export class RelayServer {
     secure: boolean;
     allowInsecureLocalhost: boolean;
     registry: DeviceRegistry;
+    ownerAuthority: OwnerDeviceAuthority | null;
+    ownerLenoGateway: OwnerLenoHttpGateway | null;
     router: DeviceRouter;
     deviceGateway: DeviceWebSocketGateway;
     mcpGateway: RemoteMcpHttpGateway;
@@ -74,6 +81,8 @@ export class RelayServer {
     this.#allowInsecureLocalhost =
       options.allowInsecureLocalhost;
     this.registry = options.registry;
+    this.ownerAuthority = options.ownerAuthority;
+    this.ownerLenoGateway = options.ownerLenoGateway;
     this.router = options.router;
     this.deviceGateway = options.deviceGateway;
     this.mcpGateway = options.mcpGateway;
@@ -90,14 +99,30 @@ export class RelayServer {
     allowInsecureLocalhost?: boolean;
     routeTimeoutMs?: number;
     authLoginBridgeToken?: string;
+    ownerAuthority?: { owner: ClientIdentity; stateFile: string };
   }): Promise<RelayServer> {
     const registry = await DeviceRegistry.open(
       options.stateFile
         ? { stateFile: options.stateFile }
         : {},
     );
+    const ownerAuthority = options.ownerAuthority
+      ? await OwnerDeviceAuthority.open({ registry, ...options.ownerAuthority })
+      : null;
+    if (ownerAuthority && options.ownerAuthority) {
+      // This V5 opt-in is Leno-only. Never load an unrelated historical
+      // global policy or give another paired device an implicit new gate.
+      const state = ownerAuthority.snapshot(options.ownerAuthority.owner);
+      if (state.enabled ||
+          state.enforcedDevices.some(deviceId => deviceId !== "Leno") ||
+          state.grants.some(grant => grant.deviceId !== "Leno" || grant.level !== "full") ||
+          state.grants.length > 1) {
+        throw new Error("Leno-only owner policy refuses global or unrelated device grants");
+      }
+    }
     const router = new DeviceRouter({
       registry,
+      ownerAuthority,
       ...(options.routeTimeoutMs === undefined
         ? {}
         : { timeoutMs: options.routeTimeoutMs }),
@@ -118,6 +143,9 @@ export class RelayServer {
       disconnectDevice: (deviceId) =>
         deviceGateway.disconnectDevice(deviceId),
     });
+    const ownerLenoGateway = ownerAuthority
+      ? new OwnerLenoHttpGateway({ authority:ownerAuthority, authenticator:options.authenticator })
+      : null;
     const authLoginGateway =
       options.authLoginBridgeToken === undefined
         ? null
@@ -138,6 +166,7 @@ export class RelayServer {
     deviceGateway.attach(httpCompatible, "/device");
     mcpGateway.attach(httpCompatible, "/mcp");
     controlGateway.attach(httpCompatible);
+    ownerLenoGateway?.attach(httpCompatible);
     authLoginGateway?.attach(httpCompatible);
 
     return new RelayServer({
@@ -146,6 +175,8 @@ export class RelayServer {
       allowInsecureLocalhost:
         options.allowInsecureLocalhost ?? false,
       registry,
+      ownerAuthority,
+      ownerLenoGateway,
       router,
       deviceGateway,
       mcpGateway,
@@ -203,6 +234,7 @@ export class RelayServer {
 
     this.healthGateway.close();
     this.controlGateway.close();
+    this.ownerLenoGateway?.close();
     this.authLoginGateway?.close();
     await this.mcpGateway.close();
     await this.deviceGateway.close();
