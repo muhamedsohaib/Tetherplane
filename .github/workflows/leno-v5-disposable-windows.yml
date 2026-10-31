@@ -120,9 +120,13 @@ jobs:
           if ($LASTEXITCODE -ne 0) { throw 'Portable certificate escrow synthetic validation failed' }
           $fakeReceipt = '20000101T000000Z-00000000000000000000000000000000'
           $out = & powershell.exe -NoProfile -NonInteractive -File docs/release/VAULTER_V5_RECOVERY_COVERAGE_READONLY_20261031.ps1 -ReceiptId $fakeReceipt 2>&1 | Out-String
-          if ($LASTEXITCODE -eq 0 -or !$out.Contains('HOST_GUARD_BLOCKED')) {
+          $expectedDenialExitCode = $LASTEXITCODE
+          if ($expectedDenialExitCode -eq 0 -or !$out.Contains('HOST_GUARD_BLOCKED')) {
             throw 'VAULTER owner-only read audit did not fail closed on Windows CI runner'
           }
+          # GitHub's pwsh wrapper appends exit $LASTEXITCODE. Normalize only
+          # AFTER verifying the deliberately denied child process.
+          $global:LASTEXITCODE = 0
           Write-Output 'PORTABLE_CERTIFICATE_ESCROW_AND_VAULTER_WRONG_HOST_GUARD=PASS'
 
 
