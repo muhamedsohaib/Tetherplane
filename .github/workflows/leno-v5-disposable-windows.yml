@@ -1,0 +1,161 @@
+name: Leno V5 isolated Windows acceptance (no publish)
+
+on:
+  push:
+    branches:
+      - ci/leno-v5-owner-20261031
+
+permissions:
+  contents: read
+
+concurrency:
+  group: leno-v5-owner-20261031-disposable
+  cancel-in-progress: false
+
+jobs:
+  release-and-preview-policy:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
+        with:
+          persist-credentials: false
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4.4.0
+        with:
+          node-version: '24.19.0'
+      - name: Verify this exact CI branch cannot request Vercel previews
+        run: |
+          node --input-type=module -e '
+            import assert from "node:assert/strict";
+            import {readFileSync,existsSync} from "node:fs";
+            const c=JSON.parse(readFileSync("vercel.json","utf8"));
+            const b="ci/leno-v5-owner-20261031";
+            assert.equal(process.env.GITHUB_REF,"refs/heads/"+b);
+            assert.deepEqual(Object.keys(c.git.deploymentEnabled),[b]);
+            assert.equal(c.git.deploymentEnabled[b],false);
+            for(const p of ["adapters/control-center-exact/public/index.html","adapters/control-center-exact/public/tp-font.woff2"]){
+              assert.equal(existsSync(p),false,"Private V5 artwork must not enter GitHub checkout: "+p);
+            }
+            console.log("TARGETED_PREVIEW_SUPPRESSION_AND_PRIVATE_ARTWORK_EXCLUSION=PASS");
+          '
+      - name: Verify no unsigned public Windows release can be published
+        run: node --test tests/release/windows-main-publication-block.test.mjs tests/release/windows-release-publication-contract.test.mjs
+
+  windows-leno-owner:
+    runs-on: windows-latest
+    timeout-minutes: 25
+    steps:
+      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
+        with:
+          persist-credentials: false
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4.4.0
+        with:
+          node-version: '24.19.0'
+      - name: Fail closed on branch, baseline and private artwork
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = 'Stop'
+          if ($env:GITHUB_REF -cne 'refs/heads/ci/leno-v5-owner-20261031') { throw 'Wrong branch' }
+          & git merge-base --is-ancestor 897aa7337fab4a20ac197212e8d3f502b4c06fa0 HEAD
+          if ($LASTEXITCODE -ne 0) { throw 'Unreviewed source base' }
+          foreach ($p in @('adapters/control-center-exact/public/index.html','adapters/control-center-exact/public/tp-font.woff2')) {
+            if (Test-Path -LiteralPath $p) { throw 'Private V5 artwork is present in public checkout' }
+          }
+          Write-Output 'WINDOWS_OWNER_SOURCE_AND_ARTWORK_GUARD=PASS'
+      - name: Install exact Node/pnpm workspace
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = 'Stop'
+          corepack enable
+          if ($LASTEXITCODE -ne 0) { throw 'Corepack failed' }
+          corepack prepare pnpm@10.34.5 --activate
+          if ($LASTEXITCODE -ne 0) { throw 'pnpm install failed' }
+          pnpm install --frozen-lockfile
+          if ($LASTEXITCODE -ne 0) { throw 'Dependency lockfile invalid' }
+      - name: Relay typecheck and all independent owner and transport tests
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = 'Stop'
+          pnpm --filter @tetherplane/relay typecheck
+          if ($LASTEXITCODE -ne 0) { throw 'Relay typecheck failed' }
+          Push-Location relay
+          try { & node --test --test-concurrency=2 'test/*.test.ts' 'test/*.test.mjs'; $rc=$LASTEXITCODE }
+          finally { Pop-Location }
+          if ($rc -ne 0) { throw 'Relay subprocess or authorization tests failed' }
+      - name: Windows local permission review and isolated ACL restoration
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = 'Stop'
+          node --test tests/release/device-local-permission-review.test.mjs
+          if ($LASTEXITCODE -ne 0) { throw 'Local device approval test failed' }
+          & powershell.exe -NoProfile -NonInteractive -File tests/release/v5-control-center-acl-isolated-rehearsal.ps1
+          if ($LASTEXITCODE -ne 0) { throw 'V5 ACL fixture failed' }
+          & powershell.exe -NoProfile -NonInteractive -File docs/release/VAULTER_V5_ACL_SAFE_HARDENING_20261031_v3.ps1 -Mode SelfTest
+          if ($LASTEXITCODE -ne 0) { throw 'V5 receipt transition fixture failed' }
+          Write-Output 'NO_PRODUCTION_ACL_OR_POLICY_CHANGES=TRUE'
+
+  windows-native-onboarding:
+    runs-on: windows-latest
+    timeout-minutes: 60
+    steps:
+      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
+        with:
+          persist-credentials: false
+      - uses: dtolnay/rust-toolchain@b725eda525362e7cf34af9a7243cac1e3f01a7ec # pinned
+        with:
+          toolchain: '1.99.1'
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4.4.0
+        with:
+          node-version: '24.19.0'
+      - name: Build exact source on disposable Windows MSVC runner
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = 'Stop'
+          if ($env:GITHUB_REF -cne 'refs/heads/ci/leno-v5-owner-20261031') { throw 'Wrong CI ref' }
+          cargo build --release --locked -p tetherd
+          if ($LASTEXITCODE -ne 0) { throw 'Native Windows Rust build failed' }
+          $binary='target/release/tetherd.exe'
+          if (!(Test-Path -LiteralPath $binary -PathType Leaf)) { throw 'No native executable produced' }
+          Write-Output ('UNSIGNED_DISPOSABLE_TETHERD_SHA256='+(Get-FileHash -LiteralPath $binary -Algorithm SHA256).Hash)
+          Write-Output 'SIGNED_RELEASE_ARTIFACT=FALSE'
+      - name: Build exact Node workspace for test-only native packaging
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = 'Stop'
+          corepack enable
+          if ($LASTEXITCODE -ne 0) { throw 'Corepack unavailable' }
+          corepack prepare pnpm@10.34.5 --activate
+          if ($LASTEXITCODE -ne 0) { throw 'pnpm unavailable' }
+          pnpm install --frozen-lockfile
+          if ($LASTEXITCODE -ne 0) { throw 'Dependencies failed' }
+          pnpm -r build
+          if ($LASTEXITCODE -ne 0) { throw 'Workspace build failed' }
+      - name: Device-only ZIP integrity and native task acceptance
+        shell: pwsh
+        env:
+          TETHERPLANE_DISPOSABLE_NATIVE_TEST: '1'
+        run: |
+          $ErrorActionPreference = 'Stop'
+          $kit=Join-Path $env:RUNNER_TEMP 'tetherplane-ci-leno-v5-kit'
+          & powershell.exe -NoProfile -NonInteractive -File scripts/package-windows-device-kit.ps1 -OutputPath $kit -SkipBuild -Zip
+          if ($LASTEXITCODE -ne 0) { throw 'Disposable ZIP packaging failed' }
+          & powershell.exe -NoProfile -NonInteractive -File scripts/verify-windows-device-kit.ps1 -ZipPath ($kit+'.zip')
+          if ($LASTEXITCODE -ne 0) { throw 'ZIP hash verifier failed' }
+          & powershell.exe -NoProfile -NonInteractive -File tests/release/windows-native-onboarding-kit.ps1
+          if ($LASTEXITCODE -ne 0) { throw 'Windows native agent ownership acceptance failed' }
+          Write-Output 'DISPOSABLE_UNSIGNED_NATIVE_ONBOARDING=PASS'
+      - name: Existing installer preservation and package lifecycle regression
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = 'Stop'
+          & powershell.exe -NoProfile -NonInteractive -File tests/release/windows-installer-preservation.ps1
+          if ($LASTEXITCODE -ne 0) { throw 'Installer preservation failed' }
+          & powershell.exe -NoProfile -NonInteractive -File tests/release/windows-package-smoke.ps1
+          if ($LASTEXITCODE -ne 0) { throw 'Windows package lifecycle test failed' }
+      - name: Native onboarding and code-signing negative contracts
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = 'Stop'
+          & powershell.exe -NoProfile -NonInteractive -File scripts/run-onboarding-tests.ps1
+          if ($LASTEXITCODE -ne 0) { throw 'Existing signing and onboarding tests failed' }
+          Write-Output 'NO_LIVE_DEVICE_PAIRING_OAUTH_OR_SIGNING=TRUE'
