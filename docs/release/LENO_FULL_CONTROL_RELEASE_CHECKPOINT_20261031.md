@@ -126,3 +126,18 @@ The naive one-pass local synthetic remediation failed (the Users Write ACE remai
 - Extra synthetic test using v3's real PrepareBackup/LoadReceipt/SaveReceipt/ApplyDacl/RestoreDacl functions (with disposable files and mocked scheduled-task XML) verified prepared-receipt compatibility, apply/verify, rollback and final receipt state PASS. Test ran only on Leno in a temporary directory, which was deleted.
 - Windows CI SelfTest step updated from v2 to v3. GitHub CI has not executed this local commit.
 - **Production remains unchanged.** Prepared VAULTER DPAPI receipt must be preserved locally; owner may use only v3 at pinned SHA for separate Apply and Verify. No protected Tetherplane client permission, OAuth, service, task or RTX mutation is included.
+## 2026-10-31 VAULTER V5 ACL hardening — owner-executed production result
+
+**Change disposition: VAULTER code-release ACL hardening completed in the owner's local PowerShell session.** This entry supersedes earlier no-live-change statements only for this approved ACL operation.
+
+- Exact scope: VAULTER ControlCenterReleases subtree. No Full Control grant, OAuth/client/scope change, device pairing edit, task restart, GitHub release, or RTX operation.
+- Operator executed pinned v3 script SHA-256 665374bb88ba8d3b2da434ed9b55901b6eaad18046af55f8a90ff8e8a8163f75 using existing owner-local DPAPI receipt 20261031T143028Z-3318eaa4ea9d4faca50b303ddddd33bd.
+- Operator SelfTest: atomic receipt transitions PASS, ACL write mask PASS, local DPAPI PASS, synthetic two-pass ACL change/rollback PASS.
+- Operator Apply and separately invoked Verify: targeted broad Users-write ACE count 1 before, 0 after. Both APPLIED_AND_VERIFIED and VAULTER_V5_ACL_VERIFICATION=PASS reported.
+- Operator metadata: 101 code files / 1.3 MB, V5 portal identity VERIFIED, authority/audit write paths OUTSIDE_CODE_SUBTREE, existing loopback services VERIFIED, AUTHENTICATION_AND_TASKS_UNCHANGED=True.
+- Independent live ChatGPT Tetherplane post-change status/capabilities on Leno, Surface, VAULTER all succeeded. Leno and Surface specifically reported authenticated responsive transport and background_only policy. VAULTER status/capabilities returned and background_only; its status payload omitted detailed liveness.
+- Independent negative checks: VAULTER limited principal files.info for production V5 script was denied outside configured allowed directories, and harmless process.run whoami.exe was denied to principal operator:sohaib-vaulter-limited. No unauthorized file was read or process launched.
+- The production ACL readout is operator-reported; limited Tetherplane cannot independently inspect ProgramData ACL. Independent Tetherplane results establish agent connectivity and unchanged authorization boundaries, not Windows effective ACLs.
+- Important scope limitation: parent ProgramData/Tetherplane may still have broad directory write; no independent low-privilege Windows-token write-denial or real owner browser sign-in acceptance was performed.
+- Retain existing DPAPI protected rollback receipt and v3 tool. Do not rerun Apply; rollback is a break-glass procedure, not routine testing. DPAPI local protection alone is not proof of disaster recovery if VAULTER/profile is lost.
+- Leno Full Control activation and public signed Windows release remain NO-GO until clean native Windows package acceptance, independent owner session/denial/reconnect tests, recoverable rollback, explicit final cutover consent and RTX/four-device acceptance when the owner makes RTX available.
