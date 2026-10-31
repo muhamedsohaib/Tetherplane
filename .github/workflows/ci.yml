@@ -94,6 +94,11 @@ jobs:
         shell: pwsh
         run: ./tests/release/windows-package-smoke.ps1
 
+      - name: Windows V5 Control Center ACL hardening and rollback rehearsal
+        if: runner.os == 'Windows'
+        shell: pwsh
+        run: ./tests/release/v5-control-center-acl-isolated-rehearsal.ps1
+
       - name: Windows canary verifier negative contracts
         if: runner.os == 'Windows'
         shell: pwsh

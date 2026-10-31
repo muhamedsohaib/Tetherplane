@@ -92,3 +92,18 @@ The owner supplied sanitized output of the locally executed original preflight:
 - Local root/owner account files, OAuth bearer values, task arguments and device registry contents were not fetched. No RTX work performed.
 
 Next: owner runs the new targeted read-only ACL second pass on VAULTER; review only sanitized metadata. Do NOT grant/revoke ACLs, restart production tasks or create an owner authority file until signed-candidate, rollback and independent acceptance gates are met.
+
+## 2026-10-31 corrected VAULTER ACL audit and isolated remediation rehearsal
+
+Owner-supplied second-pass audit at 2026-10-31T13:01:07.2213108Z verified accepted V5 oauth.mjs hash and exposed a true BUILTIN\Users Allow Write ACE inherited with ContainerInherit on directories C:\ProgramData\Tetherplane, ControlCenterReleases, accepted V5 release folder and public folder. The protected V5 oauth.mjs, index.html and tp-integration.js files had RX and **no broad Users write Allow ACE**. The ACL finding represents possible unauthorized local file/subdirectory creation in code paths, not proven overwrite or exploitation.
+
+The relay, TetherAuth and V5 portal were previously confirmed on loopback. The Control Center task is S4U Limited, so task identity and live audit/output write locations must be checked before any ACL mutation. Exact accepted Git oauth.mjs SHA-256 converted to Windows CRLF was afab023ea2de6d64d717314082c0d3c1f919ef1d84d426cf1bd9212b612f0a59, matching the owner's live VAULTER output.
+
+The naive one-pass local synthetic remediation failed (the Users Write ACE remained after protecting inheritance and removing the rule in memory). A two-pass local Windows rehearsal succeeded: protect and persist the releases-root DACL, reload and remove only broad Users Allow Write ACE, persist, verify descendants and future children no longer inherit directory Write, verify existing file hashes/read access and unchanged unrelated parent, then restore original DACL. The test was repeated successfully using Windows PowerShell 5.1 and pwsh 7; disposable temporary directories were deleted, zero leftovers.
+
+- Synthetic-only source: tests/release/v5-control-center-acl-isolated-rehearsal.ps1
+- Repeatable Windows CI step: .github/workflows/ci.yml (Windows quality job). GitHub Windows CI has **not** run this new local commit.
+- Remediation scope and owner-approval gate: docs/release/VAULTER_V5_ACL_HARDENING_PROPOSAL_20261031.md
+- Other source release-policy contract: 4/4 PASS after new CI step; no signing or publication modification.
+
+**NO live ACL modification, service restart, OAuth adjustment, pairing, Full Control activation or RTX action took place.** Before production hardening, verify audit/journal/checkpoint paths outside immutable code subtree, store/rehearse protected rollback, and obtain explicit owner consent to change security privileges. The wider Tetherplane ProgramData parent still has a broad directory Write ACE; this scoped code-path hardening would not automatically fix unrelated state/storage directories.
