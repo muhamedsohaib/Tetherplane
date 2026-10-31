@@ -112,6 +112,18 @@ jobs:
           & powershell.exe -NoProfile -NonInteractive -File tests/release/v5-offline-recovery-synthetic.ps1
           if ($LASTEXITCODE -ne 0) { throw 'Synthetic offline V5 restore mechanics failed' }
           Write-Output 'OFFLINE_RECOVERY_TEST_USES_NO_LIVE_CREDENTIALS=TRUE'
+      - name: Synthetic certificate escrow and VAULTER audit wrong-host denial
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = 'Stop'
+          & pwsh.exe -NoProfile -NonInteractive -File tests/release/v5-portable-certificate-escrow-synthetic.ps1
+          if ($LASTEXITCODE -ne 0) { throw 'Portable certificate escrow synthetic validation failed' }
+          $fakeReceipt = '20000101T000000Z-00000000000000000000000000000000'
+          $out = & powershell.exe -NoProfile -NonInteractive -File docs/release/VAULTER_V5_RECOVERY_COVERAGE_READONLY_20261031.ps1 -ReceiptId $fakeReceipt 2>&1 | Out-String
+          if ($LASTEXITCODE -eq 0 -or !$out.Contains('HOST_GUARD_BLOCKED')) {
+            throw 'VAULTER owner-only read audit did not fail closed on Windows CI runner'
+          }
+          Write-Output 'PORTABLE_CERTIFICATE_ESCROW_AND_VAULTER_WRONG_HOST_GUARD=PASS'
 
 
   windows-native-onboarding:
