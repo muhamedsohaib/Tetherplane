@@ -52,4 +52,18 @@ Full Control means an exact owner-approved **relay capability grant** for Leno. 
 - [ ] Physically validate Leno allowed/denied operations, browser consent as independent provider, reconnect after actual relay restart, VAULTER/Surface/RTX unaffected, owner session recovery, and safe device-local stop.
 - [ ] Rehearse exact current-revision owner rollback and protected offline VAULTER operator restore, then independently reverify all four devices.
 
-No production task, grant, policy, OAuth config, credential, pairing, service binary, GitHub PR/branch or protected artifact was altered during this checkpoint.
+No live production task, grant, policy, OAuth config, credential, pairing, service binary, GitHub branch, PR or release was altered. The isolated source-only release safeguards below were then updated.
+
+
+## Follow-up: preserve current main release-security fixes (isolated source only)
+
+- Git ancestry established a common base 5feee084eb24bfd4831ab42840bb5f10dafc8113; remote main has 2 commits unique to main while the V5 baseline has 158 commits unique to V5. A naive merge or release from this old V5 branch can miss newer CI/release safeguards.
+- Restored the current main source-contract test tests/release/windows-main-publication-block.test.mjs in this isolated branch and ran it BEFORE remediation: exit 1, **1/4 PASS, 3/4 FAIL**. It caught an eleven-step legacy Windows tag workflow (including unreachable build/upload/publish commands) and missing independent release-policy CI job. This establishes a real regression gap in the V5 branch, not an observed production publication.
+- Synced the exact current main fail-closed .github/workflows/release.yml: read-only contents permission, a single unconditional unsigned-release denial step, no archive, build, upload or GitHub publication steps.
+- Inserted only main's independent release-policy CI job into the V5 workflow, retaining V5-specific quality, process endurance soak and Windows canary negative-contract tests.
+- AFTER: source contract **4/4 PASS**, including mutation controls for job-skips, failure masking, alternate publishing, and executable commands after denial. Local cargo fmt --all -- --check PASS.
+- Brought the two remaining Clippy assertion test-only differences into parity with current main; no runtime Rust implementation changed. Rust 1.99 Clippy and GitHub Windows/Linux CI have not been run against the resulting local candidate.
+- The current GitHub main already contains the unsigned-release block. This synchronization is **not** a remote security fix and must not be represented as a published release.
+- Evidence logs: %TEMP%\tetherplane-leno-release-20261031-validation\release-policy-fail-first.log and release-policy-postfix.log.
+
+Source and CI are still private/local. Independent platform CI, VAULTER installed-source provenance, owner rollback receipt, RTX availability, real device acceptance, and protected cutover approval remain mandatory.
