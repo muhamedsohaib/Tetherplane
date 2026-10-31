@@ -4,6 +4,7 @@ import {createServer} from 'node:http';
 import {mkdtempSync,rmSync} from 'node:fs';
 import {join} from 'node:path';
 import {tmpdir} from 'node:os';
+import {fileURLToPath} from 'node:url';
 import {OAuthPortal} from '../oauth.mjs';
 import {provisionAuthorityAudit} from '../authority-audit.mjs';
 
@@ -65,7 +66,9 @@ const authority={journalPath:join(root,'audit.jsonl'),
 provisionAuthorityAudit(authority);
 const portal=new OAuthPortal({
   relayUrl:'http://127.0.0.1:'+relay.address().port,
-  authority
+  authority,
+  // API-only fixture; no Git-ignored V5 artwork enters public CI.
+  htmlPath:fileURLToPath(new URL('./fixture.html',import.meta.url))
 });
 const origin=await portal.listen(0);
 const cookie=portal.cookieName+'=approved';

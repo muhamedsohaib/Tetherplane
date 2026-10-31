@@ -36,6 +36,9 @@ jobs:
             for(const p of ["adapters/control-center-exact/public/index.html","adapters/control-center-exact/public/tp-font.woff2"]){
               assert.equal(existsSync(p),false,"Private V5 artwork must not enter GitHub checkout: "+p);
             }
+            const reliability=readFileSync(".github/workflows/reliability-contract.yml","utf8");
+            assert.match(reliability,/tests\/release\/windows-package-smoke\.ps1/);
+            console.log("INDEPENDENT_NATIVE_PACKAGE_LIFECYCLE_JOB_RETAINED=PASS");
             console.log("TARGETED_PREVIEW_SUPPRESSION_AND_PRIVATE_ARTWORK_EXCLUSION=PASS");
           '
       - name: Verify no unsigned public Windows release can be published
@@ -84,9 +87,17 @@ jobs:
           finally { Pop-Location }
           if ($rc -ne 0) { throw 'Relay subprocess or authorization tests failed' }
       - name: Windows local permission review and isolated ACL restoration
-        shell: pwsh
+        shell: powershell
         run: |
           $ErrorActionPreference = 'Stop'
+          # pwsh inherits a PS7-centric module path on hosted runners; the Node
+          # test spawns Windows PowerShell 5.1 which needs its native modules.
+          $env:PSModulePath=@(
+            (Join-Path $env:ProgramFiles 'WindowsPowerShell\Modules'),
+            (Join-Path $env:WINDIR 'System32\WindowsPowerShell\v1.0\Modules')
+          ) -join ';'
+          & powershell.exe -NoProfile -NonInteractive -Command 'Get-Command Get-FileHash -ErrorAction Stop'
+          if ($LASTEXITCODE -ne 0) { throw 'Required Windows PowerShell file hash module unavailable' }
           node --test tests/release/device-local-permission-review.test.mjs
           if ($LASTEXITCODE -ne 0) { throw 'Local device approval test failed' }
           & powershell.exe -NoProfile -NonInteractive -File tests/release/v5-control-center-acl-isolated-rehearsal.ps1
@@ -94,6 +105,13 @@ jobs:
           & powershell.exe -NoProfile -NonInteractive -File docs/release/VAULTER_V5_ACL_SAFE_HARDENING_20261031_v3.ps1 -Mode SelfTest
           if ($LASTEXITCODE -ne 0) { throw 'V5 receipt transition fixture failed' }
           Write-Output 'NO_PRODUCTION_ACL_OR_POLICY_CHANGES=TRUE'
+      - name: Native onboarding and signing-policy negative contracts
+        shell: powershell
+        run: |
+          $ErrorActionPreference = 'Stop'
+          & powershell.exe -NoProfile -NonInteractive -File scripts/run-onboarding-tests.ps1
+          if ($LASTEXITCODE -ne 0) { throw 'Existing signing and onboarding tests failed' }
+          Write-Output 'NO_LIVE_DEVICE_PAIRING_OAUTH_OR_SIGNING=TRUE'
 
   windows-native-onboarding:
     runs-on: windows-latest
@@ -145,18 +163,14 @@ jobs:
           & powershell.exe -NoProfile -NonInteractive -File tests/release/windows-native-onboarding-kit.ps1
           if ($LASTEXITCODE -ne 0) { throw 'Windows native agent ownership acceptance failed' }
           Write-Output 'DISPOSABLE_UNSIGNED_NATIVE_ONBOARDING=PASS'
-      - name: Existing installer preservation and package lifecycle regression
+      - name: Existing installer preservation (independent smoke runs in reliability workflow)
         shell: pwsh
         run: |
           $ErrorActionPreference = 'Stop'
+          # windows-package-smoke.ps1 and windows-native-onboarding-kit.ps1
+          # register separate native Tasks. Never execute both on the same
+          # Windows runner: the second correctly refuses competing task owners.
+          # The existing reliability-contract Windows runner proves package smoke
+          # on its own isolated runner for this exact pushed candidate.
           & powershell.exe -NoProfile -NonInteractive -File tests/release/windows-installer-preservation.ps1
           if ($LASTEXITCODE -ne 0) { throw 'Installer preservation failed' }
-          & powershell.exe -NoProfile -NonInteractive -File tests/release/windows-package-smoke.ps1
-          if ($LASTEXITCODE -ne 0) { throw 'Windows package lifecycle test failed' }
-      - name: Native onboarding and code-signing negative contracts
-        shell: pwsh
-        run: |
-          $ErrorActionPreference = 'Stop'
-          & powershell.exe -NoProfile -NonInteractive -File scripts/run-onboarding-tests.ps1
-          if ($LASTEXITCODE -ne 0) { throw 'Existing signing and onboarding tests failed' }
-          Write-Output 'NO_LIVE_DEVICE_PAIRING_OAUTH_OR_SIGNING=TRUE'
