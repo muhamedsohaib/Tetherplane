@@ -105,13 +105,7 @@ jobs:
           & powershell.exe -NoProfile -NonInteractive -File docs/release/VAULTER_V5_ACL_SAFE_HARDENING_20261031_v3.ps1 -Mode SelfTest
           if ($LASTEXITCODE -ne 0) { throw 'V5 receipt transition fixture failed' }
           Write-Output 'NO_PRODUCTION_ACL_OR_POLICY_CHANGES=TRUE'
-      - name: Native onboarding and signing-policy negative contracts
-        shell: powershell
-        run: |
-          $ErrorActionPreference = 'Stop'
-          & powershell.exe -NoProfile -NonInteractive -File scripts/run-onboarding-tests.ps1
-          if ($LASTEXITCODE -ne 0) { throw 'Existing signing and onboarding tests failed' }
-          Write-Output 'NO_LIVE_DEVICE_PAIRING_OAUTH_OR_SIGNING=TRUE'
+
 
   windows-native-onboarding:
     runs-on: windows-latest
@@ -149,6 +143,16 @@ jobs:
           if ($LASTEXITCODE -ne 0) { throw 'Dependencies failed' }
           pnpm -r build
           if ($LASTEXITCODE -ne 0) { throw 'Workspace build failed' }
+      - name: Native onboarding and signing-policy negative contracts (compiled tetherd required)
+        shell: powershell
+        run: |
+          $ErrorActionPreference = 'Stop'
+          if (!(Test-Path -LiteralPath 'target/release/tetherd.exe' -PathType Leaf)) {
+            throw 'Compiled native tetherd is required for signing and onboarding Pester contracts'
+          }
+          & powershell.exe -NoProfile -NonInteractive -File scripts/run-onboarding-tests.ps1
+          if ($LASTEXITCODE -ne 0) { throw 'Existing signing and onboarding tests failed' }
+          Write-Output 'NO_LIVE_DEVICE_PAIRING_OAUTH_OR_SIGNING=TRUE'
       - name: Device-only ZIP integrity and native task acceptance
         shell: pwsh
         env:
