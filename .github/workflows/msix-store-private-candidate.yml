@@ -17,6 +17,7 @@ on:
       - 'scripts/build-windows-agent-binaries.ps1'
       - 'tests/release/msix-store-private-candidate.test.mjs'
       - 'tests/release/msix-store-runtime*.mjs'
+      - 'tests/release/windows-store-autostartw-lifecycle.mjs'
       - 'docs/release/MSIX_STORE_PRIVATE_CANDIDATE_20261028.md'
       - 'docs/release/MSIX_STORE_CORE107_INTEGRATION_20261030.md'
 
