@@ -142,6 +142,28 @@ try {
     !(await alive(nodePid)) && !(await alive(agentPid)),
     10000, "startup parent termination left a Node or agent orphan");
   console.log("STORE_LOGON_PARENT_TERMINATION_NO_ORPHAN_PASS");
+
+  // The Node supervisor is a separate process, and Windows does not
+  // automatically terminate its native child when Node crashes. A second
+  // start must not strand an authorized but unsupervised native agent.
+  first = launch();
+  await waitUntil(async () => {
+    if (first.exitCode !== null) throw Error("second owner startup exited prematurely");
+    const nodes = children(first.pid, "node.exe");
+    if (nodes.length !== 1) return false;
+    nodePid = nodes[0];
+    const agents = children(nodePid, "tetherd-agentw.exe");
+    if (agents.length !== 1) return false;
+    agentPid = agents[0];
+    return await alive(agentPid);
+  }, 18000, "restarted owner startup did not create supervised agent");
+  process.kill(nodePid);
+  await waitUntil(async () => !(await alive(nodePid)),
+    10000, "test-owned Node supervisor did not terminate");
+  await waitUntil(async () => !(await alive(agentPid)),
+    10000, "agent orphaned after abrupt Node supervisor termination");
+  console.log("STORE_LOGON_NODE_CRASH_NO_ORPHAN_PASS");
+
 } finally {
   for (const child of [duplicate, first]) {
     if (child?.exitCode === null) child.kill();
