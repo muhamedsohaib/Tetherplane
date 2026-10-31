@@ -45,10 +45,22 @@ function WorldWritable([string]$file) {
             $sid = try { $entry.IdentityReference.Translate([System.Security.Principal.SecurityIdentifier]).Value } catch { '' }
             if ($sid -notin @('S-1-1-0','S-1-5-11','S-1-5-32-545')) { continue }
             $rights = [System.Security.AccessControl.FileSystemRights]$entry.FileSystemRights
-            $writeRights = [System.Security.AccessControl.FileSystemRights]('Write, Modify, FullControl')
-            if (($rights -band $writeRights) -ne 0) { return 'WARNING_BROAD_WRITE' }
+            # Write, Modify and FullControl enum values include Read/ReadAndExecute
+            # bits; OR-ing them would falsely flag ordinary read-only ACEs.
+            # Inspect only operations capable of mutating a file or directory.
+            $writeNames = @('WriteData','AppendData','WriteExtendedAttributes',
+                'WriteAttributes','DeleteSubdirectoriesAndFiles','Delete',
+                'ChangePermissions','TakeOwnership')
+            $writeMask = [long]0
+            foreach ($name in $writeNames) {
+                $writeMask = $writeMask -bor [long][Enum]::Parse(
+                    [System.Security.AccessControl.FileSystemRights], $name)
+            }
+            if (([long]$rights -band $writeMask) -ne 0) {
+                return 'BROAD_WRITE_ALLOW_ACE_REQUIRES_REVIEW'
+            }
         }
-        return 'NO_BROAD_WRITE_DETECTED'
+        return 'NO_BROAD_WRITE_ALLOW_ACE_DETECTED'
     } catch { return 'UNKNOWN' }
 }
 

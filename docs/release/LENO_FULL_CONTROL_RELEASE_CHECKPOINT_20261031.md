@@ -76,3 +76,19 @@ Source and CI are still private/local. Independent platform CI, VAULTER installe
 - Added live-loopback e2e assertion for expired owner portal cookie (POST grant denied HTTP 401), policy revision unchanged, then refreshed synthetic owner session retrieves unchanged snapshot. Targeted test PASS. This does not validate an actual production expired OAuth token.
 - Read-only Windows build toolchain check on Leno: stable-x86_64-pc-windows-msvc configured, MSVC link.exe **NOT found**, VS C++ build tools not found via vswhere. Native Windows Rust build and signed package acceptance **NOT** claimed.
 - Remaining immediate gate: run VAULTER read-only owner-admin inventory locally and return only sanitized printed results. Then compare exact running V5 hashes, task snapshots and enrolled identity before designing an operator rollback backup.
+
+## Owner-run VAULTER preflight observation and corrected ACL interpretation — 2026-10-31 12:20:56Z
+
+The owner supplied sanitized output of the locally executed original preflight:
+- VAULTER relay: loopback 127.0.0.1:8788, node.exe PID 9536; script SHA-256 1c305bad54da109d46a26b55d0388c84e6361a8015451053cf865f3b27773b59.
+- VAULTER TetherAuth: loopback 8790, node.exe PID 2768; script SHA-256 41b54888085785cf774064331d24205a01a2c99e05bec477ce85e4d9c03c6309; health HTTP 200.
+- Accepted V5 Control Center: loopback 8791, node.exe PID 996; script SHA-256 afab023ea2de6d64d717314082c0d3c1f919ef1d84d426cf1bd9212b612f0a59. Expected approved private HTML/font hashes still match.
+- Current relay has auth config and device state file, but no --owner-authority-config. No live Leno Full Control grant is claimed. One VAULTER tetherd PID 10100. Existing relay/Control Center/TetherAuth scheduled tasks are running; VAULTER Agent task Ready, separate boot recovery task running. No duplicate tetherd observed.
+- The live oauth.mjs hash **matches the exact accepted 09ea09b7ba5bbe66a23851ef6f3248c799050008 Git source after CRLF line-ending conversion**, SHA-256 afab023ea2de6d64d717314082c0d3c1f919ef1d84d426cf1bd9212b612f0a59. This closes the V5 oauth.mjs source-provenance gap without altering production.
+- The original preflight displayed PORT_8791_SCRIPT_ACL=WARNING_BROAD_WRITE. That flag was **methodologically invalid**: its FileSystemRights mask OR-ed Write, Modify and FullControl, which include read flags. Verified on Leno: a pure Read ACE matched the old mask, but not the correct 852310 write-specific mask. No evidence of actual broad write was established by this warning.
+- The original preflight source in the isolated branch was corrected; the initially supplied and executed copy is an immutable historic observation and must not be interpreted as proof of broad write.
+- Added docs/release/VAULTER_V5_ACL_SECOND_PASS_20261031.ps1 to inspect only public well-known group ACEs on Control Center executable, ancestors and public assets, plus hash-only task XML fingerprints. It refuses the wrong host and refuses to inspect if the accepted V5 script hash changed. PowerShell parser and built-in read/write mask self-test PASS, wrong-host denial PASS; SHA-256 130e17985ec9e10414fb73e1545e31233b0d51bbdb7520f2dfae70858a150605. **Not yet executed on VAULTER.**
+- Interpretation: a broad Allow ACE is a **review candidate**, not proof of effective write access; deny rules and directory traversal/replace rights must also be considered. If no broad write allow ACE appears, ACL clearance is limited to the inspected well-known broad groups. No ACL is changed by the script.
+- Local root/owner account files, OAuth bearer values, task arguments and device registry contents were not fetched. No RTX work performed.
+
+Next: owner runs the new targeted read-only ACL second pass on VAULTER; review only sanitized metadata. Do NOT grant/revoke ACLs, restart production tasks or create an owner authority file until signed-candidate, rollback and independent acceptance gates are met.
