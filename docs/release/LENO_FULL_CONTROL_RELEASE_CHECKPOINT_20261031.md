@@ -67,3 +67,12 @@ No live production task, grant, policy, OAuth config, credential, pairing, servi
 - Evidence logs: %TEMP%\tetherplane-leno-release-20261031-validation\release-policy-fail-first.log and release-policy-postfix.log.
 
 Source and CI are still private/local. Independent platform CI, VAULTER installed-source provenance, owner rollback receipt, RTX availability, real device acceptance, and protected cutover approval remain mandatory.
+## Next protected gate execution — 2026-10-31 follow-up
+
+- VAULTER's authenticated connector still offers device.status/capabilities, but **no process operations**; attempts to inspect VAULTER Downloads/Documents were denied as outside permitted filesystem roots. No alternate path or authorization bypass was attempted.
+- Read-only VAULTER owner-admin inventory was authored at docs/release/VAULTER_READONLY_PRODUCTION_PREFLIGHT_20261031.ps1. It prints selected service PID/script path/hash, permitted config-file hash and ACL warning (never content), task states with arguments withheld, local agent hash, accepted V5 artwork hash match, and local health. Validation: PowerShell AST parse PASS, non-VAULTER host abort PASS, mock script/CLI argument extraction PASS, ACL helper exercised, SHA-256 helper PASS. **NOT RUN on VAULTER**.
+- Separate protected restore requirements in docs/release/VAULTER_V5_ROLLBACK_RECEIPT_PREP_20261031.md; this is a plan, **not** an existing backup.
+- Isolated source workspace on Leno passed pnpm -r --workspace-concurrency=1 build (exit 0) and pnpm -r --workspace-concurrency=1 typecheck (exit 0); no remote production services altered.
+- Added live-loopback e2e assertion for expired owner portal cookie (POST grant denied HTTP 401), policy revision unchanged, then refreshed synthetic owner session retrieves unchanged snapshot. Targeted test PASS. This does not validate an actual production expired OAuth token.
+- Read-only Windows build toolchain check on Leno: stable-x86_64-pc-windows-msvc configured, MSVC link.exe **NOT found**, VS C++ build tools not found via vswhere. Native Windows Rust build and signed package acceptance **NOT** claimed.
+- Remaining immediate gate: run VAULTER read-only owner-admin inventory locally and return only sanitized printed results. Then compare exact running V5 hashes, task snapshots and enrolled identity before designing an operator rollback backup.

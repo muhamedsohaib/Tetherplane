@@ -64,7 +64,7 @@ test("V5 owner editor + real loopback relay require both identities; Leno only +
   const sessionId="synthetic-owner-portal-session";
   const csrf="synthetic-portal-csrf";
   portal.sessions.set(sessionId,{token:ownerToken,csrf,expires:Date.now()+120000});
-  const cookie=portal.cookieName+"="+sessionId;
+  let cookie=portal.cookieName+"="+sessionId;
   t.after(async()=>{
     for(const ws of websockets)ws.terminate();
     await portal.close();await relay.close();
@@ -121,6 +121,21 @@ test("V5 owner editor + real loopback relay require both identities; Leno only +
   assert.equal(initial.status,200);
   assert.deepEqual(initial.body.enforcedDevices,[]);
   assert.ok(initial.body.clients.some(c=>c.clientId===ai.clientId));
+  // A stale owner cookie must never stage privileges, even if its CSRF token remains known.
+  const stale=portal.sessions.get(sessionId);
+  assert.ok(stale);
+  stale.expires=Date.now()-1;
+  const expired=await post("/api/owner-leno/grant",{
+    revision:0,clientId:ai.clientId,principalId:ai.principalId,confirmation:"TRUST Leno"
+  });
+  assert.equal(expired.status,401,"Expired owner session must be denied");
+  // Simulate an explicitly reauthenticated owner session, without minting any real token.
+  const freshSessionId="synthetic-owner-renewed-session";
+  portal.sessions.set(freshSessionId,{token:ownerToken,csrf,expires:Date.now()+120000});
+  cookie=portal.cookieName+"="+freshSessionId;
+  const afterRenew=await get("/api/owner-leno");
+  assert.equal(afterRenew.status,200);
+  assert.equal(afterRenew.body.revision,0,"Denied stale session must not stage the grant");
   assert.equal((await post("/api/owner-leno/grant",{
     revision:0,clientId:ai.clientId,principalId:ai.principalId,confirmation:"TRUST Leno"
   },{omitCsrf:true})).status,403);
