@@ -1,56 +1,41 @@
 # Tetherplane icon / logo distribution gate
 
-**Status: BRAND MASTER NOT CONFIRMED.** Several saved black-and-crimson artworks were generated and supplied by the owner, but this review has not established which exact file/version is the final approved emblem. Do not treat remembered visual descriptions as source-of-truth. Do not publish unbranded assets or substitute placeholder artwork.
+**Owner designation — 2026-11-01:** The **only approved logo sources** are the four monochrome images supplied directly in the owner's latest Tetherplane conversation. These supersede previous visual descriptions and prior logo candidates. Preserve the four originals unmodified. Any proposed derivative must retain the exact emblem geometry and black/white appearance.
 
-## Approved identity
+## Approved, source-hashed originals
 
-Archived source references and prior design requests describe a black geometric four-tether/plane mark with a crimson-red side strip. **The exact approved revision has NOT been independently identified.** Do not infer approval from colors, filename, or a conversation summary. After identifying the user's designated master, prefer its emblem-only artwork for small icons and its wordmark for appropriate larger media. **Never recreate or recolor a different source as an alleged exact match.**
+| Design | Owner-supplied filename | Dimensions | SHA-256 |
+| --- | --- | --- | --- |
+| Textured emblem + wordmark | `Logo with word mark(1).jpg` | 2047×2048 | `4803a8d4c3565e58de5605dbcd44c18256117809ce9722aa4ebddc3bd33ffc3c` |
+| Textured emblem | `Logo(2).jpg` | 1062×1062 | `ad09e637464a834fc36bf4e088d1aa767841c89e9f5bb07b6d6dc07f0b2f4f53` |
+| Clean white-on-black emblem | `Gemini_Generated_Image_c8tp7c8tp7c8tp7c.jpg` | 2048×1143 | `c964d071774f67ec83b85207e5ff2511e441f3676b5d92893cffe974a74d0e12` |
+| Clean black-on-white emblem | `Gemini_Generated_Image_di5utxdi5utxdi5u.jpg` | 2048×1143 | `bbc021833a1c1a0a52dc9014b6f65114c19ba4fffeb6a751923d720ffe8e9e72` |
 
-Candidate historical Library images (visually inspected on 2026-11-01; **no selection/approval established**):
+The master images were verified against the exact uploaded file bytes. A separate **derived icon pack** containing these originals and aspect-preserving light/dark PNG icon sizes (16, 32, 48, 128, 256, 512 pixels) has been prepared in the owner's current ChatGPT artifact workspace, but **the files have not yet been committed to this GitHub branch or installed in a plugin**. Do not misrepresent staging as published branding.
 
-- `Tether Plane Minimal Logo.png` — black/crimson on white, includes wordmark.
-- `Tether Plane Logo Emblem.png` — black/crimson plus wordmark on a transparent-style image.
+### Canonical usage
 
-The actual PNG bytes could not be materialized from the available Library reference, so none of these images has been installed as a branded plugin asset. Their names and appearance do **not** verify which is the official logo. The older local `tetherplane-publisher-review-kit.zip` contains a **monochrome**, different logo and tiles; its image bytes must **not** be promoted as approved artwork. The repo branch currently has no PNG/SVG/ICO logo assets.
+- **Plugin icon/composer:** clean monochrome emblem PNG (black-on-white for light mode; white-on-black for dark mode), using only aspect-preserving resizing and background padding. Do not generate a new emblem or modify rods, angles, joints or proportions.
+- **Wordmark/marketing:** owner-supplied wordmark source; never shrink the wordmark until illegible.
+- **ASCII-textured emblem and wordmark:** use only as intentionally stylized media, not as the default small icon.
+- **Source provenance:** preserve raw SHA-256 and the pixel-processing recipe; keep brand rights separate from source-code licenses.
 
-**Blocking dependency:** identify the exact approved revision from owner-supplied originals (rather than choosing by memory); obtain its original file as a local raw PNG/SVG, retain its source SHA-256 and visual review, then mechanically extract/rescale the emblem without changing its proportions, colors or geometry. No generative replacement.
+## Distribution integration
 
-## Package-specific requirements
+1. **ChatGPT/Codex plugin:** package the actual square PNG assets under `assets/` and set `extensions.com.openai.interface.logo`, `composerIcon`, plus dark variants when supported, to **relative paths that exist inside the installed package**. Verify the actual private plugin card and composer, not merely the manifest.
+2. **Browser extension:** package sizes 16/32/48/128, wire `icons` and `action.default_icon` in `extension/browser/manifest.json`, and ensure the extension staging workflow copies them.
+3. **Windows packaging:** include immutable brand artwork in any installer/MSIX/shortcut implementation; inspect actual installed tiles and the Start menu where supported. Do not replace developer placeholders without install verification.
+4. **MCP Registry:** where supported, publish icon metadata consistent with the packaged official assets, but do not depend on a remote URL as the only icon.
+5. **Existing installed private ChatGPT plugin:** identify its actual existing app identity/manifest and update branding there; do **not** create a replacement OAuth client or application to solve an icon problem.
 
-### ChatGPT/Codex portable plugin
+## Release-blocking validation
 
-In the distributed plugin package (not a README-only image), keep:
+- Every image is traceable to one of the four exact uploaded originals, with matching SHA-256; check visual shape and black/white appearance.
+- Every declared logo path exists inside the distributable artifact; CI rejects missing or substituted images.
+- Required sizes, format, dimensions and light/dark contrast are checked.
+- The owner can see the correct emblem in the installed plugin, browser extension and Windows package on clients that support icons. Where clients lack icon rendering, record the limitation honestly.
+- Branding must not touch credentials, scopes, device identity, agent startup or Windows security.
 
-- `plugin.json` with `extensions.com.openai.interface.composerIcon: "./assets/composer-icon.png"` and `extensions.com.openai.interface.logo: "./assets/logo.png"`.
-- `./assets/composer-icon.png` and `./assets/logo.png` as actual bundled PNG image files, each **square**, at least 48x48 pixels and at most 4096x4096, 5 MiB.
-- Optional dark-theme variants referenced via `composerIconDark` and `logoDark`; prefer versions with contrast verified in both themes.
-- `assets/branding-provenance.json` recording each final file SHA-256, the original approved-source SHA-256, source name, approved master revision and transformation steps. This ensures icon files cannot be silently replaced with CI placeholders.
-- Test the installed plugin's card and composer in a real supported ChatGPT/Codex client; plugin manifests alone do not control every host's rendering.
+**No universal icon-display guarantee:** We can guarantee bundled files and correct manifest wiring in supported clients; we cannot force third-party interfaces to render icons they don't support.
 
-An existing private ChatGPT app/plugin may have **separate dashboard branding** outside this repository. Inspect and update that exact app identity before claiming that existing installations show the icon. Do not make a replacement OAuth client or new app.
-
-See the authoritative [OpenAI plugin packaging requirements](https://developers.openai.com/plugins/deploy/submission) for icon sizes and manifest locations.
-
-### Browser extension
-
-Add immutable PNG icon assets at 16/32/48/128, reference them in `extension/browser/manifest.json` under `icons` **and** `action.default_icon`, and ensure `scripts/package-windows.ps1` includes them in the unpacked extension payload. Verify the installed icon in Edge's extensions UI. Do not change extension ID, owner pinning, tab permissions or pairing automatically.
-
-### Windows installer / MSIX (future optional packaging)
-
-Supply exact `Assets\Logo44.png`, `Logo50.png`, `Logo150.png` in both relevant MSIX staging layouts; verify the pixels/hashes in the packaged artifact and actual Start menu after a clean authorized install. The existing development MSIX uses disposable placeholders and **must not** be presented as a branded/signed release. For portable Windows installs, include discoverable `assets/logo.png` and an installer/shortcut icon where the packaging format supports it.
-
-### MCP registry
-
-After a genuine distribution build exists, supply supported HTTPS icon URLs in the published `server.json.icons` metadata with correct MIME and size; do not rely on a remote URL as a substitute for the bundled plugin assets. The schema makes icon rendering optional for clients.
-
-## Release-blocking acceptance
-
-A public or installable branded package is **NO-GO** until all of these pass:
-
-1. Original approved-source SHA-256 and ownership/provenance documented; visual comparison confirms no changes to geometry/colors.
-2. Icon files copied into the actual packaged distribution; each referenced path resolves inside the package and matches SHA-256.
-3. CI fails on any missing icon, non-square image, unexpected file, omitted dark/light branding when declared, or substituted test placeholder.
-4. Fresh-install inspection of the plugin card, composer, browser extension toolbar and Windows tile/shortcut where supported. Explicitly note clients that do not show icons.
-5. No new startup, identity, permissions, OAuth/DCR or platform-security bypass introduced merely for branding.
-
-**Limit of guarantee:** We can ensure packages contain correctly referenced, tested icon assets and supported host UIs show them. We cannot guarantee every third-party client renders a logo in every surface or offline/cache condition.
+**Status:** Four approved sources verified; derived bundle prepared; GitHub binary integration and actual host acceptance still pending. Do not release an unbranded package as final.
