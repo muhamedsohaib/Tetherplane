@@ -36,6 +36,14 @@ An isolated one-time post-change observation reported about 8.8 MiB of agent wor
 - The legacy PowerShell browser task was disabled and its HKCU Run value backed up/removed. A proposed unsigned native browser launcher was blocked by Windows Application Control (error 4551); it was not forced or enabled at logon.
 - No Windows reboot, Microsoft Store submission, privilege bypass, credential rotation, task deletion outside the temporary migration tasks, or unrelated shell termination took place.
 
+## Windows security and trust verification (2026-11-01)
+
+Read-only validation on actual Leno showed **Windows 11 kernel build 10.0.26300**, the exact installed GUI-agent SHA-256 `411e0f07f32ca3e6cf69a5ca53f3995e268946df419600bf0c807d737d00895c`, and **Authenticode status NotSigned**. Windows Code Integrity Operational events **3033** and **3077** were observed, without extracting their target paths or causes; a separate unsigned native browser launcher was previously blocked (Windows error 4551). The private agent continued running normally without any Windows security-policy modification.
+
+**Smart App Control enforcement mode (On / Evaluation / Off) has not been independently verified on Leno.** Running one unsigned candidate successfully is not evidence that it would always pass reputation or signing rules on a clean Windows 11 installation. A true enforcement trial and approved trusted-distribution method remain release gates.
+
+See [the complete Windows recovery timeline and platform-security distinctions](../operations/2026-11-01-windows-private-recovery-log.md).
+
 ## No-go gates
 
 1. Browser provider is not currently advertised; a browser host running or extension merely present is not proof of authenticated pairing.
