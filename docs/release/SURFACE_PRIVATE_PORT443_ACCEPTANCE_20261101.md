@@ -39,6 +39,12 @@ Owner-machine evidence file:
 
 Original rollback-task XML backup is stored alongside it. Neither file contains device-credential contents.
 
+## Windows security and trust verification (2026-11-01)
+
+A read-only Surface inspection established **Windows 10 kernel build 10.0.19045**, installed GUI-agent SHA-256 `411e0f07f32ca3e6cf69a5ca53f3995e268946df419600bf0c807d737d00895c`, and **Authenticode status NotSigned**. The previous `.ps1` repair was rejected by local script-signing policy, so the owner used a separate native Task Scheduler import without disabling that policy.
+
+**Smart App Control is not available on Windows 10.** Surface therefore proves permitted agent execution under its actual Windows 10 restrictions—not Smart App Control enforcement compatibility. That stronger test must be performed independently on Windows 11. [Microsoft Windows Security reference](https://support.microsoft.com/en-us/windows/security/windows-security/app-browser-control-in-the-windows-security-app).
+
 ## Next independent acceptance gate
 
 **At the next natural owner-approved Windows sign-in** (do not remotely force sign-out or reboot a computer actively in use):
