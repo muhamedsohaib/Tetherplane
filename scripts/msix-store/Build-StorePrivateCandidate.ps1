@@ -51,6 +51,7 @@ $report = [ordered]@{
     browser_launcher_sha256 = 'NOT_VERIFIED'
     browser_component_hashes = [ordered]@{}
     browser_payload_included = $false
+    browser_host_synthetic_runtime = 'NOT_RUN'
     browser_activation = 'owner_approved_only'
     browser_owner_authorization = 'NOT_PERFORMED'
     store_state_directory = 'TetherplaneStore'
@@ -540,6 +541,34 @@ try {
         $unpackedProvenance.browser_activation -cne 'owner_approved_only') {
         throw 'STORE_CANDIDATE_PROVENANCE_FAILED'
     }
+    # Exercise the *unpacked* browser host and its deployed runtime, not
+    # merely check files in source. This test uses disposable local tokens,
+    # loopback ports, no installed extension or human browser profile.
+    $browserSmokeScript = Join-Path $repo 'tests\release\browser-package-runtime.mjs'
+    if (-not (Test-Path -LiteralPath $browserSmokeScript -PathType Leaf)) {
+        throw 'STORE_CANDIDATE_BROWSER_RUNTIME_SMOKE_MISSING'
+    }
+    $browserSmokeOutput = @(& $nodePath $browserSmokeScript $unpack)
+    if ($LASTEXITCODE -ne 0) {
+        throw 'STORE_CANDIDATE_BROWSER_RUNTIME_SMOKE_FAILED'
+    }
+    $browserSmokeMarkers = @($browserSmokeOutput | Where-Object { $_ -like 'BROWSER_PACKAGE_RUNTIME=*' })
+    if ($browserSmokeMarkers.Count -ne 1) {
+        throw 'STORE_CANDIDATE_BROWSER_RUNTIME_PROOF_MISSING'
+    }
+    $browserSmoke = $browserSmokeMarkers[0].Substring('BROWSER_PACKAGE_RUNTIME='.Length) |
+        ConvertFrom-Json -ErrorAction Stop
+    if ($browserSmoke.verdict -cne 'PASS' -or
+        $browserSmoke.missingTokenFailsClosed -ne $true -or
+        $browserSmoke.unpinnedExtensionFailsClosed -ne $true -or
+        $browserSmoke.bundledHostStarts -ne $true -or
+        $browserSmoke.webOriginDeniedPairing -ne $true -or
+        $browserSmoke.browserRpcUnavailableBeforePairing -ne $true -or
+        $browserSmoke.hostExited -ne $true -or
+        $browserSmoke.tempStateRemoved -ne $true) {
+        throw 'STORE_CANDIDATE_BROWSER_RUNTIME_NOT_READY'
+    }
+    $report.browser_host_synthetic_runtime = 'PASS'
     $report.browser_payload_included = $true
     $report.unpack_integrity = 'PASS'
     if (-not $CiValidationOnly) {

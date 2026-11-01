@@ -249,6 +249,12 @@ test("Store candidate includes complete authenticated browser payload and fails 
   assert.match(workflow, /-BrowserDeployDirectory/);
   assert.match(workflow, /-BrowserExtensionDirectory/);
   assert.match(workflow, /browser_payload_included -ne \$true/);
+  assert.ok(workflow.includes("browser_host_synthetic_runtime -ne 'PASS'"));
+  assert.ok(builder.includes("STORE_CANDIDATE_BROWSER_RUNTIME_SMOKE_FAILED"));
+  assert.ok(builder.includes("STORE_CANDIDATE_BROWSER_RUNTIME_NOT_READY"));
+  assert.ok(builder.includes("browser-package-runtime.mjs"));
+  assert.ok(builder.includes("browserRpcUnavailableBeforePairing"));
+  assert.ok(builder.includes("tempStateRemoved"));
   assert.match(builder, /browser_activation = 'owner_approved_only'/);
   assert.match(builder, /browser_owner_authorization = 'NOT_PERFORMED'/);
   assert.doesNotMatch(builder, /Add-AppxPackage|Import-Certificate|Set-ExecutionPolicy|Start-ScheduledTask|Register-ScheduledTask/);

@@ -144,6 +144,7 @@ jobs:
               $evidence.autostart_launcher_subsystem -ne 'WindowsGUI' -or
               $evidence.autostart_task_default -ne 'DisabledOwnerOptIn' -or
               $evidence.browser_payload_included -ne $true -or
+              $evidence.browser_host_synthetic_runtime -ne 'PASS' -or
               $evidence.browser_activation -cne 'owner_approved_only' -or
               $evidence.browser_owner_authorization -cne 'NOT_PERFORMED' -or
               $evidence.browser_launcher_sha256 -notmatch '^[0-9a-f]{64}$' -or
