@@ -14,7 +14,7 @@ The legacy Surface startup task invoked console-subsystem `tetherd.exe`, risking
 2. Staged the private Windows GUI-subsystem `tetherd-agentw.exe` compiled from source commit `d327117217c69e177019a6d6361c93870e579d79`. Independently verified binary SHA-256: `411e0f07f32ca3e6cf69a5ca53f3995e268946df419600bf0c807d737d00895c`.
 3. Copied the agent arguments unchanged **except for relay port 10000 → 443**. The same device ID (`Surface`), existing credential-file reference, principal profile, allowed workspace and policy boundaries were preserved. Did not read credential values.
 4. The owner manually imported a **separate initially disabled** native GUI-agent scheduled task, verified the executable and arguments, disabled the old Canary task and ended its old process, then enabled and ran the new task. Never intentionally operated two live agents with the same identity.
-5. After confirming live authenticated connectivity, identified an obsolete October one-time rollback task with `StartWhenAvailable` still enabled. Exported its original XML to a local protected user-profile Diagnostics directory, **disabled** it, and preserved it for manual rollback. Did not delete the task.
+5. After confirming live authenticated connectivity, identified an obsolete October one-time rollback task with `StartWhenAvailable` still enabled. Exported its original XML to a local user-profile Diagnostics directory, **disabled** it, and preserved it for manual rollback. Did not delete the task.
 
 ## Independent real-device verification
 
