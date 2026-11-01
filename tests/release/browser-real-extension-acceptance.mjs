@@ -307,13 +307,63 @@ try {
   assert.equal(created.data.active, false);
   result.realOwnedTabCreated = true;
 
-  const snapshot = await until(async () => {
-    const current = await rpc(rpcPort, "snapshot", {page_id: pageId});
-    if (current.status !== "success") return null;
-    const input = current.data.nodes?.find(x => x.accessible_name === "Release marker");
-    const button = current.data.nodes?.find(x => x.accessible_name === "Commit fixture action");
-    return input && button ? {input, button} : null;
-  }, 12000, "owned tab did not expose semantic nodes");
+  // A real installed Edge extension can return create_tab before Chrome
+  // commits the new document, especially immediately after a full Windows
+  // package compile/install. Observe only this disposable test-owned tab;
+  // never inspect a human browser profile or relax owner-origin grants.
+  const match = /^tab:(\d+)$/.exec(pageId);
+  assert.ok(match, "created owned tab ID is not a native Chrome tab reference");
+  const ownedTabId = Number(match[1]);
+  let committed = { ready: false, expectedOrigin: false };
+  try {
+    await until(async () => {
+      const observed = await evaluatePage(extensionTarget.webSocketDebuggerUrl,
+        "chrome.tabs.get(" + ownedTabId +
+        ").then(t=>({status:t.status,url:t.url}))");
+      const tab = observed.result?.value;
+      committed = {
+        ready: tab?.status === "complete",
+        expectedOrigin: typeof tab?.url === "string" &&
+          tab.url.startsWith(fixtureUrl),
+      };
+      return committed.ready && committed.expectedOrigin;
+    }, 20000, "owned test-only tab document did not commit its approved origin");
+  } catch (error) {
+    result.ownedTabDiagnostic = committed;
+    throw error;
+  }
+
+  let snapshotDiagnostic = null;
+  let snapshot;
+  try {
+    snapshot = await until(async () => {
+      const current = await rpc(rpcPort, "snapshot", {page_id: pageId});
+      if (current.status !== "success") {
+        snapshotDiagnostic = {
+          status: current.status,
+          errorCode: String(current.error?.code ?? "unknown").slice(0, 50),
+        };
+        return null;
+      }
+      const nodes = Array.isArray(current.data?.nodes)
+        ? current.data.nodes : [];
+      const input = nodes.find(x => x.accessible_name === "Release marker");
+      const button = nodes.find(x => x.accessible_name === "Commit fixture action");
+      snapshotDiagnostic = {
+        status: "success",
+        sameFixtureOrigin: typeof current.data?.url === "string" &&
+          current.data.url.startsWith(fixtureUrl),
+        nodeCount: nodes.length,
+        inputVisible: Boolean(input),
+        buttonVisible: Boolean(button),
+      };
+      return input && button ? {input, button} : null;
+    }, 25000, "owned tab did not expose semantic nodes");
+  } catch (error) {
+    // Only fixture state and bounded metadata, never page text or secrets.
+    result.snapshotDiagnostic = snapshotDiagnostic;
+    throw error;
+  }
 
   const action = await rpc(rpcPort, "act", {
     page_id: pageId, actions: [{kind: "click", target: snapshot.button.ref}],
