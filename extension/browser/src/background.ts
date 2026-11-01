@@ -51,7 +51,19 @@ const bridgeLoop = new BridgeLoopCoordinator({
 });
 
 chrome.runtime.onMessage.addListener(
-  (message, _sender, sendResponse) => {
+  (message, sender, sendResponse) => {
+    // Only the extension's own owner-facing popup can grant a site.
+    // Never route remote bridge commands into local approval messages.
+    if (message && typeof message === "object" &&
+        ("type" in message) &&
+        (message.type === "tetherplane.approve_owned_site" ||
+         message.type === "tetherplane.revoke_owned_site" ||
+         message.type === "tetherplane.share_current_tab" ||
+         message.type === "tetherplane.detach_current_tab") &&
+        sender.url !== chrome.runtime.getURL("pair.html")) {
+      sendResponse({ ok: false, error: "site approval must originate from the owner popup" });
+      return false;
+    }
     if (isBrowserConnectMessage(message)) {
       void bridgeLoop.ensureRunning().then(
         (started) => {
@@ -84,6 +96,10 @@ chrome.runtime.onMessage.addListener(
         handleLocalApprovalMessage(
           controller,
           message,
+          {
+            senderUrl: sender.url,
+            ownerPopupUrl: chrome.runtime.getURL("pair.html"),
+          },
         ),
     ).then(
       (result) => {
@@ -182,12 +198,11 @@ async function runBridgeLoop(
           operationalAgent,
         });
 
+      // Readiness is not an authorization grant. Never forward the
+      // extension's human-owned tab registry during bridge handshake.
       session.send({
         type: "event",
         event: "extension_ready",
-        data: {
-          pages: controller.pages(),
-        },
       });
 
       await runtime.run();

@@ -101,3 +101,64 @@ test("service never trusts caller-supplied ownership for a human page", async ()
     await server.close();
   }
 });
+
+
+test("authenticated browser RPC refuses a revoked human tab before backend observation", async () => {
+  class ObservedBackend extends FakeBackend {
+    observeAttempts = 0;
+    override async observe(pageId: string) {
+      this.observeAttempts++;
+      return await super.observe(pageId);
+    }
+  }
+  const backend = new ObservedBackend();
+  const service = new BrowserBridgeService({ backend, ownership: new BrowserOwnershipRegistry() });
+  const server = await startBrowserRpcServer({ host: "127.0.0.1", port: 0, service });
+  try {
+    const reply = await rpc(server.address, {
+      type: "invoke",
+      request_id: "revoke-observation-regression",
+      capability: "browser.snapshot",
+      arguments: { page_id: "human-1" },
+    });
+    assert.equal(reply.status, "error");
+    assert.equal((reply.error as Record<string, unknown>).code, "permission_denied");
+    assert.equal(backend.observeAttempts, 0, "unshared human page reached backend");
+  } finally {
+    await server.close();
+  }
+});
+
+
+test("authenticated browser.pages never returns unshared human-tab metadata even if backend lists it", async () => {
+  const backend = new FakeBackend();
+  backend.pagesState[0]!.url = "https://personal.example/private?secret=hidden";
+  backend.pagesState.push({
+    page_id:"owned-1",ownership:"tetherplane",active:false,
+    url:"https://approved.example/home",
+  });
+  const service = new BrowserBridgeService({
+    backend, ownership:new BrowserOwnershipRegistry(),
+  });
+  const response = await service.invoke("browser.pages",{});
+  const pages = (response.data as {pages:BrowserServicePage[]}).pages;
+  assert.deepEqual(pages.map(p=>p.page_id),["owned-1"]);
+  assert.equal(JSON.stringify(response).includes("personal.example"),false);
+});
+
+
+test("unknown and unshared page IDs deny without revealing private existence", async () => {
+  const backend = new FakeBackend();
+  const service = new BrowserBridgeService({
+    backend, ownership: new BrowserOwnershipRegistry(),
+  });
+  for (const pageId of ["human-1", "not-visible-999"]) {
+    await assert.rejects(
+      () => service.invoke("browser.snapshot", {page_id:pageId}),
+      (error: unknown) =>
+        typeof error === "object" && error !== null &&
+        "code" in error && error.code === "permission_denied" &&
+        (!(error instanceof Error) || !error.message.includes("https://human.test")),
+    );
+  }
+});

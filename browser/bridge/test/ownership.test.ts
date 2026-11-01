@@ -144,3 +144,50 @@ test("unexpired shared-authorized grant remains usable", () => {
     }),
   );
 });
+
+
+test("human observation stays denied before sharing and immediately after revocation", () => {
+  const registry = new BrowserOwnershipRegistry();
+  const pageId = "human-revocation-regression";
+  const snapshot = () =>
+    registry.authorize({
+      page_id: pageId,
+      operation: "snapshot",
+      mode: "background_only",
+    });
+
+  registry.register({ page_id: pageId, ownership: "human", active: false });
+  assert.throws(snapshot, (error: unknown) =>
+    error instanceof BrowserPolicyError && error.code === "permission_denied");
+
+  registry.register({
+    page_id: pageId,
+    ownership: "shared-observe",
+    active: false,
+    grant: { operations: ["snapshot"], expires_at_ms: Date.now() + 30_000 },
+  });
+  assert.doesNotThrow(snapshot);
+
+  registry.register({ page_id: pageId, ownership: "human", active: false });
+  assert.throws(snapshot, (error: unknown) =>
+    error instanceof BrowserPolicyError && error.code === "permission_denied");
+});
+
+test("expired browser sharing grant cannot disclose a semantic snapshot", () => {
+  const registry = new BrowserOwnershipRegistry();
+  registry.register({
+    page_id: "expired-observer",
+    ownership: "shared-observe",
+    active: false,
+    grant: { operations: ["snapshot"], expires_at_ms: Date.now() - 5 },
+  });
+  assert.throws(
+    () => registry.authorize({
+      page_id: "expired-observer",
+      operation: "snapshot",
+      mode: "background_only",
+    }),
+    (error: unknown) =>
+      error instanceof BrowserPolicyError && error.code === "permission_denied",
+  );
+});

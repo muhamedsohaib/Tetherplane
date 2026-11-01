@@ -23,7 +23,11 @@
       "fix/windows-zero-console-model-worker-20261030": false,
       "fix/store-windowless-owner-setup-20261030": false,
       "fix/store-owner-opt-in-autostart-20261030": false,
-      "feature/msix-store-private-candidate-autostart-audit-20261031": false
+      "feature/msix-store-private-candidate-autostart-audit-20261031": false,
+      "test/release-real-extension-acceptance-20261028": false,
+      "test/release-origin-bound-human-grants-20261029": false,
+      "fix/browser-owner-grants-integrated-20261101": false
     }
-  }
+  },
+  "$schema": "https://openapi.vercel.sh/vercel.json"
 }

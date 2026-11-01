@@ -165,6 +165,17 @@ export async function startExtensionBridgeServer(options: {
         return;
       }
 
+      // Readiness events cannot carry tab metadata or arbitrary page data.
+      // This is enforced by the receiving transport as well as the sender.
+      if (parsed.type === "event" &&
+          parsed.event === "extension_ready" &&
+          Object.keys(parsed).some(
+            (field) => field !== "type" && field !== "event",
+          )) {
+        rejectConnection(4003, "startup_metadata_forbidden");
+        return;
+      }
+
       authenticatedClient?.push(parsed);
     });
 

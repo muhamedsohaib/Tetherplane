@@ -101,7 +101,13 @@ test(
       await proxy.close();
       throw error;
     });
-    const backend = new CdpBrowserBackend({ control });
+    const backend = new CdpBrowserBackend({
+      control,
+      authorizeSite: (operation, url) =>
+        grant.authorize(
+          operation as Parameters<LocalBrowserLabGrant["authorize"]>[0], url,
+        ),
+    });
     try {
       const service = new CdpLabOnlyBridgeService({
         backend,

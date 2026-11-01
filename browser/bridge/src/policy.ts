@@ -104,9 +104,17 @@ export class BrowserOwnershipRegistry {
       return structuredClone(page);
     }
 
-    if (
-      OBSERVE_OPERATIONS.has(input.operation)
-    ) {
+    if (OBSERVE_OPERATIONS.has(input.operation)) {
+      // A revoked human tab is not an observe-only fallback. Any remote
+      // semantic read requires an existing owner sharing decision.
+      const expired = page.grant?.expires_at_ms !== undefined &&
+        page.grant.expires_at_ms <= Date.now();
+      if (page.ownership === "human" || expired) {
+        throw new BrowserPolicyError(
+          "permission_denied",
+          "browser observation requires a current owner sharing grant",
+        );
+      }
       return structuredClone(page);
     }
 

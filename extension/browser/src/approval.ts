@@ -12,20 +12,41 @@ export type LocalApprovalController = {
     },
   ): Promise<unknown>;
   detachHumanTab(tabId: number): Promise<unknown>;
+  approveOwnedOriginFromTab(tabId: number, grant: {
+    ttl_ms: number; operations: BrowserOperation[];
+  }): Promise<unknown>;
+  revokeOwnedOriginFromTab(tabId: number): Promise<unknown>;
 };
 
 export type LocalApprovalResult =
   | { handled: false }
   | { handled: true; page: unknown };
 
+export type LocalApprovalSender = {
+  senderUrl: string | undefined;
+  ownerPopupUrl: string;
+};
+
 const MAX_ATTACHMENT_TTL_MS = 3_600_000;
 
 export async function handleLocalApprovalMessage(
   controller: LocalApprovalController,
   message: unknown,
+  sender: LocalApprovalSender,
 ): Promise<LocalApprovalResult> {
   if (!isRecord(message) || typeof message.type !== "string") {
     return { handled: false };
+  }
+  if ((message.type === "tetherplane.share_current_tab" ||
+       message.type === "tetherplane.detach_current_tab" ||
+       message.type === "tetherplane.approve_owned_site" ||
+       message.type === "tetherplane.revoke_owned_site") &&
+      (!sender.senderUrl || !sender.ownerPopupUrl ||
+       sender.senderUrl !== sender.ownerPopupUrl)) {
+    throw new BrowserPolicyError(
+      "permission_denied",
+      "browser ownership changes require the local owner popup",
+    );
   }
 
   if (message.type === "tetherplane.detach_current_tab") {
@@ -36,6 +57,25 @@ export async function handleLocalApprovalMessage(
     };
   }
 
+  if (message.type === "tetherplane.approve_owned_site") {
+    const tabId = requiredTabId(message.tab_id);
+    const ttlMs = requiredTtl(message.ttl_ms);
+    const operations: BrowserOperation[] = ["act"];
+    if (message.allow_navigate === true) operations.push("navigate");
+    if (message.allow_upload === true) operations.push("upload");
+    return {
+      handled: true,
+      page: await controller.approveOwnedOriginFromTab(tabId, {
+        ttl_ms: ttlMs, operations,
+      }),
+    };
+  }
+  if (message.type === "tetherplane.revoke_owned_site") {
+    const tabId = requiredTabId(message.tab_id);
+    return {
+      handled: true, page: await controller.revokeOwnedOriginFromTab(tabId),
+    };
+  }
   if (message.type !== "tetherplane.share_current_tab") {
     return { handled: false };
   }
