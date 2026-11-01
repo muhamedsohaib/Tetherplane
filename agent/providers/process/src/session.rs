@@ -661,7 +661,11 @@ mod windows_windowless_tests {
         );
         let (running, exit_code) = session.status().await.expect("child exit status");
         assert!(!running);
-        assert_eq!(exit_code, Some(0), "console window was created, or child failed");
+        assert_eq!(
+            exit_code,
+            Some(0),
+            "console window was created, or child failed"
+        );
         let (stdout, _) = session.output_tail(4096);
         assert!(
             stdout.contains("NO_CONSOLE_WINDOW"),
