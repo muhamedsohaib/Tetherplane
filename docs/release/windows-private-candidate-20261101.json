@@ -56,7 +56,32 @@
       "background_only_verified": true,
       "nonpty_no_console_test": "pass",
       "smart_app_control_mode": "UNKNOWN",
-      "reboot_logon_acceptance": "NOT_TESTED"
+      "reboot_logon_acceptance": "PASS_ONE_CYCLE_2026-11-01",
+      "reboot_logon_evidence": {
+        "windows_boot_utc": "2026-11-01T13:27:12.500Z",
+        "task_name": "Tetherplane Private Agent NoConsole 20261101",
+        "task_logon_trigger_event_id": 119,
+        "task_logon_trigger_utc": "2026-11-01T13:27:25.2725557Z",
+        "task_process_created_utc": "2026-11-01T13:27:25.2761900Z",
+        "task_process_id_observed": 8120,
+        "boot_to_agent_start_seconds_approx": 13,
+        "authenticated_time_to_ready_seconds": null,
+        "post_reboot_authenticated_ready": true,
+        "post_reboot_transport": "authenticated",
+        "post_reboot_single_agent": true,
+        "post_reboot_expected_binary_sha256": true,
+        "post_reboot_established_remote_port": 443,
+        "post_reboot_powershell_no_console_exit_code": 0,
+        "post_reboot_denied_operation": "device.help permission_denied",
+        "human_visual_no_flash_during_logon": "NOT_INDEPENDENTLY_OBSERVED",
+        "cycle_count": 1,
+        "surface_maintained_authenticated_status": true,
+        "unmodified_legacy_tasks": [
+          "Tetherplane Emergency Relay (pythonw.exe, Running)",
+          "Tetherplane Leno Canary Rollback (Ready, old one-time trigger, StartWhenAvailable=true)",
+          "Tetherplane Leno Canary Rollback V2 (Ready, old one-time trigger, StartWhenAvailable=true)"
+        ]
+      }
     },
     "Surface": {
       "windows_build": "10.0.19045",
@@ -123,7 +148,9 @@
     "signing_trust_distribution": false,
     "induced_failure_rollback": false,
     "surface_one_reboot_logon_recovery": true,
-    "reboot_logon_recovery_detail": "Surface one reboot/logon PASSED; Leno and repeat cycles untested"
+    "reboot_logon_recovery_detail": "Surface and Leno each PASSED one separate real reboot/logon with single authenticated agent; repeat cycles, sleep/resume and other devices remain untested",
+    "leno_one_reboot_logon_recovery": true,
+    "legacy_canary_rollback_tasks_need_review": true
   },
   "backups": {
     "Surface": "%LOCALAPPDATA%\\Tetherplane\\Diagnostics\\SurfaceLogonAcceptance-20261101\\",
