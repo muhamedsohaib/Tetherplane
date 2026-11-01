@@ -1,19 +1,19 @@
 # Tetherplane icon / logo distribution gate
 
-**Status: BLOCKED ON THE APPROVED ORIGINAL IMAGE BYTES. Do not publish unbranded or substitute synthetic placeholder imagery.**
+**Status: BRAND MASTER NOT CONFIRMED.** Several saved black-and-crimson artworks were generated and supplied by the owner, but this review has not established which exact file/version is the final approved emblem. Do not treat remembered visual descriptions as source-of-truth. Do not publish unbranded assets or substitute placeholder artwork.
 
 ## Approved identity
 
-The owner-approved artwork is a precise black geometric four-tether/plane mark with a **crimson-red side strip**, no central cross or altered rods. Prefer the **emblem-only** artwork for small icons; use the full wordmark for README, marketing and screenshot material. **Never recreate or recolor a different source as an alleged exact match.**
+Archived source references and prior design requests describe a black geometric four-tether/plane mark with a crimson-red side strip. **The exact approved revision has NOT been independently identified.** Do not infer approval from colors, filename, or a conversation summary. After identifying the user's designated master, prefer its emblem-only artwork for small icons and its wordmark for appropriate larger media. **Never recreate or recolor a different source as an alleged exact match.**
 
-Relevant owner Library images (visually inspected on 2026-11-01):
+Candidate historical Library images (visually inspected on 2026-11-01; **no selection/approval established**):
 
 - `Tether Plane Minimal Logo.png` — black/crimson on white, includes wordmark.
 - `Tether Plane Logo Emblem.png` — black/crimson plus wordmark on a transparent-style image.
 
-The actual PNG bytes could not be materialized from the available Library reference. The older local `tetherplane-publisher-review-kit.zip` contains a **monochrome**, different logo and tiles; its image bytes must **not** be promoted as approved artwork. The repo branch currently has no PNG/SVG/ICO logo assets.
+The actual PNG bytes could not be materialized from the available Library reference, so none of these images has been installed as a branded plugin asset. Their names and appearance do **not** verify which is the official logo. The older local `tetherplane-publisher-review-kit.zip` contains a **monochrome**, different logo and tiles; its image bytes must **not** be promoted as approved artwork. The repo branch currently has no PNG/SVG/ICO logo assets.
 
-**Blocking dependency:** obtain the approved original file as a local raw PNG/SVG, retain its source SHA-256 and visual review, then mechanically extract/rescale the emblem without changing its proportions, crimson strip or geometry. No generative replacement.
+**Blocking dependency:** identify the exact approved revision from owner-supplied originals (rather than choosing by memory); obtain its original file as a local raw PNG/SVG, retain its source SHA-256 and visual review, then mechanically extract/rescale the emblem without changing its proportions, colors or geometry. No generative replacement.
 
 ## Package-specific requirements
 
