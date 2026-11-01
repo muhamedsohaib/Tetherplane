@@ -1,0 +1,89 @@
+name: Private windowless process hotfix candidate (nonrelease)
+on:
+  push:
+    branches:
+      - fix/windows-process-run-no-console-20261101
+
+permissions:
+  contents: read
+
+jobs:
+  windowless-agent-candidate:
+    runs-on: windows-latest
+    timeout-minutes: 35
+    steps:
+      - name: Fetch exact reviewed source
+        uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
+        with:
+          persist-credentials: false
+          fetch-depth: 0
+
+      - name: Enforce minimal hotfix source delta
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = 'Stop'
+          $base = '48ddc41a6139b766e1f0ebd01e658f00837f6431'
+          git merge-base --is-ancestor $base HEAD
+          if ($LASTEXITCODE -ne 0) { throw 'UNEXPECTED_HOTFIX_BASE' }
+          $changed = @(git diff --name-only $base HEAD)
+          $allow = @('.github/workflows/private-process-windowless-build-20261101.yml','agent/providers/process/src/session.rs')
+          if ($changed.Count -ne 2 -or @($changed | Where-Object { $_ -cnotin $allow }).Count -gt 0) {
+            throw ('PRIVATE_BUILD_UNEXPECTED_FILES: ' + ($changed -join ','))
+          }
+          Write-Output 'PRIVATE_HOTFIX_EXACT_SOURCE_DELTA_PASS'
+
+      - uses: dtolnay/rust-toolchain@b725eda525362e7cf34af9a7243cac1e3f01a7ec # stable
+
+      - name: Check Rust formatting
+        shell: pwsh
+        run: |
+          cargo fmt --all -- --check
+          if ($LASTEXITCODE -ne 0) { throw 'RUSTFMT_FAILED' }
+
+      - name: Test actual Windows console invisibility
+        shell: pwsh
+        run: |
+          cargo test -p tether-process-provider windows_windowless_tests -- --nocapture
+          if ($LASTEXITCODE -ne 0) { throw 'NO_CONSOLE_REGRESSION_FAILED' }
+
+      - name: Compile windowless owner agent
+        shell: pwsh
+        run: |
+          cargo build --release -p tetherd --features windows-headless-agent
+          if ($LASTEXITCODE -ne 0) { throw 'PRIVATE_AGENT_BUILD_FAILED' }
+
+      - name: Verify GUI executable and stage private artifact
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = 'Stop'
+          $src = 'target/release/tetherd.exe'
+          if (-not (Test-Path -LiteralPath $src -PathType Leaf)) { throw 'NATIVE_EXE_MISSING' }
+          $bytes = [System.IO.File]::ReadAllBytes((Resolve-Path $src).Path)
+          $peOffset = [BitConverter]::ToInt32($bytes, 0x3c)
+          $optional = $peOffset + 24
+          $subsystem = [BitConverter]::ToUInt16($bytes, $optional + 68)
+          if ($subsystem -ne 2) { throw ('EXPECTED_GUI_SUBSYSTEM_2_GOT_' + $subsystem) }
+          $out = 'private-windowless-agent'
+          New-Item -ItemType Directory -Path $out -Force | Out-Null
+          $target = Join-Path $out 'tetherd-agentw.exe'
+          Copy-Item -LiteralPath $src -Destination $target -ErrorAction Stop
+          $sha = (Get-FileHash $target -Algorithm SHA256).Hash.ToLowerInvariant()
+          [ordered]@{
+            purpose = 'Private Leno windowless process.run hotfix; NOT A RELEASE'
+            source_commit = (git rev-parse HEAD).Trim()
+            source_base = '48ddc41a6139b766e1f0ebd01e658f00837f6431'
+            sha256 = $sha
+            windows_pe_subsystem = 2
+            windows_console_test = 'PASSED'
+            signed = $false
+            live_device_acceptance = 'NOT_TESTED'
+          } | ConvertTo-Json -Depth 4 | Set-Content -LiteralPath (Join-Path $out 'proof.json') -Encoding utf8
+          Write-Output 'PRIVATE_AGENT_GUI_SHA256_AND_TEST_PROOF_OK'
+
+      - name: Upload private executable; no install or release
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        with:
+          name: tetherplane-leno-process-no-console-20261101
+          path: private-windowless-agent/
+          if-no-files-found: error
+          retention-days: 2
