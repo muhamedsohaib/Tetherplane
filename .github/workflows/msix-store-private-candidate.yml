@@ -90,7 +90,7 @@ jobs:
           if ($LASTEXITCODE -ne 0) { throw 'STORE_BROWSER_BRIDGE_DEPLOY_FAILED' }
           $hostOut = Join-Path $env:RUNNER_TEMP 'store-private-deploy\host\host.mjs'
           New-Item -ItemType Directory -Force -Path (Split-Path -Parent $hostOut) | Out-Null
-          pnpm --filter @tetherplane/browser-extension exec esbuild scripts/browser-extension-host.ts --bundle --platform=node --format=esm --target=node22 --packages=external ("--outfile=" + $hostOut)
+          pnpm --filter @tetherplane/browser-extension exec esbuild ../../scripts/browser-extension-host.ts --bundle --platform=node --format=esm --target=node22 --packages=external ("--outfile=" + $hostOut)
           if ($LASTEXITCODE -ne 0 -or -not (Test-Path -LiteralPath $hostOut -PathType Leaf)) {
             throw 'STORE_BROWSER_HOST_BUNDLE_FAILED'
           }
