@@ -72,7 +72,25 @@
       "smart_app_control_available": false,
       "signing_execution_policy_preserved": true,
       "logon_task_trigger_verified": true,
-      "reboot_logon_acceptance": "NOT_TESTED"
+      "reboot_logon_acceptance": "PASS_ONE_CYCLE_2026-11-01",
+      "reboot_logon_evidence": {
+        "windows_boot_utc": "2026-11-01T12:26:20.500Z",
+        "task_logon_trigger_event_id": 119,
+        "task_logon_trigger_utc": "2026-11-01T12:27:19.1921543Z",
+        "task_process_created_utc": "2026-11-01T12:27:19.1986970Z",
+        "task_process_id_observed": 7600,
+        "boot_to_agent_start_seconds_approx": 59,
+        "authenticated_time_to_ready_seconds": null,
+        "post_reboot_authenticated_ready": true,
+        "post_reboot_transport": "authenticated",
+        "post_reboot_single_agent": true,
+        "post_reboot_expected_binary_sha256": true,
+        "post_reboot_established_remote_port": 443,
+        "post_reboot_power_shell_no_console_exit_code": 0,
+        "post_reboot_denied_operation": "device.help permission_denied",
+        "human_visual_no_flash_during_logon": "NOT_INDEPENDENTLY_OBSERVED",
+        "cycle_count": 1
+      }
     },
     "VAULTER": {
       "device_status_metadata_observed": true,
@@ -103,7 +121,9 @@
     "sleep_resume_recovery": false,
     "four_devices_authenticated": false,
     "signing_trust_distribution": false,
-    "induced_failure_rollback": false
+    "induced_failure_rollback": false,
+    "surface_one_reboot_logon_recovery": true,
+    "reboot_logon_recovery_detail": "Surface one reboot/logon PASSED; Leno and repeat cycles untested"
   },
   "backups": {
     "Surface": "%LOCALAPPDATA%\\Tetherplane\\Diagnostics\\SurfaceLogonAcceptance-20261101\\",
