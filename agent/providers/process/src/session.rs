@@ -13,6 +13,11 @@ use tokio::sync::Mutex as AsyncMutex;
 use tokio::task::JoinHandle;
 use tokio::time;
 
+// Windows console-subsystem children must not show PowerShell/cmd windows
+// when spawned by background-only process.run (PTY is a separate path).
+#[cfg(windows)]
+const CREATE_NO_WINDOW: u32 = 0x0800_0000;
+
 use crate::output::OutputBuffer;
 
 #[derive(Clone, Copy)]
@@ -68,6 +73,11 @@ impl ProcessSession {
             .stdin(Stdio::piped())
             .stdout(Stdio::piped())
             .stderr(Stdio::piped());
+
+        // Keep all ordinary process.run invocations invisible on Windows.
+        // In particular, piping stdio does NOT suppress a console window.
+        #[cfg(windows)]
+        command.creation_flags(CREATE_NO_WINDOW);
 
         let mut child = command
             .spawn()
@@ -622,5 +632,40 @@ fn provider_error_message(message: &str, program: &str) -> CapabilityError {
         message: message.to_owned(),
         recovery_hint: None,
         details: json!({ "program": program }),
+    }
+}
+
+#[cfg(all(test, windows))]
+mod windows_windowless_tests {
+    use super::*;
+
+    #[tokio::test]
+    async fn piped_powershell_has_no_console_window() {
+        // GetConsoleWindow is checked inside the spawned child, rather than
+        // inferring invisibility from redirection or its final exit status.
+        let program = "powershell.exe";
+        let args = vec![
+            "-NoProfile".to_owned(),
+            "-NonInteractive".to_owned(),
+            "-Command".to_owned(),
+            r#"Add-Type -TypeDefinition 'using System; using System.Runtime.InteropServices; public static class TetherplaneConsoleProbe { [DllImport("kernel32.dll")] public static extern IntPtr GetConsoleWindow(); }'; if ([TetherplaneConsoleProbe]::GetConsoleWindow() -ne [IntPtr]::Zero) { exit 42 }; Write-Output 'NO_CONSOLE_WINDOW'"#.to_owned(),
+        ];
+        let session = ProcessSession::spawn_piped(program, &args)
+            .expect("PowerShell child must start for Windows invisibility test");
+        assert!(
+            session
+                .wait_for_exit(Duration::from_secs(25))
+                .await
+                .expect("child status must be available"),
+            "PowerShell child did not finish"
+        );
+        let (running, exit_code) = session.status().await.expect("child exit status");
+        assert!(!running);
+        assert_eq!(exit_code, Some(0), "console window was created, or child failed");
+        let (stdout, _) = session.output_tail(4096);
+        assert!(
+            stdout.contains("NO_CONSOLE_WINDOW"),
+            "missing successful no-console probe marker"
+        );
     }
 }
