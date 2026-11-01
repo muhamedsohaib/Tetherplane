@@ -65,7 +65,7 @@ External vendor reference: [Microsoft Windows Security — Smart App Control is 
 
 ## Release/no-go gates still open
 
-1. Natural Windows logoff/logon, reboot, sleep/resume and network interruption recovery on actual devices, with **single agent**, no flashes, authenticated transport and measured recovery time.
+1. **Surface passed one actual reboot/logon** (see follow-up below); remaining: Leno reboot/logon, repeated Surface cycles, sleep/resume, network interruption, evidence of no flashes at sign-in and measured authenticated recovery time.
 2. Clean-install and clean-uninstall test from a trustworthy distribution path on a newly authorized machine, preserving device identity, owner consent and scopes.
 3. Vendor-trusted installer/signature/reputation acceptance, including an independently **verified Windows 11 Smart App Control enforcement** trial.
 4. Bundled monochrome official logo/icons with real installed-plugin/extension/Windows host verification.
@@ -73,3 +73,20 @@ External vendor reference: [Microsoft Windows Security — Smart App Control is 
 6. Rollback under an induced failure and proof that the agent can recover without this chat/session.
 
 **Release state:** **NO-GO for general availability.** This is a promising private Windows candidate, not a tagged or generally distributed `v0.1.1`. Preserve original tasks and credentials; do not merge or publish without owner approval.
+
+## Follow-up acceptance: Surface real reboot and Windows logon — PASS (2026-11-01)
+
+The owner restarted Surface normally and signed back into Windows. The assistant reconnected through the **same Tetherplane app** without manually invoking the agent, then read the local Task Scheduler Operational log and Windows process/socket state.
+
+- Windows boot: **2026-11-01 12:26:20.500 UTC** (16:26:20.500 Dubai).
+- Task Scheduler **Event ID 119 (logon trigger)**: **12:27:19.192 UTC**. Task/process/action events **129, 100, 200** immediately followed at approximately **12:27:19.200 UTC**. This distinguishes an automatic logon-triggered start from the earlier manual task start.
+- New `tetherd-agentw.exe` process: **PID 7600**, created **12:27:19.199 UTC** after boot, exactly **one** agent and **no old `tetherd.exe`**; executable location matched the verified private package.
+- SHA-256 after reboot: `411e0f07f32ca3e6cf69a5ca53f3995e268946df419600bf0c807d737d00895c` (unchanged).
+- Established agent TCP connection to remote **port 443**. Tetherplane `device.status(Surface)` returned **authenticated**, **ready**, **background_only**. Leno remained authenticated/ready throughout.
+- Authorized real post-reboot PowerShell command returned **`NO_CONSOLE_WINDOW`**, exit **0**. Restricted `device.help` returned expected **`permission_denied`**.
+- Active task remained **Running** with an enabled logon trigger and `MultipleInstances=IgnoreNew`; original Canary and obsolete rollback remained **Disabled**.
+- Boot-to-agent-process-start was approximately **59 seconds**. The exact **first authenticated ready** timestamp was not instrumented, so no time-to-ready claim is made. Invisible post-reboot command execution does **not** prove that no window flashed during sign-in.
+
+**Result:** One real Surface reboot/logon cycle with automatic agent startup and recovered authenticated control **PASSED**. This supersedes the earlier *pre-reboot* statement that Surface sign-in had not been tested. Do **not** generalize to Leno, multiple cycles, sleep/resume, network loss, signing/trust or clean installation.
+
+Source: [Surface acceptance record](../release/SURFACE_PRIVATE_PORT443_ACCEPTANCE_20261101.md) and [machine-readable provenance](../release/windows-private-candidate-20261101.json). No Tetherplane config, Windows security policy, OAuth, credential, or scheduled-task settings were changed during this validation.
