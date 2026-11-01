@@ -68,7 +68,14 @@ async function main(): Promise<void> {
     await proxy.close();
     throw error;
   });
-  const backend = new CdpBrowserBackend({ control, pollIntervalMs: 20 });
+  const backend = new CdpBrowserBackend({
+    control, pollIntervalMs: 20,
+    // Independent backend enforcement; permission never comes from model RPC.
+    authorizeSite: (operation, url) =>
+      grant.authorize(
+        operation as Parameters<LocalBrowserLabGrant["authorize"]>[0], url,
+      ),
+  });
   let server: Awaited<ReturnType<typeof startBrowserRpcServer>> | null = null;
   let resolveStop!: () => void;
   const stop = new Promise<void>((resolve) => {

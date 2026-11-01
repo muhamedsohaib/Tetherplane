@@ -32,9 +32,11 @@ class FakeController implements ExtensionCommandController {
     ownership: "tetherplane" as const,
   };
   humanMutationAttempts = 0;
+  localShareMutations = 0;
+  extraPages: Array<Record<string, unknown>> = [];
 
   pages() {
-    return [structuredClone(this.page)];
+    return [structuredClone(this.page), ...structuredClone(this.extraPages)];
   }
 
   async createOwnedTab(url: string) {
@@ -75,6 +77,7 @@ class FakeController implements ExtensionCommandController {
     tabId: number,
     grant: { operations: string[] },
   ) {
+    this.localShareMutations++;
     return {
       ...structuredClone(this.page),
       page_id: `tab:${tabId}`,
@@ -85,6 +88,7 @@ class FakeController implements ExtensionCommandController {
   }
 
   async detachHumanTab(tabId: number) {
+    this.localShareMutations++;
     return {
       ...structuredClone(this.page),
       page_id: `tab:${tabId}`,
@@ -356,4 +360,42 @@ test("command runtime routes upload downloads and diagnostics to operational age
       },
     ],
   });
+});
+
+
+test("remote pages metadata never reveals unshared human tab URLs", async () => {
+  const context = runtime();
+  context.controller.extraPages = [
+    {page_id:"tab:99",tab_id:99,window_id:2,active:true,
+      ownership:"human",url:"https://private.example/account?secret=never-share"},
+    {page_id:"tab:98",tab_id:98,window_id:2,active:false,
+      ownership:"shared-authorized",url:"https://approved.example/work",
+      grant:{operations:["act"],origin:"https://approved.example",
+        expires_at_ms: Date.now()+60_000}},
+  ];
+  await context.runtime.handleMessage({
+    type:"command",request_id:"private-page-list",operation:"pages",args:{},
+  });
+  const response = context.session.sent[0];
+  assert.equal(response?.status,"success");
+  const data = response?.data as {pages:Array<{page_id:string;ownership:string;url:string}>};
+  assert.deepEqual(data.pages.map(p=>p.page_id), ["tab:7","tab:98"]);
+  assert.equal(JSON.stringify(response).includes("private.example"),false);
+});
+
+test("remote extension commands cannot grant or revoke human tab access", async () => {
+  const context = runtime();
+  for (const operation of ["attach","detach"]) {
+    await context.runtime.handleMessage({
+      type:"command",request_id:"attempt-"+operation,operation,
+      args:{tab_id:99,operations:["act","navigate"]},
+    });
+  }
+  assert.equal(context.controller.localShareMutations,0,
+    "a remote bridge command changed local owner sharing state");
+  assert.deepEqual(
+    context.session.sent.map(x=>(x.error as {code:string}|undefined)?.code),
+    ["permission_denied","permission_denied"],
+  );
+  assert.ok(context.session.sent.every(x=>x.status==="error"));
 });

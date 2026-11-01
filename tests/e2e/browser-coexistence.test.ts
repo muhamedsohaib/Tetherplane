@@ -187,6 +187,9 @@ test(
       cdp = new CdpBrowserBackend({
         control,
         pollIntervalMs: 20,
+        authorizeSite: (_operation, url) => {
+          if (new URL(url).origin !== lab.origin) throw new Error("non-fixture site");
+        },
       });
       const backend = new CoexistenceBackend(cdp);
       bridge = await startBrowserRpcServer({
@@ -249,8 +252,9 @@ test(
       const human = pages.find(
         (page) => page.page_id === backend.human.page_id,
       );
-      assert.equal(human?.active, true);
-      assert.equal(human?.ownership, "human");
+      assert.equal(human, undefined,
+        "remote pages must not enumerate unshared human tabs");
+      assert.equal(backend.human.active, true);
 
       const denied = await call(local.client, "browser", {
         op: "navigate",
@@ -687,11 +691,10 @@ test(
       const finalHuman = finalPages.find(
         (page) => page.page_id === backend.human.page_id,
       );
-      assert.equal(finalHuman?.active, true);
-      assert.equal(
-        finalHuman?.url,
-        "https://human.example/work",
-      );
+      assert.equal(finalHuman, undefined,
+        "unshared human tab metadata leaked after browser workflow");
+      assert.equal(backend.human.active, true);
+      assert.equal(backend.human.url, "https://human.example/work");
       assert.equal(backend.humanMutationAttempts, 0);
 
       if (process.platform === "win32") {

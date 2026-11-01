@@ -39,6 +39,8 @@ export type ExtensionPageRecord = {
   grant?: {
     operations: BrowserOperation[];
     expires_at_ms: number;
+    // Captured locally from chrome.tabs.get at approval time, never from RPC.
+    origin?: string;
   };
 };
 
@@ -52,6 +54,11 @@ export class ExtensionTabController {
   readonly #store: ExtensionOwnershipStore;
   readonly #ownership = new BrowserOwnershipRegistry();
   readonly #pages = new Map<string, ExtensionPageRecord>();
+  // Owner approval is deliberately ephemeral; an extension restart fails closed.
+  readonly #approvedOwnedOrigins = new Map<string, {
+    operations: BrowserOperation[];
+    expires_at_ms: number;
+  }>();
   readonly #now: () => number;
 
   constructor(options: {
@@ -77,7 +84,13 @@ export class ExtensionTabController {
       const pageId = pageIdForTab(tab.id);
       const saved = persisted.get(pageId);
       const restored =
-        saved && !this.#isExpired(saved)
+        saved && !this.#isExpired(saved) &&
+          (saved.ownership === "tetherplane"
+            ? Boolean(saved.grant?.origin &&
+                this.#approvedOwnedOrigins.get(saved.grant.origin)?.expires_at_ms! > this.#now() &&
+                saved.grant.origin === approvedOrigin(tab.url))
+            : saved.grant?.origin !== undefined &&
+              saved.grant.origin === approvedOrigin(tab.url))
           ? saved
           : undefined;
       const record: ExtensionPageRecord = {
@@ -105,6 +118,14 @@ export class ExtensionTabController {
 
   async createOwnedTab(url: string): Promise<ExtensionPageRecord> {
     requireUrl(url);
+    const origin = approvedOrigin(url);
+    const grant = origin ? this.#approvedOwnedOrigins.get(origin) : undefined;
+    if (!grant || grant.expires_at_ms <= this.#now()) {
+      throw new BrowserPolicyError(
+        "permission_denied",
+        "an owner-approved website grant is required before opening an AI tab",
+      );
+    }
     const tab = await this.#tabs.create({
       url,
       active: false,
@@ -116,6 +137,8 @@ export class ExtensionTabController {
       url: tab.url,
       active: false,
       ownership: "tetherplane",
+      grant: { origin: origin!, operations: [...grant.operations],
+        expires_at_ms: grant.expires_at_ms },
     };
     this.#record(record);
     await this.#persist();
@@ -127,7 +150,13 @@ export class ExtensionTabController {
     url: string,
   ): Promise<ExtensionPageRecord> {
     requireUrl(url);
-    const page = this.#requirePage(pageId);
+    const page = await this.authorizeLivePage(pageId, "navigate");
+    if (approvedOrigin(url) !== page.grant?.origin) {
+      throw new BrowserPolicyError(
+        "permission_denied",
+        "navigation outside the owner-approved website origin is denied",
+      );
+    }
     this.#ownership.authorize({
       page_id: pageId,
       operation: "navigate",
@@ -181,6 +210,13 @@ export class ExtensionTabController {
     if (!tab) {
       throw new Error(`missing tab: ${tabId}`);
     }
+    const origin = approvedOrigin(tab.url);
+    if (!origin) {
+      throw new BrowserPolicyError(
+        "permission_denied",
+        "only http/https website tabs can be shared",
+      );
+    }
     const record: ExtensionPageRecord = {
       page_id: pageIdForTab(tab.id),
       tab_id: tab.id,
@@ -191,11 +227,131 @@ export class ExtensionTabController {
       grant: {
         operations: [...grant.operations],
         expires_at_ms: this.#now() + grant.ttl_ms,
+        origin,
       },
     };
     this.#record(record);
     await this.#persist();
     return structuredClone(record);
+  }
+
+  async approveOwnedOriginFromTab(tabId: number, grant: {
+    ttl_ms: number;
+    operations: BrowserOperation[];
+  }): Promise<{ origin: string; expires_at_ms: number }> {
+    if (!Number.isSafeInteger(grant.ttl_ms) ||
+        grant.ttl_ms <= 0 || grant.ttl_ms > 3_600_000) {
+      throw new BrowserPolicyError("invalid_arguments", "invalid site-grant duration");
+    }
+    const tab = await this.#tabs.get(tabId);
+    const origin = tab ? approvedOrigin(tab.url) : null;
+    if (!origin) {
+      throw new BrowserPolicyError("permission_denied", "approved tab must be an open website");
+    }
+    const expires_at_ms = this.#now() + grant.ttl_ms;
+    this.#approvedOwnedOrigins.set(origin, {
+      operations: [...grant.operations], expires_at_ms,
+    });
+    return { origin, expires_at_ms };
+  }
+
+  async revokeOwnedOriginFromTab(tabId: number): Promise<void> {
+    const tab = await this.#tabs.get(tabId);
+    const origin = tab ? approvedOrigin(tab.url) : null;
+    if (!origin) {
+      throw new BrowserPolicyError("permission_denied", "site origin unavailable for revocation");
+    }
+    this.#approvedOwnedOrigins.delete(origin);
+    for (const page of this.#pages.values()) {
+      if (page.ownership === "tetherplane" && page.grant?.origin === origin) {
+        this.#record({ page_id: page.page_id, tab_id: page.tab_id,
+          window_id: page.window_id, url: page.url,
+          active: page.active, ownership: "human" });
+      }
+    }
+    await this.#persist();
+  }
+
+  // Trust boundary shared by extension commands, independently of RPC state.
+  // chrome.tabs.get is checked for every operation, not only at approval.
+  async authorizeLivePage(
+    pageId: string,
+    operation: BrowserOperation,
+  ): Promise<ExtensionPageRecord> {
+    const page = this.#requirePage(pageId);
+    if (page.ownership === "tetherplane") {
+      const live = await this.#tabs.get(page.tab_id);
+      // A new tab can temporarily report about:blank while its approved
+      // first navigation is committing. Deny reads/actions, but do not
+      // irreversibly revoke the site grant for this pending state.
+      if (live?.url === "about:blank") {
+        throw new BrowserPolicyError("permission_denied",
+          "AI-owned tab has not committed an approved website origin");
+      }
+      const origin = page.grant?.origin;
+      const currentGrant = origin ? this.#approvedOwnedOrigins.get(origin) : undefined;
+      if (!live || !origin || approvedOrigin(live.url) !== origin ||
+          !currentGrant || currentGrant.expires_at_ms <= this.#now()) {
+        this.#record({ page_id: page.page_id, tab_id: page.tab_id,
+          window_id: live?.window_id ?? page.window_id,
+          url: live?.url ?? page.url, active: live?.active ?? page.active,
+          ownership: "human" });
+        await this.#persist();
+        throw new BrowserPolicyError("permission_denied",
+          "AI-owned tab left the approved website or the site grant was revoked");
+      }
+      const observeOnly = operation === "snapshot" || operation === "wait" ||
+        operation === "checkpoint";
+      if (!observeOnly && !currentGrant.operations.includes(operation)) {
+        throw new BrowserPolicyError("permission_denied",
+          "operation was not approved for this AI-owned site");
+      }
+      return structuredClone({ ...page, url: live.url, active: live.active,
+        window_id: live.window_id });
+    }
+
+    if (page.ownership !== "shared-authorized" &&
+        page.ownership !== "shared-observe") {
+      throw new BrowserPolicyError(
+        "permission_denied",
+        "a human tab must be explicitly shared before access",
+      );
+    }
+
+    const live = await this.#tabs.get(page.tab_id);
+    const origin = live ? approvedOrigin(live.url) : null;
+    if (!live || !page.grant?.origin ||
+        page.grant.expires_at_ms <= this.#now() ||
+        origin !== page.grant.origin) {
+      const revoked: ExtensionPageRecord = {
+        page_id: page.page_id,
+        tab_id: page.tab_id,
+        window_id: live?.window_id ?? page.window_id,
+        url: live?.url ?? page.url,
+        active: live?.active ?? page.active,
+        ownership: "human",
+      };
+      this.#record(revoked);
+      await this.#persist();
+      throw new BrowserPolicyError(
+        "permission_denied",
+        "the sharing grant expired or the browser left its approved origin",
+      );
+    }
+
+    const observeOnly = operation === "snapshot" ||
+      operation === "wait" || operation === "checkpoint";
+    if ((!observeOnly && !page.grant.operations.includes(operation)) ||
+        (page.ownership === "shared-observe" && !observeOnly)) {
+      throw new BrowserPolicyError(
+        "permission_denied",
+        "the owner has not approved this operation",
+      );
+    }
+
+    return structuredClone({
+      ...page, url: live.url, active: live.active, window_id: live.window_id,
+    });
   }
 
   async detachHumanTab(tabId: number): Promise<ExtensionPageRecord> {
@@ -250,8 +406,13 @@ export class ExtensionTabController {
 
   #isExpired(page: ExtensionPageRecord): boolean {
     return (
-      page.ownership === "shared-authorized" &&
+      (page.ownership === "shared-authorized" ||
+        page.ownership === "tetherplane") &&
       (!page.grant ||
+        (page.ownership === "tetherplane" &&
+         (!this.#approvedOwnedOrigins.has(page.grant.origin ?? "") ||
+          this.#approvedOwnedOrigins.get(page.grant.origin ?? "")!.expires_at_ms <= this.#now())) ||
+        !page.grant.origin ||
         !Number.isFinite(page.grant.expires_at_ms) ||
         page.grant.expires_at_ms <= this.#now())
     );
@@ -275,5 +436,17 @@ function requireUrl(url: string): void {
   }
   if (parsed.protocol !== "http:" && parsed.protocol !== "https:") {
     throw new Error("browser URL must use http or https");
+  }
+}
+
+function approvedOrigin(value: string): string | null {
+  try {
+    const url = new URL(value);
+    if (url.protocol !== "http:" && url.protocol !== "https:") {
+      return null;
+    }
+    return url.origin;
+  } catch {
+    return null;
   }
 }

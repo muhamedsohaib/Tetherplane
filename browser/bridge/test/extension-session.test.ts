@@ -293,3 +293,37 @@ test("extension bridge consumes keepalive internally", async () => {
     await bridge.close();
   }
 });
+
+
+test("authenticated startup event cannot export private human tab metadata", {timeout:8000}, async () => {
+  const bridge = await startExtensionBridgeServer({launchToken:"local-test-token"});
+  const socket = new WebSocket(bridge.url);
+  try {
+    await onceOpen(socket);
+    socket.send(JSON.stringify({
+      type:"hello",token:"local-test-token",extension_id:"extension-test",
+    }));
+    await onceMessage(socket);
+    const client = await bridge.waitForAuthenticatedClient();
+    const closed = new Promise<number>(resolve => {
+      socket.once("close", code => resolve(code));
+    });
+    socket.send(JSON.stringify({
+      type:"event",event:"extension_ready",
+      data:{pages:[{
+        page_id:"tab:17",tab_id:17,active:true,ownership:"human",
+        url:"https://private.example/account?secret=do-not-leak",
+      }]},
+    }));
+    const code = await Promise.race([
+      closed,
+      new Promise<number>(resolve => setTimeout(() => resolve(0), 1200)),
+    ]);
+    assert.equal(code,4003,"bridge accepted a startup event carrying private tab URLs");
+    assert.equal(bridge.authenticatedClientCount(),0);
+    await assert.rejects(() => client.nextMessage(),/disconnected/);
+  } finally {
+    socket.close();
+    await bridge.close();
+  }
+});
