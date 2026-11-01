@@ -173,6 +173,7 @@
     "published_at": null,
     "attached_assets": 0,
     "tag_ref_exists": false,
-    "owner_visible_url": "https://github.com/muhamedsohaib/Tetherplane/releases/tag/untagged-350718c4ebaa0c7c519a"
+    "owner_visible_url": "https://github.com/muhamedsohaib/Tetherplane/releases",
+    "url_note": "Draft ID 430562213; generated untagged HTML URL can change after editing. Find via repository Releases and confirm ID, not via the ephemeral URL."
   }
 }
