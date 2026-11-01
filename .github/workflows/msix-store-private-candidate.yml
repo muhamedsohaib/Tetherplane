@@ -85,6 +85,15 @@ jobs:
           $out = Join-Path $env:RUNNER_TEMP 'store-private-deploy\compact-mcp'
           pnpm --config.node-linker=hoisted --filter @tetherplane/compact-mcp deploy --legacy --prod $out
           if ($LASTEXITCODE -ne 0) { throw 'COMPACT_MCP_DEPLOY_FAILED' }
+          $browserOut = Join-Path $env:RUNNER_TEMP 'store-private-deploy\browser-bridge'
+          pnpm --config.node-linker=hoisted --filter @tetherplane/browser-bridge deploy --legacy --prod $browserOut
+          if ($LASTEXITCODE -ne 0) { throw 'STORE_BROWSER_BRIDGE_DEPLOY_FAILED' }
+          $hostOut = Join-Path $env:RUNNER_TEMP 'store-private-deploy\host\host.mjs'
+          New-Item -ItemType Directory -Force -Path (Split-Path -Parent $hostOut) | Out-Null
+          pnpm --filter @tetherplane/browser-extension exec esbuild ../../scripts/browser-extension-host.ts --bundle --platform=node --format=esm --target=node22 --packages=external ("--outfile=" + $hostOut)
+          if ($LASTEXITCODE -ne 0 -or -not (Test-Path -LiteralPath $hostOut -PathType Leaf)) {
+            throw 'STORE_BROWSER_HOST_BUNDLE_FAILED'
+          }
       - name: Exercise Windows onboarding ACL and denial unit tests
         shell: pwsh
         run: node --test tests/release/msix-store-runtime.test.mjs
@@ -113,6 +122,10 @@ jobs:
             '-NodeExecutable', $nodeExe,
             '-OnboardingDirectory', 'packaging/msix-store-runtime/app',
             '-CompactDeployDirectory', (Join-Path $env:RUNNER_TEMP 'store-private-deploy\compact-mcp'),
+            '-BrowserWindowlessLauncherBinary', 'target/release/tetherplane-browserw.exe',
+            '-BrowserHostBundle', (Join-Path $env:RUNNER_TEMP 'store-private-deploy\host\host.mjs'),
+            '-BrowserDeployDirectory', (Join-Path $env:RUNNER_TEMP 'store-private-deploy\browser-bridge'),
+            '-BrowserExtensionDirectory', 'extension/browser',
             '-ReportPath', $report,
             '-CiValidationOnly'
           )
@@ -130,6 +143,11 @@ jobs:
               $evidence.setup_launcher_subsystem -ne 'WindowsGUI' -or
               $evidence.autostart_launcher_subsystem -ne 'WindowsGUI' -or
               $evidence.autostart_task_default -ne 'DisabledOwnerOptIn' -or
+              $evidence.browser_payload_included -ne $true -or
+              $evidence.browser_host_synthetic_runtime -ne 'PASS' -or
+              $evidence.browser_activation -cne 'owner_approved_only' -or
+              $evidence.browser_owner_authorization -cne 'NOT_PERFORMED' -or
+              $evidence.browser_launcher_sha256 -notmatch '^[0-9a-f]{64}$' -or
               $evidence.autostart_launcher_sha256 -notmatch '^[0-9a-f]{64}$' -or
               $evidence.setup_launcher_sha256 -notmatch '^[0-9a-f]{64}$' -or
               $evidence.source_commit -notmatch '^[0-9a-f]{40}$') {

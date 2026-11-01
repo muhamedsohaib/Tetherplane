@@ -219,3 +219,43 @@ test("real relay Windows integration targets the reviewed windowless executable"
   assert.match(manifest, /Executable="bin\\tetherplane-setupw\.exe"/);
   assert.doesNotMatch(manifest, /Executable="runtime\\node\.exe"/);
 });
+
+
+test("Store candidate validates unpacked artwork from the exact Assets directory", () => {
+  assert.ok(
+    builder.includes("('Assets\\' + $key)"),
+    "unpacked artwork path must retain its directory separator"
+  );
+});
+
+test("Store candidate includes complete authenticated browser payload and fails closed when absent", () => {
+  for (const marker of [
+    "BrowserWindowlessLauncherBinary",
+    "BrowserHostBundle",
+    "BrowserDeployDirectory",
+    "BrowserExtensionDirectory",
+    "STORE_CANDIDATE_BROWSER_PAYLOAD_MISSING",
+    "STORE_CANDIDATE_UNPACKED_BROWSER_HASH_MISMATCH",
+    "browser\\host.mjs",
+    "browser\\extension\\manifest.json",
+    "browser\\extension\\dist\\background.js",
+    "browser\\extension\\dist\\pair.js",
+    "bin\\tetherplane-browserw.exe"
+  ]) {
+    assert.ok(builder.includes(marker), "missing fail-closed Store browser packaging contract: " + marker);
+  }
+  assert.match(workflow, /-BrowserWindowlessLauncherBinary/);
+  assert.match(workflow, /-BrowserHostBundle/);
+  assert.match(workflow, /-BrowserDeployDirectory/);
+  assert.match(workflow, /-BrowserExtensionDirectory/);
+  assert.match(workflow, /browser_payload_included -ne \$true/);
+  assert.ok(workflow.includes("browser_host_synthetic_runtime -ne 'PASS'"));
+  assert.ok(builder.includes("STORE_CANDIDATE_BROWSER_RUNTIME_SMOKE_FAILED"));
+  assert.ok(builder.includes("STORE_CANDIDATE_BROWSER_RUNTIME_NOT_READY"));
+  assert.ok(builder.includes("browser-package-runtime.mjs"));
+  assert.ok(builder.includes("browserRpcUnavailableBeforePairing"));
+  assert.ok(builder.includes("tempStateRemoved"));
+  assert.match(builder, /browser_activation = 'owner_approved_only'/);
+  assert.match(builder, /browser_owner_authorization = 'NOT_PERFORMED'/);
+  assert.doesNotMatch(builder, /Add-AppxPackage|Import-Certificate|Set-ExecutionPolicy|Start-ScheduledTask|Register-ScheduledTask/);
+});
