@@ -115,5 +115,17 @@
     "release_notes": "docs/release/v0.1.1-rc.1.DRAFT.md",
     "surface_acceptance": "docs/release/SURFACE_PRIVATE_PORT443_ACCEPTANCE_20261101.md",
     "leno_acceptance": "docs/release/WINDOWS_PRIVATE_ACCEPTANCE_20261101.md"
+  },
+  "github_draft_release": {
+    "exists": true,
+    "id": 430562213,
+    "tag_name": "v0.1.1-rc.1",
+    "target_commitish": "d327117217c69e177019a6d6361c93870e579d79",
+    "is_draft": true,
+    "is_prerelease": true,
+    "published_at": null,
+    "attached_assets": 0,
+    "tag_ref_exists": false,
+    "owner_visible_url": "https://github.com/muhamedsohaib/Tetherplane/releases/tag/untagged-350718c4ebaa0c7c519a"
   }
 }
