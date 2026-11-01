@@ -1,0 +1,119 @@
+{
+  "schema_version": 1,
+  "as_of": "2026-11-01",
+  "classification": "private_owner_verified_candidate",
+  "general_availability": "NO_GO",
+  "last_published_release": "v0.1.0",
+  "proposed_next_version": "v0.1.1-rc.1",
+  "candidate_version_embedded_in_binary": "0.1.0",
+  "release_tag_created": false,
+  "public_release_authorized": false,
+  "tested_source_commit": "d327117217c69e177019a6d6361c93870e579d79",
+  "tested_binary": {
+    "filename": "tetherd-agentw.exe",
+    "os": "Windows",
+    "arch": "x86_64",
+    "subsystem": "GUI",
+    "authenticode_status": "NotSigned",
+    "sha256": "411e0f07f32ca3e6cf69a5ca53f3995e268946df419600bf0c807d737d00895c"
+  },
+  "prs": [
+    {
+      "number": 119,
+      "role": "no-console source fix",
+      "state": "draft_unmerged"
+    },
+    {
+      "number": 120,
+      "role": "documentation and evidence",
+      "state": "draft_unmerged"
+    }
+  ],
+  "ci": [
+    {
+      "run_id": 41281507337,
+      "scope": "Windows GUI build and no-console regression",
+      "conclusion": "success"
+    },
+    {
+      "run_id": 41281511821,
+      "scope": "Windows, Ubuntu, release-policy",
+      "conclusion": "success"
+    },
+    {
+      "run_id": 41303340362,
+      "scope": "PR120 prior documentation commit Windows, Ubuntu, release-policy",
+      "conclusion": "success"
+    }
+  ],
+  "real_device_acceptance": {
+    "Leno": {
+      "windows_build": "10.0.26300",
+      "windows_family": "Windows 11",
+      "binary_sha256_verified": true,
+      "single_agent_verified": true,
+      "authenticated_ready_verified": true,
+      "background_only_verified": true,
+      "nonpty_no_console_test": "pass",
+      "smart_app_control_mode": "UNKNOWN",
+      "reboot_logon_acceptance": "NOT_TESTED"
+    },
+    "Surface": {
+      "windows_build": "10.0.19045",
+      "windows_family": "Windows 10",
+      "binary_sha256_verified": true,
+      "single_agent_verified": true,
+      "authenticated_ready_verified": true,
+      "background_only_verified": true,
+      "nonpty_no_console_test": "pass",
+      "relay_port": 443,
+      "permission_denial_test": "pass_device_help",
+      "obsolete_rollback_disabled_and_xml_backed_up": true,
+      "smart_app_control_available": false,
+      "signing_execution_policy_preserved": true,
+      "logon_task_trigger_verified": true,
+      "reboot_logon_acceptance": "NOT_TESTED"
+    },
+    "VAULTER": {
+      "device_status_metadata_observed": true,
+      "authenticated_transport_verified": false
+    },
+    "RTX": {
+      "owner_powered_off": true,
+      "acceptance_not_run": true
+    }
+  },
+  "security": {
+    "oauth_dcr_clients_modified": false,
+    "device_credentials_exposed": false,
+    "policy_grants_broadened": false,
+    "windows_app_control_bypassed": false,
+    "powershell_execution_policy_bypassed": false,
+    "smart_app_control_enforcement_accepted": false
+  },
+  "branding": {
+    "approved_source_variants": 4,
+    "source_theme": "black_white",
+    "packaged_in_current_plugin": false
+  },
+  "feature_gates": {
+    "browser_available": false,
+    "clean_install_repeatability": false,
+    "reboot_logon_recovery": false,
+    "sleep_resume_recovery": false,
+    "four_devices_authenticated": false,
+    "signing_trust_distribution": false,
+    "induced_failure_rollback": false
+  },
+  "backups": {
+    "Surface": "%LOCALAPPDATA%\\Tetherplane\\Diagnostics\\SurfaceLogonAcceptance-20261101\\",
+    "Leno": "%LOCALAPPDATA%\\TetherplanePrivateTrial\\20261101\\rollback\\no-console-20261101\\"
+  },
+  "references": {
+    "changelog": "CHANGELOG.md",
+    "operational_log": "docs/operations/2026-11-01-windows-private-recovery-log.md",
+    "release_notes": "docs/release/v0.1.1-rc.1.DRAFT.md",
+    "surface_acceptance": "docs/release/SURFACE_PRIVATE_PORT443_ACCEPTANCE_20261101.md",
+    "leno_acceptance": "docs/release/WINDOWS_PRIVATE_ACCEPTANCE_20261101.md"
+  }
+}
