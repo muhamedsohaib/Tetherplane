@@ -5,6 +5,10 @@ param(
     [Parameter(Mandatory = $true)][string]$NodeExecutable,
     [Parameter(Mandatory = $true)][string]$OnboardingDirectory,
     [Parameter(Mandatory = $true)][string]$CompactDeployDirectory,
+    [Parameter(Mandatory = $true)][string]$BrowserWindowlessLauncherBinary,
+    [Parameter(Mandatory = $true)][string]$BrowserHostBundle,
+    [Parameter(Mandatory = $true)][string]$BrowserDeployDirectory,
+    [Parameter(Mandatory = $true)][string]$BrowserExtensionDirectory,
     [Parameter(Mandatory = $true)][string]$ReportPath,
     [string]$ApprovedAssetsDirectory,
     [string]$ApprovedAssetsManifest,
@@ -44,6 +48,11 @@ $report = [ordered]@{
     manifest_sha256 = 'NOT_VERIFIED'
     store_runtime_sha256 = 'NOT_VERIFIED'
     store_setup_sha256 = 'NOT_VERIFIED'
+    browser_launcher_sha256 = 'NOT_VERIFIED'
+    browser_component_hashes = [ordered]@{}
+    browser_payload_included = $false
+    browser_activation = 'owner_approved_only'
+    browser_owner_authorization = 'NOT_PERFORMED'
     store_state_directory = 'TetherplaneStore'
     approved_artwork = $false
     package_sha256 = 'NOT_BUILT'
@@ -199,6 +208,45 @@ try {
     $nodePath = (Resolve-Path -LiteralPath $NodeExecutable -ErrorAction Stop).Path
     $appSource = (Resolve-Path -LiteralPath $OnboardingDirectory -ErrorAction Stop).Path
     $compactSource = (Resolve-Path -LiteralPath $CompactDeployDirectory -ErrorAction Stop).Path
+
+    # All browser assets are mandatory for a browser-first candidate. This
+    # stages source-reviewed bytes only; it cannot enroll a browser, grant an
+    # origin, change an installed task, or start a human-owned browser.
+    try {
+        $browserLauncher = (Resolve-Path -LiteralPath $BrowserWindowlessLauncherBinary -ErrorAction Stop).Path
+        $browserHost = (Resolve-Path -LiteralPath $BrowserHostBundle -ErrorAction Stop).Path
+        $browserDeploy = (Resolve-Path -LiteralPath $BrowserDeployDirectory -ErrorAction Stop).Path
+        $browserExtension = (Resolve-Path -LiteralPath $BrowserExtensionDirectory -ErrorAction Stop).Path
+    } catch {
+        throw 'STORE_CANDIDATE_BROWSER_PAYLOAD_MISSING'
+    }
+    $browserSourceFiles = @(
+        $browserLauncher,
+        $browserHost,
+        (Join-Path $browserDeploy 'package.json'),
+        (Join-Path $browserDeploy 'dist\index.js'),
+        (Join-Path $browserExtension 'manifest.json'),
+        (Join-Path $browserExtension 'pair.html'),
+        (Join-Path $browserExtension 'dist\background.js'),
+        (Join-Path $browserExtension 'dist\pair.js')
+    )
+    if ((Split-Path -Leaf $browserLauncher) -cne 'tetherplane-browserw.exe' -or
+        (Get-Item -LiteralPath $browserLauncher).Length -lt 100000 -or
+        (Split-Path -Leaf $browserHost) -cne 'host.mjs' -or
+        -not (Test-Path -LiteralPath (Join-Path $browserDeploy 'node_modules') -PathType Container)) {
+        throw 'STORE_CANDIDATE_BROWSER_PAYLOAD_MISSING'
+    }
+    foreach ($file in $browserSourceFiles) {
+        if (-not (Test-Path -LiteralPath $file -PathType Leaf) -or
+            (Get-Item -LiteralPath $file).Length -eq 0) {
+            throw 'STORE_CANDIDATE_BROWSER_PAYLOAD_MISSING'
+        }
+    }
+    $extensionManifest = Get-Content -LiteralPath (Join-Path $browserExtension 'manifest.json') -Raw |
+        ConvertFrom-Json -ErrorAction Stop
+    if ($extensionManifest.background.service_worker -cne 'dist/background.js') {
+        throw 'STORE_CANDIDATE_BROWSER_EXTENSION_WORKER_MISMATCH'
+    }
     if ((Split-Path -Leaf $autostartPath) -cne 'tetherplane-autostartw.exe' -or
         (Get-Item -LiteralPath $autostartPath).Length -lt 100000 -or
         (Split-Path -Leaf $setupPath) -cne 'tetherplane-setupw.exe' -or
@@ -220,6 +268,8 @@ try {
     Assert-WindowlessAgentBinary -Path $agentPath
     Assert-WindowlessAgentBinary -Path $setupPath
     Assert-WindowlessAgentBinary -Path $autostartPath
+    Assert-WindowlessAgentBinary -Path $browserLauncher
+    $report.browser_launcher_sha256 = Get-Sha256Hex -Path $browserLauncher
     $report.autostart_launcher_subsystem = 'WindowsGUI'
     $report.autostart_task_default = 'DisabledOwnerOptIn'
     $report.autostart_launcher_sha256 = Get-Sha256Hex -Path $autostartPath
@@ -270,6 +320,36 @@ try {
     Copy-Item -LiteralPath $nodeLicense -Destination (Join-Path $payload 'runtime\LICENSE')
     Copy-Item -Path (Join-Path $appSource '*') -Destination (Join-Path $payload 'app') -Recurse -Force
     Copy-Item -LiteralPath $compactSource -Destination (Join-Path $payload 'adapters\compact-mcp') -Recurse -Force
+
+    # Pack browser-owned resources, never a browser profile, cookie, credential
+    # file, owner-issued grant, private extension ID, or startup registration.
+    Copy-Item -LiteralPath $browserLauncher -Destination (Join-Path $payload 'bin\tetherplane-browserw.exe')
+    Copy-Item -LiteralPath $browserDeploy -Destination (Join-Path $payload 'browser') -Recurse -Force
+    Copy-Item -LiteralPath $browserHost -Destination (Join-Path $payload 'browser\host.mjs')
+    $packedExtension = Join-Path $payload 'browser\extension'
+    [void][IO.Directory]::CreateDirectory($packedExtension)
+    Copy-Item -LiteralPath (Join-Path $browserExtension 'manifest.json') -Destination (Join-Path $packedExtension 'manifest.json')
+    Copy-Item -LiteralPath (Join-Path $browserExtension 'pair.html') -Destination (Join-Path $packedExtension 'pair.html')
+    Copy-Item -LiteralPath (Join-Path $browserExtension 'dist') -Destination $packedExtension -Recurse -Force
+    $browserEntries = @(
+        'bin\tetherplane-browserw.exe',
+        'browser\host.mjs',
+        'browser\package.json',
+        'browser\dist\index.js',
+        'browser\extension\manifest.json',
+        'browser\extension\pair.html',
+        'browser\extension\dist\background.js',
+        'browser\extension\dist\pair.js'
+    )
+    foreach ($name in $browserEntries) {
+        $installed = Join-Path $payload $name
+        if (-not (Test-Path -LiteralPath $installed -PathType Leaf)) {
+            throw 'STORE_CANDIDATE_BROWSER_PAYLOAD_MISSING'
+        }
+        $report.browser_component_hashes[$name] = Get-Sha256Hex -Path $installed
+    }
+    & $nodePath --check (Join-Path $payload 'browser\host.mjs')
+    if ($LASTEXITCODE -ne 0) { throw 'STORE_CANDIDATE_BROWSER_HOST_SYNTAX_INVALID' }
 
     # A deterministic, separately tested Node overlay transforms only this
     # fresh scratch copy; dev source and existing device state are untouched.
@@ -351,6 +431,11 @@ try {
         manifest_sha256 = $report.manifest_sha256
         store_runtime_sha256 = $report.store_runtime_sha256
         store_setup_sha256 = $report.store_setup_sha256
+        browser_launcher_sha256 = $report.browser_launcher_sha256
+        browser_component_hashes = $report.browser_component_hashes
+        browser_payload_included = $true
+        browser_activation = 'owner_approved_only'
+        browser_owner_authorization = 'NOT_PERFORMED'
         store_state_directory = $report.store_state_directory
         logos_sha256 = $artHashes
         CI_synthetic_preview_only = [bool]$CiValidationOnly
@@ -422,8 +507,18 @@ try {
             throw 'STORE_CANDIDATE_UNPACKED_RUNTIME_HASH_MISMATCH'
         }
     }
+    foreach ($name in $report.browser_component_hashes.Keys) {
+        $unpackedFile = Join-Path $unpack $name
+        if (-not (Test-Path -LiteralPath $unpackedFile -PathType Leaf) -or
+            (Get-Sha256Hex -Path $unpackedFile) -cne $report.browser_component_hashes[$name]) {
+            throw 'STORE_CANDIDATE_UNPACKED_BROWSER_HASH_MISMATCH'
+        }
+    }
+    if (-not (Test-Path -LiteralPath (Join-Path $unpack 'browser\node_modules') -PathType Container)) {
+        throw 'STORE_CANDIDATE_BROWSER_PAYLOAD_MISSING'
+    }
     foreach ($key in $requiredArtwork.Keys) {
-        if ((Get-Sha256Hex -Path (Join-Path $unpack ('Assets\' + $key))) -cne $artHashes[$key]) {
+        if ((Get-Sha256Hex -Path (Join-Path $unpack ('Assets' + $key))) -cne $artHashes[$key]) {
             throw 'STORE_CANDIDATE_UNPACKED_ASSET_HASH_MISMATCH'
         }
     }
@@ -438,9 +533,14 @@ try {
         $unpackedProvenance.agent_launch_subsystem -cne 'WindowsGUI' -or
         $unpackedProvenance.package_identity -cne $identity -or
         $unpackedProvenance.store_runtime_sha256 -cne $report.store_runtime_sha256 -or
-        $unpackedProvenance.store_setup_sha256 -cne $report.store_setup_sha256) {
+        $unpackedProvenance.store_setup_sha256 -cne $report.store_setup_sha256 -or
+        $unpackedProvenance.browser_launcher_sha256 -cne $report.browser_launcher_sha256 -or
+        $unpackedProvenance.browser_payload_included -ne $true -or
+        $unpackedProvenance.browser_owner_authorization -cne 'NOT_PERFORMED' -or
+        $unpackedProvenance.browser_activation -cne 'owner_approved_only') {
         throw 'STORE_CANDIDATE_PROVENANCE_FAILED'
     }
+    $report.browser_payload_included = $true
     $report.unpack_integrity = 'PASS'
     if (-not $CiValidationOnly) {
         $report.last_phase = 'EXPORTING_VERIFIED_OWNER_CANDIDATE'
