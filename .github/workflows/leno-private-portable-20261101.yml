@@ -1,0 +1,107 @@
+name: Leno private portable candidate (no release)
+# Isolated owner-directed internal trial. No certificates, credentials, MSIX,
+# release, publishing, application installation, policy or device changes.
+on:
+  push:
+    branches:
+      - experiment/leno-private-portable-20261101
+
+permissions:
+  contents: read
+
+jobs:
+  windows-private-build:
+    runs-on: windows-latest
+    timeout-minutes: 55
+    steps:
+      - name: Exact source checkout
+        uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
+        with:
+          persist-credentials: false
+          fetch-depth: 2
+
+      - name: Prove unchanged product source
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = 'Stop'
+          $expected = '48ddc41a6139b766e1f0ebd01e658f00837f6431'
+          $actualParent = (git rev-parse HEAD^).Trim()
+          if ($actualParent -cne $expected) { throw 'UNEXPECTED_SOURCE_PARENT' }
+          $changed = @(git diff --name-only $expected HEAD)
+          if ($changed.Count -ne 1 -or $changed[0] -cne '.github/workflows/leno-private-portable-20261101.yml') {
+            throw 'PRODUCT_SOURCE_MODIFICATION_FORBIDDEN'
+          }
+          Write-Output 'EXACT_PR117_SOURCE_ONLY_NEW_BUILD_WORKFLOW_PASS'
+
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4.4.0
+        with:
+          node-version: 22
+
+      - uses: dtolnay/rust-toolchain@b725eda525362e7cf34af9a7243cac1e3f01a7ec # stable
+
+      - name: Install locked source dependencies and compile TypeScript
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = 'Stop'
+          corepack enable
+          corepack prepare pnpm@10.34.5 --activate
+          pnpm install --frozen-lockfile
+          if ($LASTEXITCODE -ne 0) { throw 'LOCKED_INSTALL_FAILED' }
+          pnpm -r build
+          if ($LASTEXITCODE -ne 0) { throw 'TYPESCRIPT_BUILD_FAILED' }
+
+      - name: Compile CLI and windowless GUI agents
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = 'Stop'
+          ./scripts/build-windows-agent-binaries.ps1
+          if ($LASTEXITCODE -ne 0) { throw 'WINDOWS_NATIVE_BUILD_FAILED' }
+
+      - name: Run Windows disposable lifecycle checks
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = 'Stop'
+          node tests/release/windows-store-setupw-lifecycle.mjs target/release/tetherplane-setupw.exe
+          if ($LASTEXITCODE -ne 0) { throw 'WINDOWLESS_SETUP_LIFECYCLE_FAILED' }
+          node tests/release/windows-store-autostartw-lifecycle.mjs target/release/tetherplane-autostartw.exe target/release/tetherd-agentw.exe
+          if ($LASTEXITCODE -ne 0) { throw 'WINDOWLESS_AGENT_LIFECYCLE_FAILED' }
+          $env:TETHERPLANE_REQUIRE_MSIX_REAL_RELAY = '1'
+          node --test tests/release/msix-store-runtime-real-relay.test.mjs
+          if ($LASTEXITCODE -ne 0) { throw 'DISPOSABLE_RELAY_CONTRACT_FAILED' }
+
+      - name: Assemble standalone portable Windows package and provenance
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = 'Stop'
+          $target = Join-Path $env:GITHUB_WORKSPACE 'private-candidate-payload'
+          ./scripts/package-windows.ps1 -OutputPath $target -SkipBuild
+          if (-not (Test-Path (Join-Path $target 'bin\tetherd-agentw.exe') -PathType Leaf)) {
+            throw 'PRIVATE_PACKAGE_INCOMPLETE'
+          }
+          $expected = '48ddc41a6139b766e1f0ebd01e658f00837f6431'
+          $fileHashes = [ordered]@{}
+          foreach ($name in @('tetherd.exe','tetherd-agentw.exe','tetherplane-browserw.exe','tetherplane-modelw.exe')) {
+            $file = Join-Path $target ('bin\' + $name)
+            if (-not (Test-Path $file -PathType Leaf)) { throw 'PRIVATE_PACKAGE_MISSING_BINARY' }
+            $fileHashes[$name] = (Get-FileHash -LiteralPath $file -Algorithm SHA256).Hash.ToLowerInvariant()
+          }
+          $proof = [ordered]@{
+            purpose = 'owner-only internal portable acceptance; NOT A RELEASE'
+            source_parent = $expected
+            workflow_commit = (git rev-parse HEAD).Trim()
+            signed_by_tetherplane = $false
+            smart_app_control_on_accepted = 'NOT_TESTED'
+            authenticated_device_test = 'NOT_TESTED'
+            source_binary_sha256 = $fileHashes
+          }
+          $proof | ConvertTo-Json -Depth 5 | Set-Content -LiteralPath (Join-Path $target 'private-build-proof.json') -Encoding utf8
+          Write-Output 'PORTABLE_PRIVATE_SOURCE_AND_HASH_PROOF_CREATED'
+
+      - name: Upload ephemeral unsigned portable package for owner test (not release)
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        with:
+          name: leno-private-portable-20261101
+          path: private-candidate-payload/
+          if-no-files-found: error
+          include-hidden-files: true
+          retention-days: 1
