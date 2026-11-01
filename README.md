@@ -1,5 +1,11 @@
 # Tetherplane
 
+**Give AI agents a verified path to your real computer—without surrendering local permissions or the human's desktop.**
+
+Tetherplane is an open-source, model-neutral computer-control plane exposed through six compact MCP tools. Instead of copying an AI-generated command from a sandbox and troubleshooting it manually, an authorized model can inspect the target machine, execute allowed operations and return actual results. The device's **local policy** remains the final authority.
+
+**What has actually been verified:** A private Windows build on an owner-operated Leno machine completed an authenticated, background-only `process.run` call while a Windows console-window check returned `NO_CONSOLE_WINDOW`. The code fix and release evidence are in [draft PR #119](https://github.com/muhamedsohaib/Tetherplane/pull/119) and the [unreleased Windows changelog](CHANGELOG.md). This is **not** yet a broadly accepted Windows release: new-device installation, sleep/logon recovery, browser availability and four-device acceptance remain open gates.
+
 Tetherplane is an open-source control plane for AI-operated computers. It gives AI clients a small, provider-neutral interface for files, processes, browsers, desktop UI, batching, local policy, durable jobs, and optional remote routing.
 
 The local agent is the final authority. Remote relays and AI clients can route requests, but they cannot override stricter local policy.
