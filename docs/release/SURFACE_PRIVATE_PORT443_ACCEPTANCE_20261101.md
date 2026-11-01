@@ -1,6 +1,6 @@
 # Surface — private Windows relay and background-start acceptance (2026-11-01)
 
-> **State: AUTHENTICATED / READY on the owner's real Surface.** Private build only; no tag, protected merge, public installation or production-readiness certification. The **next actual Windows sign-in, reboot and sleep/resume have NOT been tested** with this replacement agent.
+> **State: AUTHENTICATED / READY on the owner's real Surface.** **First real Windows reboot + logon-triggered agent recovery PASSED on 2026-11-01.** Private build only; no tag, protected merge, public installation or production-readiness certification. Sleep/resume, network interruption and repeated reboot tests remain untested.
 
 ## Why Surface was disconnected
 
@@ -45,15 +45,41 @@ A read-only Surface inspection established **Windows 10 kernel build 10.0.19045*
 
 **Smart App Control is not available on Windows 10.** Surface therefore proves permitted agent execution under its actual Windows 10 restrictions—not Smart App Control enforcement compatibility. That stronger test must be performed independently on Windows 11. [Microsoft Windows Security reference](https://support.microsoft.com/en-us/windows/security/windows-security/app-browser-control-in-the-windows-security-app).
 
-## Next independent acceptance gate
+## First real reboot and automatic logon acceptance — PASS (2026-11-01)
 
-**At the next natural owner-approved Windows sign-in** (do not remotely force sign-out or reboot a computer actively in use):
+After the owner performed a normal Windows **Restart** and signed in, the assistant independently reconnected through the existing Tetherplane plugin, queried Windows Task Scheduler events, inspected native process and socket state and ran authorized real-device tests.
 
-1. Capture the sign-in time, native task launch events (Task Scheduler Operational), and the new agent's process creation time. Confirm an actual *logon-triggered* start, not merely the November 1 manual run.
-2. Verify exactly one agent, no old `tetherd.exe`, no foreground terminal, and a verified hash of the current `tetherd-agentw.exe`.
-3. Call authenticated `device.status(Surface)` and check the relay reconnected without changing the credentials or policy. Record time-to-ready from the task's start event; do not guess a metric.
-4. Test a permitted read-only command and an explicitly denied capability.
-5. After that, separately evaluate reboot and sleep/resume on a suitable maintenance window, plus interruption recovery. Keep Surface's working task, snapshot and identity intact until independently proven.
+| Independent measurement | Verified observation |
+| --- | --- |
+| Windows last boot | **2026-11-01 12:26:20.500 UTC** (16:26:20.500 Dubai) |
+| Windows Task Scheduler logon trigger | **Event ID 119**, **2026-11-01 12:27:19.192 UTC** |
+| Task action / process start | Events **129, 100 and 200** at approximately **12:27:19.200 UTC** |
+| Native agent process creation | **12:27:19.199 UTC**, PID **7600**, after this boot |
+| Boot-to-agent-launch | Approximately **59 seconds**. This is **not** an authenticated time-to-ready metric. |
+| Active scheduled task | `Surface_NoConsole_Port443_DISABLED_Task` **Running**, enabled logon trigger, `MultipleInstances=IgnoreNew` |
+| Old tasks | `Tetherplane Surface Canary` and obsolete rollback **Disabled** |
+| Process inventory | **Exactly one `tetherd-agentw.exe`**, no `tetherd.exe`; executable path exactly matches staged private package |
+| File integrity | SHA-256 `411e0f07f32ca3e6cf69a5ca53f3995e268946df419600bf0c807d737d00895c` |
+| Relay transport | Agent had an **established TCP connection to remote port 443** |
+| Authenticated MCP status | `device.status(Surface)` returned **ready**, `transport=authenticated`, `background_only` |
+| Genuine post-reboot process execution | Windows non-PTY PowerShell `GetConsoleWindow()` returned **`NO_CONSOLE_WINDOW`**, exit **0** |
+| Negative permission check | `device.help` returned the expected **`permission_denied`** |
+| Leno availability during Surface restart | **Authenticated and ready**; deliberately left running as the recovery route |
+
+**Interpretation:** Task Scheduler's **119** logon-trigger event and matching agent creation time establish that **the configured Windows logon trigger launched the new GUI-subsystem agent after reboot**, not a manual task run. The live Tetherplane status establishes that authenticated transport subsequently recovered. The exact time at which the agent first authenticated was **not captured**, so time-to-ready must not be estimated from the 59-second boot-to-process interval.
+
+**Limits:** The post-reboot command proves an invisible non-PTY child at test time; it does **not** independently prove whether *any* terminal flashed during the sign-in sequence. Only one reboot/logon cycle has passed; startup across sleep/resume, intermittent network outages, force-kill/crash, other user accounts and clean installs remains untested. No credentials, OAuth, task settings, or Windows policy were modified during these checks.
+
+## Remaining independent acceptance gates
+
+**Surface's first actual reboot/logon recovery is now PASSED.** For the next acceptance session, keep the current Surface agent running as a known-good control and test **Leno** in a separate owner-approved restart window. Remaining tests on Surface must be planned separately:
+
+1. Reboot/sign-in **Leno** while Surface stays available; verify native logon trigger, one agent, SHA-256, authenticated status, no-console test and preserved scopes.
+2. For **Surface**, repeat restart/logon and record actual time-to-ready with a timestamped independent watcher before claiming a reconnect-time SLA.
+3. Test Surface and Leno sleep/resume, transient network loss and an induced agent failure with measured rollback/recovery.
+4. Complete clean-install/trust acceptance, exact logo packaging and browser feature gates; do not consider a passing reboot equivalent to distribution readiness.
+
+**Historical pre-reboot checklist below is superseded by the verified logon event and acceptance table above.**
 
 **Release gate remains open** for clean-install repeatability, user-visible icon packaging, other devices (RTX is deliberately powered off), browser enrollment, recovery/rollback under failures, and trust/signing. The agent reports version `0.1.0` although its private executable differs from the published `v0.1.0` release.
 
