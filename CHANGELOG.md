@@ -4,7 +4,7 @@ This document records **released** versions separately from **unreleased/private
 
 ## Unreleased — Windows private candidate (verified 2026-11-01)
 
-**Status:** Private, owner-tested candidate. **Not tagged, published, signed, or certified as a new release.** A [private GitHub draft release for proposed `v0.1.1-rc.1`](https://github.com/muhamedsohaib/Tetherplane/releases/tag/untagged-350718c4ebaa0c7c519a) exists (**draft ID `430562213`, unpublished, no Git tag or attached binary**). Both installed agents still report `0.1.0`; the source changes are on draft [PR #119](https://github.com/muhamedsohaib/Tetherplane/pull/119), which is not merged. See the [complete draft release notes](docs/release/v0.1.1-rc.1.DRAFT.md).
+**Status:** Private, owner-tested candidate. **Not tagged, published, signed, or certified as a new release.** A [private GitHub draft release for proposed `v0.1.1-rc.1`](https://github.com/muhamedsohaib/Tetherplane/releases) exists (**draft ID `430562213` in GitHub Releases, unpublished, no Git tag or attached binary; draft's ephemeral direct URL may change on edit**). Both installed agents still report `0.1.0`; the source changes are on draft [PR #119](https://github.com/muhamedsohaib/Tetherplane/pull/119), which is not merged. See the [complete draft release notes](docs/release/v0.1.1-rc.1.DRAFT.md).
 
 ### Fixed — actual Windows desktop evidence
 
