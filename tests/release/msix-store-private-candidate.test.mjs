@@ -221,6 +221,13 @@ test("real relay Windows integration targets the reviewed windowless executable"
 });
 
 
+test("Store candidate validates unpacked artwork from the exact Assets directory", () => {
+  assert.ok(
+    builder.includes("('Assets\\' + $key)"),
+    "unpacked artwork path must retain its directory separator"
+  );
+});
+
 test("Store candidate includes complete authenticated browser payload and fails closed when absent", () => {
   for (const marker of [
     "BrowserWindowlessLauncherBinary",

@@ -518,7 +518,7 @@ try {
         throw 'STORE_CANDIDATE_BROWSER_PAYLOAD_MISSING'
     }
     foreach ($key in $requiredArtwork.Keys) {
-        if ((Get-Sha256Hex -Path (Join-Path $unpack ('Assets' + $key))) -cne $artHashes[$key]) {
+        if ((Get-Sha256Hex -Path (Join-Path $unpack ('Assets\' + $key))) -cne $artHashes[$key]) {
             throw 'STORE_CANDIDATE_UNPACKED_ASSET_HASH_MISMATCH'
         }
     }
