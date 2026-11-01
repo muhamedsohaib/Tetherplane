@@ -65,7 +65,7 @@ External vendor reference: [Microsoft Windows Security — Smart App Control is 
 
 ## Release/no-go gates still open
 
-1. **Surface passed one actual reboot/logon** (see follow-up below); remaining: Leno reboot/logon, repeated Surface cycles, sleep/resume, network interruption, evidence of no flashes at sign-in and measured authenticated recovery time.
+1. **Both Surface and Leno passed one actual separate reboot/logon** (see follow-ups below); remaining: repeated cycles on each, sleep/resume, network interruption, evidence of no flashes at sign-in and measured authenticated recovery time.
 2. Clean-install and clean-uninstall test from a trustworthy distribution path on a newly authorized machine, preserving device identity, owner consent and scopes.
 3. Vendor-trusted installer/signature/reputation acceptance, including an independently **verified Windows 11 Smart App Control enforcement** trial.
 4. Bundled monochrome official logo/icons with real installed-plugin/extension/Windows host verification.
@@ -90,3 +90,23 @@ The owner restarted Surface normally and signed back into Windows. The assistant
 **Result:** One real Surface reboot/logon cycle with automatic agent startup and recovered authenticated control **PASSED**. This supersedes the earlier *pre-reboot* statement that Surface sign-in had not been tested. Do **not** generalize to Leno, multiple cycles, sleep/resume, network loss, signing/trust or clean installation.
 
 Source: [Surface acceptance record](../release/SURFACE_PRIVATE_PORT443_ACCEPTANCE_20261101.md) and [machine-readable provenance](../release/windows-private-candidate-20261101.json). No Tetherplane config, Windows security policy, OAuth, credential, or scheduled-task settings were changed during this validation.
+
+## Follow-up acceptance: Leno real reboot and Windows logon — PASS (2026-11-01)
+
+The owner restarted Leno normally, signed in, then requested live connectivity verification. The existing authorized Tetherplane app returned `device.status(Leno)` as **authenticated, ready, background_only**, and independently confirmed Surface was still authenticated and ready.
+
+A subsequent **read-only** Windows inspection on Leno established:
+
+- Windows boot: **2026-11-01 13:27:12.500 UTC** (17:27:12.500 Dubai).
+- Native Task Scheduler Operational **Event ID 119** logged a **logon trigger** for `Tetherplane Private Agent NoConsole 20261101` at **13:27:25.272 UTC**. Event IDs **129, 100 and 200** followed near **13:27:25.278 UTC**, corroborating process/task/action start.
+- Exactly **one** live `tetherd-agentw.exe`, PID **8120**, created **13:27:25.276 UTC** after boot; no old `tetherd.exe`. Executable path: `%LOCALAPPDATA%\Programs\TetherplanePrivateNoConsole-20261101\bin\tetherd-agentw.exe`.
+- Exact SHA-256: `411e0f07f32ca3e6cf69a5ca53f3995e268946df419600bf0c807d737d00895c`, matching the independently recorded private build and Surface candidate.
+- Established TCP socket to remote **443**, task **Running** with enabled logon trigger and `MultipleInstances=IgnoreNew`; old `Tetherplane Private Agent 20261101` **Disabled**.
+- Real post-reboot non-PTY PowerShell command returned **`NO_CONSOLE_WINDOW`**, exit code **0**. Restricted `device.help` returned expected **`permission_denied`**, without any grant or policy change.
+- Boot-to-process start was approximately **13 seconds**. No timestamp for first authenticated ready was captured; **do not represent this as time-to-ready**. Visible screen flashes during initial logon were not independently observed or ruled out.
+
+**Residual tasks (read-only inspection):** `Tetherplane Emergency Relay` uses a separate `pythonw.exe` task and was Running; it is not a duplicate `tetherd` agent and was left untouched. Two old canary rollback tasks (`Tetherplane Leno Canary Rollback` and `Tetherplane Leno Canary Rollback V2`) remain **Ready** with past one-time time triggers (October 23) and `StartWhenAvailable=true`; they did not interrupt this restart, but merit a scoped, non-disruptive review before any automated upgrade or rollback claim. Neither was disabled or otherwise changed.
+
+**Result:** Both **Leno and Surface** have now **independently passed one real reboot/logon** with automatic GUI-subsystem agent startup, single-agent enforcement, authenticated port-443 connectivity, a successful non-PTY no-console command, and an expected denied capability. The **multi-device repeated-reboot**, unattended failure recovery, sleep/wake, Windows signing/Smart App Control trust and clean-install gates remain **open**.
+
+References: [Leno acceptance record](../release/WINDOWS_PRIVATE_ACCEPTANCE_20261101.md), [Surface acceptance record](../release/SURFACE_PRIVATE_PORT443_ACCEPTANCE_20261101.md) and [release evidence manifest](../release/windows-private-candidate-20261101.json). No agent, scheduled task, credential, identity or security setting was modified to perform this Leno verification.
