@@ -31,7 +31,7 @@ This document records **released** versions separately from **unreleased/private
 - Browser provider remains unavailable on Leno. Browser extension enrollment/active profile and trusted native browser launcher require separate authorized acceptance.
 - Tailscale reported an offline `NoState` backend and historical service crashes; its root cause and repair are unverified.
 - No clean-machine installer trial, reliable reboot/logon/sleep/wake recovery trial, four-device authenticated acceptance, verified unauthorized-denial matrix, or distributable signing/trust validation exists for this candidate.
-- The repository lacks approved bundled official logo/icon assets. The owner-approved crimson-and-black artwork must be recovered **as original bytes**, checked for provenance/geometry, bundled, and validated in the actual plugin and installer. Synthetic placeholder artwork is not an approved substitute.
+- The repository lacks approved bundled official logo/icon assets. The owner has now supplied **four approved monochrome source images**, with original SHA-256 values recorded in [the branding gate](docs/branding/ICON_DISTRIBUTION_GATE.md). Derived icon assets are prepared but are **not yet embedded in the repository or installed plugin**; packaging and host-display acceptance remain outstanding.
 - Cross-host icon presentation cannot be guaranteed for clients that hide or do not implement icons.
 
 **Release decision:** **NO-GO for general availability.** Propose a separately verified version (for example `v0.1.1`) only after the release gates pass and the owner explicitly authorizes tagging and publishing. Do not retroactively attach these unreleased changes to the old `v0.1.0` release.
