@@ -38,6 +38,7 @@ pub(crate) struct RelayConfig {
     pub reconnect_delay: Duration,
 }
 
+#[derive(Debug)]
 enum RelayFailure {
     Fatal(String),
     Retryable(String),
