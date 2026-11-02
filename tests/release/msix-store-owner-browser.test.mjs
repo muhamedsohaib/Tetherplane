@@ -6,7 +6,8 @@ import { join } from "node:path";
 import test from "node:test";
 import {
   validateOwnerExtensionId, assertPackagedBrowserAssets,
-  readOwnerBrowserEnrollment, enrollOwnerBrowser, ownerBrowserAgentArgs
+  readOwnerBrowserEnrollment, enrollOwnerBrowser, ownerBrowserAgentArgs,
+  revokeOwnerBrowser, isOwnerBrowserRevoked
 } from "../../packaging/msix-store-runtime/app/browser-owner.mjs";
 import { persistApprovedConfig, createWizard } from "../../packaging/msix-store-runtime/app/runtime-app.mjs";
 
@@ -214,4 +215,120 @@ test("Store wizard requires separate device and browser owner approvals", async 
   assert.doesNotMatch(JSON.stringify({firstAgent, enrolled, second, host, stop}),
     new RegExp(actualSecret));
   await action(wizard, "/api/stop", {});
+});
+
+test("owner revocation invalidates a running host without stopping the device", async t => {
+  const f = await fixture(t);
+  await enrollOwnerBrowser(f.stateRoot, f.packageRoot, fakeId);
+  const agentArgs = [];
+  const agentChildren = [];
+  const browserChildren = [];
+  const wizard = await createWizard({
+    stateRoot: f.stateRoot, packageRoot: f.packageRoot,
+    spawnAgent: (_program, args) => {
+      agentArgs.push(args);
+      const child = processStub();
+      agentChildren.push(child);
+      return child;
+    },
+    spawnBrowserHost: () => {
+      const child = processStub();
+      browserChildren.push(child);
+      return child;
+    }
+  });
+  t.after(() => wizard.close());
+
+  assert.equal((await action(wizard, "/api/start", {
+    confirmation: "I APPROVED THIS DEVICE"
+  })).status, 200);
+  assert.equal(agentChildren.length, 1);
+  assert.equal(agentArgs[0].includes("--browser-bridge"), true);
+  assert.equal((await action(wizard, "/api/browser/start", {
+    confirmation: "I AUTHORIZE LOCAL BROWSER HOST"
+  })).status, 200);
+  assert.equal(browserChildren.length, 1);
+  assert.equal(browserChildren[0].exitCode, null);
+
+  assert.equal((await action(wizard, "/api/browser/revoke", {
+    confirmation: "I REVOKE THIS BROWSER"
+  }, { origin: "https://forged.example" })).status, 403);
+  assert.equal((await action(wizard, "/api/browser/revoke", {
+    confirmation: "incorrect"
+  })).status, 400);
+  assert.equal(await isOwnerBrowserRevoked(f.stateRoot), false);
+
+  const before = await readFile(join(f.stateRoot, "device-credential.txt"), "utf8");
+  const revoked = await action(wizard, "/api/browser/revoke", {
+    confirmation: "I REVOKE THIS BROWSER"
+  });
+  assert.equal(revoked.status, 200);
+  assert.equal(revoked.json.revoked, true);
+  assert.equal(revoked.json.credentialFilesRemoved, true);
+  assert.equal(revoked.json.connected, "not_verified");
+  assert.equal(await isOwnerBrowserRevoked(f.stateRoot), true);
+  assert.equal(wizard.state.browserState, "revoked");
+  for (const name of [
+    "browser-bridge.token", "browser-extension-launch.token", "browser-extension.id"
+  ]) {
+    await assert.rejects(() => readFile(join(f.stateRoot, name), "utf8"),
+      { code: "ENOENT" });
+  }
+  assert.equal(await readFile(join(f.stateRoot, "device-credential.txt"), "utf8"), before);
+  assert.equal(agentChildren[0].exitCode, null,
+    "owner revocation may not terminate the authenticated device core");
+  assert.equal(browserChildren[0].exitCode, 0,
+    "wizard-owned browser host must be stopped");
+  assert.equal((await action(wizard, "/api/browser/start", {
+    confirmation: "I AUTHORIZE LOCAL BROWSER HOST"
+  })).status, 400);
+  await assert.rejects(() => enrollOwnerBrowser(f.stateRoot, f.packageRoot, fakeId),
+    /revoked browser enrollment requires manual owner recovery/);
+  assert.deepEqual(await revokeOwnerBrowser(f.stateRoot), {
+    revoked: true, alreadyRevoked: true, credentialFilesRemoved: false
+  });
+
+  assert.equal((await action(wizard, "/api/stop", {})).status, 200);
+  assert.equal((await action(wizard, "/api/start", {
+    confirmation: "I APPROVED THIS DEVICE"
+  })).status, 200);
+  assert.equal(agentArgs.length, 2);
+  assert.equal(wizard.state.browserState, "revoked",
+    "a device restart must not hide the owner revocation state");
+  assert.equal(agentArgs[1].includes("--browser-bridge"), false,
+    "after revocation core must restart with no browser capability");
+  await action(wizard, "/api/stop", {});
+});
+
+test("revocation survives owner setup restart and does not erase device identity", async t => {
+  const f = await fixture(t);
+  await enrollOwnerBrowser(f.stateRoot, f.packageRoot, fakeId);
+  const previous = await readFile(join(f.stateRoot, "device-credential.txt"), "utf8");
+  assert.equal((await revokeOwnerBrowser(f.stateRoot)).revoked, true);
+  const wizard = await createWizard({ stateRoot: f.stateRoot, packageRoot: f.packageRoot });
+  t.after(() => wizard.close());
+  assert.equal(wizard.state.browserState, "revoked");
+  assert.equal((await action(wizard, "/api/browser/enroll", {
+    extensionId: fakeId, confirmation: "I AUTHORIZE THIS BROWSER EXTENSION"
+  })).status, 400);
+  assert.equal(await readFile(join(f.stateRoot, "device-credential.txt"), "utf8"), previous);
+  const marker = await readFile(join(f.stateRoot, "browser-enrollment.revoked"), "utf8");
+  assert.equal(marker, "revoked\\n".replace("\\n", "\n"));
+});
+
+test("revoke on an unenrolled device is a safe no-op, not permanent lockout", async t => {
+  const f = await fixture(t);
+  const wizard = await createWizard({ stateRoot: f.stateRoot, packageRoot: f.packageRoot });
+  t.after(() => wizard.close());
+  const result = await action(wizard, "/api/browser/revoke", {
+    confirmation: "I REVOKE THIS BROWSER"
+  });
+  assert.equal(result.status, 200);
+  assert.equal(result.json.revoked, false);
+  assert.equal(wizard.state.browserState, "not_enrolled");
+  assert.equal(await isOwnerBrowserRevoked(f.stateRoot), false);
+  assert.equal(await readOwnerBrowserEnrollment(f.stateRoot), null);
+  assert.deepEqual(await enrollOwnerBrowser(f.stateRoot, f.packageRoot, fakeId), {
+    enrolled: true, requiresExtensionPairing: true
+  });
 });

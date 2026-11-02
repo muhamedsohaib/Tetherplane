@@ -1,5 +1,7 @@
 import path from "node:path";
 import process from "node:process";
+import { readFileSync } from "node:fs";
+import { assertBrowserNotRevoked } from "../browser/bridge/src/revocation.ts";
 import {
   mkdir,
   readFile,
@@ -31,6 +33,9 @@ const extensionTokenFile =
 const pinnedExtensionIdFile =
   process.env.TETHERPLANE_EXTENSION_ID_FILE ??
   path.join(root, "browser-extension.id");
+const revocationMarkerFile = path.join(
+  path.dirname(agentTokenFile), "browser-enrollment.revoked",
+);
 
 const rpcPort = portFromEnv(
   "TETHERPLANE_AUTH_BROWSER_RPC_PORT",
@@ -46,6 +51,7 @@ const extensionPort = portFromEnv(
 );
 
 await mkdir(root, { recursive: true });
+assertBrowserNotRevoked(revocationMarkerFile);
 
 const agentToken = await readSecret(
   agentTokenFile,
@@ -57,9 +63,26 @@ const extensionToken = await readSecret(
 );
 // Do not open even a loopback pairing socket until the owner has selected
 // and pinned the *specific* Chrome extension in their own local context.
-if (!(await readPinnedExtensionId(pinnedExtensionIdFile))) {
+const initialPinnedExtensionId = await readPinnedExtensionId(pinnedExtensionIdFile);
+if (!initialPinnedExtensionId) {
   throw new Error("owner-pinned extension ID is required before browser pairing");
 }
+const assertLiveOwnerEnrollment = (): void => {
+  assertBrowserNotRevoked(revocationMarkerFile);
+  try {
+    if (
+      readFileSync(agentTokenFile, "utf8").trim() !== agentToken ||
+      readFileSync(extensionTokenFile, "utf8").trim() !== extensionToken ||
+      readFileSync(pinnedExtensionIdFile, "utf8").trim() !== initialPinnedExtensionId
+    ) {
+      throw new Error("Browser enrollment credentials changed.");
+    }
+  } catch {
+    throw Object.assign(new Error("browser owner authorization revoked"), {
+      code: "permission_denied",
+    });
+  }
+};
 
 const extensionServer =
   await startExtensionBridgeServer({
@@ -86,6 +109,14 @@ const requestStop = (): void => {
   stopping = true;
   resolveStop();
 };
+
+// Shutdown eventually closes pairing and extension connections. The RPC
+// request gate independently denies every new operation immediately after
+// the owner marker is created, including sessions with cached tokens.
+const revocationWatch = setInterval(() => {
+  try { assertLiveOwnerEnrollment(); } catch { requestStop(); }
+}, 150);
+revocationWatch.unref();
 
 process.once("SIGINT", requestStop);
 process.once("SIGTERM", requestStop);
@@ -164,6 +195,7 @@ try {
       token: agentToken,
       host: "127.0.0.1",
       port: rpcPort,
+      authorizeRequest: assertLiveOwnerEnrollment,
     });
 
     process.stdout.write(
@@ -185,6 +217,7 @@ try {
     }
   }
 } finally {
+  clearInterval(revocationWatch);
   await browserRpc?.close().catch(() => undefined);
   await pairingBroker?.close().catch(() => undefined);
   await extensionServer.close().catch(() => undefined);

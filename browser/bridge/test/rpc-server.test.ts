@@ -1,6 +1,10 @@
 import assert from "node:assert/strict";
 import net from "node:net";
 import test from "node:test";
+import { mkdtemp, rm, writeFile } from "node:fs/promises";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
+import { assertBrowserNotRevoked } from "../src/revocation.ts";
 
 import {
   BrowserBridgeService,
@@ -59,6 +63,46 @@ async function rpc(address: string, request: Record<string, unknown>) {
     socket.on("error", reject);
   });
 }
+
+test("owner revocation denies cached credentials for both handshake and mutation RPC", async (t) => {
+  const ownerRoot = await mkdtemp(join(tmpdir(), "tp-live-revocation-"));
+  t.after(() => rm(ownerRoot, { recursive: true, force: true }));
+  const marker = join(ownerRoot, "browser-enrollment.revoked");
+  const backend = new FakeBackend();
+  const server = await startBrowserRpcServer({
+    host: "127.0.0.1",
+    token: "cached-agent-auth-token",
+    port: 0,
+    service: new BrowserBridgeService({ backend }),
+    authorizeRequest: () => assertBrowserNotRevoked(marker),
+  });
+  try {
+    const handshake = () => rpc(server.address, {
+      type: "handshake", request_id: "live-owner-handshake",
+      token: "cached-agent-auth-token",
+    });
+    const createTab = () => rpc(server.address, {
+      type: "invoke", request_id: "create-after-revoke",
+      token: "cached-agent-auth-token",
+      capability: "browser.create_tab",
+      arguments: { url: "https://approved.example" },
+    });
+    assert.equal((await handshake()).status, "success");
+    assert.equal((await createTab()).status, "success");
+    const count = backend.pagesState.length;
+    await writeFile(marker, "revoked\n", { flag: "wx" });
+    const deniedHandshake = await handshake();
+    const deniedMutation = await createTab();
+    assert.equal(deniedHandshake.status, "error");
+    assert.equal(deniedMutation.status, "error");
+    assert.equal((deniedHandshake.error as { code: string }).code, "permission_denied");
+    assert.equal((deniedMutation.error as { code: string }).code, "permission_denied");
+    assert.equal(backend.pagesState.length, count,
+      "a cached token must not mutate a page after owner revocation");
+  } finally {
+    await server.close();
+  }
+});
 
 test("RPC handshake authenticates and reports actual operations", async () => {
   const backend = new FakeBackend();

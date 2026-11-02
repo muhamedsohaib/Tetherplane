@@ -8,7 +8,7 @@ import { dirname, isAbsolute, join, resolve } from "node:path";
 import { initializeCredentialDirectory, assertPrivateCredentialState } from "./state-security.mjs";
 import {
   assertPackagedBrowserAssets, enrollOwnerBrowser, readOwnerBrowserEnrollment,
-  ownerBrowserAgentArgs
+  ownerBrowserAgentArgs, isOwnerBrowserRevoked, revokeOwnerBrowser
 } from "./browser-owner.mjs";
 
 const appDirectory = dirname(fileURLToPath(import.meta.url));
@@ -249,7 +249,10 @@ export async function createWizard(options = {}) {
   if (saved) {
     try {
       if (await readOwnerBrowserEnrollment(stateRoot)) current.browserState = "enrolled_host_not_verified";
-    } catch { current.browserState = "needs_owner_review"; }
+    } catch {
+      current.browserState = (await isOwnerBrowserRevoked(stateRoot).catch(() => false))
+        ? "revoked" : "needs_owner_review";
+    }
   }
   const server = createServer(async (req, res) => {
     try {
@@ -298,6 +301,30 @@ export async function createWizard(options = {}) {
         current.browserState = "enrolled_host_not_verified";
         return send(res, 200, { enrolled: true, connected: "not_verified" });
       }
+      if (url.pathname === "/api/browser/revoke") {
+        if (!saved) throw new Error("No approved device identity exists.");
+        if (body.confirmation !== "I REVOKE THIS BROWSER")
+          throw new Error("Explicit owner browser revocation confirmation required.");
+        let revoked;
+        try {
+          revoked = await revokeOwnerBrowser(stateRoot);
+        } catch {
+          current.browserState = "needs_owner_review";
+          throw new Error("Browser access blocked; manual credential cleanup may be needed.");
+        }
+        if (!revoked.revoked) {
+          current.browserState = "not_enrolled";
+          return send(res, 200, { ...revoked, connected: "not_verified" });
+        }
+        current.browserState = "revoked";
+        // The marker and removal of tokens deny even a separately supervised
+        // host. Killing a wizard-owned host is additional cleanup, not the
+        // security boundary. The authenticated core agent stays running.
+        if (current.browserHost && current.browserHost.exitCode === null)
+          current.browserHost.kill();
+        current.browserHost = null;
+        return send(res, 200, { ...revoked, connected: "not_verified" });
+      }
       if (url.pathname === "/api/browser/start") {
         if (!saved || !current.agent || current.agent.exitCode !== null)
           throw new Error("Start the already-approved device agent before starting the browser host.");
@@ -317,12 +344,12 @@ export async function createWizard(options = {}) {
         child.once("error", () => {
           if (current.browserHost !== child) return;
           current.browserHost = null;
-          current.browserState = "host_failed";
+          if (current.browserState !== "revoked") current.browserState = "host_failed";
         });
         child.once("exit", () => {
           if (current.browserHost !== child) return;
           current.browserHost = null;
-          current.browserState = "host_stopped";
+          if (current.browserState !== "revoked") current.browserState = "host_stopped";
         });
         return send(res, 200, { state: current.browserState, connected: "not_verified" });
       }
@@ -332,7 +359,7 @@ export async function createWizard(options = {}) {
         if (current.browserHost && current.browserHost.exitCode === null)
           current.browserHost.kill();
         current.browserHost = null;
-        current.browserState = "host_stopped";
+        if (current.browserState !== "revoked") current.browserState = "host_stopped";
         return send(res, 200, { state: current.browserState });
       }
       if (url.pathname === "/api/pair") {
@@ -385,7 +412,8 @@ export async function createWizard(options = {}) {
           }
         } catch {
           // A broken optional browser must never take the authenticated core offline.
-          current.browserState = "needs_owner_review";
+          current.browserState = (await isOwnerBrowserRevoked(stateRoot).catch(() => false))
+            ? "revoked" : "needs_owner_review";
         }
         await mkdir(join(stateRoot, "agent-state"), { recursive: true, mode: 0o700 });
         const child = spawnAgent(executable, args, { cwd: stateRoot, windowsHide: true, stdio: ["ignore", "ignore", "pipe"] });

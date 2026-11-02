@@ -63,6 +63,16 @@ document.getElementById("stopBrowserHost").addEventListener("click", async () =>
     document.getElementById("browserStatus").textContent = r.state;
   } catch(error) { showError(error); }
 });
+document.getElementById("revokeBrowser").addEventListener("click", async () => {
+  feedback.textContent = "";
+  if (!window.confirm("Revoke all access from this browser, invalidate its saved tokens and require manual owner recovery? Device connectivity stays active.")) return;
+  try {
+    const r = await call("/api/browser/revoke", { confirmation: "I REVOKE THIS BROWSER" });
+    document.getElementById("browserStatus").textContent = r.revoked
+      ? "Revoked. Saved browser credentials invalidated; device identity preserved."
+      : "Browser access was not enrolled.";
+  } catch(error) { showError(error); }
+});
 async function refresh() {
   try {
     const r = await call("/api/status", null, "GET");

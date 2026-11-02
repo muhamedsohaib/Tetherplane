@@ -8,6 +8,7 @@ import { promisify } from "node:util";
 import { assertPrivateCredentialState } from "./state-security.mjs";
 
 const execFile = promisify(callbackExecFile);
+const REVOCATION_MARKER = "browser-enrollment.revoked";
 const NAMES = Object.freeze([
   "browser-bridge.token",
   "browser-extension-launch.token",
@@ -100,7 +101,75 @@ async function checkBrowserFileAccess(paths) {
   }
 }
 
+export async function isOwnerBrowserRevoked(stateRoot) {
+  const marker = join(stateRoot, REVOCATION_MARKER);
+  try {
+    const entry = await lstat(marker);
+    if (!entry.isFile() || entry.isSymbolicLink()) throw new Error("Invalid revocation marker.");
+    await checkBrowserFileAccess([marker]);
+    return true;
+  } catch (error) {
+    if (error?.code === "ENOENT") return false;
+    throw new Error("Browser revocation state needs owner review.");
+  }
+}
+
+// Create the durable denial FIRST. An already-running host must check
+// this marker before every authenticated RPC, not merely on startup.
+export async function revokeOwnerBrowser(stateRoot) {
+  await assertPrivateCredentialState(stateRoot);
+  if (await isOwnerBrowserRevoked(stateRoot)) {
+    return { revoked: true, alreadyRevoked: true, credentialFilesRemoved: false };
+  }
+  // An unenrolled owner must not be permanently locked out by accidentally
+  // pressing Revoke. Partially present state is still marked revoked.
+  let hasBrowserState = false;
+  for (const name of NAMES) {
+    try {
+      await lstat(join(stateRoot, name));
+      hasBrowserState = true;
+      break;
+    } catch (error) {
+      if (error?.code !== "ENOENT") throw new Error("Browser state needs owner review.");
+    }
+  }
+  if (!hasBrowserState) {
+    return { revoked: false, alreadyRevoked: false, credentialFilesRemoved: false };
+  }
+  const marker = join(stateRoot, REVOCATION_MARKER);
+  await writeFile(marker, "revoked\n", { flag: "wx", mode: 0o600 });
+  // Never roll back the denial marker after it has been created.
+  await checkBrowserFileAccess([marker]);
+  const existing = [];
+  for (const name of NAMES) {
+    const file = join(stateRoot, name);
+    try {
+      await regularFile(file);
+      existing.push(file);
+    } catch (error) {
+      if (error?.code !== "ENOENT") {
+        throw new Error("Browser revoked; credential cleanup needs owner review.");
+      }
+    }
+  }
+  if (existing.length) await checkBrowserFileAccess(existing);
+  // These are exactly the owner-approved browser credentials, never the
+  // separately paired device credential. A foreign file is never removed.
+  for (const file of existing) {
+    try { await unlink(file); }
+    catch { throw new Error("Browser revoked; credential cleanup needs owner review."); }
+  }
+  return {
+    revoked: true,
+    alreadyRevoked: false,
+    credentialFilesRemoved: existing.length === NAMES.length,
+  };
+}
+
 export async function readOwnerBrowserEnrollment(stateRoot) {
+  if (await isOwnerBrowserRevoked(stateRoot)) {
+    throw new Error("Browser enrollment revoked; manual owner recovery required.");
+  }
   const paths = NAMES.map(name => join(stateRoot, name));
   let present = 0;
   for (const path of paths) {
@@ -138,6 +207,9 @@ export function ownerBrowserAgentArgs(stateRoot) {
 }
 
 export async function enrollOwnerBrowser(stateRoot, packageRoot, extensionId) {
+  if (await isOwnerBrowserRevoked(stateRoot)) {
+    throw new Error("Previously revoked browser enrollment requires manual owner recovery.");
+  }
   const id = validateOwnerExtensionId(extensionId);
   await assertPrivateCredentialState(stateRoot);
   await assertPackagedBrowserAssets(packageRoot);

@@ -336,6 +336,7 @@ export async function startBrowserRpcServer(options: {
   token?: string;
   host?: string;
   port?: number;
+  authorizeRequest?: () => void;
 }): Promise<BrowserRpcServer> {
   const host = options.host ?? "127.0.0.1";
   if (
@@ -405,6 +406,7 @@ async function handleLine(
   options: {
     service: BrowserBridgeService;
     token?: string;
+    authorizeRequest?: () => void;
   },
 ): Promise<RpcResponse> {
   let request: RpcRequest;
@@ -431,6 +433,16 @@ async function handleLine(
       requestId,
       "permission_denied",
       "browser bridge authentication failed",
+    );
+  }
+
+  // Authentication tokens cached by a running host cannot override a
+  // subsequent explicit owner revocation. Check both handshake and invoke.
+  try {
+    options.authorizeRequest?.();
+  } catch {
+    return errorResponse(
+      requestId, "permission_denied", "browser owner authorization revoked",
     );
   }
 
