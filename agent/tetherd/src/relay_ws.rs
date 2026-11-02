@@ -845,10 +845,8 @@ mod tests {
         .expect("local WebSocket upgrade succeeded");
         let (sink, mut reader) = client.split();
         let writer = Arc::new(Mutex::new(sink));
-        let mut heartbeat = super::SocketHeartbeat::new(
-            Duration::from_millis(30),
-            Duration::from_millis(70),
-        );
+        let mut heartbeat =
+            super::SocketHeartbeat::new(Duration::from_millis(30), Duration::from_millis(70));
         let result = tokio::time::timeout(
             Duration::from_millis(1_400),
             super::read_with_heartbeat(&mut reader, &writer, &mut heartbeat),
