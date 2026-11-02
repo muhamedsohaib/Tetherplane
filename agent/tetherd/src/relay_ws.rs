@@ -11,6 +11,7 @@ use tether_core::{
     VerificationStatus,
 };
 use tokio::sync::{Mutex, Semaphore};
+use tokio::time::Instant;
 use tokio_tungstenite::connect_async;
 use tokio_tungstenite::tungstenite::client::IntoClientRequest;
 use tokio_tungstenite::tungstenite::http::header::AUTHORIZATION;
@@ -25,6 +26,9 @@ const MAX_IN_FLIGHT_WORK: usize = 16;
 const MAX_IN_FLIGHT_CONTROL: usize = 4;
 const READ_ONLY_EXECUTION_DEADLINE: Duration = Duration::from_secs(30);
 const WEBSOCKET_WRITE_DEADLINE: Duration = Duration::from_secs(2);
+const WEBSOCKET_CONNECT_DEADLINE: Duration = Duration::from_secs(20);
+const WEBSOCKET_IDLE_PING_AFTER: Duration = Duration::from_secs(25);
+const WEBSOCKET_PONG_DEADLINE: Duration = Duration::from_secs(15);
 
 pub(crate) struct RelayConfig {
     pub url: String,
@@ -131,18 +135,19 @@ async fn connect_and_run(
     request.headers_mut().insert(AUTHORIZATION, authorization);
     request.headers_mut().insert(DEVICE_ID_HEADER, device_id);
 
-    let (socket, _) = connect_async(request)
+    let (socket, _) = tokio::time::timeout(WEBSOCKET_CONNECT_DEADLINE, connect_async(request))
         .await
+        .map_err(|_| {
+            RelayFailure::Retryable("relay handshake exceeded connection deadline".into())
+        })?
         .map_err(|error| classify_connect_error(&error))?;
 
     // Execution never owns the socket reader. A blocked provider must not
     // prevent independent status requests or WebSocket Ping from being read.
     let (writer, mut reader) = socket.split();
     let writer = Arc::new(Mutex::new(writer));
-    while let Some(next) = reader.next().await {
-        let message = next.map_err(|error| {
-            RelayFailure::Retryable(format!("websocket receive failed: {error}"))
-        })?;
+    let mut heartbeat = SocketHeartbeat::new(WEBSOCKET_IDLE_PING_AFTER, WEBSOCKET_PONG_DEADLINE);
+    while let Some(message) = read_with_heartbeat(&mut reader, &writer, &mut heartbeat).await? {
         match message {
             Message::Text(text) => {
                 let inbound =
@@ -214,6 +219,97 @@ async fn connect_and_run(
     }
 
     Ok(())
+}
+
+struct SocketHeartbeat {
+    last_received: Instant,
+    pending_ping: Option<([u8; 8], Instant)>,
+    next_ping_id: u64,
+    idle_after: Duration,
+    pong_deadline: Duration,
+}
+
+impl SocketHeartbeat {
+    fn new(idle_after: Duration, pong_deadline: Duration) -> Self {
+        Self {
+            last_received: Instant::now(),
+            pending_ping: None,
+            next_ping_id: 1,
+            idle_after,
+            pong_deadline,
+        }
+    }
+
+    fn next_deadline(&self) -> Instant {
+        self.pending_ping
+            .as_ref()
+            .map_or(self.last_received + self.idle_after, |(_, deadline)| {
+                *deadline
+            })
+    }
+
+    fn observe(&mut self, message: &Message) {
+        self.last_received = Instant::now();
+        if let Message::Pong(payload) = message
+            && self
+                .pending_ping
+                .as_ref()
+                .is_some_and(|(expected, _)| payload.as_ref() == expected.as_slice())
+        {
+            self.pending_ping = None;
+        }
+    }
+
+    fn begin_ping(&mut self) -> [u8; 8] {
+        let payload = self.next_ping_id.to_be_bytes();
+        self.next_ping_id = self.next_ping_id.wrapping_add(1);
+        self.pending_ping = Some((payload, Instant::now() + self.pong_deadline));
+        payload
+    }
+}
+
+// An established TCP socket may remain half-open after WAN or Funnel changes.
+// A solicited, matching WebSocket Pong is the liveness proof; unrelated
+// invocations or unsolicited Pong frames cannot mask a dead connection.
+// The reader is never held hostage by a provider operation or a socket writer.
+async fn read_with_heartbeat<R, S>(
+    reader: &mut R,
+    writer: &Arc<Mutex<S>>,
+    heartbeat: &mut SocketHeartbeat,
+) -> Result<Option<Message>, RelayFailure>
+where
+    R: futures_util::Stream<Item = Result<Message, WebSocketError>> + Unpin,
+    S: Sink<Message> + Unpin,
+    S::Error: std::fmt::Display,
+{
+    loop {
+        match tokio::time::timeout_at(heartbeat.next_deadline(), reader.next()).await {
+            Ok(Some(Ok(message))) => {
+                heartbeat.observe(&message);
+                return Ok(Some(message));
+            }
+            Ok(Some(Err(error))) => {
+                return Err(RelayFailure::Retryable(format!(
+                    "websocket receive failed: {error}"
+                )));
+            }
+            Ok(None) => return Ok(None),
+            Err(_) if heartbeat.pending_ping.is_some() => {
+                return Err(RelayFailure::Retryable(
+                    "websocket heartbeat Pong deadline exceeded".into(),
+                ));
+            }
+            Err(_) => {
+                let payload = heartbeat.begin_ping();
+                pong_with_deadline(
+                    writer,
+                    Message::Ping(payload.to_vec().into()),
+                    WEBSOCKET_WRITE_DEADLINE,
+                )
+                .await?;
+            }
+        }
+    }
 }
 
 // A stuck transport must not hold the sole reader or the shared writer lock
@@ -715,6 +811,142 @@ mod tests {
             writer.try_lock().is_ok(),
             "pong timeout must release sink lock"
         );
+    }
+
+    #[tokio::test]
+    async fn silent_half_open_socket_sends_ping_then_reconnects_after_missing_pong() {
+        use futures_util::{sink, stream};
+        use std::sync::Arc;
+        use std::time::Duration;
+        use tokio::sync::Mutex;
+        use tokio_tungstenite::tungstenite::{Error as WebSocketError, Message};
+
+        let (sender, mut outbound) = tokio::sync::mpsc::channel(4);
+        let sink = sink::unfold(sender, |sender, frame| async move {
+            sender.send(frame).await.map_err(std::io::Error::other)?;
+            Ok::<_, std::io::Error>(sender)
+        });
+        let writer = Arc::new(Mutex::new(Box::pin(sink)));
+        let pending = tokio::spawn(async move {
+            let mut reader = Box::pin(stream::pending::<Result<Message, WebSocketError>>());
+            let mut heartbeat =
+                super::SocketHeartbeat::new(Duration::from_millis(15), Duration::from_millis(25));
+            super::read_with_heartbeat(&mut reader, &writer, &mut heartbeat).await
+        });
+        let frame = tokio::time::timeout(Duration::from_millis(200), outbound.recv())
+            .await
+            .expect("heartbeat must be sent")
+            .expect("heartbeat sink closed");
+        assert!(matches!(frame, Message::Ping(_)));
+        let result = tokio::time::timeout(Duration::from_millis(250), pending)
+            .await
+            .expect("stale connection must not block forever")
+            .expect("heartbeat test task panicked");
+        assert!(matches!(
+            result,
+            Err(super::RelayFailure::Retryable(reason)) if reason.contains("Pong deadline")
+        ));
+    }
+
+    #[tokio::test]
+    async fn matching_pong_preserves_live_socket_without_forcing_reconnect() {
+        use futures_util::{sink, stream};
+        use std::sync::Arc;
+        use std::time::Duration;
+        use tokio::sync::Mutex;
+        use tokio_tungstenite::tungstenite::{Error as WebSocketError, Message};
+
+        let (sender, mut outbound) = tokio::sync::mpsc::channel(4);
+        let sink = sink::unfold(sender, |sender, frame| async move {
+            sender.send(frame).await.map_err(std::io::Error::other)?;
+            Ok::<_, std::io::Error>(sender)
+        });
+        let writer = Arc::new(Mutex::new(Box::pin(sink)));
+        let (incoming, receiver) = tokio::sync::mpsc::channel::<Result<Message, WebSocketError>>(4);
+        let test = tokio::spawn(async move {
+            let mut reader = Box::pin(stream::unfold(receiver, |mut receiver| async move {
+                receiver.recv().await.map(|frame| (frame, receiver))
+            }));
+            let mut heartbeat =
+                super::SocketHeartbeat::new(Duration::from_millis(15), Duration::from_millis(80));
+            let first = super::read_with_heartbeat(&mut reader, &writer, &mut heartbeat)
+                .await
+                .expect("matching Pong must not disconnect")
+                .expect("Pong frame missing");
+            assert!(matches!(first, Message::Pong(_)));
+            assert!(
+                heartbeat.pending_ping.is_none(),
+                "matching Pong must clear deadline"
+            );
+            let second = super::read_with_heartbeat(&mut reader, &writer, &mut heartbeat)
+                .await
+                .expect("healthy socket must remain readable")
+                .expect("message missing");
+            assert!(matches!(second, Message::Text(_)));
+        });
+        let sent = tokio::time::timeout(Duration::from_millis(200), outbound.recv())
+            .await
+            .expect("ping missing")
+            .expect("sink disconnected");
+        let Message::Ping(payload) = sent else {
+            panic!("expected Ping");
+        };
+        incoming.send(Ok(Message::Pong(payload))).await.unwrap();
+        incoming
+            .send(Ok(Message::Text("alive".into())))
+            .await
+            .unwrap();
+        tokio::time::timeout(Duration::from_millis(250), test)
+            .await
+            .expect("live socket test timed out")
+            .expect("live socket test failed");
+    }
+
+    #[tokio::test]
+    async fn unrelated_traffic_cannot_disguise_missing_pong() {
+        use futures_util::{sink, stream};
+        use std::sync::Arc;
+        use std::time::Duration;
+        use tokio::sync::Mutex;
+        use tokio_tungstenite::tungstenite::{Error as WebSocketError, Message};
+
+        let (sender, mut outbound) = tokio::sync::mpsc::channel(4);
+        let sink = sink::unfold(sender, |sender, frame| async move {
+            sender.send(frame).await.map_err(std::io::Error::other)?;
+            Ok::<_, std::io::Error>(sender)
+        });
+        let writer = Arc::new(Mutex::new(Box::pin(sink)));
+        let (incoming, receiver) = tokio::sync::mpsc::channel::<Result<Message, WebSocketError>>(4);
+        let task = tokio::spawn(async move {
+            let mut reader = Box::pin(stream::unfold(receiver, |mut receiver| async move {
+                receiver.recv().await.map(|frame| (frame, receiver))
+            }));
+            let mut heartbeat =
+                super::SocketHeartbeat::new(Duration::from_millis(15), Duration::from_millis(40));
+            let first = super::read_with_heartbeat(&mut reader, &writer, &mut heartbeat)
+                .await
+                .expect("message should arrive")
+                .expect("message missing");
+            assert!(matches!(first, Message::Text(_)));
+            super::read_with_heartbeat(&mut reader, &writer, &mut heartbeat).await
+        });
+        let first = tokio::time::timeout(Duration::from_millis(200), outbound.recv())
+            .await
+            .expect("ping was never sent")
+            .expect("no Ping frame");
+        assert!(matches!(first, Message::Ping(_)));
+        incoming
+            .send(Ok(Message::Text("unrelated".into())))
+            .await
+            .unwrap();
+        let outcome = tokio::time::timeout(Duration::from_millis(250), task)
+            .await
+            .expect("missing Pong must expire despite unrelated frames")
+            .expect("task failed");
+        assert!(matches!(
+            outcome,
+            Err(super::RelayFailure::Retryable(reason)) if reason.contains("Pong deadline")
+        ));
     }
 
     #[test]
