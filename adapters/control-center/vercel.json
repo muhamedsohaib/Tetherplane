@@ -28,7 +28,10 @@
       "test/release-origin-bound-human-grants-20261029": false,
       "fix/browser-owner-grants-integrated-20261101": false,
       "fix/relay-stale-websocket-recovery-20261102": false,
-      "test/real-websocket-heartbeat-20261102": false
+      "test/real-websocket-heartbeat-20261102": false,
+      "test/windows-portable-chromium-acceptance-20261102": false,
+      "review/win11-browser-relay-integration-20261102": false,
+      "review/win11-store-browser-no-vpn-20261102": false
     }
   },
   "$schema": "https://openapi.vercel.sh/vercel.json"

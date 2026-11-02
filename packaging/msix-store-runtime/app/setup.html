@@ -39,6 +39,22 @@
        reopen Tetherplane. Do not change Windows security settings to force a connection.</p>
   </section>
   <section><h2>Agent</h2><p id="status">Not started</p><button id="stop">Stop this session's agent</button></section>
+  <section id="browser" hidden aria-label="Optional owner browser enrollment">
+    <h2>Optional — connect an owner-approved browser extension</h2>
+    <p>First load Tetherplane's packaged unpacked extension using your browser's extension manager.
+      Confirm its actual ID. Browser access is off until you explicitly enroll this ID,
+      pair the local extension and approve individual tabs and origins. Other tabs remain private.</p>
+    <label>Installed extension ID <input id="extensionId" pattern="[a-p]{32}" autocomplete="off"></label>
+    <button type="button" id="enrollBrowser">Enroll this browser extension (agent must be stopped)</button>
+    <p>After enrollment, restart the approved agent and choose Start browser host.
+      Pair the extension locally using its protected owner-only launch token.
+      No browser grants are created by this setup step.</p>
+    <button type="button" id="startBrowserHost">Start browser host (manual opt-in)</button>
+    <button type="button" id="stopBrowserHost">Stop browser host</button>
+    <p id="browserStatus">Browser access not enrolled.</p>
+    <p>The browser host is not added to Windows Startup by this wizard.
+      Core device connectivity works independently if browser enrollment is missing or invalid.</p>
+  </section>
   <section id="startup" aria-label="Optional startup control">
     <h2>Optional — reconnect after Windows sign-in</h2>
     <p>After the device owner has verified an authenticated <code>device.status</code>,

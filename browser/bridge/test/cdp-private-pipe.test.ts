@@ -16,7 +16,7 @@ test("private CDP pipe drives owned Browser Lab tab without a TCP debugger", {
   timeout: 70_000,
   skip: process.platform !== "win32",
 }, async () => {
-  const chrome = "C:\\Program Files\\Google\\Chrome\\Application\\chrome.exe";
+  const chrome = process.env.TETHERPLANE_CHROMIUM ?? "C:\\Program Files\\Google\\Chrome\\Application\\chrome.exe";
   assert.ok(existsSync(chrome), "Windows Chrome is required for this test");
   const lab = await startBrowserLab();
   let profileDir: string | null = null;
