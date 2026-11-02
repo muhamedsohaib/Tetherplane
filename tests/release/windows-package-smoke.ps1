@@ -93,6 +93,18 @@ try {
         }
     }
 
+    # Prove the actual release executables have no external VC++ redistributable
+    # imports. A nonzero exit must stop release packaging before install.
+    $peVerifier = Join-Path $PSScriptRoot "windows-native-runtime-imports.mjs"
+    & node $peVerifier (Join-Path $repo "target\release")
+    if ($LASTEXITCODE -ne 0) {
+        throw "RELEASE_NO_GO: one or more native release binaries require an external VC++ runtime"
+    }
+    & node $peVerifier (Join-Path $stage "bin") tetherd.exe tetherd-agentw.exe tetherplane-browserw.exe tetherplane-modelw.exe
+    if ($LASTEXITCODE -ne 0) {
+        throw "RELEASE_NO_GO: staged Windows executables require an external VC++ runtime"
+    }
+    Write-Output "WINDOWS_NATIVE_STATIC_CRT_PACKAGE_IMPORTS_OK"
     $manifestPath = Join-Path $stage "manifest.json"
     & node -e "JSON.parse(require('fs').readFileSync(process.argv[1], 'utf8'));" $manifestPath
     if ($LASTEXITCODE -ne 0) {
