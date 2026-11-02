@@ -1,7 +1,7 @@
 import path from "node:path";
 import process from "node:process";
 import { readFileSync } from "node:fs";
-import { assertBrowserNotRevoked } from "../browser/bridge/src/revocation.ts";
+import { assertBrowserNotRevoked, assertOwnerBackgroundOptIn } from "../browser/bridge/src/revocation.ts";
 import {
   mkdir,
   readFile,
@@ -36,6 +36,10 @@ const pinnedExtensionIdFile =
 const revocationMarkerFile = path.join(
   path.dirname(agentTokenFile), "browser-enrollment.revoked",
 );
+// Present only for an explicitly owner-approved background host launched by
+// the packaged logon supervisor. Manual, session-scoped hosts are unchanged.
+const backgroundOptInFile =
+  process.env.TETHERPLANE_BROWSER_BACKGROUND_OPTIN_FILE;
 
 const rpcPort = portFromEnv(
   "TETHERPLANE_AUTH_BROWSER_RPC_PORT",
@@ -50,8 +54,12 @@ const extensionPort = portFromEnv(
   17658,
 );
 
+const assertLiveBackgroundApproval = (): void =>
+  assertOwnerBackgroundOptIn(backgroundOptInFile);
+
 await mkdir(root, { recursive: true });
 assertBrowserNotRevoked(revocationMarkerFile);
+assertLiveBackgroundApproval();
 
 const agentToken = await readSecret(
   agentTokenFile,
@@ -69,6 +77,7 @@ if (!initialPinnedExtensionId) {
 }
 const assertLiveOwnerEnrollment = (): void => {
   assertBrowserNotRevoked(revocationMarkerFile);
+  assertLiveBackgroundApproval();
   try {
     if (
       readFileSync(agentTokenFile, "utf8").trim() !== agentToken ||

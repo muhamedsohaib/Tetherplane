@@ -8,7 +8,9 @@ import { dirname, isAbsolute, join, resolve } from "node:path";
 import { initializeCredentialDirectory, assertPrivateCredentialState } from "./state-security.mjs";
 import {
   assertPackagedBrowserAssets, enrollOwnerBrowser, readOwnerBrowserEnrollment,
-  ownerBrowserAgentArgs, isOwnerBrowserRevoked, revokeOwnerBrowser
+  ownerBrowserAgentArgs, isOwnerBrowserRevoked, revokeOwnerBrowser,
+  approveOwnerBrowserBackground, disableOwnerBrowserBackground,
+  readOwnerBrowserBackgroundOptIn
 } from "./browser-owner.mjs";
 
 const appDirectory = dirname(fileURLToPath(import.meta.url));
@@ -229,10 +231,12 @@ export async function createWizard(options = {}) {
   const readAssets = options.readAssets || readFile;
   const spawnAgent = options.spawnAgent || spawn;
   const spawnBrowserHost = options.spawnBrowserHost || spawn;
+  const spawnBackgroundSupervisor = options.spawnBackgroundSupervisor || spawn;
   const fetchImpl = options.fetchImpl || fetch;
   const approvalProbe = options.approvalProbe || probeApprovedDevice;
   const token = randomBytes(32).toString("base64url");
   const current = { pending: null, agent: null, browserHost: null, browserState: "not_enrolled",
+    backgroundLaunchState: "not_started",
     status: "idle", lastError: null, stopRequested: false };
   let saved = null;
   let blockedExistingIdentity = false;
@@ -285,7 +289,11 @@ export async function createWizard(options = {}) {
           pending: current.pending ? { userCode: current.pending.userCode, expiresAt: new Date(current.pending.expiresAt).toISOString() } : null,
           lastError: current.lastError,
           connected: "not_verified",
-          browserState: current.browserState
+          browserState: current.browserState,
+          browserBackgroundApproved: saved
+            ? await readOwnerBrowserBackgroundOptIn(stateRoot).catch(() => false)
+            : false,
+          browserBackgroundLaunch: current.backgroundLaunchState
         });
       }
       if (blockedExistingIdentity) return send(res, 403, { error: "Saved identity needs owner review; pairing and agent controls are disabled." });
@@ -300,6 +308,71 @@ export async function createWizard(options = {}) {
         await enrollOwnerBrowser(stateRoot, packageRoot, body.extensionId);
         current.browserState = "enrolled_host_not_verified";
         return send(res, 200, { enrolled: true, connected: "not_verified" });
+      }
+      if (url.pathname === "/api/browser/background/enable") {
+        if (!saved) throw new Error("Approve the device identity first.");
+        if (body.confirmation !== "I AUTHORIZE MY BACKGROUND BROWSER")
+          throw new Error("Separate explicit owner background approval is required.");
+        const consent = await approveOwnerBrowserBackground(stateRoot, packageRoot);
+        return send(res, 200, {
+          ...consent, connected: "not_verified",
+          futureLogon: "requires_owner_enabled_windows_startup"
+        });
+      }
+      if (url.pathname === "/api/browser/background/disable") {
+        if (!saved) throw new Error("No approved device identity exists.");
+        if (body.confirmation !== "DISABLE MY BACKGROUND BROWSER")
+          throw new Error("Explicit owner background withdrawal required.");
+        const result = await disableOwnerBrowserBackground(stateRoot);
+        current.backgroundLaunchState = "background_browser_disabling";
+        return send(res, 200, { ...result, connected: "not_verified" });
+      }
+      if (url.pathname === "/api/browser/background/start-now") {
+        if (!saved) throw new Error("Approve the device identity first.");
+        if (body.confirmation !== "START MY APPROVED BACKGROUND DEVICE AND BROWSER")
+          throw new Error("Explicit owner session handoff approval required.");
+        if (current.agent && current.agent.exitCode === null)
+          throw new Error("Stop this wizard's agent before background handoff.");
+        if (current.browserHost && current.browserHost.exitCode === null)
+          throw new Error("Stop this wizard's browser host before background handoff.");
+        if (current.backgroundLaunchState === "started_not_verified")
+          throw new Error("This setup session already launched a background supervisor.");
+        if (!(await readOwnerBrowserBackgroundOptIn(stateRoot)))
+          throw new Error("Approve background browser use before starting it.");
+        await assertPackagedBrowserAssets(packageRoot);
+        // Recheck the exact saved device identity rather than creating any new
+        // pairing, token, client, Windows StartupTask or elevated privilege.
+        await readSavedConfig(stateRoot);
+        for (const name of [
+          "bin/tetherplane-autostartw.exe",
+          "bin/tetherd-agentw.exe",
+          "app/agent-autostart.mjs",
+          "runtime/node.exe"
+        ]) {
+          const asset = join(packageRoot, ...name.split("/"));
+          const info = await lstat(asset);
+          if (!info.isFile() || info.isSymbolicLink())
+            throw new Error("The packaged owner supervisor is incomplete.");
+        }
+        const launcher = join(packageRoot, "bin", "tetherplane-autostartw.exe");
+        const child = spawnBackgroundSupervisor(launcher, [], {
+          cwd: packageRoot, windowsHide: true, detached: true, stdio: "ignore"
+        });
+        current.backgroundLaunchState = "started_not_verified";
+        child.once("error", () => {
+          current.backgroundLaunchState = "launch_failed";
+        });
+        child.once("exit", () => {
+          if (current.backgroundLaunchState === "started_not_verified")
+            current.backgroundLaunchState = "exited_not_verified";
+        });
+        child.unref?.();
+        // Deliberately no wizard ownership or PID persistence; native
+        // agent/browser single-instance guards enforce uniqueness.
+        return send(res, 200, {
+          state: current.backgroundLaunchState, connected: "not_verified",
+          futureLogon: "requires_owner_enabled_windows_startup"
+        });
       }
       if (url.pathname === "/api/browser/revoke") {
         if (!saved) throw new Error("No approved device identity exists.");

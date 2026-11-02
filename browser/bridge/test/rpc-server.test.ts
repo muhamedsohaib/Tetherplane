@@ -1,10 +1,10 @@
 import assert from "node:assert/strict";
 import net from "node:net";
 import test from "node:test";
-import { mkdtemp, rm, writeFile } from "node:fs/promises";
+import { mkdtemp, rm, writeFile, unlink } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { assertBrowserNotRevoked } from "../src/revocation.ts";
+import { assertBrowserNotRevoked, assertOwnerBackgroundOptIn } from "../src/revocation.ts";
 
 import {
   BrowserBridgeService,
@@ -102,6 +102,40 @@ test("owner revocation denies cached credentials for both handshake and mutation
   } finally {
     await server.close();
   }
+});
+
+test("withdrawn background owner opt-in denies new RPC with cached credentials", async t => {
+  const root = await mkdtemp(join(tmpdir(), "tp-background-rpc-optin-"));
+  t.after(() => rm(root, { recursive: true, force: true }));
+  const approval = join(root, "browser-background.optin");
+  await writeFile(approval, "owner-approved-browser-background-v1\n", { flag: "wx" });
+  const backend = new FakeBackend();
+  const server = await startBrowserRpcServer({
+    host: "127.0.0.1",
+    port: 0,
+    token: "same-cached-browser-token",
+    service: new BrowserBridgeService({ backend }),
+    authorizeRequest: () => assertOwnerBackgroundOptIn(approval)
+  });
+  const request = () => rpc(server.address, {
+    type: "invoke", request_id: "withdraw-background",
+    token: "same-cached-browser-token",
+    capability: "browser.create_tab",
+    arguments: { url: "https://owner-fixture.example" }
+  });
+  try {
+    const allowed = await request();
+    assert.equal(allowed.status, "success");
+    const count = backend.pagesState.length;
+    await unlink(approval);
+    const denied = await request();
+    assert.equal(denied.status, "error");
+    assert.equal((denied.error as { code: string }).code, "permission_denied");
+    assert.equal(backend.pagesState.length, count, "withdrawn owner cannot mutate");
+    await writeFile(approval, "tampered\n");
+    const tampered = await request();
+    assert.equal((tampered.error as { code: string }).code, "permission_denied");
+  } finally { await server.close(); }
 });
 
 test("RPC handshake authenticates and reports actual operations", async () => {

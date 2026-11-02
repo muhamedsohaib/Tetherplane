@@ -51,11 +51,23 @@
       No browser grants are created by this setup step.</p>
     <button type="button" id="startBrowserHost">Start browser host (manual opt-in)</button>
     <button type="button" id="stopBrowserHost">Stop browser host</button>
+    <h3>Optional background operation — separate owner approval</h3>
+    <p>Browser enrollment alone does not authorize ongoing background use.
+       Approve it separately, then stop this setup session's agent and browser
+       before choosing Start background. The packaged supervisor can outlive
+       this setup wizard, but browser pairing and individual tab grants are
+       still required. No Windows Startup setting is changed.</p>
+    <button type="button" id="approveBackgroundBrowser">Approve my browser for background operation</button>
+    <button type="button" id="startBackgroundBrowser">Start my approved device and browser in background</button>
+    <button type="button" id="disableBackgroundBrowser">Disable my browser's background operation</button>
+    <p id="backgroundBrowserStatus">Background browser is disabled until separately approved.</p>
+    <p>For future sign-ins, the owner must separately enable Tetherplane Agent
+       in Windows Settings &gt; Apps &gt; Startup. That StartupTask stays disabled by default.</p>
     <button type="button" id="revokeBrowser">Revoke browser access and invalidate its tokens</button>
     <p>Revocation permanently disables the existing browser enrollment until an explicit owner recovery procedure. Core device pairing is retained.</p>
     <p id="browserStatus">Browser access not enrolled.</p>
-    <p>The browser host is not added to Windows Startup by this wizard.
-      Core device connectivity works independently if browser enrollment is missing or invalid.</p>
+    <p>Background operation never enables Windows Startup automatically.
+       Core device connectivity works independently if browser enrollment is missing or invalid.</p>
   </section>
   <section id="startup" aria-label="Optional startup control">
     <h2>Optional — reconnect after Windows sign-in</h2>
