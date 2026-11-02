@@ -29,7 +29,7 @@ The original browser host read owner-approved RPC and extension pairing tokens i
 - The GUI launcher and Node host rely on cooperative shutdown. Physical tests must confirm the host processes close, open sessions are terminated promptly and the native supervisor does not respawn.
 - Browser recovery and re-enrollment after a deliberate revoke are **not** implemented. No automatic token rotation or regrant is allowed.
 - Store publisher eligibility, code-integrity/SAC, no-Tailscale public ingress, authenticated pairing, signed private-audience delivery, rollback and four-device acceptance remain release gates.
-- The GitHub OAuth credential cannot modify workflow definitions. This review branch does not change workflow files or release/Store permissions. New Store wizard tests are locally executed but are not individually CI-enforced by the existing workflow.
+- The GitHub OAuth credential cannot modify workflow definitions. This review branch does not change workflow files or release/Store permissions. A normal `tests/release/package.json` workspace test entry now runs all nine owner tests through the existing `pnpm -r test` CI step; exact-head Windows and Ubuntu job results must be checked before declaring it enforced and passing.
 
 **Release disposition: NO-GO. Preserve the existing auth boundaries and all live devices.**
 
@@ -37,7 +37,7 @@ The original browser host read owner-approved RPC and extension pairing tokens i
 
 - Browser-bridge typecheck: **PASS**.
 - Real loopback RPC suite: **6 passed, 0 failed**; cached bearer token denied for both handshake and mutation after revocation.
-- Store owner-enrollment suite: **8 passed, 0 failed** following correction of an exit-handler state race. After a final idempotent/no-op refinement, **2 focused lifecycle cases passed**, covering revoked core restart and no-op revocation when never enrolled. An exact-head full rerun remains desirable.
+- Store owner-enrollment suite: **9 passed, 0 failed** on Surface via `pnpm --filter @tetherplane/store-release-checks test` (220 seconds). This includes the final idempotent/no-op refinement, revoked core restart, and safe no-op for never-enrolled devices. GitHub CI runs the same package under the existing `pnpm -r test` command.
 - Packaged browser-host esbuild bundle: **PASS**, output 55,599 bytes in an isolated temporary location; Node syntax check passed.
 - Windows-native browser supervisor test was added; its Rust compilation/execution remains for Windows CI.
 - A separate attempt to rerun the existing Store core suite in this worktree was blocked by the remote tool's safety check and was not circumvented. Prior PR #126 and its baseline CI had passed; that is **not** proof of this new commit.

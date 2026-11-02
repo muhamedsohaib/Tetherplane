@@ -97,7 +97,7 @@ test("protected enrollment is immutable and refuses partial or modified state", 
   assert.ok(agentToken.trim().length >= 32);
   assert.ok(pairingToken.trim().length >= 32);
   assert.notEqual(agentToken, pairingToken);
-  assert.doesNotMatch(JSON.stringify(result), new RegExp(agentToken.trim()));
+  assert.equal(JSON.stringify(result).includes(agentToken.trim()), false);
   await assert.rejects(() => enrollOwnerBrowser(f.stateRoot, f.packageRoot, fakeId));
   assert.equal(await readFile(join(f.stateRoot, "browser-bridge.token"), "utf8"), agentToken);
   await writeFile(join(f.stateRoot, "browser-extension-launch.token"), "short\n");
@@ -212,8 +212,10 @@ test("Store wizard requires separate device and browser owner approvals", async 
   });
   assert.equal(stop.status, 200);
   const actualSecret = (await readFile(join(f.stateRoot, "browser-bridge.token"), "utf8")).trim();
-  assert.doesNotMatch(JSON.stringify({firstAgent, enrolled, second, host, stop}),
-    new RegExp(actualSecret));
+  assert.equal(
+    JSON.stringify({firstAgent, enrolled, second, host, stop}).includes(actualSecret),
+    false
+  );
   await action(wizard, "/api/stop", {});
 });
 
