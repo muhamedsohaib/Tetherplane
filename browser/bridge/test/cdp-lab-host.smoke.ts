@@ -129,6 +129,7 @@ test(
               TETHERPLANE_CDP_LAB_PRIVATE_PIPE: "1",
               ...(process.platform === "win32"
                 ? { TETHERPLANE_CHROMIUM:
+                    process.env.TETHERPLANE_CHROMIUM ??
                     "C:\\Program Files\\Google\\Chrome\\Application\\chrome.exe" }
                 : {}),
             }
