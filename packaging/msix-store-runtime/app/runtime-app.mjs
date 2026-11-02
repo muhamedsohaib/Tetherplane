@@ -6,6 +6,10 @@ import { spawn } from "node:child_process";
 import { fileURLToPath } from "node:url";
 import { dirname, isAbsolute, join, resolve } from "node:path";
 import { initializeCredentialDirectory, assertPrivateCredentialState } from "./state-security.mjs";
+import {
+  assertPackagedBrowserAssets, enrollOwnerBrowser, readOwnerBrowserEnrollment,
+  ownerBrowserAgentArgs
+} from "./browser-owner.mjs";
 
 const appDirectory = dirname(fileURLToPath(import.meta.url));
 const packageDirectory = resolve(appDirectory, "..");
@@ -224,10 +228,12 @@ export async function createWizard(options = {}) {
   const packageRoot = options.packageRoot || packageDirectory;
   const readAssets = options.readAssets || readFile;
   const spawnAgent = options.spawnAgent || spawn;
+  const spawnBrowserHost = options.spawnBrowserHost || spawn;
   const fetchImpl = options.fetchImpl || fetch;
   const approvalProbe = options.approvalProbe || probeApprovedDevice;
   const token = randomBytes(32).toString("base64url");
-  const current = { pending: null, agent: null, status: "idle", lastError: null, stopRequested: false };
+  const current = { pending: null, agent: null, browserHost: null, browserState: "not_enrolled",
+    status: "idle", lastError: null, stopRequested: false };
   let saved = null;
   let blockedExistingIdentity = false;
   try {
@@ -239,6 +245,11 @@ export async function createWizard(options = {}) {
     blockedExistingIdentity = true;
     current.status = "existing_identity_blocked";
     current.lastError = "Saved identity cannot be verified. No files were changed; contact the device owner for recovery.";
+  }
+  if (saved) {
+    try {
+      if (await readOwnerBrowserEnrollment(stateRoot)) current.browserState = "enrolled_host_not_verified";
+    } catch { current.browserState = "needs_owner_review"; }
   }
   const server = createServer(async (req, res) => {
     try {
@@ -270,12 +281,60 @@ export async function createWizard(options = {}) {
           identityBlocked: blockedExistingIdentity,
           pending: current.pending ? { userCode: current.pending.userCode, expiresAt: new Date(current.pending.expiresAt).toISOString() } : null,
           lastError: current.lastError,
-          connected: "not_verified"
+          connected: "not_verified",
+          browserState: current.browserState
         });
       }
       if (blockedExistingIdentity) return send(res, 403, { error: "Saved identity needs owner review; pairing and agent controls are disabled." });
       if (req.method !== "POST" || req.headers.origin !== origin) return send(res, 403, { error: "Same-origin user action required." });
       const body = await parseBody(req);
+      if (url.pathname === "/api/browser/enroll") {
+        if (!saved) throw new Error("Approve and save this device before enrolling a browser.");
+        if (current.agent && current.agent.exitCode === null)
+          throw new Error("Stop the agent before enrolling; restart it to activate the bridge.");
+        if (body.confirmation !== "I AUTHORIZE THIS BROWSER EXTENSION")
+          throw new Error("Explicit browser-owner approval is required.");
+        await enrollOwnerBrowser(stateRoot, packageRoot, body.extensionId);
+        current.browserState = "enrolled_host_not_verified";
+        return send(res, 200, { enrolled: true, connected: "not_verified" });
+      }
+      if (url.pathname === "/api/browser/start") {
+        if (!saved || !current.agent || current.agent.exitCode !== null)
+          throw new Error("Start the already-approved device agent before starting the browser host.");
+        if (body.confirmation !== "I AUTHORIZE LOCAL BROWSER HOST")
+          throw new Error("Explicit browser host startup approval is required.");
+        if (current.browserHost && current.browserHost.exitCode === null)
+          throw new Error("This setup session already owns a browser host.");
+        if (!(await readOwnerBrowserEnrollment(stateRoot)))
+          throw new Error("Enroll the owner-pinned browser extension first.");
+        await assertPackagedBrowserAssets(packageRoot);
+        const host = join(packageRoot, "bin", "tetherplane-browserw.exe");
+        const child = spawnBrowserHost(host, ["--browser-state-dir", stateRoot], {
+          cwd: packageRoot, windowsHide: true, stdio: "ignore"
+        });
+        current.browserHost = child;
+        current.browserState = "host_started_not_verified";
+        child.once("error", () => {
+          if (current.browserHost !== child) return;
+          current.browserHost = null;
+          current.browserState = "host_failed";
+        });
+        child.once("exit", () => {
+          if (current.browserHost !== child) return;
+          current.browserHost = null;
+          current.browserState = "host_stopped";
+        });
+        return send(res, 200, { state: current.browserState, connected: "not_verified" });
+      }
+      if (url.pathname === "/api/browser/stop") {
+        if (body.confirmation !== "STOP THIS BROWSER HOST")
+          throw new Error("Explicit browser host stop confirmation required.");
+        if (current.browserHost && current.browserHost.exitCode === null)
+          current.browserHost.kill();
+        current.browserHost = null;
+        current.browserState = "host_stopped";
+        return send(res, 200, { state: current.browserState });
+      }
       if (url.pathname === "/api/pair") {
         if (saved || (current.pending && Date.now() < current.pending.expiresAt))
           throw new Error("An existing identity or active pairing session must not be replaced.");
@@ -318,6 +377,16 @@ export async function createWizard(options = {}) {
         const executable = join(packageRoot, "bin", "tetherd.exe");
         if (!(await stat(executable)).isFile()) throw new Error("Packaged agent executable is missing.");
         const args = agentArgs(config, join(stateRoot, "device-credential.txt"), join(stateRoot, "agent-state"));
+        try {
+          if (await readOwnerBrowserEnrollment(stateRoot)) {
+            await assertPackagedBrowserAssets(packageRoot);
+            args.push(...ownerBrowserAgentArgs(stateRoot));
+            current.browserState = "enrolled_host_not_verified";
+          }
+        } catch {
+          // A broken optional browser must never take the authenticated core offline.
+          current.browserState = "needs_owner_review";
+        }
         await mkdir(join(stateRoot, "agent-state"), { recursive: true, mode: 0o700 });
         const child = spawnAgent(executable, args, { cwd: stateRoot, windowsHide: true, stdio: ["ignore", "ignore", "pipe"] });
         current.agent = child;
@@ -342,6 +411,11 @@ export async function createWizard(options = {}) {
         return send(res, 200, { state: current.status, connected: "not_verified" });
       }
       if (url.pathname === "/api/stop") {
+        if (current.browserHost && current.browserHost.exitCode === null)
+          current.browserHost.kill();
+        current.browserHost = null;
+        if (current.browserState === "host_started_not_verified")
+          current.browserState = "host_stopped";
         if (current.agent && current.agent.exitCode === null) {
           current.stopRequested = true;
           current.status = "stopping";
@@ -364,7 +438,11 @@ export async function createWizard(options = {}) {
   const url = "http://127.0.0.1:" + server.address().port + "/#" + token;
   return {
     url, server, state: current,
-    close: async () => { await new Promise(resolveClose => server.close(resolveClose)); },
+    close: async () => {
+      if (current.browserHost && current.browserHost.exitCode === null)
+        current.browserHost.kill();
+      await new Promise(resolveClose => server.close(resolveClose));
+    },
   };
 }
 
@@ -400,6 +478,9 @@ if (process.argv[1] && resolve(process.argv[1]) === fileURLToPath(import.meta.ur
         } catch {
           if (shutdownStarted) return;
           shutdownStarted = true;
+          if (wizard.state.browserHost && wizard.state.browserHost.exitCode === null) {
+            wizard.state.browserHost.kill();
+          }
           if (wizard.state.agent && wizard.state.agent.exitCode === null) {
             wizard.state.agent.kill();
           }

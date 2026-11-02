@@ -7,6 +7,7 @@ import { dirname, isAbsolute, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import { setTimeout as delay } from "node:timers/promises";
 import { readSavedConfig, agentArgs } from "./runtime-app.mjs";
+import { readOwnerBrowserEnrollment, assertPackagedBrowserAssets, ownerBrowserAgentArgs } from "./browser-owner.mjs";
 
 const packageRoot = resolve(dirname(fileURLToPath(import.meta.url)), "..");
 const MAX_EVENT_BYTES = 1024 * 1024;
@@ -60,10 +61,6 @@ async function agentStateDirectory(stateRoot) {
 
 async function runSupervisedAgent(config, stateRoot, executable, nativeParent) {
   const state = await agentStateDirectory(stateRoot);
-  const args = [
-    ...agentArgs(config, join(stateRoot, "device-credential.txt"), state),
-    "--owner-instance-lock"
-  ];
   let agent = null;
   let stopping = false;
   const stop = () => {
@@ -87,6 +84,22 @@ async function runSupervisedAgent(config, stateRoot, executable, nativeParent) {
           latest.allowRoot !== config.allowRoot) {
         throw new Error("Approved device identity changed; manual review required.");
       }
+      // Read optional owner enrollment on EACH restart. Broken browser state
+      // must fail closed without taking the paired device itself offline.
+      let ownerBrowser = null;
+      try {
+        if (await readOwnerBrowserEnrollment(stateRoot)) {
+          await assertPackagedBrowserAssets(packageRoot);
+          ownerBrowser = ownerBrowserAgentArgs(stateRoot);
+        }
+      } catch {
+        await recordSafeEvent(stateRoot, "BROWSER_ENROLLMENT_BLOCKED");
+      }
+      const args = [
+        ...agentArgs(config, join(stateRoot, "device-credential.txt"), state),
+        ...(ownerBrowser || []),
+        "--owner-instance-lock"
+      ];
       const code = await new Promise(resolveExit => {
         let finished = false;
         const finish = value => {

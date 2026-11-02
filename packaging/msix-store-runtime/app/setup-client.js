@@ -37,6 +37,32 @@ document.getElementById("stop").addEventListener("click", async () => {
   try { const r = await call("/api/stop", {}); status.textContent = r.state; }
   catch(error) { showError(error); }
 });
+document.getElementById("enrollBrowser").addEventListener("click", async () => {
+  feedback.textContent = "";
+  try {
+    const extensionId = document.getElementById("extensionId").value.trim();
+    const r = await call("/api/browser/enroll", {
+      extensionId, confirmation: "I AUTHORIZE THIS BROWSER EXTENSION"
+    });
+    document.getElementById("browserStatus").textContent = r.enrolled
+      ? "Enrolled locally. Restart the agent; separately pair and authorize browser tabs."
+      : "Not enrolled.";
+  } catch(error) { showError(error); }
+});
+document.getElementById("startBrowserHost").addEventListener("click", async () => {
+  feedback.textContent = "";
+  try {
+    const r = await call("/api/browser/start", { confirmation: "I AUTHORIZE LOCAL BROWSER HOST" });
+    document.getElementById("browserStatus").textContent = r.state + " — extension pairing not verified.";
+  } catch(error) { showError(error); }
+});
+document.getElementById("stopBrowserHost").addEventListener("click", async () => {
+  feedback.textContent = "";
+  try {
+    const r = await call("/api/browser/stop", { confirmation: "STOP THIS BROWSER HOST" });
+    document.getElementById("browserStatus").textContent = r.state;
+  } catch(error) { showError(error); }
+});
 async function refresh() {
   try {
     const r = await call("/api/status", null, "GET");
@@ -50,10 +76,16 @@ async function refresh() {
       document.getElementById("resume").hidden = true;
       document.getElementById("stop").hidden = true;
       document.getElementById("blocked").hidden = false;
+      document.getElementById("browser").hidden = true;
       status.textContent = "Stopped — saved device identity needs owner review";
       return;
     }
-    if (r.hasSavedIdentity) { form.hidden = true; document.getElementById("resume").hidden = false; }
+    if (r.hasSavedIdentity) {
+      form.hidden = true;
+      document.getElementById("resume").hidden = false;
+      document.getElementById("browser").hidden = false;
+      document.getElementById("browserStatus").textContent = r.browserState || "not_enrolled";
+    }
     else if (r.state === "pairing_expired") {
       document.getElementById("challenge").hidden = false;
       form.hidden = false;
