@@ -7,7 +7,10 @@ import { dirname, isAbsolute, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import { setTimeout as delay } from "node:timers/promises";
 import { readSavedConfig, agentArgs } from "./runtime-app.mjs";
-import { readOwnerBrowserEnrollment, assertPackagedBrowserAssets, ownerBrowserAgentArgs } from "./browser-owner.mjs";
+import {
+  readOwnerBrowserEnrollment, readOwnerBrowserBackgroundOptIn,
+  assertPackagedBrowserAssets, ownerBrowserAgentArgs
+} from "./browser-owner.mjs";
 
 const packageRoot = resolve(dirname(fileURLToPath(import.meta.url)), "..");
 const MAX_EVENT_BYTES = 1024 * 1024;
@@ -59,12 +62,34 @@ async function agentStateDirectory(stateRoot) {
   return path;
 }
 
+// The disabled-by-default Store StartupTask is the only logon entrypoint.
+ // A separately owner-approved browser marker is required as well.
+export async function launchApprovedBackgroundBrowser({
+  stateRoot, packageRoot: appRoot = packageRoot, spawnHost = spawn
+}) {
+  if (!(await readOwnerBrowserBackgroundOptIn(stateRoot))) return null;
+  await assertPackagedBrowserAssets(appRoot);
+  const launcher = join(appRoot, "bin", "tetherplane-browserw.exe");
+  const info = await lstat(launcher);
+  if (!info.isFile() || info.isSymbolicLink()) {
+    throw new Error("Packaged browser supervisor needs owner review.");
+  }
+  const child = spawnHost(launcher, [
+    "--browser-state-dir", stateRoot, "--require-background-optin"
+  ], {
+    cwd: appRoot, windowsHide: true, stdio: "ignore"
+  });
+  return child;
+}
+
 async function runSupervisedAgent(config, stateRoot, executable, nativeParent) {
   const state = await agentStateDirectory(stateRoot);
   let agent = null;
+  let browserHost = null;
   let stopping = false;
   const stop = () => {
     stopping = true;
+    if (browserHost && browserHost.exitCode === null) browserHost.kill();
     if (agent?.pid && agent.exitCode === null) agent.kill();
   };
   const checkParent = setInterval(() => {
@@ -94,6 +119,23 @@ async function runSupervisedAgent(config, stateRoot, executable, nativeParent) {
         }
       } catch {
         await recordSafeEvent(stateRoot, "BROWSER_ENROLLMENT_BLOCKED");
+      }
+      if (ownerBrowser && !browserHost) {
+        try {
+          const started = await launchApprovedBackgroundBrowser({ stateRoot });
+          if (started) {
+            browserHost = started;
+            const ownedHost = started;
+            const onExit = () => {
+              if (browserHost === ownedHost) browserHost = null;
+            };
+            started.once("exit", onExit);
+            started.once("error", onExit);
+            await recordSafeEvent(stateRoot, "OWNER_BROWSER_LOGON_START_NOT_VERIFIED");
+          }
+        } catch {
+          await recordSafeEvent(stateRoot, "BROWSER_BACKGROUND_START_BLOCKED");
+        }
       }
       const args = [
         ...agentArgs(config, join(stateRoot, "device-credential.txt"), state),
@@ -137,6 +179,7 @@ async function runSupervisedAgent(config, stateRoot, executable, nativeParent) {
     clearInterval(checkParent);
     process.off("SIGINT", stop);
     process.off("SIGTERM", stop);
+    if (browserHost && browserHost.exitCode === null) browserHost.kill();
     if (agent?.pid && agent.exitCode === null) agent.kill();
   }
 }

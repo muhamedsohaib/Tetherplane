@@ -72,7 +72,7 @@ try {
   await copyFile(resolve(process.argv[2]), launcher);
   await copyFile(resolve(process.argv[3]), agentExe);
   await copyFile(process.execPath, join(packageRoot, "runtime", "node.exe"));
-  for (const name of ["agent-autostart.mjs", "runtime-app.mjs", "state-security.mjs"]) {
+  for (const name of ["agent-autostart.mjs", "runtime-app.mjs", "state-security.mjs", "browser-owner.mjs"]) {
     await copyFile(resolve("packaging", "msix-store-runtime", "app", name),
       join(packageRoot, "app", name));
   }

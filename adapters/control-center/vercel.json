@@ -33,7 +33,8 @@
       "review/win11-browser-relay-integration-20261102": false,
       "review/win11-store-browser-no-vpn-20261102": false,
       "review/owner-browser-live-revoke-20261102": false,
-      "fix/windows-cdp-quality-serial-20261102": false
+      "fix/windows-cdp-quality-serial-20261102": false,
+      "review/store-browser-background-optin-20261102": false
     }
   },
   "$schema": "https://openapi.vercel.sh/vercel.json"

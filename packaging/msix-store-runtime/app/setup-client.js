@@ -63,6 +63,37 @@ document.getElementById("stopBrowserHost").addEventListener("click", async () =>
     document.getElementById("browserStatus").textContent = r.state;
   } catch(error) { showError(error); }
 });
+document.getElementById("approveBackgroundBrowser").addEventListener("click", async () => {
+  feedback.textContent = "";
+  try {
+    const result = await call("/api/browser/background/enable", {
+      confirmation: "I AUTHORIZE MY BACKGROUND BROWSER"
+    });
+    document.getElementById("backgroundBrowserStatus").textContent = result.approved
+      ? "Owner approved. Stop this wizard's agent and browser before starting in background."
+      : "Not approved.";
+  } catch(error) { showError(error); }
+});
+document.getElementById("startBackgroundBrowser").addEventListener("click", async () => {
+  feedback.textContent = "";
+  try {
+    const result = await call("/api/browser/background/start-now", {
+      confirmation: "START MY APPROVED BACKGROUND DEVICE AND BROWSER"
+    });
+    document.getElementById("backgroundBrowserStatus").textContent =
+      result.state + " — independently verify authenticated device and browser pairing.";
+  } catch(error) { showError(error); }
+});
+document.getElementById("disableBackgroundBrowser").addEventListener("click", async () => {
+  feedback.textContent = "";
+  try {
+    const result = await call("/api/browser/background/disable", {
+      confirmation: "DISABLE MY BACKGROUND BROWSER"
+    });
+    document.getElementById("backgroundBrowserStatus").textContent = result.approved
+      ? "Background still approved." : "Disabled; existing device identity preserved.";
+  } catch(error) { showError(error); }
+});
 document.getElementById("revokeBrowser").addEventListener("click", async () => {
   feedback.textContent = "";
   if (!window.confirm("Revoke all access from this browser, invalidate its saved tokens and require manual owner recovery? Device connectivity stays active.")) return;
@@ -95,6 +126,10 @@ async function refresh() {
       document.getElementById("resume").hidden = false;
       document.getElementById("browser").hidden = false;
       document.getElementById("browserStatus").textContent = r.browserState || "not_enrolled";
+      document.getElementById("backgroundBrowserStatus").textContent =
+        (r.browserBackgroundApproved ? "Owner approved; " : "Not approved; ") +
+        (r.browserBackgroundLaunch || "not_started") +
+        " — no browser connection verified.";
     }
     else if (r.state === "pairing_expired") {
       document.getElementById("challenge").hidden = false;

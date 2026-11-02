@@ -206,6 +206,69 @@ export function ownerBrowserAgentArgs(stateRoot) {
   ];
 }
 
+// Separate, optional owner approval for background browser operation.
+// Device pairing and browser extension enrollment never imply this consent.
+// This file alone does NOT enable the disabled Windows StartupTask.
+export const OWNER_BROWSER_BACKGROUND_APPROVAL = "owner-approved-browser-background-v1\n";
+export const OWNER_BROWSER_BACKGROUND_FILE = "browser-background.optin";
+
+export async function readOwnerBrowserBackgroundOptIn(stateRoot) {
+  const marker = join(stateRoot, OWNER_BROWSER_BACKGROUND_FILE);
+  let entry;
+  try { entry = await lstat(marker); }
+  catch (error) {
+    if (error?.code === "ENOENT") return false;
+    throw new Error("Browser background approval needs owner review.");
+  }
+  if (!entry.isFile() || entry.isSymbolicLink() ||
+      entry.size <= 0 || entry.size > 128) {
+    throw new Error("Browser background approval needs owner review.");
+  }
+  await assertPrivateCredentialState(stateRoot);
+  await checkBrowserFileAccess([marker]);
+  if (await readFile(marker, "utf8") !== OWNER_BROWSER_BACKGROUND_APPROVAL) {
+    throw new Error("Browser background approval needs owner review.");
+  }
+  if (!(await readOwnerBrowserEnrollment(stateRoot))) {
+    throw new Error("Background browser requires approved extension enrollment.");
+  }
+  return true;
+}
+
+export async function approveOwnerBrowserBackground(stateRoot, packageRoot) {
+  if (!(await readOwnerBrowserEnrollment(stateRoot))) {
+    throw new Error("Enroll an owner-pinned extension before background startup.");
+  }
+  await assertPackagedBrowserAssets(packageRoot);
+  if (await readOwnerBrowserBackgroundOptIn(stateRoot)) {
+    return { approved: true, alreadyApproved: true };
+  }
+  const marker = join(stateRoot, OWNER_BROWSER_BACKGROUND_FILE);
+  let written = false;
+  try {
+    await writeFile(marker, OWNER_BROWSER_BACKGROUND_APPROVAL, {
+      flag: "wx", mode: 0o600
+    });
+    written = true;
+    if (!(await readOwnerBrowserBackgroundOptIn(stateRoot))) {
+      throw new Error("Owner background approval was not independently verified.");
+    }
+  } catch {
+    // Only clean up the exact file this attempt exclusively created.
+    if (written) await unlink(marker).catch(() => {});
+    throw new Error("Browser background approval needs owner review.");
+  }
+  return { approved: true, alreadyApproved: false };
+}
+
+export async function disableOwnerBrowserBackground(stateRoot) {
+  if (!(await readOwnerBrowserBackgroundOptIn(stateRoot))) {
+    return { approved: false, alreadyDisabled: true };
+  }
+  await unlink(join(stateRoot, OWNER_BROWSER_BACKGROUND_FILE));
+  return { approved: false, alreadyDisabled: false };
+}
+
 export async function enrollOwnerBrowser(stateRoot, packageRoot, extensionId) {
   if (await isOwnerBrowserRevoked(stateRoot)) {
     throw new Error("Previously revoked browser enrollment requires manual owner recovery.");
