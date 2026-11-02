@@ -815,6 +815,54 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn real_websocket_peer_without_pong_expires_even_while_tcp_remains_open() {
+        use futures_util::StreamExt;
+        use std::sync::Arc;
+        use std::time::Duration;
+        use tokio::sync::Mutex;
+
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0")
+            .await
+            .expect("test loopback listener");
+        let address = listener.local_addr().expect("test listener address");
+        // Accept a REAL WebSocket upgrade, then deliberately stop polling the
+        // server stream. The kernel connection stays open, so a TCP Established
+        // status is not evidence that the device transport is healthy.
+        let silent_server = tokio::spawn(async move {
+            let (tcp, _) = listener.accept().await.expect("incoming test socket");
+            let _peer = tokio_tungstenite::accept_async(tcp)
+                .await
+                .expect("WebSocket upgrade");
+            tokio::time::sleep(Duration::from_secs(3)).await;
+        });
+        let endpoint = format!("ws://{address}/device");
+        let (client, _) = tokio::time::timeout(
+            Duration::from_secs(2),
+            tokio_tungstenite::connect_async(endpoint),
+        )
+        .await
+        .expect("local handshake deadline")
+        .expect("local WebSocket upgrade succeeded");
+        let (sink, mut reader) = client.split();
+        let writer = Arc::new(Mutex::new(sink));
+        let mut heartbeat =
+            super::SocketHeartbeat::new(Duration::from_millis(30), Duration::from_millis(70));
+        let result = tokio::time::timeout(
+            Duration::from_millis(1_400),
+            super::read_with_heartbeat(&mut reader, &writer, &mut heartbeat),
+        )
+        .await
+        .expect("dead WebSocket must not keep the reader waiting indefinitely");
+        assert!(
+            matches!(result, Err(super::RelayFailure::Retryable(message))
+                if message.contains("Pong deadline")),
+            "missed Pong must be retryable, not fatal or successful"
+        );
+        assert!(heartbeat.pending_ping.is_some());
+        silent_server.abort();
+    }
+
+    #[tokio::test]
     async fn silent_half_open_socket_sends_ping_then_reconnects_after_missing_pong() {
         use futures_util::{sink, stream};
         use std::sync::Arc;
