@@ -87,6 +87,11 @@ mod windows {
     }
 
     fn require_owner_enrollment(state: &Path) -> Result<(), &'static str> {
+        match fs::symlink_metadata(state.join("browser-enrollment.revoked")) {
+            Ok(_) => return Err("owner revoked the browser enrollment"),
+            Err(error) if error.kind() == std::io::ErrorKind::NotFound => {}
+            Err(_) => return Err("browser revocation state is unreadable"),
+        }
         for file in ["browser-bridge.token", "browser-extension-launch.token"] {
             let metadata = fs::metadata(state.join(file))
                 .map_err(|_| "owner browser token file is unavailable")?;
@@ -212,6 +217,29 @@ mod windows {
                 retry_seconds = retry_seconds.saturating_mul(2).min(MAX_RETRY_SECS);
             }
             thread::sleep(Duration::from_secs(retry_seconds));
+        }
+    }
+
+    #[cfg(test)]
+    mod tests {
+        use super::*;
+
+        #[test]
+        fn revoked_owner_marker_prevents_windowless_host_relaunch() {
+            let suffix = SystemTime::now()
+                .duration_since(UNIX_EPOCH)
+                .expect("clock")
+                .as_nanos();
+            let directory =
+                env::temp_dir().join(format!("tetherplane-revoked-{}-{suffix}", process::id()));
+            fs::create_dir(&directory).expect("isolated revocation test directory");
+            fs::write(directory.join("browser-enrollment.revoked"), b"revoked\n")
+                .expect("synthetic owner marker");
+            let result = require_owner_enrollment(&directory);
+            assert_eq!(result, Err("owner revoked the browser enrollment"));
+            fs::remove_file(directory.join("browser-enrollment.revoked"))
+                .expect("remove only synthetic marker");
+            fs::remove_dir(directory).expect("remove isolated test directory");
         }
     }
 }
