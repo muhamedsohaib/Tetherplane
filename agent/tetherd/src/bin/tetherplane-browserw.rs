@@ -90,7 +90,12 @@ mod windows {
         } else {
             PathBuf::from("node.exe")
         };
-        Ok(Options { host, state, node, require_background_optin })
+        Ok(Options {
+            host,
+            state,
+            node,
+            require_background_optin,
+        })
     }
 
     fn require_owner_enrollment(state: &Path) -> Result<(), &'static str> {
@@ -124,14 +129,19 @@ mod windows {
         }
         let path = state.join(".tetherplane-owner-browser.lock");
         match fs::symlink_metadata(&path) {
-            Ok(meta) if !meta.is_file() || meta.file_type().is_symlink() =>
-                return Err("browser lock path invalid"),
-            Err(error) if error.kind() != std::io::ErrorKind::NotFound =>
-                return Err("browser lock unavailable"),
+            Ok(meta) if !meta.is_file() || meta.file_type().is_symlink() => {
+                return Err("browser lock path invalid");
+            }
+            Err(error) if error.kind() != std::io::ErrorKind::NotFound => {
+                return Err("browser lock unavailable");
+            }
             _ => {}
         }
         OpenOptions::new()
-            .read(true).write(true).create(true).truncate(false)
+            .read(true)
+            .write(true)
+            .create(true)
+            .truncate(false)
             .share_mode(0)
             .open(path)
             .map_err(|_| "browser owner instance already running or unavailable")
@@ -139,13 +149,12 @@ mod windows {
 
     fn require_background_optin(state: &Path) -> Result<(), &'static str> {
         let marker = state.join("browser-background.optin");
-        let meta = fs::symlink_metadata(&marker)
-            .map_err(|_| "background browser not approved")?;
+        let meta = fs::symlink_metadata(&marker).map_err(|_| "background browser not approved")?;
         if !meta.is_file() || meta.file_type().is_symlink() || meta.len() > 128 {
             return Err("background browser approval invalid");
         }
-        let content = fs::read_to_string(marker)
-            .map_err(|_| "background browser approval unreadable")?;
+        let content =
+            fs::read_to_string(marker).map_err(|_| "background browser approval unreadable")?;
         if content != "owner-approved-browser-background-v1\n" {
             return Err("background browser approval withdrawn");
         }
@@ -284,15 +293,18 @@ mod windows {
 
         #[test]
         fn exclusive_browser_lock_prevents_duplicates_and_recovers_on_exit() {
-            let suffix = SystemTime::now().duration_since(UNIX_EPOCH)
-                .expect("clock").as_nanos();
-            let dir = env::temp_dir()
-                .join(format!("tp-browser-lock-{}-{suffix}", process::id()));
+            let suffix = SystemTime::now()
+                .duration_since(UNIX_EPOCH)
+                .expect("clock")
+                .as_nanos();
+            let dir = env::temp_dir().join(format!("tp-browser-lock-{}-{suffix}", process::id()));
             fs::create_dir(&dir).expect("isolated owner directory");
-            let first = acquire_owner_browser_instance_lock(&dir)
-                .expect("first browser owner accepted");
-            assert!(acquire_owner_browser_instance_lock(&dir).is_err(),
-                "second browser supervisor must not start");
+            let first =
+                acquire_owner_browser_instance_lock(&dir).expect("first browser owner accepted");
+            assert!(
+                acquire_owner_browser_instance_lock(&dir).is_err(),
+                "second browser supervisor must not start"
+            );
             drop(first);
             let next = acquire_owner_browser_instance_lock(&dir)
                 .expect("OS must release lock after owner closes");
@@ -304,10 +316,11 @@ mod windows {
 
         #[test]
         fn background_marker_is_required_and_checked_again() {
-            let suffix = SystemTime::now().duration_since(UNIX_EPOCH)
-                .expect("clock").as_nanos();
-            let dir = env::temp_dir()
-                .join(format!("tp-browser-optin-{}-{suffix}", process::id()));
+            let suffix = SystemTime::now()
+                .duration_since(UNIX_EPOCH)
+                .expect("clock")
+                .as_nanos();
+            let dir = env::temp_dir().join(format!("tp-browser-optin-{}-{suffix}", process::id()));
             fs::create_dir(&dir).expect("isolated owner directory");
             assert!(require_background_optin(&dir).is_err());
             let marker = dir.join("browser-background.optin");
