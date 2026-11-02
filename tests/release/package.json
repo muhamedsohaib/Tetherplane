@@ -1,0 +1,9 @@
+{
+  "name": "@tetherplane/store-release-checks",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "test": "node --test --test-concurrency=1 msix-store-owner-browser.test.mjs"
+  }
+}
