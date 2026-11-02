@@ -270,6 +270,12 @@ try {
     }
     Write-Output "WINDOWS_BROWSER_NO_CONSOLE_PROCESS_SMOKE_OK"
 
+    & node (Join-Path $PSScriptRoot "windows-browserw-background-optin-lifecycle.mjs") $install
+    if ($LASTEXITCODE -ne 0) {
+        throw "RELEASE_NO_GO: native owner-background browser acceptance failed"
+    }
+    Write-Output "WINDOWS_BROWSER_BACKGROUND_OPTIN_SMOKE_OK"
+
     & node (Join-Path $PSScriptRoot "windows-modelw-lifecycle.mjs") $install
     if ($LASTEXITCODE -ne 0) {
         throw "RELEASE_NO_GO: native optional model worker launch/cleanup test failed"
