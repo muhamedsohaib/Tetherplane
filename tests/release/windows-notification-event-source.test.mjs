@@ -83,7 +83,7 @@ test("GUI-subsystem beta parity is build-only and never added to the developer Z
   const workflow = read(".github/workflows/windows-toast-developer-beta.yml");
   const builder = read("scripts/windows/Build-TetherplaneToastBetaKit.ps1");
   assert.match(cargo, /developer-beta-gui\s*=\s*\["developer-beta-notification-feed"\]/);
-  assert.match(main, /feature = "developer-beta-gui"\), windows_subsystem = "windows"/);
+  assert.match(main, /feature = "developer-beta-gui"\),\s*windows_subsystem = "windows"/);
   assert.match(workflow, /Build isolated GUI-subsystem parity candidate \(never install\)/);
   assert.match(workflow, /SUBSYSTEM_VERIFIED/);
   assert.match(workflow, /GUI_BETA_INVALID_SYNTHETIC_ARGUMENTS_REJECTED/);
