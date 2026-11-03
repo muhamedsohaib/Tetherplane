@@ -1,0 +1,61 @@
+name: Windows Toast Developer Beta
+# Intentionally limited to the draft development branch. No deployment, publication,
+# package signing, OAuth configuration or protected branch mutation.
+on:
+  push:
+    branches:
+      - feature/windows-toast-notifications-design-20261103
+
+permissions:
+  contents: read
+
+jobs:
+  win-toast-beta:
+    runs-on: windows-latest
+    timeout-minutes: 25
+    steps:
+      - name: Check out exact source
+        uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
+        with:
+          persist-credentials: false
+
+      - name: Install Rust with clippy and rustfmt
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          components: rustfmt, clippy
+
+      - name: Format gate
+        run: cargo fmt --all -- --check
+
+      - name: Notification event policy and Windows XML tests
+        run: cargo test --locked -p tether-notifications --features dev-beta
+
+      - name: Authenticated and rejected WebSocket upgrade integration tests
+        run: cargo test --locked -p tetherd --features developer-beta-notification-feed --bin tetherd relay_ws::notification_feed_contract_tests -- --nocapture
+
+      - name: Agent feature strict lint
+        run: cargo clippy --locked -p tetherd --features developer-beta-notification-feed --all-targets -- -D warnings
+
+      - name: Native beta toast executable
+        run: cargo build --locked --release -p tether-notifications --features dev-beta --bin tetherplane-toast-smoke
+
+      - name: SHA-256 build evidence
+        shell: pwsh
+        run: |
+          $exe = "target/release/tetherplane-toast-smoke.exe"
+          if (-not (Test-Path -LiteralPath $exe)) { throw "Beta executable missing" }
+          $sha = (Get-FileHash -LiteralPath $exe -Algorithm SHA256).Hash
+          "commit=$env:GITHUB_SHA" | Set-Content -LiteralPath "toast-beta-build-evidence.txt"
+          "sha256=$sha" | Add-Content -LiteralPath "toast-beta-build-evidence.txt"
+          "artifact=tetherplane-toast-smoke.exe" | Add-Content -LiteralPath "toast-beta-build-evidence.txt"
+          Get-Content "toast-beta-build-evidence.txt"
+
+      - name: Save private developer-test executable
+        uses: actions/upload-artifact@v4
+        with:
+          name: tetherplane-toast-beta-windows-x64
+          path: |
+            target/release/tetherplane-toast-smoke.exe
+            toast-beta-build-evidence.txt
+          retention-days: 7
+          if-no-files-found: error
