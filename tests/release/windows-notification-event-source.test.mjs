@@ -108,3 +108,17 @@ test("live Leno rollback preflight is read-only and explicitly blocks replacemen
   assert.match(script, /SafeToReplaceLiveAgent=\$false/);
   assert.doesNotMatch(script, /Start-ScheduledTask|Stop-ScheduledTask|Register-ScheduledTask|Set-ScheduledTask|Remove-Item|Export-ScheduledTask/i);
 });
+
+test("beta notifications use private-free unique type tags for robust history acceptance", () => {
+  const native = read("agent/tether-notifications/src/windows_native.rs");
+  const script = read("scripts/windows/Test-TetherplaneToastEventBeta.ps1");
+  assert.match(native, /DEV_BETA_GROUP: &str = "tetherplane-beta"/);
+  assert.match(native, /toast\.SetTag\(&HSTRING::from\(new_beta_tag\(notice\)\)\)\?/);
+  assert.match(native, /toast\.SetGroup\(&HSTRING::from\(DEV_BETA_GROUP\)\)\?/);
+  assert.match(native, /"tb-\{kind\}-/);
+  assert.match(script, /function Get-EventTagCount/);
+  assert.match(script, /\$tag -cmatch/);
+  assert.match(script, /Get-EventTagCount -Kind "cn"/);
+  assert.match(script, /Get-EventTagCount -Kind "uk"/);
+  assert.doesNotMatch(script, /Get-TitleCount/);
+});

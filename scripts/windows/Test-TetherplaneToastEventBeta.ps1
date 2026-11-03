@@ -49,11 +49,23 @@ $node = (Get-Command node.exe -ErrorAction Stop).Source
 function Get-HistoryCount {
     return @($manager::History.GetHistory($identity)).Count
 }
-function Get-TitleCount {
-    param([string]$Title)
+function Get-EventTagCount {
+    param([ValidateSet('cn','uk')][string]$Kind)
     $count = 0
     foreach($item in @($manager::History.GetHistory($identity))) {
-        if ($item.Content.GetXml().Contains('<text>' + $Title + '</text>')) { $count++ }
+        # Windows may retain entries with null Content. Only trust our bounded
+        # beta group and unique event-type tags, not XML or global history totals.
+        if ($null -eq $item) { continue }
+        try {
+            $tag = [string]$item.Tag
+            $group = [string]$item.Group
+            if ($group -ceq 'tetherplane-beta' -and
+                $tag -cmatch ('^tb-' + $Kind + '-[0-9a-f]+-[0-9a-f]+-[0-9a-f]+$')) {
+                $count++
+            }
+        } catch {
+            continue
+        }
     }
     return $count
 }
@@ -83,8 +95,8 @@ function Run-SyntheticCase {
             throw ('BETA_MOCK_RELAY_FAILED_TO_START_' + $Mode)
         }
         $before = Get-HistoryCount
-        $connectedBefore = Get-TitleCount -Title "TP_BETA_TEST connected"
-        $unknownBefore = Get-TitleCount -Title "TP_BETA_TEST status unknown"
+        $connectedBefore = Get-EventTagCount -Kind "cn"
+        $unknownBefore = Get-EventTagCount -Kind "uk"
         $argList = @(
             '--relay-url', ('ws://127.0.0.1:' + $port + '/device'),
             '--device-id', 'TP_BETA_TEST',
@@ -113,9 +125,13 @@ function Run-SyntheticCase {
         if ($Mode -eq 'reject') {
             Start-Sleep -Seconds 2
             $after = Get-HistoryCount
+            $connectedAfter = Get-EventTagCount -Kind "cn"
+            $unknownAfter = Get-EventTagCount -Kind "uk"
             Write-Output ('BETA_401_HISTORY_BEFORE=' + $before)
             Write-Output ('BETA_401_HISTORY_AFTER=' + $after)
-            if ($after -ne $before) {
+            if ($after -ne $before -or
+                $connectedAfter -ne $connectedBefore -or
+                $unknownAfter -ne $unknownBefore) {
                 throw 'BETA_401_GENERATED_UNAUTHORIZED_NOTIFICATION'
             }
             $serverEvidence = Get-Content -LiteralPath $serverStdout -Raw
@@ -131,8 +147,8 @@ function Run-SyntheticCase {
             $unknownAfter = $unknownBefore
             for ($i=0; $i -lt 100; $i++) {
                 $after = Get-HistoryCount
-                $connectedAfter = Get-TitleCount -Title "TP_BETA_TEST connected"
-                $unknownAfter = Get-TitleCount -Title "TP_BETA_TEST status unknown"
+                $connectedAfter = Get-EventTagCount -Kind "cn"
+                $unknownAfter = Get-EventTagCount -Kind "uk"
                 if ($connectedAfter -gt $connectedBefore -and $unknownAfter -gt $unknownBefore) { break }
                 if ($agentProcess.HasExited) { break }
                 Start-Sleep -Milliseconds 100

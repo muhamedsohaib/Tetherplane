@@ -2,6 +2,10 @@
 //! This module never registers package identities, creates shortcuts,
 //! grants approvals, changes browser focus, or creates network connections.
 use super::Notification;
+#[cfg(feature = "dev-beta")]
+use std::sync::atomic::{AtomicU64, Ordering};
+#[cfg(feature = "dev-beta")]
+use std::time::{SystemTime, UNIX_EPOCH};
 use windows::ApplicationModel::Package;
 use windows::Data::Xml::Dom::XmlDocument;
 use windows::UI::Notifications::{ToastNotification, ToastNotificationManager, ToastNotifier};
@@ -11,6 +15,41 @@ const PACKAGE_NAME: &str = "ARCUSLabs.Tetherplane";
 /// Dedicated per-user, unpackaged beta identity. Presentation only; not an authentication principal.
 #[cfg(feature = "dev-beta")]
 pub const DEV_BETA_APP_ID: &str = "ARCUSLabs.Tetherplane.DevBeta";
+#[cfg(feature = "dev-beta")]
+pub const DEV_BETA_GROUP: &str = "tetherplane-beta";
+#[cfg(feature = "dev-beta")]
+static BETA_TOAST_SEQUENCE: AtomicU64 = AtomicU64::new(0);
+
+#[cfg(feature = "dev-beta")]
+fn new_beta_tag(notice: &Notification) -> String {
+    // Public event class only: no device identity, request ID, credential or source path.
+    let kind = if notice.key.starts_with("DeviceConnected:") {
+        "cn"
+    } else if notice.key.starts_with("LocalStatusUnknown:") {
+        "uk"
+    } else if notice.key.starts_with("DeviceDisconnected:") {
+        "of"
+    } else if notice.key.starts_with("Unstable:") {
+        "fl"
+    } else if notice.key == "LocalSmoke" {
+        "sm"
+    } else {
+        "nt"
+    };
+    let millis: u64 = SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .unwrap_or_default()
+        .as_millis()
+        .try_into()
+        .unwrap_or(u64::MAX);
+    let sequence = BETA_TOAST_SEQUENCE.fetch_add(1, Ordering::Relaxed);
+    format!(
+        "tb-{kind}-{:x}-{:x}-{:x}",
+        std::process::id(),
+        millis,
+        sequence
+    )
+}
 
 #[derive(Debug)]
 pub enum DeliveryError {
@@ -53,10 +92,21 @@ fn require_package_identity() -> Result<(), DeliveryError> {
     validate_package_name(&name)
 }
 
-fn dispatch(notifier: &ToastNotifier, notice: &Notification) -> Result<(), DeliveryError> {
+fn dispatch(
+    notifier: &ToastNotifier,
+    notice: &Notification,
+    beta_tagged: bool,
+) -> Result<(), DeliveryError> {
     let xml = XmlDocument::new()?;
     xml.LoadXml(&HSTRING::from(notice.to_toast_xml()))?;
     let toast = ToastNotification::CreateToastNotification(&xml)?;
+    #[cfg(feature = "dev-beta")]
+    if beta_tagged {
+        toast.SetTag(&HSTRING::from(new_beta_tag(notice)))?;
+        toast.SetGroup(&HSTRING::from(DEV_BETA_GROUP))?;
+    }
+    #[cfg(not(feature = "dev-beta"))]
+    let _ = beta_tagged;
     notifier.Show(&toast)?;
     // API success establishes dispatch only. Windows Do Not Disturb and
     // notification policy determine whether the user actually sees a toast.
@@ -72,7 +122,7 @@ fn dispatch(notifier: &ToastNotifier, notice: &Notification) -> Result<(), Deliv
 pub fn show_packaged(notice: &Notification) -> Result<(), DeliveryError> {
     require_package_identity()?;
     let notifier = ToastNotificationManager::CreateToastNotifier()?;
-    dispatch(&notifier, notice)
+    dispatch(&notifier, notice, false)
 }
 
 /// Dispatch text-only notifications from an *unpackaged* developer-beta executable.
@@ -86,7 +136,7 @@ pub fn show_packaged(notice: &Notification) -> Result<(), DeliveryError> {
 pub fn show_dev_beta(notice: &Notification) -> Result<(), DeliveryError> {
     let notifier =
         ToastNotificationManager::CreateToastNotifierWithId(&HSTRING::from(DEV_BETA_APP_ID))?;
-    dispatch(&notifier, notice)
+    dispatch(&notifier, notice, true)
 }
 
 #[cfg(test)]
@@ -115,6 +165,30 @@ mod tests {
         assert_ne!(DEV_BETA_APP_ID, PACKAGE_NAME);
         assert!(DEV_BETA_APP_ID.ends_with(".DevBeta"));
         assert!(validate_package_name(DEV_BETA_APP_ID).is_err());
+    }
+
+    #[cfg(feature = "dev-beta")]
+    #[test]
+    fn beta_toast_tags_are_unique_bounded_and_hide_device_identifiers() {
+        let sample = Notification {
+            title: "A secret device has connected".into(),
+            body: "No external links".into(),
+            severity: super::super::Severity::Normal,
+            key: "DeviceConnected:PRIVATE_DEVICE_NAME:".into(),
+        };
+        let first = new_beta_tag(&sample);
+        let second = new_beta_tag(&sample);
+        assert!(first.starts_with("tb-cn-"));
+        assert_ne!(first, second);
+        assert!(first.len() <= 64);
+        assert!(!first.contains("PRIVATE_DEVICE_NAME"));
+        assert_eq!(DEV_BETA_GROUP, "tetherplane-beta");
+
+        let lost = Notification {
+            key: "LocalStatusUnknown:PRIVATE_DEVICE_NAME:".into(),
+            ..sample
+        };
+        assert!(new_beta_tag(&lost).starts_with("tb-uk-"));
     }
 
     #[test]
