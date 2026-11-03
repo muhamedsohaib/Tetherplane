@@ -58,6 +58,13 @@ jobs:
           "agent_sha256=$agent" | Add-Content -LiteralPath "toast-beta-build-evidence.txt"
           Get-Content "toast-beta-build-evidence.txt"
 
+      - name: Package pinned developer-beta kit
+        shell: pwsh
+        run: |
+          $archive = Join-Path $pwd.Path "tetherplane-toast-developer-beta.zip"
+          ./scripts/windows/Build-TetherplaneToastBetaKit.ps1 -ArtifactDirectory $pwd.Path -OutputZip $archive -ExpectedCommit $env:GITHUB_SHA
+          if (-not (Test-Path -LiteralPath $archive)) { throw "Beta test kit missing" }
+
       - name: Save private developer-test executable
         uses: actions/upload-artifact@v4
         with:
@@ -66,5 +73,6 @@ jobs:
             target/release/tetherplane-toast-smoke.exe
             target/release/tetherd.exe
             toast-beta-build-evidence.txt
+            tetherplane-toast-developer-beta.zip
           retention-days: 7
           if-no-files-found: error

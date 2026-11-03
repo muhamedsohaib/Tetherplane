@@ -4,6 +4,8 @@
 param(
     [Parameter(Mandatory=$true)][string]$ToastExecutable,
     [Parameter(Mandatory=$true)][string]$AgentExecutable,
+    [string]$ExpectedToastSha256,
+    [string]$ExpectedAgentSha256,
     [switch]$KeepRegistration,
     [switch]$KeepEvidence
 )
@@ -12,7 +14,9 @@ $ErrorActionPreference = 'Stop'
 $identity = 'ARCUSLabs.Tetherplane.DevBeta'
 $registrar = Join-Path $PSScriptRoot 'Register-TetherplaneToastBeta.ps1'
 $fixture = (Resolve-Path -LiteralPath (Join-Path $PSScriptRoot '..\..\tests\release\windows-toast-loopback-relay.mjs')).Path
-if ((Split-Path -Leaf $ToastExecutable) -cne 'tetherplane-toast-smoke.exe' -or
+if (-not [IO.Path]::IsPathRooted($ToastExecutable) -or
+    -not [IO.Path]::IsPathRooted($AgentExecutable) -or
+    (Split-Path -Leaf $ToastExecutable) -cne 'tetherplane-toast-smoke.exe' -or
     (Split-Path -Leaf $AgentExecutable) -cne 'tetherd.exe' -or
     -not (Test-Path -LiteralPath $ToastExecutable -PathType Leaf) -or
     -not (Test-Path -LiteralPath $AgentExecutable -PathType Leaf)) {
@@ -20,6 +24,15 @@ if ((Split-Path -Leaf $ToastExecutable) -cne 'tetherplane-toast-smoke.exe' -or
 }
 $toast = (Resolve-Path -LiteralPath $ToastExecutable).Path
 $agent = (Resolve-Path -LiteralPath $AgentExecutable).Path
+foreach($artifact in @(
+    @{ Path = $toast; Expected = $ExpectedToastSha256; Name = 'TOAST' },
+    @{ Path = $agent; Expected = $ExpectedAgentSha256; Name = 'AGENT' }
+)) {
+    if ($artifact.Expected -and
+        (Get-FileHash -LiteralPath $artifact.Path -Algorithm SHA256).Hash -ine $artifact.Expected) {
+        throw ('BETA_' + $artifact.Name + '_ARTIFACT_HASH_MISMATCH')
+    }
+}
 $link = Join-Path ([Environment]::GetFolderPath('Programs')) 'Tetherplane Developer Beta.lnk'
 $createdHere = -not (Test-Path -LiteralPath $link)
 $registered = $false
