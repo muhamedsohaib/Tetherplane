@@ -7,22 +7,26 @@ const FRESHNESS_MS: u64 = 90_000;
 const FUTURE_SKEW_MS: u64 = 5_000;
 const DEDUPE_MS: u64 = 300_000;
 const FLAP_WINDOW_MS: u64 = 600_000;
-const MAX_DEVICES: usize = 256;
+const MAX_STREAMS: usize = 1024;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum EventKind {
     DeviceConnected,
     DeviceDisconnected,
+    /// A local authenticated WebSocket was lost; remote device status is unverified.
+    LocalStatusUnknown,
     PairingRequested,
     ApprovalRequired,
     PermissionRevoked,
     SetupNeedsAttention,
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub enum Provenance {
     AuthenticatedRelay,
     ConfirmedRelayOffline,
+    /// Local agent transport loss; never proves a remote device is offline.
+    LocalAgentTransport,
     OwnerInteraction,
     LocalPolicyBroker,
     LocalSetup,
@@ -71,11 +75,19 @@ struct Cursor {
 
 #[derive(Debug, Default)]
 pub struct NotificationPolicy {
-    cursor: HashMap<String, Cursor>,
-    connection: HashMap<String, bool>,
+    // Independent event streams must not share a sequence cursor.
+    cursor: HashMap<(String, Provenance), Cursor>,
+    connection: HashMap<String, ConnectionState>,
     notified: HashMap<String, u64>,
     transitions: HashMap<String, VecDeque<u64>>,
     unstable_until: HashMap<String, u64>,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum ConnectionState {
+    Online,
+    Offline,
+    Unknown,
 }
 
 fn valid_identifier(value: &str, max: usize) -> bool {
@@ -93,6 +105,7 @@ fn required_provenance(kind: EventKind) -> Provenance {
     match kind {
         EventKind::DeviceConnected => Provenance::AuthenticatedRelay,
         EventKind::DeviceDisconnected => Provenance::ConfirmedRelayOffline,
+        EventKind::LocalStatusUnknown => Provenance::LocalAgentTransport,
         EventKind::PairingRequested => Provenance::OwnerInteraction,
         EventKind::ApprovalRequired | EventKind::PermissionRevoked => Provenance::LocalPolicyBroker,
         EventKind::SetupNeedsAttention => Provenance::LocalSetup,
@@ -110,6 +123,11 @@ fn make_notice(event: &Event) -> Notification {
         EventKind::DeviceDisconnected => (
             format!("{id} disconnected"),
             "The relay no longer confirms an authenticated device session.",
+            Severity::Normal,
+        ),
+        EventKind::LocalStatusUnknown => (
+            format!("{id} status unknown"),
+            "The local relay connection was interrupted. Device availability is unverified.",
             Severity::Normal,
         ),
         EventKind::PairingRequested => (
@@ -169,7 +187,8 @@ impl NotificationPolicy {
         {
             return Err(Reject::StaleOrFuture);
         }
-        if let Some(last) = self.cursor.get(&event.device_id) {
+        let cursor_key = (event.device_id.clone(), event.provenance);
+        if let Some(last) = self.cursor.get(&cursor_key) {
             let replay = if last.epoch == event.source_epoch {
                 event.sequence <= last.sequence || event.observed_at_ms < last.observed_at_ms
             } else {
@@ -178,11 +197,11 @@ impl NotificationPolicy {
             if replay {
                 return Err(Reject::Replay);
             }
-        } else if self.cursor.len() >= MAX_DEVICES {
+        } else if self.cursor.len() >= MAX_STREAMS {
             return Err(Reject::RosterLimit);
         }
         self.cursor.insert(
-            event.device_id.clone(),
+            cursor_key,
             Cursor {
                 epoch: event.source_epoch.clone(),
                 sequence: event.sequence,
@@ -192,14 +211,17 @@ impl NotificationPolicy {
 
         if matches!(
             event.kind,
-            EventKind::DeviceConnected | EventKind::DeviceDisconnected
+            EventKind::DeviceConnected
+                | EventKind::DeviceDisconnected
+                | EventKind::LocalStatusUnknown
         ) {
-            let is_connected = event.kind == EventKind::DeviceConnected;
-            if self
-                .connection
-                .insert(event.device_id.clone(), is_connected)
-                == Some(is_connected)
-            {
+            let state = match event.kind {
+                EventKind::DeviceConnected => ConnectionState::Online,
+                EventKind::DeviceDisconnected => ConnectionState::Offline,
+                EventKind::LocalStatusUnknown => ConnectionState::Unknown,
+                _ => unreachable!(),
+            };
+            if self.connection.insert(event.device_id.clone(), state) == Some(state) {
                 return Ok(None);
             }
             let changes = self.transitions.entry(event.device_id.clone()).or_default();
@@ -282,6 +304,8 @@ impl Notification {
         }
     }
 }
+
+pub mod session_feed;
 
 #[cfg(windows)]
 pub mod windows_native;
@@ -487,5 +511,81 @@ mod tests {
         let n = p.accept(&revoke, 100_005).unwrap().unwrap();
         assert_eq!(n.severity, Severity::High);
         assert!(n.to_toast_xml().contains("access revoked"));
+    }
+}
+
+#[cfg(test)]
+mod multi_source_regressions {
+    use super::*;
+
+    fn event(kind: EventKind, provenance: Provenance, sequence: u64, at: u64) -> Event {
+        Event {
+            kind,
+            provenance,
+            device_id: "RTX".into(),
+            source_epoch: "source-123".into(),
+            sequence,
+            observed_at_ms: at,
+            request_id: None,
+        }
+    }
+
+    #[test]
+    fn independent_relay_and_policy_counters_do_not_cause_false_replay() {
+        let mut policy = NotificationPolicy::default();
+        let connected = event(
+            EventKind::DeviceConnected,
+            Provenance::AuthenticatedRelay,
+            99,
+            100_000,
+        );
+        let approval = event(
+            EventKind::ApprovalRequired,
+            Provenance::LocalPolicyBroker,
+            1,
+            100_001,
+        );
+        let unknown = event(
+            EventKind::LocalStatusUnknown,
+            Provenance::LocalAgentTransport,
+            2,
+            100_002,
+        );
+        assert!(policy.accept(&connected, 100_000).unwrap().is_some());
+        assert!(policy.accept(&approval, 100_001).unwrap().is_some());
+        let message = policy.accept(&unknown, 100_002).unwrap().unwrap();
+        assert!(message.title.contains("status unknown"));
+        assert!(!message.title.contains("disconnected"));
+        assert_eq!(policy.accept(&approval, 100_003), Err(Reject::Replay));
+    }
+
+    #[test]
+    fn unknown_does_not_require_a_relay_confirmed_offline_event() {
+        let mut policy = NotificationPolicy::default();
+        let incorrect = event(
+            EventKind::LocalStatusUnknown,
+            Provenance::ConfirmedRelayOffline,
+            1,
+            100_000,
+        );
+        assert_eq!(
+            policy.accept(&incorrect, 100_000),
+            Err(Reject::UntrustedSource)
+        );
+        let valid = event(
+            EventKind::LocalStatusUnknown,
+            Provenance::LocalAgentTransport,
+            1,
+            100_001,
+        );
+        let msg = policy.accept(&valid, 100_001).unwrap().unwrap();
+        assert!(msg.body.contains("unverified"));
+        let repeated = event(
+            EventKind::LocalStatusUnknown,
+            Provenance::LocalAgentTransport,
+            2,
+            100_002,
+        );
+        assert_eq!(policy.accept(&repeated, 100_002), Ok(None));
     }
 }

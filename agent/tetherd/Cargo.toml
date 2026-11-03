@@ -5,6 +5,10 @@ edition.workspace = true
 license.workspace = true
 publish = false
 
+[features]
+default = []
+developer-beta-notification-feed = ["dep:tether-notifications"]
+
 [dependencies]
 async-trait = "0.1"
 futures-util = "0.3.34"
@@ -15,11 +19,12 @@ rustls = { version = "0.23.45", default-features = false, features = ["ring"] }
 sha2 = "0.10"
 tether-browser-provider = { path = "../providers/browser" }
 tether-core = { path = "../tether-core" }
+tether-notifications = { path = "../tether-notifications", optional = true }
 tether-desktop-provider = { path = "../providers/desktop" }
 tether-filesystem-provider = { path = "../providers/filesystem" }
 tether-process-provider = { path = "../providers/process" }
 tether-search-provider = { path = "../providers/search" }
-tokio = { version = "1", features = ["io-std", "io-util", "macros", "rt-multi-thread", "sync", "time"] }
+tokio = { version = "1", features = ["io-std", "io-util", "macros", "net", "rt-multi-thread", "sync", "time"] }
 tokio-tungstenite = { version = "0.30.0", features = ["rustls-tls-webpki-roots"] }
 url = "2.5.8"
 uuid = { version = "1", features = ["v4"] }

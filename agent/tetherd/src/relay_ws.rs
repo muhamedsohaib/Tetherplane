@@ -26,6 +26,9 @@ pub(crate) struct RelayConfig {
     pub credential: String,
     pub allow_insecure_localhost: bool,
     pub reconnect_delay: Duration,
+    // Read-only in-process observer; not a socket, credential or device-control channel.
+    #[cfg(feature = "developer-beta-notification-feed")]
+    pub notification_sink: Option<std::sync::mpsc::SyncSender<tether_notifications::Event>>,
 }
 
 enum RelayFailure {
@@ -116,6 +119,18 @@ async fn connect_and_run(
     let (mut socket, _) = connect_async(request)
         .await
         .map_err(|error| classify_connect_error(&error))?;
+
+    // Deliberately created only AFTER the device-authenticated WebSocket upgrade.
+    // On any transport error, RAII teardown reports UNKNOWN (never relay-confirmed offline).
+    // A full observer queue never disrupts the authenticated device connection.
+    #[cfg(feature = "developer-beta-notification-feed")]
+    let _notification_session = config.notification_sink.as_ref().and_then(|sink| {
+        tether_notifications::session_feed::AcceptedRelaySession::after_authenticated_upgrade(
+            sink.clone(),
+            &config.device_id,
+        )
+        .ok()
+    });
 
     while let Some(next) = socket.next().await {
         let message = next.map_err(|error| {
@@ -222,5 +237,119 @@ mod tests {
         assert!(validate_relay_url("ws://localhost:8765/device", true).is_ok());
         assert!(validate_relay_url("ws://relay.example.test/device", false).is_err());
         assert!(validate_relay_url("http://relay.example.test/device", true).is_err());
+    }
+}
+
+#[cfg(all(test, feature = "developer-beta-notification-feed"))]
+mod notification_feed_contract_tests {
+    use super::*;
+    use std::sync::mpsc::sync_channel;
+    use tether_notifications::{EventKind, Provenance};
+    use tokio::io::{AsyncReadExt, AsyncWriteExt};
+    use tokio::net::TcpListener;
+    use tokio_tungstenite::tungstenite::handshake::server::{Request, Response};
+
+    fn config(
+        port: u16,
+        sink: std::sync::mpsc::SyncSender<tether_notifications::Event>,
+    ) -> RelayConfig {
+        RelayConfig {
+            url: format!("ws://127.0.0.1:{port}/device"),
+            device_id: "TP_BETA_TEST".into(),
+            credential: "synthetic-test-credential-no-permissions".into(),
+            allow_insecure_localhost: true,
+            reconnect_delay: Duration::from_millis(10),
+            notification_sink: Some(sink),
+        }
+    }
+
+    #[tokio::test]
+    async fn accepted_upgrade_emits_connected_then_unknown_after_close_without_credentials() {
+        let server = TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let port = server.local_addr().unwrap().port();
+        let server_task = tokio::spawn(async move {
+            let (socket, _) = server.accept().await.unwrap();
+            let mut ws = tokio_tungstenite::accept_hdr_async(
+                socket,
+                |request: &Request, response: Response| {
+                    assert_eq!(request.uri().path(), "/device");
+                    assert_eq!(
+                        request
+                            .headers()
+                            .get("authorization")
+                            .unwrap()
+                            .to_str()
+                            .unwrap(),
+                        "Device synthetic-test-credential-no-permissions"
+                    );
+                    assert_eq!(
+                        request
+                            .headers()
+                            .get("x-tetherplane-device-id")
+                            .unwrap()
+                            .to_str()
+                            .unwrap(),
+                        "TP_BETA_TEST"
+                    );
+                    Ok(response)
+                },
+            )
+            .await
+            .unwrap();
+            ws.close(None).await.unwrap();
+        });
+        let (tx, rx) = sync_channel(8);
+        let runtime =
+            Arc::new(crate::runtime::AgentRuntime::new(vec![], None, None, None).unwrap());
+        let result = tokio::time::timeout(
+            Duration::from_secs(5),
+            connect_and_run(runtime, &config(port, tx)),
+        )
+        .await
+        .expect("server must close");
+        assert!(result.is_ok());
+        server_task.await.unwrap();
+        let a = rx.try_recv().unwrap();
+        let b = rx.try_recv().unwrap();
+        assert_eq!(a.kind, EventKind::DeviceConnected);
+        assert_eq!(a.provenance, Provenance::AuthenticatedRelay);
+        assert_eq!(b.kind, EventKind::LocalStatusUnknown);
+        assert_eq!(b.provenance, Provenance::LocalAgentTransport);
+        assert_eq!(a.device_id, "TP_BETA_TEST");
+        assert_eq!(a.source_epoch, b.source_epoch);
+        assert!(!format!("{a:?}{b:?}").contains("synthetic-test-credential"));
+        assert!(rx.try_recv().is_err());
+    }
+
+    #[tokio::test]
+    async fn denied_upgrade_never_emits_a_connected_event() {
+        let server = TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let port = server.local_addr().unwrap().port();
+        let server_task = tokio::spawn(async move {
+            let (mut socket, _) = server.accept().await.unwrap();
+            let mut buffer = [0u8; 2048];
+            let _ = socket.read(&mut buffer).await.unwrap();
+            socket
+                .write_all(
+                    b"HTTP/1.1 401 Unauthorized\r\nContent-Length: 0\r\nConnection: close\r\n\r\n",
+                )
+                .await
+                .unwrap();
+        });
+        let (tx, rx) = sync_channel(8);
+        let runtime =
+            Arc::new(crate::runtime::AgentRuntime::new(vec![], None, None, None).unwrap());
+        let result = tokio::time::timeout(
+            Duration::from_secs(5),
+            connect_and_run(runtime, &config(port, tx)),
+        )
+        .await
+        .expect("denied upgrade must complete");
+        assert!(result.is_err());
+        server_task.await.unwrap();
+        assert!(
+            rx.try_recv().is_err(),
+            "rejected pairing must not claim connected"
+        );
     }
 }

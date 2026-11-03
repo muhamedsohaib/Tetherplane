@@ -1220,6 +1220,13 @@ dependencies = [
 ]
 
 [[package]]
+name = "tether-notifications"
+version = "0.1.0"
+dependencies = [
+ "windows",
+]
+
+[[package]]
 name = "tether-process-provider"
 version = "0.1.0"
 dependencies = [
@@ -1259,6 +1266,7 @@ dependencies = [
  "tether-core",
  "tether-desktop-provider",
  "tether-filesystem-provider",
+ "tether-notifications",
  "tether-process-provider",
  "tether-search-provider",
  "tokio",

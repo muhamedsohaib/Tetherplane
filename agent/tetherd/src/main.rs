@@ -258,6 +258,8 @@ async fn main() {
                     credential,
                     allow_insecure_localhost,
                     reconnect_delay: Duration::from_secs(2),
+                    #[cfg(feature = "developer-beta-notification-feed")]
+                    notification_sink: None, // IPC not authorized/implemented in this beta slice.
                 },
             )
             .await
