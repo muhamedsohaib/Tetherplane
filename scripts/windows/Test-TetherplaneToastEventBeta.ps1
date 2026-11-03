@@ -35,6 +35,14 @@ $node = (Get-Command node.exe -ErrorAction Stop).Source
 function Get-HistoryCount {
     return @($manager::History.GetHistory($identity)).Count
 }
+function Get-TitleCount {
+    param([string]$Title)
+    $count = 0
+    foreach($item in @($manager::History.GetHistory($identity))) {
+        if ($item.Content.GetXml().Contains('<text>' + $Title + '</text>')) { $count++ }
+    }
+    return $count
+}
 function Run-SyntheticCase {
     param([ValidateSet('accept','reject')][string]$Mode)
     $serverStdout = Join-Path $evidence ($Mode + '.server.out')
@@ -61,6 +69,8 @@ function Run-SyntheticCase {
             throw ('BETA_MOCK_RELAY_FAILED_TO_START_' + $Mode)
         }
         $before = Get-HistoryCount
+        $connectedBefore = Get-TitleCount -Title "TP_BETA_TEST connected"
+        $unknownBefore = Get-TitleCount -Title "TP_BETA_TEST status unknown"
         $argList = @(
             '--relay-url', ('ws://127.0.0.1:' + $port + '/device'),
             '--device-id', 'TP_BETA_TEST',
@@ -87,16 +97,22 @@ function Run-SyntheticCase {
             Write-Output 'BETA_401_NO_NOTIFICATION_VERIFIED'
         } else {
             $after = $before
-            for ($i=0; $i -lt 80; $i++) {
+            $connectedAfter = $connectedBefore
+            $unknownAfter = $unknownBefore
+            for ($i=0; $i -lt 100; $i++) {
                 $after = Get-HistoryCount
-                if ($after -gt $before) { break }
+                $connectedAfter = Get-TitleCount -Title "TP_BETA_TEST connected"
+                $unknownAfter = Get-TitleCount -Title "TP_BETA_TEST status unknown"
+                if ($connectedAfter -gt $connectedBefore -and $unknownAfter -gt $unknownBefore) { break }
                 if ($agentProcess.HasExited) { break }
                 Start-Sleep -Milliseconds 100
             }
             Write-Output ('BETA_101_HISTORY_BEFORE=' + $before)
             Write-Output ('BETA_101_HISTORY_AFTER=' + $after)
-            if ($after -le $before) {
-                throw 'BETA_ACCEPTED_AGENT_NOTIFICATION_NOT_OBSERVED'
+            Write-Output ('BETA_101_CONNECTED_NEW=' + ($connectedAfter - $connectedBefore))
+            Write-Output ('BETA_101_UNKNOWN_NEW=' + ($unknownAfter - $unknownBefore))
+            if ($connectedAfter -le $connectedBefore -or $unknownAfter -le $unknownBefore) {
+                throw 'BETA_ACCEPTED_AGENT_CONNECTION_OR_UNKNOWN_NOTIFICATION_NOT_OBSERVED'
             }
             $serverEvidence = Get-Content -LiteralPath $serverStdout -Raw
             if ($serverEvidence -notmatch 'MOCK_UPGRADE_ACCEPTED') {
