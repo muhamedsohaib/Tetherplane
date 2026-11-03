@@ -19,6 +19,9 @@ use url::Url;
 use crate::runtime::AgentRuntime;
 
 const DEVICE_ID_HEADER: HeaderName = HeaderName::from_static("x-tetherplane-device-id");
+// Bound a stalled DNS/TCP/TLS/WebSocket upgrade before the reconnect loop retries.
+// This is an attempt budget, not a promise of end-to-end device readiness.
+const RELAY_HANDSHAKE_BUDGET: Duration = Duration::from_secs(12);
 
 pub(crate) struct RelayConfig {
     pub url: String,
@@ -107,6 +110,18 @@ async fn connect_device_socket(
     tokio_tungstenite::WebSocketStream<tokio_tungstenite::MaybeTlsStream<tokio::net::TcpStream>>,
     RelayFailure,
 > {
+    connect_device_socket_with_budget(config, RELAY_HANDSHAKE_BUDGET).await
+}
+
+// Explicit budget injection keeps the synthetic stalled-upgrade tests fast.
+// No credentials, device identifiers or target URLs enter timeout diagnostics.
+async fn connect_device_socket_with_budget(
+    config: &RelayConfig,
+    budget: Duration,
+) -> Result<
+    tokio_tungstenite::WebSocketStream<tokio_tungstenite::MaybeTlsStream<tokio::net::TcpStream>>,
+    RelayFailure,
+> {
     let mut request = config
         .url
         .as_str()
@@ -121,9 +136,10 @@ async fn connect_device_socket(
     request.headers_mut().insert(AUTHORIZATION, authorization);
     request.headers_mut().insert(DEVICE_ID_HEADER, device_id);
 
-    let (socket, _) = connect_async(request)
+    let upgrade = tokio::time::timeout(budget, connect_async(request))
         .await
-        .map_err(|error| classify_connect_error(&error))?;
+        .map_err(|_| RelayFailure::Retryable("relay WebSocket handshake timed out".into()))?;
+    let (socket, _) = upgrade.map_err(|error| classify_connect_error(&error))?;
     Ok(socket)
 }
 
@@ -335,11 +351,89 @@ mod notification_feed_contract_tests {
         )
         .await
         .expect("denied upgrade must complete");
-        assert!(result.is_err());
+        assert!(matches!(result, Err(RelayFailure::Fatal(message))
+            if message.starts_with("relay rejected device authentication with HTTP 401")));
         server_task.await.unwrap();
         assert!(
             rx.try_recv().is_err(),
             "rejected pairing must not claim connected"
+        );
+    }
+
+    #[tokio::test]
+    async fn stalled_upgrade_expires_without_connected_notification_or_credentials() {
+        let server = TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let port = server.local_addr().unwrap().port();
+        let server_task = tokio::spawn(async move {
+            let (mut peer, _) = server.accept().await.unwrap();
+            let mut request = [0_u8; 2048];
+            let _ = peer.read(&mut request).await.unwrap();
+            // Hold the HTTP upgrade response until after the client's budget.
+            tokio::time::sleep(Duration::from_millis(350)).await;
+        });
+
+        let (tx, rx) = sync_channel(8);
+        let cfg = config(port, tx);
+        let result = tokio::time::timeout(
+            Duration::from_secs(2),
+            connect_device_socket_with_budget(&cfg, Duration::from_millis(75)),
+        )
+        .await
+        .expect("stalled upgrade must observe its bounded handshake deadline");
+        assert!(matches!(result, Err(RelayFailure::Retryable(message))
+            if message == "relay WebSocket handshake timed out"));
+        assert!(
+            rx.try_recv().is_err(),
+            "an unauthenticated, timed-out upgrade must not claim device presence"
+        );
+        server_task.await.unwrap();
+    }
+    #[tokio::test]
+    async fn successful_retry_after_stalled_upgrade_reports_one_authenticated_session() {
+        let server = TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let port = server.local_addr().unwrap().port();
+        let server_task = tokio::spawn(async move {
+            let (mut stalled, _) = server.accept().await.unwrap();
+            let mut request = [0_u8; 2048];
+            let _ = stalled.read(&mut request).await.unwrap();
+            // Never acknowledge the first connection; the caller must bound it.
+            let (recovered, _) = server.accept().await.unwrap();
+            let mut ws = tokio_tungstenite::accept_async(recovered).await.unwrap();
+            ws.close(None).await.unwrap();
+        });
+
+        let (tx, rx) = sync_channel(8);
+        let cfg = config(port, tx.clone());
+        let first = connect_device_socket_with_budget(&cfg, Duration::from_millis(75)).await;
+        assert!(matches!(first, Err(RelayFailure::Retryable(_))));
+        assert!(
+            rx.try_recv().is_err(),
+            "stall cannot create authenticated presence"
+        );
+
+        let mut recovered = tokio::time::timeout(
+            Duration::from_secs(3),
+            connect_device_socket_with_budget(&cfg, Duration::from_secs(2)),
+        )
+        .await
+        .expect("recovery must complete within the synthetic budget")
+        .expect("synthetic second upgrade must be accepted");
+        let guard =
+            tether_notifications::session_feed::AcceptedRelaySession::after_authenticated_upgrade(
+                tx,
+                &cfg.device_id,
+            )
+            .expect("only accepted retry creates a session");
+        let _ = tokio::time::timeout(Duration::from_secs(2), recovered.next())
+            .await
+            .expect("synthetic server must close the recovered session");
+        server_task.await.unwrap();
+        drop(guard);
+        assert_eq!(rx.try_recv().unwrap().kind, EventKind::DeviceConnected);
+        assert_eq!(rx.try_recv().unwrap().kind, EventKind::LocalStatusUnknown);
+        assert!(
+            rx.try_recv().is_err(),
+            "no duplicate sessions or phantom alerts"
         );
     }
 }

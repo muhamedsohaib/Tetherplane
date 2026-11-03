@@ -19,15 +19,25 @@ test("developer beta event feed remains opt-in and has no default runtime subscr
 
 test("notifications cannot precede the device-authenticated WebSocket upgrade", () => {
   const relay = read("agent/tetherd/src/relay_ws.rs");
-  const upgrade = relay.indexOf("let (socket, _) = connect_async(request)");
+  const upgrade = relay.indexOf("let upgrade = tokio::time::timeout(budget, connect_async(request))");
   const observer = relay.indexOf("let _notification_session =");
   assert.ok(upgrade >= 0 && observer > upgrade, "observer must follow successful upgrade");
   const between = relay.slice(upgrade, observer);
-  assert.match(between, /\.await\s*\.map_err\(\|error\|\s*classify_connect_error\(&error\)\)\?/);
+  assert.match(between, /tokio::time::timeout\(budget, connect_async\(request\)\)/);
+  assert.match(between, /let \(socket, _\) = upgrade\.map_err\(\|error\| classify_connect_error\(&error\)\)\?/);
   assert.match(between, /let mut socket = connect_device_socket\(config\)\.await\?/);
   assert.match(relay.slice(observer - 100, observer), /#\[cfg\(feature = "developer-beta-notification-feed"\)\]/);
   assert.match(relay, /notification_sink\.as_ref\(\)\.and_then/);
   assert.match(relay, /after_authenticated_upgrade/);
+});
+
+test("relay handshake timeout remains retryable, does not claim auth, and carries no private values", () => {
+  const relay = read("agent/tetherd/src/relay_ws.rs");
+  assert.match(relay, /RELAY_HANDSHAKE_BUDGET: Duration = Duration::from_secs\(12\)/);
+  assert.match(relay, /RelayFailure::Retryable\("relay WebSocket handshake timed out"/);
+  assert.match(relay, /stalled_upgrade_expires_without_connected_notification_or_credentials/);
+  assert.match(relay, /unauthenticated, timed-out upgrade must not claim device presence/);
+  assert.match(relay, /relay rejected device authentication with HTTP 401/);
 });
 
 test("feed is bounded, text-only and reports unknown instead of fictitious offline", () => {
