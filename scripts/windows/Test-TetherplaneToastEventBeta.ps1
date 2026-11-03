@@ -1,0 +1,133 @@
+# Isolated end-to-end Windows developer-beta notification acceptance.
+# Synthetic loopback only. No real relay, device credentials, or agent task changes.
+[CmdletBinding()]
+param(
+    [Parameter(Mandatory=$true)][string]$ToastExecutable,
+    [Parameter(Mandatory=$true)][string]$AgentExecutable,
+    [switch]$KeepRegistration,
+    [switch]$KeepEvidence
+)
+Set-StrictMode -Version Latest
+$ErrorActionPreference = 'Stop'
+$identity = 'ARCUSLabs.Tetherplane.DevBeta'
+$registrar = Join-Path $PSScriptRoot 'Register-TetherplaneToastBeta.ps1'
+$fixture = (Resolve-Path -LiteralPath (Join-Path $PSScriptRoot '..\..\tests\release\windows-toast-loopback-relay.mjs')).Path
+if ((Split-Path -Leaf $ToastExecutable) -cne 'tetherplane-toast-smoke.exe' -or
+    (Split-Path -Leaf $AgentExecutable) -cne 'tetherd.exe' -or
+    -not (Test-Path -LiteralPath $ToastExecutable -PathType Leaf) -or
+    -not (Test-Path -LiteralPath $AgentExecutable -PathType Leaf)) {
+    throw 'BETA_EXECUTABLE_INPUTS_INVALID'
+}
+$toast = (Resolve-Path -LiteralPath $ToastExecutable).Path
+$agent = (Resolve-Path -LiteralPath $AgentExecutable).Path
+$link = Join-Path ([Environment]::GetFolderPath('Programs')) 'Tetherplane Developer Beta.lnk'
+$createdHere = -not (Test-Path -LiteralPath $link)
+$registered = $false
+$scriptSuccess = $false
+$evidence = Join-Path $env:TEMP ('TPToastAcceptance-' + [guid]::NewGuid().ToString('N'))
+New-Item -ItemType Directory -Path $evidence -ErrorAction Stop | Out-Null
+$credentialFile = Join-Path $evidence 'synthetic-credential.txt'
+[IO.File]::WriteAllText($credentialFile, 'synthetic-notification-only-credential', [Text.Encoding]::ASCII)
+[void][Windows.UI.Notifications.ToastNotificationManager,Windows.UI.Notifications,ContentType=WindowsRuntime]
+$manager = [Windows.UI.Notifications.ToastNotificationManager]
+$node = (Get-Command node.exe -ErrorAction Stop).Source
+
+function Get-HistoryCount {
+    return @($manager::History.GetHistory($identity)).Count
+}
+function Run-SyntheticCase {
+    param([ValidateSet('accept','reject')][string]$Mode)
+    $serverStdout = Join-Path $evidence ($Mode + '.server.out')
+    $serverStderr = Join-Path $evidence ($Mode + '.server.err')
+    $agentStdout = Join-Path $evidence ($Mode + '.agent.out')
+    $agentStderr = Join-Path $evidence ($Mode + '.agent.err')
+    $serverProcess = $null
+    $agentProcess = $null
+    try {
+        $serverProcess = Start-Process -FilePath $node -ArgumentList @('"' + $fixture + '"', $Mode) -WindowStyle Hidden -PassThru -RedirectStandardOutput $serverStdout -RedirectStandardError $serverStderr
+        $port = $null
+        for ($i=0; $i -lt 90; $i++) {
+            if (Test-Path -LiteralPath $serverStdout) {
+                $line = Get-Content -LiteralPath $serverStdout -TotalCount 1 -ErrorAction SilentlyContinue
+                if ($line -match '^MOCK_RELAY_PORT=(\d+)$') {
+                    $port = [int]$Matches[1]
+                    break
+                }
+            }
+            if ($serverProcess.HasExited) { break }
+            Start-Sleep -Milliseconds 100
+        }
+        if (-not $port) {
+            throw ('BETA_MOCK_RELAY_FAILED_TO_START_' + $Mode)
+        }
+        $before = Get-HistoryCount
+        $argList = @(
+            '--relay-url', ('ws://127.0.0.1:' + $port + '/device'),
+            '--device-id', 'TP_BETA_TEST',
+            '--device-credential-file', ('"' + $credentialFile + '"'),
+            '--allow', ('"' + $evidence + '"'),
+            '--relay-allow-insecure-localhost',
+            '--dev-beta-local-toasts'
+        )
+        $agentProcess = Start-Process -FilePath $agent -ArgumentList $argList -WindowStyle Hidden -PassThru -RedirectStandardOutput $agentStdout -RedirectStandardError $agentStderr
+        if ($Mode -eq 'reject') {
+            Start-Sleep -Seconds 2
+            $after = Get-HistoryCount
+            Write-Output ('BETA_401_HISTORY_BEFORE=' + $before)
+            Write-Output ('BETA_401_HISTORY_AFTER=' + $after)
+            if ($after -ne $before) {
+                throw 'BETA_401_GENERATED_UNAUTHORIZED_NOTIFICATION'
+            }
+            $serverEvidence = Get-Content -LiteralPath $serverStdout -Raw
+            $agentEvidence = Get-Content -LiteralPath $agentStderr -Raw
+            if ($serverEvidence -notmatch 'MOCK_UPGRADE_REJECTED' -or
+                $agentEvidence -notmatch 'relay rejected device authentication with HTTP 401') {
+                throw 'BETA_401_HANDSHAKE_DENIAL_NOT_PROVEN'
+            }
+            Write-Output 'BETA_401_NO_NOTIFICATION_VERIFIED'
+        } else {
+            $after = $before
+            for ($i=0; $i -lt 80; $i++) {
+                $after = Get-HistoryCount
+                if ($after -gt $before) { break }
+                if ($agentProcess.HasExited) { break }
+                Start-Sleep -Milliseconds 100
+            }
+            Write-Output ('BETA_101_HISTORY_BEFORE=' + $before)
+            Write-Output ('BETA_101_HISTORY_AFTER=' + $after)
+            if ($after -le $before) {
+                throw 'BETA_ACCEPTED_AGENT_NOTIFICATION_NOT_OBSERVED'
+            }
+            $serverEvidence = Get-Content -LiteralPath $serverStdout -Raw
+            if ($serverEvidence -notmatch 'MOCK_UPGRADE_ACCEPTED') {
+                throw 'BETA_101_HANDSHAKE_NOT_PROVEN'
+            }
+            Write-Output 'BETA_AUTHENTICATED_SESSION_EVENT_HISTORY_VERIFIED'
+        }
+    } finally {
+        if ($agentProcess -and -not $agentProcess.HasExited) {
+            Stop-Process -Id $agentProcess.Id -Force -ErrorAction SilentlyContinue
+        }
+        if ($serverProcess -and -not $serverProcess.HasExited) {
+            Stop-Process -Id $serverProcess.Id -Force -ErrorAction SilentlyContinue
+        }
+    }
+}
+try {
+    & $registrar -Operation Register -Executable $toast | Out-Host
+    $registered = $true
+    Run-SyntheticCase -Mode reject
+    Run-SyntheticCase -Mode accept
+    $scriptSuccess = $true
+    Write-Output 'BETA_LOOPBACK_END_TO_END_VERIFIED'
+    Write-Output 'BETA_NATIVE_POPUP_VISIBILITY_NOT_HUMAN_CONFIRMED'
+} finally {
+    if ($registered -and $createdHere -and -not $KeepRegistration) {
+        & $registrar -Operation Unregister | Out-Host
+    }
+    if (-not $KeepEvidence -and $scriptSuccess) {
+        Remove-Item -LiteralPath $evidence -Recurse -Force -ErrorAction Stop
+    } else {
+        Write-Output ('BETA_EVIDENCE_DIRECTORY=' + $evidence)
+    }
+}

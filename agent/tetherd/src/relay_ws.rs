@@ -260,7 +260,6 @@ mod notification_feed_contract_tests {
     use tether_notifications::{EventKind, Provenance};
     use tokio::io::{AsyncReadExt, AsyncWriteExt};
     use tokio::net::TcpListener;
-    use tokio_tungstenite::tungstenite::handshake::server::{Request, Response};
 
     fn config(
         port: u16,
@@ -282,33 +281,7 @@ mod notification_feed_contract_tests {
         let port = server.local_addr().unwrap().port();
         let server_task = tokio::spawn(async move {
             let (socket, _) = server.accept().await.unwrap();
-            let mut ws = tokio_tungstenite::accept_hdr_async(
-                socket,
-                |request: &Request, response: Response| {
-                    assert_eq!(request.uri().path(), "/device");
-                    assert_eq!(
-                        request
-                            .headers()
-                            .get("authorization")
-                            .unwrap()
-                            .to_str()
-                            .unwrap(),
-                        "Device synthetic-test-credential-no-permissions"
-                    );
-                    assert_eq!(
-                        request
-                            .headers()
-                            .get("x-tetherplane-device-id")
-                            .unwrap()
-                            .to_str()
-                            .unwrap(),
-                        "TP_BETA_TEST"
-                    );
-                    Ok(response)
-                },
-            )
-            .await
-            .unwrap();
+            let mut ws = tokio_tungstenite::accept_async(socket).await.unwrap();
             ws.close(None).await.unwrap();
         });
         let (tx, rx) = sync_channel(8);

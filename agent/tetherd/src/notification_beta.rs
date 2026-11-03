@@ -18,7 +18,7 @@ fn now_ms() -> u64 {
         .unwrap_or(u64::MAX)
 }
 
-fn consume<F: FnMut(&Notification)>(rx: Receiver<Event>, mut present: F) {
+fn consume<F: FnMut(&Notification)>(rx: &Receiver<Event>, mut present: F) {
     let mut policy = NotificationPolicy::default();
     while let Ok(event) = rx.recv() {
         if let Ok(Some(notice)) = policy.accept(&event, now_ms()) {
@@ -38,7 +38,7 @@ pub(crate) fn start() -> Result<SyncSender<Event>, String> {
         .name("tetherplane-toast-beta".into())
         .spawn(move || {
             let mut last_delivery_failed = false;
-            consume(rx, |notice| match windows_native::show_dev_beta(notice) {
+            consume(&rx, |notice| match windows_native::show_dev_beta(notice) {
                 Ok(()) => last_delivery_failed = false,
                 Err(_) => {
                     if !last_delivery_failed {
@@ -52,6 +52,15 @@ pub(crate) fn start() -> Result<SyncSender<Event>, String> {
         })
         .map_err(|error| format!("failed to start developer-beta notification thread: {error}"))?;
     Ok(tx)
+}
+
+/// Return a sender only when the human explicitly opted in on a user-session agent.
+/// No notification thread is created in default mode.
+///
+/// # Errors
+/// Propagates a thread startup failure without changing the existing agent.
+pub(crate) fn optional(enabled: bool) -> Result<Option<SyncSender<Event>>, String> {
+    if enabled { start().map(Some) } else { Ok(None) }
 }
 
 #[cfg(test)]
@@ -96,7 +105,7 @@ mod tests {
         .unwrap();
         drop(tx);
         let mut titles = Vec::new();
-        consume(rx, |notice| titles.push(notice.title.clone()));
+        consume(&rx, |notice| titles.push(notice.title.clone()));
         assert_eq!(titles, vec!["Leno connected", "Leno status unknown"]);
     }
 
@@ -105,7 +114,7 @@ mod tests {
         let (tx, rx) = sync_channel(1);
         drop(tx);
         let mut times_called = 0;
-        consume(rx, |_| times_called += 1);
+        consume(&rx, |_| times_called += 1);
         assert_eq!(times_called, 0);
     }
 }

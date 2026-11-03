@@ -113,33 +113,15 @@ fn parse_args() -> Result<CliOptions, String> {
         }
     }
 
-    let transport = match (stdio_rpc, relay_url) {
-        (true, None) => {
-            #[cfg(all(windows, feature = "developer-beta-notification-feed"))]
-            if dev_beta_local_toasts {
-                return Err("--dev-beta-local-toasts requires --relay-url".into());
-            }
-            if device_id.is_some() || device_credential_file.is_some() {
-                return Err("--device-id and --device-credential-file require --relay-url".into());
-            }
-            TransportMode::Stdio
-        }
-        (false, Some(url)) => TransportMode::Relay {
-            url,
-            device_id: device_id.ok_or_else(|| "--relay-url requires --device-id".to_owned())?,
-            credential_file: device_credential_file
-                .ok_or_else(|| "--relay-url requires --device-credential-file".to_owned())?,
-            allow_insecure_localhost: relay_allow_insecure_localhost,
-            #[cfg(all(windows, feature = "developer-beta-notification-feed"))]
-            dev_beta_local_toasts,
-        },
-        (true, Some(_)) => {
-            return Err("--stdio-rpc and --relay-url are mutually exclusive".into());
-        }
-        (false, None) => {
-            return Err("tetherd requires either --stdio-rpc or --relay-url".into());
-        }
-    };
+    let transport = resolve_transport(
+        stdio_rpc,
+        relay_url,
+        device_id,
+        device_credential_file,
+        relay_allow_insecure_localhost,
+        #[cfg(all(windows, feature = "developer-beta-notification-feed"))]
+        dev_beta_local_toasts,
+    )?;
 
     Ok(CliOptions {
         transport,
@@ -149,6 +131,39 @@ fn parse_args() -> Result<CliOptions, String> {
         browser_bridge,
         browser_bridge_token_file,
     })
+}
+
+fn resolve_transport(
+    stdio_rpc: bool,
+    relay_url: Option<String>,
+    device_id: Option<String>,
+    device_credential_file: Option<PathBuf>,
+    allow_insecure_localhost: bool,
+    #[cfg(all(windows, feature = "developer-beta-notification-feed"))] dev_beta_local_toasts: bool,
+) -> Result<TransportMode, String> {
+    match (stdio_rpc, relay_url) {
+        (true, None) => {
+            #[cfg(all(windows, feature = "developer-beta-notification-feed"))]
+            if dev_beta_local_toasts {
+                return Err("--dev-beta-local-toasts requires --relay-url".into());
+            }
+            if device_id.is_some() || device_credential_file.is_some() {
+                return Err("--device-id and --device-credential-file require --relay-url".into());
+            }
+            Ok(TransportMode::Stdio)
+        }
+        (false, Some(url)) => Ok(TransportMode::Relay {
+            url,
+            device_id: device_id.ok_or_else(|| "--relay-url requires --device-id".to_owned())?,
+            credential_file: device_credential_file
+                .ok_or_else(|| "--relay-url requires --device-credential-file".to_owned())?,
+            allow_insecure_localhost,
+            #[cfg(all(windows, feature = "developer-beta-notification-feed"))]
+            dev_beta_local_toasts,
+        }),
+        (true, Some(_)) => Err("--stdio-rpc and --relay-url are mutually exclusive".into()),
+        (false, None) => Err("tetherd requires either --stdio-rpc or --relay-url".into()),
+    }
 }
 
 fn load_principal_profile(path: Option<&PathBuf>) -> Result<Option<PrincipalProfile>, String> {
@@ -259,25 +274,17 @@ async fn main() {
             #[cfg(all(windows, feature = "developer-beta-notification-feed"))]
             dev_beta_local_toasts,
         } => {
-            let credential = match relay_ws::load_device_credential(&credential_file) {
-                Ok(credential) => credential,
-                Err(message) => {
+            let credential =
+                relay_ws::load_device_credential(&credential_file).unwrap_or_else(|message| {
                     eprintln!("{message}");
                     std::process::exit(2);
-                }
-            };
+                });
             #[cfg(all(windows, feature = "developer-beta-notification-feed"))]
-            let notification_sink = if dev_beta_local_toasts {
-                match notification_beta::start() {
-                    Ok(sender) => Some(sender),
-                    Err(error) => {
-                        eprintln!("{error}");
-                        std::process::exit(1);
-                    }
-                }
-            } else {
-                None
-            };
+            let notification_sink = notification_beta::optional(dev_beta_local_toasts)
+                .unwrap_or_else(|error| {
+                    eprintln!("{error}");
+                    std::process::exit(1);
+                });
             #[cfg(all(not(windows), feature = "developer-beta-notification-feed"))]
             let notification_sink = None;
             relay_ws::serve(
