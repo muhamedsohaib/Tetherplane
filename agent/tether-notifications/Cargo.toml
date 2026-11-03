@@ -5,6 +5,10 @@ edition.workspace = true
 license.workspace = true
 description = "Fail-closed notification event policy and native Windows toast presenter"
 
+[features]
+default = []
+dev-beta = []
+
 [target.'cfg(windows)'.dependencies]
 windows = { version = "0.62.2", features = ["UI_Notifications", "Data_Xml_Dom", "ApplicationModel"] }
 

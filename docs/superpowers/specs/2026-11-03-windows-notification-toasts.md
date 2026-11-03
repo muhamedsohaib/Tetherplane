@@ -67,3 +67,13 @@ Scope: native user-session notification presenter; no second network client, con
 - SHA-256 comparison of tested/formatter-output `Cargo.toml`, `windows_native.rs`, and smoke CLI sources on Vaulter and Leno matched exactly.
 - **Still unverified:** delivery inside correctly registered/signed Tetherplane MSIX; actual Notification Center visibility; authenticated read-only presence/approval feed into the notification component; cross-user local IPC ACL; approval-review activation; complete 4-device integration.
 - Do not install unsigned packages, change Store manifest or signing, re-pair devices, or bypass SAC just to close a synthetic test. Treat the isolated unit-test result as a code-level gate, not product readiness.
+
+## Developer-beta scope decision — 2026-11-03
+
+The owner explicitly declined a requirement to confirm a production Windows application. Accordingly, the active delivery target is a **developer beta** using a fixed unpackaged per-user classic desktop notification identity, not a signed MSIX or Microsoft Store submission. The packaged identity pathway remains optional future work.
+
+Implementation adds Cargo feature `dev-beta` and a per-user, reversible Start-menu shortcut registration helper. It does not relax local policy, identity or device pairing. Legacy Windows WinRT notification delivery is a beta compatibility choice; the recommended Windows App SDK alternative may be evaluated later.
+
+Independent evidence: Vaulter Rust feature gates passed **12/12 tests** and strict Clippy; Leno shortcut registration and cleanup passed, including refusal to overwrite/delete a foreign shortcut. A synthetic Windows WinRT notification was dispatched on Leno and one notification history entry recorded. The native Rust sender's real delivered toast and authenticated agent-driven delivery remain pending.
+
+See `docs/release/WINDOWS_TOAST_DEVELOPER_BETA_20261103.md` for exact evidence, rollback and next gates.

@@ -8,6 +8,9 @@ use windows::UI::Notifications::{ToastNotification, ToastNotificationManager, To
 use windows::core::HSTRING;
 
 const PACKAGE_NAME: &str = "ARCUSLabs.Tetherplane";
+/// Dedicated per-user, unpackaged beta identity. Presentation only; not an authentication principal.
+#[cfg(feature = "dev-beta")]
+pub const DEV_BETA_APP_ID: &str = "ARCUSLabs.Tetherplane.DevBeta";
 
 #[derive(Debug)]
 pub enum DeliveryError {
@@ -72,6 +75,20 @@ pub fn show_packaged(notice: &Notification) -> Result<(), DeliveryError> {
     dispatch(&notifier, notice)
 }
 
+/// Dispatch text-only notifications from an *unpackaged* developer-beta executable.
+/// Requires the matching per-user Start-menu shortcut with System.AppUserModel.ID.
+/// This identifier is only a Windows notification presentation label; it does
+/// not establish device identity, grant scopes or authenticate the event source.
+///
+/// # Errors
+/// Returns a Windows API error if the registered desktop notifier rejects dispatch.
+#[cfg(feature = "dev-beta")]
+pub fn show_dev_beta(notice: &Notification) -> Result<(), DeliveryError> {
+    let notifier =
+        ToastNotificationManager::CreateToastNotifierWithId(&HSTRING::from(DEV_BETA_APP_ID))?;
+    dispatch(&notifier, notice)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -90,6 +107,14 @@ mod tests {
                 Err(DeliveryError::WrongPackageIdentity)
             ));
         }
+    }
+
+    #[cfg(feature = "dev-beta")]
+    #[test]
+    fn dev_beta_id_does_not_claim_store_package_identity() {
+        assert_ne!(DEV_BETA_APP_ID, PACKAGE_NAME);
+        assert!(DEV_BETA_APP_ID.ends_with(".DevBeta"));
+        assert!(validate_package_name(DEV_BETA_APP_ID).is_err());
     }
 
     #[test]
