@@ -11,18 +11,20 @@ test("developer beta event feed remains opt-in and has no default runtime subscr
   const cargo = read("agent/tetherd/Cargo.toml");
   const main = read("agent/tetherd/src/main.rs");
   assert.match(cargo, /default\s*=\s*\[\]/);
-  assert.match(cargo, /developer-beta-notification-feed\s*=\s*\["dep:tether-notifications"\]/);
-  assert.match(main, /#\[cfg\(feature = "developer-beta-notification-feed"\)\]\s*notification_sink:\s*None/);
+  assert.match(cargo, /developer-beta-notification-feed\s*=\s*\["dep:tether-notifications",\s*"tether-notifications\/dev-beta"\]/);
+  assert.match(main, /if dev_beta_local_toasts/);
+  assert.match(main, /"--dev-beta-local-toasts" => dev_beta_local_toasts = true/);
   assert.match(main, /TransportMode::Stdio/);
 });
 
 test("notifications cannot precede the device-authenticated WebSocket upgrade", () => {
   const relay = read("agent/tetherd/src/relay_ws.rs");
-  const upgrade = relay.indexOf("let (mut socket, _) = connect_async(request)");
+  const upgrade = relay.indexOf("let (socket, _) = connect_async(request)");
   const observer = relay.indexOf("let _notification_session =");
   assert.ok(upgrade >= 0 && observer > upgrade, "observer must follow successful upgrade");
   const between = relay.slice(upgrade, observer);
   assert.match(between, /\.await\s*\.map_err\(\|error\|\s*classify_connect_error\(&error\)\)\?/);
+  assert.match(between, /let mut socket = connect_device_socket\(config\)\.await\?/);
   assert.match(relay.slice(observer - 100, observer), /#\[cfg\(feature = "developer-beta-notification-feed"\)\]/);
   assert.match(relay, /notification_sink\.as_ref\(\)\.and_then/);
   assert.match(relay, /after_authenticated_upgrade/);

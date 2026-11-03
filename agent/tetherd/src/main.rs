@@ -3,6 +3,8 @@
 mod audit;
 mod idempotency;
 mod job;
+#[cfg(all(windows, feature = "developer-beta-notification-feed"))]
+mod notification_beta;
 mod relay_ws;
 mod runtime;
 mod stdio_rpc;
@@ -22,6 +24,8 @@ enum TransportMode {
         device_id: String,
         credential_file: PathBuf,
         allow_insecure_localhost: bool,
+        #[cfg(all(windows, feature = "developer-beta-notification-feed"))]
+        dev_beta_local_toasts: bool,
     },
 }
 
@@ -46,6 +50,8 @@ fn parse_args() -> Result<CliOptions, String> {
     let mut device_id = None;
     let mut device_credential_file = None;
     let mut relay_allow_insecure_localhost = false;
+    #[cfg(all(windows, feature = "developer-beta-notification-feed"))]
+    let mut dev_beta_local_toasts = false;
 
     while let Some(argument) = arguments.next() {
         match argument.as_str() {
@@ -101,12 +107,18 @@ fn parse_args() -> Result<CliOptions, String> {
                     })?));
             }
             "--relay-allow-insecure-localhost" => relay_allow_insecure_localhost = true,
+            #[cfg(all(windows, feature = "developer-beta-notification-feed"))]
+            "--dev-beta-local-toasts" => dev_beta_local_toasts = true,
             _ => return Err(format!("unknown tetherd argument: {argument}")),
         }
     }
 
     let transport = match (stdio_rpc, relay_url) {
         (true, None) => {
+            #[cfg(all(windows, feature = "developer-beta-notification-feed"))]
+            if dev_beta_local_toasts {
+                return Err("--dev-beta-local-toasts requires --relay-url".into());
+            }
             if device_id.is_some() || device_credential_file.is_some() {
                 return Err("--device-id and --device-credential-file require --relay-url".into());
             }
@@ -118,6 +130,8 @@ fn parse_args() -> Result<CliOptions, String> {
             credential_file: device_credential_file
                 .ok_or_else(|| "--relay-url requires --device-credential-file".to_owned())?,
             allow_insecure_localhost: relay_allow_insecure_localhost,
+            #[cfg(all(windows, feature = "developer-beta-notification-feed"))]
+            dev_beta_local_toasts,
         },
         (true, Some(_)) => {
             return Err("--stdio-rpc and --relay-url are mutually exclusive".into());
@@ -242,6 +256,8 @@ async fn main() {
             device_id,
             credential_file,
             allow_insecure_localhost,
+            #[cfg(all(windows, feature = "developer-beta-notification-feed"))]
+            dev_beta_local_toasts,
         } => {
             let credential = match relay_ws::load_device_credential(&credential_file) {
                 Ok(credential) => credential,
@@ -250,6 +266,20 @@ async fn main() {
                     std::process::exit(2);
                 }
             };
+            #[cfg(all(windows, feature = "developer-beta-notification-feed"))]
+            let notification_sink = if dev_beta_local_toasts {
+                match notification_beta::start() {
+                    Ok(sender) => Some(sender),
+                    Err(error) => {
+                        eprintln!("{error}");
+                        std::process::exit(1);
+                    }
+                }
+            } else {
+                None
+            };
+            #[cfg(all(not(windows), feature = "developer-beta-notification-feed"))]
+            let notification_sink = None;
             relay_ws::serve(
                 runtime,
                 relay_ws::RelayConfig {
@@ -259,7 +289,7 @@ async fn main() {
                     allow_insecure_localhost,
                     reconnect_delay: Duration::from_secs(2),
                     #[cfg(feature = "developer-beta-notification-feed")]
-                    notification_sink: None, // IPC not authorized/implemented in this beta slice.
+                    notification_sink, // in-process, explicit beta opt-in; no IPC or remote approvals.
                 },
             )
             .await

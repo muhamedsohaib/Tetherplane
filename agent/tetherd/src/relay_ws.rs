@@ -31,6 +31,7 @@ pub(crate) struct RelayConfig {
     pub notification_sink: Option<std::sync::mpsc::SyncSender<tether_notifications::Event>>,
 }
 
+#[derive(Debug)]
 enum RelayFailure {
     Fatal(String),
     Retryable(String),
@@ -98,10 +99,14 @@ pub(crate) async fn serve(runtime: Arc<AgentRuntime>, config: RelayConfig) -> Re
     }
 }
 
-async fn connect_and_run(
-    runtime: Arc<AgentRuntime>,
+// The handshake is separately testable without initializing a Windows desktop/UIA
+// provider. Only an accepted WebSocket may create an authenticated-session alert.
+async fn connect_device_socket(
     config: &RelayConfig,
-) -> Result<(), RelayFailure> {
+) -> Result<
+    tokio_tungstenite::WebSocketStream<tokio_tungstenite::MaybeTlsStream<tokio::net::TcpStream>>,
+    RelayFailure,
+> {
     let mut request = config
         .url
         .as_str()
@@ -116,9 +121,17 @@ async fn connect_and_run(
     request.headers_mut().insert(AUTHORIZATION, authorization);
     request.headers_mut().insert(DEVICE_ID_HEADER, device_id);
 
-    let (mut socket, _) = connect_async(request)
+    let (socket, _) = connect_async(request)
         .await
         .map_err(|error| classify_connect_error(&error))?;
+    Ok(socket)
+}
+
+async fn connect_and_run(
+    runtime: Arc<AgentRuntime>,
+    config: &RelayConfig,
+) -> Result<(), RelayFailure> {
+    let mut socket = connect_device_socket(config).await?;
 
     // Deliberately created only AFTER the device-authenticated WebSocket upgrade.
     // On any transport error, RAII teardown reports UNKNOWN (never relay-confirmed offline).
@@ -299,16 +312,22 @@ mod notification_feed_contract_tests {
             ws.close(None).await.unwrap();
         });
         let (tx, rx) = sync_channel(8);
-        let runtime =
-            Arc::new(crate::runtime::AgentRuntime::new(vec![], None, None, None).unwrap());
-        let result = tokio::time::timeout(
-            Duration::from_secs(5),
-            connect_and_run(runtime, &config(port, tx)),
-        )
-        .await
-        .expect("server must close");
-        assert!(result.is_ok());
+        let cfg = config(port, tx.clone());
+        let mut socket = tokio::time::timeout(Duration::from_secs(5), connect_device_socket(&cfg))
+            .await
+            .expect("accepted upgrade must complete")
+            .expect("synthetic relay should accept WebSocket");
+        let session =
+            tether_notifications::session_feed::AcceptedRelaySession::after_authenticated_upgrade(
+                tx,
+                &cfg.device_id,
+            )
+            .expect("post-upgrade event must be queued");
+        let _ = tokio::time::timeout(Duration::from_secs(5), socket.next())
+            .await
+            .expect("server should close socket");
         server_task.await.unwrap();
+        drop(session);
         let a = rx.try_recv().unwrap();
         let b = rx.try_recv().unwrap();
         assert_eq!(a.kind, EventKind::DeviceConnected);
@@ -337,11 +356,9 @@ mod notification_feed_contract_tests {
                 .unwrap();
         });
         let (tx, rx) = sync_channel(8);
-        let runtime =
-            Arc::new(crate::runtime::AgentRuntime::new(vec![], None, None, None).unwrap());
         let result = tokio::time::timeout(
             Duration::from_secs(5),
-            connect_and_run(runtime, &config(port, tx)),
+            connect_device_socket(&config(port, tx)),
         )
         .await
         .expect("denied upgrade must complete");

@@ -7,7 +7,7 @@ publish = false
 
 [features]
 default = []
-developer-beta-notification-feed = ["dep:tether-notifications"]
+developer-beta-notification-feed = ["dep:tether-notifications", "tether-notifications/dev-beta"]
 
 [dependencies]
 async-trait = "0.1"

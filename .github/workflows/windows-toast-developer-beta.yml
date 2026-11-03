@@ -30,6 +30,9 @@ jobs:
       - name: Notification event policy and Windows XML tests
         run: cargo test --locked -p tether-notifications --features dev-beta
 
+      - name: Source-boundary regressions
+        run: node --test tests/release/windows-notification-event-source.test.mjs
+
       - name: Authenticated and rejected WebSocket upgrade integration tests
         run: cargo test --locked -p tetherd --features developer-beta-notification-feed --bin tetherd relay_ws::notification_feed_contract_tests -- --nocapture
 
@@ -38,6 +41,9 @@ jobs:
 
       - name: Native beta toast executable
         run: cargo build --locked --release -p tether-notifications --features dev-beta --bin tetherplane-toast-smoke
+
+      - name: Optional beta agent binary for synthetic loopback tests
+        run: cargo build --locked --release -p tetherd --features developer-beta-notification-feed
 
       - name: SHA-256 build evidence
         shell: pwsh
@@ -48,6 +54,8 @@ jobs:
           "commit=$env:GITHUB_SHA" | Set-Content -LiteralPath "toast-beta-build-evidence.txt"
           "sha256=$sha" | Add-Content -LiteralPath "toast-beta-build-evidence.txt"
           "artifact=tetherplane-toast-smoke.exe" | Add-Content -LiteralPath "toast-beta-build-evidence.txt"
+          $agent = (Get-FileHash -LiteralPath "target/release/tetherd.exe" -Algorithm SHA256).Hash
+          "agent_sha256=$agent" | Add-Content -LiteralPath "toast-beta-build-evidence.txt"
           Get-Content "toast-beta-build-evidence.txt"
 
       - name: Save private developer-test executable
@@ -56,6 +64,7 @@ jobs:
           name: tetherplane-toast-beta-windows-x64
           path: |
             target/release/tetherplane-toast-smoke.exe
+            target/release/tetherd.exe
             toast-beta-build-evidence.txt
           retention-days: 7
           if-no-files-found: error
