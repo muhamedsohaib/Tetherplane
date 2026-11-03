@@ -48,6 +48,33 @@ jobs:
       - name: Optional beta agent binary for synthetic loopback tests
         run: cargo build --locked --release -p tetherd --features developer-beta-notification-feed
 
+      - name: Build isolated GUI-subsystem parity candidate (never install)
+        shell: pwsh
+        run: |
+          $release = "target/release"
+          Copy-Item -LiteralPath "$release/tetherd.exe" -Destination "$release/tetherd-console-preserved.exe"
+          cargo build --locked --release -p tetherd --features developer-beta-gui
+          if ($LASTEXITCODE -ne 0) { throw "GUI beta compile failed" }
+          Move-Item -LiteralPath "$release/tetherd.exe" -Destination "$release/tetherd-agentw-beta.exe"
+          Copy-Item -LiteralPath "$release/tetherd-console-preserved.exe" -Destination "$release/tetherd.exe"
+          Remove-Item -LiteralPath "$release/tetherd-console-preserved.exe"
+          foreach ($probe in @(
+            @{File="$release/tetherd.exe"; Subsystem=3},
+            @{File="$release/tetherd-agentw-beta.exe"; Subsystem=2}
+          )) {
+            $bytes=[IO.File]::ReadAllBytes((Resolve-Path $probe.File))
+            $pe=[BitConverter]::ToInt32($bytes,0x3C)
+            if ($pe -lt 64 -or $pe + 94 -gt $bytes.Length) { throw "Invalid PE header" }
+            $subsystem=[BitConverter]::ToUInt16($bytes,($pe+24+68))
+            if ($subsystem -ne $probe.Subsystem) { throw "Unexpected Windows subsystem for $($probe.File): $subsystem" }
+            Write-Output "SUBSYSTEM_VERIFIED file=$($probe.File) subsystem=$subsystem"
+          }
+          $badArgumentFile = Join-Path $pwd.Path "nonexistent-public-synthetic-argfile.json"
+          if (Test-Path -LiteralPath $badArgumentFile) { throw "Synthetic path unexpectedly exists" }
+          $probe=Start-Process -FilePath "$release/tetherd-agentw-beta.exe" -ArgumentList @("--arguments-file", ('"' + $badArgumentFile + '"')) -Wait -PassThru -WindowStyle Hidden
+          if ($probe.ExitCode -ne 2) { throw "GUI beta failed to reject absent synthetic arguments file" }
+          Write-Output "GUI_BETA_INVALID_SYNTHETIC_ARGUMENTS_REJECTED"
+
       - name: SHA-256 build evidence
         shell: pwsh
         run: |
@@ -59,6 +86,8 @@ jobs:
           "artifact=tetherplane-toast-smoke.exe" | Add-Content -LiteralPath "toast-beta-build-evidence.txt"
           $agent = (Get-FileHash -LiteralPath "target/release/tetherd.exe" -Algorithm SHA256).Hash
           "agent_sha256=$agent" | Add-Content -LiteralPath "toast-beta-build-evidence.txt"
+          $gui = (Get-FileHash -LiteralPath "target/release/tetherd-agentw-beta.exe" -Algorithm SHA256).Hash
+          "gui_agent_sha256=$gui" | Add-Content -LiteralPath "toast-beta-build-evidence.txt"
           Get-Content "toast-beta-build-evidence.txt"
 
       - name: Package pinned developer-beta kit
@@ -75,6 +104,7 @@ jobs:
           path: |
             target/release/tetherplane-toast-smoke.exe
             target/release/tetherd.exe
+            target/release/tetherd-agentw-beta.exe
             toast-beta-build-evidence.txt
             tetherplane-toast-developer-beta.zip
           retention-days: 7

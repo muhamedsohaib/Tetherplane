@@ -6,6 +6,7 @@ param(
     [Parameter(Mandatory=$true)][string]$AgentExecutable,
     [string]$ExpectedToastSha256,
     [string]$ExpectedAgentSha256,
+    [switch]$UseSyntheticArgumentsFile,
     [switch]$KeepRegistration,
     [switch]$KeepEvidence
 )
@@ -92,6 +93,22 @@ function Run-SyntheticCase {
             '--relay-allow-insecure-localhost',
             '--dev-beta-local-toasts'
         )
+        if ($UseSyntheticArgumentsFile) {
+            # Exercise the JSON-array compatibility path with synthetic loopback data only.
+            # A separate actual agent identity must NEVER be loaded or copied here.
+            $argFile = Join-Path $evidence ($Mode + '.synthetic-arguments.json')
+            $plainArgs = @(
+                '--relay-url', ('ws://127.0.0.1:' + $port + '/device'),
+                '--device-id', 'TP_BETA_TEST',
+                '--device-credential-file', $credentialFile,
+                '--allow', $evidence,
+                '--relay-allow-insecure-localhost'
+            )
+            $json = ConvertTo-Json -InputObject $plainArgs -Compress
+            [IO.File]::WriteAllText($argFile, $json, [Text.UTF8Encoding]::new($false))
+            $argList = @('--arguments-file', ('"' + $argFile + '"'), '--dev-beta-local-toasts')
+            Write-Output 'BETA_SYNTHETIC_ARGUMENT_FILE_MODE'
+        }
         $agentProcess = Start-Process -FilePath $agent -ArgumentList $argList -WindowStyle Hidden -PassThru -RedirectStandardOutput $agentStdout -RedirectStandardError $agentStderr
         if ($Mode -eq 'reject') {
             Start-Sleep -Seconds 2

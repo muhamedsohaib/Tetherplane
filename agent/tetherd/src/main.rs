@@ -1,4 +1,6 @@
 #![forbid(unsafe_code)]
+// Developer-beta parity with the installed no-console agent; opt-in only.
+#![cfg_attr(all(windows, feature = "developer-beta-gui"), windows_subsystem = "windows")]
 
 mod audit;
 #[cfg(all(windows, feature = "developer-beta-notification-feed"))]

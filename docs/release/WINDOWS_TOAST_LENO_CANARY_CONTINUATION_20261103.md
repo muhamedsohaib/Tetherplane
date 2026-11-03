@@ -1,0 +1,22 @@
+# Tetherplane Developer Beta — Leno canary continuation (2026-11-03)
+
+**Scope:** isolated, unsigned developer-beta notification prototype. No Microsoft Store/MSIX gate, existing authentication change, production task modification, live credential reuse, installed-agent replacement, OAuth client registration, release or merge.
+
+## Verified continuation from ecf0ce2
+
+- Leno `device.status` remained `agent_version=0.1.0`, `transport=authenticated`, `state=ready`, `responsiveness=responsive`, `policy_mode=background_only`.
+- Independently queried Windows Notification Center: historical canary `Tag=status-1793702036-6ce8d72d` in `Group=tetherplane-verified-snapshot` exists **exactly once** and retains `verified snapshot` and `One-time check, not continuous monitoring.` content. This is **not** proof of live automatic alerts or visually observed popup.
+- One matching active `tetherd-agentw.exe` process under `Tetherplane Private Agent NoConsole 20261101`, expected installed SHA-256 `411E0F07F32CA3E6CF69A5CA53F3995E268946DF419600BF0C807D737D00895C`, and an existing non-reparse, protected arguments-file path; task remains running. Neither executable nor task was changed, stopped or restarted.
+- Read-only preflight `scripts/windows/Test-LenoPrivateAgentCanaryReadiness.ps1` confirmed current-agent baseline, presence of legacy rollback tasks, and explicit **NO-GO** for protected replacement: no independent exercise proved that a rollback restores the **November 1** agent; Desktop Commander for Leno remained offline, so no second recovery/control path was demonstrated. Preflight does not read or emit arguments-file contents, command lines, private paths or credentials.
+- Beta CI `https://github.com/muhamedsohaib/Tetherplane/actions/runs/41622838422` at `ecf0ce2a0f1586ad13b1269289abf22a9f738a2d` passed. Downloaded and independently SHA-256 checked archived `tetherd.exe` (`830AD39F864D35032497DD1FC17574F60E38E185679EC3C8681FB42D89CA20E4`) and `tetherplane-toast-smoke.exe` (`0E09C05B2B5338C9EA166A5E07DD5EAF9FB0DA5B1AA8B51E821391BF37EE28FC`).
+- End-to-end synthetic CLI exercised the **actual Windows `--arguments-file` JSON-array loader** from that CI build using only loopback `127.0.0.1`, `TP_BETA_TEST` and a fixed public synthetic credential. HTTP 401 gave **0 notifications** (history 18 → 18). Accepted WebSocket plus teardown generated **1 connected** and **1 status-unknown** notification (18 → 20). Synthetic processes and beta Start-menu shortcut removed. Original private agent PID unchanged. The test did not read the active launcher arguments-file or use its credentials.
+- Current worktree adds a separate `developer-beta-gui` Cargo feature to build the same agent as a Windows GUI-subsystem parity candidate on CI, preserving the console `tetherd.exe` in the ZIP. The extra candidate is build-only and **not** included in the developer ZIP; CI should verify `IMAGE_SUBSYSTEM_WINDOWS_GUI=2`, `IMAGE_SUBSYSTEM_WINDOWS_CUI=3` for the console binary, and rejection of nonexistent synthetic arguments-file input before claiming parity.
+
+## Release gates that remain
+
+1. **Build gate:** fresh hosted Windows workflow must compile and validate GUI-subsystem candidate, source lint/test gates, and exact binary hashes. The presence of GUI bytes alone is not evidence of actual startup, authentication or delivery on a real device.
+2. **Rollback gate:** independent, owner-authorized rollback to the current Nov 1 agent, not legacy October canary; second control path available if the Tetherplane transport fails. Do not run the legacy rollback tasks as a guess.
+3. **Real-device gate:** only after rollback and explicit owner approval, stage a temporary one-device beta with no duplicate live identity, prove actual authenticated connection/unknown/reconnect events, unauthorized denial and user-session Notification Center history while maintaining connectivity.
+4. **Scale gate:** independently prove VAULTER, Surface and RTX with per-device runtime restrictions. No Store certification is required for the developer beta.
+
+**Disposition:** Current live agent **PRESERVED**; read-only status toast and synthetic session events **VERIFIED**; permanent four-device event notifications **NOT INSTALLED**. The recommended smallest next intervention after CI is restoring an independent second control path and rehearsing an exact-version rollback before a protected agent swap.

@@ -8,6 +8,8 @@ publish = false
 [features]
 default = []
 developer-beta-notification-feed = ["dep:tether-notifications", "tether-notifications/dev-beta"]
+# Test-only GUI/no-console counterpart. Never enabled for the default agent.
+developer-beta-gui = ["developer-beta-notification-feed"]
 
 [dependencies]
 async-trait = "0.1"

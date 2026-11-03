@@ -76,3 +76,35 @@ test("one-shot real-status notification cannot be confused with automatic presen
   assert.match(script, /-Operation Unregister/);
   assert.doesNotMatch(script, /Start-ScheduledTask|Stop-ScheduledTask|Register-ScheduledTask|--relay-url|--device-credential-file/i);
 });
+
+test("GUI-subsystem beta parity is build-only and never added to the developer ZIP", () => {
+  const cargo = read("agent/tetherd/Cargo.toml");
+  const main = read("agent/tetherd/src/main.rs");
+  const workflow = read(".github/workflows/windows-toast-developer-beta.yml");
+  const builder = read("scripts/windows/Build-TetherplaneToastBetaKit.ps1");
+  assert.match(cargo, /developer-beta-gui\s*=\s*\["developer-beta-notification-feed"\]/);
+  assert.match(main, /feature = "developer-beta-gui"\), windows_subsystem = "windows"/);
+  assert.match(workflow, /Build isolated GUI-subsystem parity candidate \(never install\)/);
+  assert.match(workflow, /SUBSYSTEM_VERIFIED/);
+  assert.match(workflow, /GUI_BETA_INVALID_SYNTHETIC_ARGUMENTS_REJECTED/);
+  assert.doesNotMatch(builder, /tetherd-agentw-beta\.exe/);
+});
+
+test("synthetic args-file loopback harness never reads the live private launcher", () => {
+  const script = read("scripts/windows/Test-TetherplaneToastEventBeta.ps1");
+  assert.match(script, /\[switch\]\$UseSyntheticArgumentsFile/);
+  assert.match(script, /TP_BETA_TEST/);
+  assert.match(script, /synthetic-notification-only-credential/);
+  assert.match(script, /ConvertTo-Json -InputObject \$plainArgs -Compress/);
+  assert.match(script, /'--arguments-file', \('"' \+ \$argFile \+ '"'\), '--dev-beta-local-toasts'/);
+  assert.doesNotMatch(script, /TetherplanePrivateNoConsole-20261101|Get-ScheduledTask|Get-Content\s+.*principal\.json/);
+});
+
+test("live Leno rollback preflight is read-only and explicitly blocks replacement", () => {
+  const script = read("scripts/windows/Test-LenoPrivateAgentCanaryReadiness.ps1");
+  assert.match(script, /CurrentAgentBaselinePreserved/);
+  assert.match(script, /OriginalBinarySha256Verified/);
+  assert.match(script, /ProtectedArgumentsFileContentsRead=\$false/);
+  assert.match(script, /SafeToReplaceLiveAgent=\$false/);
+  assert.doesNotMatch(script, /Start-ScheduledTask|Stop-ScheduledTask|Register-ScheduledTask|Set-ScheduledTask|Remove-Item|Export-ScheduledTask/i);
+});
