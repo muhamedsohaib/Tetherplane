@@ -27,6 +27,13 @@ if (-not (Test-Path -LiteralPath (Split-Path -Parent $output) -PathType Containe
     throw 'BETA_KIT_OUTPUT_PARENT_MISSING'
 }
 $repository = (Resolve-Path -LiteralPath (Join-Path $PSScriptRoot '..\..')).Path
+$packagingCommit = & git -C $repository rev-parse HEAD
+if ($LASTEXITCODE -ne 0 -or $packagingCommit -notmatch '^[0-9a-f]{40}$') {
+    throw 'BETA_KIT_PACKAGING_SOURCE_UNVERIFIED'
+}
+$packagingStatus = & git -C $repository status --porcelain
+if ($LASTEXITCODE -ne 0) { throw 'BETA_KIT_PACKAGING_STATUS_UNVERIFIED' }
+$packagingDirty = if ($packagingStatus) { 'true' } else { 'false' }
 $evidenceFile = Join-Path $artifact 'toast-beta-build-evidence.txt'
 $toastFile = Join-Path $artifact 'target\release\tetherplane-toast-smoke.exe'
 $agentFile = Join-Path $artifact 'target\release\tetherd.exe'
@@ -66,12 +73,24 @@ $verify = Join-Path $temporary 'verification'
 $createdZip = $false
 New-Item -ItemType Directory -Path $stage -ErrorAction Stop | Out-Null
 try {
-    foreach($rel in @('bin','scripts\windows','tests\release','docs')) {
+    foreach($rel in @('bin','scripts\windows','tests\release','docs','assets\windows')) {
         New-Item -ItemType Directory -Path (Join-Path $stage $rel) -Force | Out-Null
     }
     Copy-Item -LiteralPath $toastFile -Destination (Join-Path $stage 'bin\tetherplane-toast-smoke.exe')
     Copy-Item -LiteralPath $agentFile -Destination (Join-Path $stage 'bin\tetherd.exe')
     Copy-Item -LiteralPath $evidenceFile -Destination (Join-Path $stage 'toast-beta-build-evidence.txt')
+    foreach($name in @('tetherplane-black-on-white.ico','tetherplane-white-on-black.ico','icon-provenance.json')) {
+        Copy-Item -LiteralPath (Join-Path $repository ('assets\windows\' + $name)) -Destination (Join-Path $stage ('assets\windows\' + $name))
+    }
+    $iconProvenance = Get-Content -LiteralPath (Join-Path $stage 'assets\windows\icon-provenance.json') -Raw | ConvertFrom-Json
+    foreach($variant in @('black-on-white','white-on-black')) {
+        $entry = @($iconProvenance.images | Where-Object { $_.variant -ceq $variant })
+        $iconFile = Join-Path $stage ('assets\windows\tetherplane-' + $variant + '.ico')
+        if ($entry.Count -ne 1 -or
+            (Get-FileHash -LiteralPath $iconFile -Algorithm SHA256).Hash -ine $entry[0].iconSha256) {
+            throw 'BETA_KIT_ICON_PROVENANCE_MISMATCH'
+        }
+    }
     foreach($name in @(
         'Register-TetherplaneToastBeta.ps1',
         'Test-TetherplaneToastBeta.ps1',
@@ -130,17 +149,30 @@ an existing authorized agent. Windows Notification Center history verifies
 recorded delivery, NOT whether a popup was visually seen.
 
 The ZIP is unsigned. Do not redistribute as a production Windows release.
+The binary source commit and packaging source HEAD/working-copy status are
+recorded separately in KIT-MANIFEST.txt. SHA256SUMS.txt covers all other files.
+The icon originals and rebuild script are retained in the source repository;
+both converted ICO variants are included here. The shortcut uses black on white.
 See docs\ACCEPTANCE.md and toast-beta-build-evidence.txt.
 '@
     [IO.File]::WriteAllText((Join-Path $stage 'README.txt'),$readme,[Text.Encoding]::UTF8)
     $manifest = @(
         ('commit=' + $ExpectedCommit),
+        ('binary_source_commit=' + $ExpectedCommit),
+        ('packaging_source_commit=' + $packagingCommit),
+        ('packaging_working_copy_dirty=' + $packagingDirty),
         ('toast_sha256=' + $toastHash),
         ('agent_sha256=' + $agentHash),
         'kit_type=unpackaged_developer_beta',
         'production_ready=false'
     )
     [IO.File]::WriteAllLines((Join-Path $stage 'KIT-MANIFEST.txt'),$manifest,[Text.Encoding]::ASCII)
+    $checksums = @()
+    foreach($file in @(Get-ChildItem -LiteralPath $stage -Recurse -File | Sort-Object FullName)) {
+        $relative = $file.FullName.Substring($stage.Length + 1).Replace('\','/')
+        $checksums += ((Get-FileHash -LiteralPath $file.FullName -Algorithm SHA256).Hash.ToLowerInvariant() + '  ' + $relative)
+    }
+    [IO.File]::WriteAllLines((Join-Path $stage 'SHA256SUMS.txt'),$checksums,[Text.Encoding]::ASCII)
     $entries = @(Get-ChildItem -LiteralPath $stage -Force | Select-Object -ExpandProperty FullName)
     Compress-Archive -LiteralPath $entries -DestinationPath $output -CompressionLevel Optimal -ErrorAction Stop
     $createdZip = $true
@@ -161,8 +193,15 @@ See docs\ACCEPTANCE.md and toast-beta-build-evidence.txt.
         }
     }
     $files = @(Get-ChildItem -LiteralPath $verify -Recurse -File)
-    if ($files.Count -ne 12) {
+    if ($files.Count -ne 16) {
         throw ('BETA_KIT_UNEXPECTED_FILE_COUNT: ' + $files.Count)
+    }
+    foreach($line in $checksums) {
+        $expected = $line.Substring(0,64)
+        $relative = $line.Substring(66)
+        if ((Get-FileHash -LiteralPath (Join-Path $verify $relative) -Algorithm SHA256).Hash -ine $expected) {
+            throw 'BETA_KIT_PACKAGED_FILE_HASH_MISMATCH'
+        }
     }
     Write-Output 'BETA_KIT_EXTRACTED_CONTENTS_VERIFIED'
     [pscustomobject]@{

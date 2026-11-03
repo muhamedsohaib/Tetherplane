@@ -1,0 +1,35 @@
+{
+  "schemaVersion": 1,
+  "conversion": "Full original image; proportional resize; centered opaque background padding; no crop, recolor, redraw or generated art.",
+  "sizes": [
+    16,
+    20,
+    24,
+    32,
+    40,
+    48,
+    64,
+    128,
+    256
+  ],
+  "images": [
+    {
+      "variant": "black-on-white",
+      "source": "assets/windows/source/black-on-white.jpg",
+      "sourceSha256": "c7489fd386a9585d1b52a4fe76b6f5e7765f3fc508c4b7f5fcff58b8a986bbf5",
+      "width": 2048,
+      "height": 1143,
+      "icon": "assets/windows/tetherplane-black-on-white.ico",
+      "iconSha256": "48ecaa5c905e4de0e87cb86c45edc4a92c8692c77e08d06225bff46f95191c46"
+    },
+    {
+      "variant": "white-on-black",
+      "source": "assets/windows/source/white-on-black.jpg",
+      "sourceSha256": "c964d071774f67ec83b85207e5ff2511e441f3676b5d92893cffe974a74d0e12",
+      "width": 2048,
+      "height": 1143,
+      "icon": "assets/windows/tetherplane-white-on-black.ico",
+      "iconSha256": "b084d81ea23677778a5d4ee6fa4e2ed532a7b24a56a3ff2f41a6947712cad8af"
+    }
+  ]
+}

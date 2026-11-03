@@ -3,7 +3,8 @@
 [CmdletBinding()]
 param(
     [ValidateSet('Register', 'Status', 'Unregister')][string]$Operation = 'Status',
-    [string]$Executable = ''
+    [string]$Executable = '',
+    [string]$IconPath = (Join-Path $PSScriptRoot '..\..\assets\windows\tetherplane-black-on-white.ico')
 )
 Set-StrictMode -Version Latest
 $ErrorActionPreference = 'Stop'
@@ -90,6 +91,7 @@ function Get-ShortcutDetails {
         AppId = [TPShortcutAppId]::Get($link)
         Target = [string]$shortcut.TargetPath
         Description = [string]$shortcut.Description
+        IconLocation = [string]$shortcut.IconLocation
         Path = $link
     }
 }
@@ -120,11 +122,35 @@ switch ($Operation) {
             throw 'BETA_TOAST_EXECUTABLE_REQUIRED: provide an existing absolute tetherplane-toast-smoke.exe path.'
         }
         $exe = (Resolve-Path -LiteralPath $Executable).Path
+        if (-not [IO.Path]::IsPathRooted($IconPath) -or
+            [IO.Path]::GetExtension($IconPath) -ine '.ico' -or
+            -not (Test-Path -LiteralPath $IconPath -PathType Leaf)) {
+            throw 'BETA_TOAST_ICON_REQUIRED: provide an existing absolute ICO path.'
+        }
+        $icon = (Resolve-Path -LiteralPath $IconPath).Path
+        if (((Get-Item -LiteralPath $icon).Attributes -band [IO.FileAttributes]::ReparsePoint) -ne 0) {
+            throw 'BETA_TOAST_ICON_REPARSE_POINT_REFUSED'
+        }
+        # Pin the exact two owner-approved monochrome artwork conversions.
+        # A changed or substituted icon must never silently inherit this identity.
+        $approvedIconHashes = @{
+            'tetherplane-black-on-white.ico' = '48ECAA5C905E4DE0E87CB86C45EDC4A92C8692C77E08D06225BFF46F95191C46'
+            'tetherplane-white-on-black.ico' = 'B084D81EA23677778A5D4EE6FA4E2ED532A7B24A56A3FF2F41A6947712CAD8AF'
+        }
+        $iconName = Split-Path -Leaf $icon
+        if (-not $approvedIconHashes.ContainsKey($iconName) -or
+            (Get-FileHash -LiteralPath $icon -Algorithm SHA256).Hash -ine $approvedIconHashes[$iconName]) {
+            throw 'BETA_TOAST_ICON_HASH_MISMATCH: refusing unapproved or modified artwork.'
+        }
+        $iconLocation = $icon + ',0'
         $existing = Get-ShortcutDetails
         if ($null -ne $existing) {
             Assert-OwnedShortcut $existing
             if (-not [string]::Equals($existing.Target,$exe,[StringComparison]::OrdinalIgnoreCase)) {
                 throw 'BETA_TOAST_DIFFERENT_TARGET: refusal to overwrite a previously registered beta shortcut.'
+            }
+            if (-not [string]::Equals($existing.IconLocation,$iconLocation,[StringComparison]::OrdinalIgnoreCase)) {
+                throw 'BETA_TOAST_DIFFERENT_ICON: unregister the owned shortcut explicitly before changing its icon.'
             }
             Write-Output 'BETA_TOAST_SHORTCUT_ALREADY_REGISTERED'
             break
@@ -135,11 +161,16 @@ switch ($Operation) {
         $shortcut.Arguments = '--smoke --developer-beta'
         $shortcut.Description = $description
         $shortcut.WorkingDirectory = (Split-Path -Parent $exe)
+        $shortcut.IconLocation = $iconLocation
         $shortcut.Save()
         try {
             [TPShortcutAppId]::Set($link, $appId)
             if ([TPShortcutAppId]::Get($link) -cne $appId) {
                 throw 'BETA_TOAST_SHORTCUT_APP_ID_VERIFICATION_FAILED'
+            }
+            $verified = Get-ShortcutDetails
+            if (-not [string]::Equals($verified.IconLocation,$iconLocation,[StringComparison]::OrdinalIgnoreCase)) {
+                throw 'BETA_TOAST_SHORTCUT_ICON_VERIFICATION_FAILED'
             }
         } catch {
             Remove-Item -LiteralPath $link -ErrorAction SilentlyContinue

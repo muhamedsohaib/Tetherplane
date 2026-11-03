@@ -31,7 +31,7 @@ jobs:
         run: cargo test --locked -p tether-notifications --features dev-beta
 
       - name: Source-boundary regressions
-        run: node --test tests/release/windows-notification-event-source.test.mjs
+        run: node --test tests/release/windows-notification-event-source.test.mjs tests/release/windows-toast-icons.test.mjs
 
       - name: Authenticated and rejected WebSocket upgrade integration tests
         run: cargo test --locked -p tetherd --features developer-beta-notification-feed --bin tetherd relay_ws::notification_feed_contract_tests -- --nocapture
