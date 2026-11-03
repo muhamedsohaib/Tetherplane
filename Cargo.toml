@@ -8,6 +8,7 @@ members = [
   "agent/providers/browser",
   "agent/providers/desktop",
   "agent/tetherd",
+  "agent/tether-notifications",
 ]
 
 [workspace.package]
