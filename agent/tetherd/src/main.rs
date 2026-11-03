@@ -1,6 +1,8 @@
 #![forbid(unsafe_code)]
 
 mod audit;
+#[cfg(all(windows, feature = "developer-beta-notification-feed"))]
+mod beta_arguments_file;
 mod idempotency;
 mod job;
 #[cfg(all(windows, feature = "developer-beta-notification-feed"))]
@@ -39,7 +41,10 @@ struct CliOptions {
 }
 
 fn parse_args() -> Result<CliOptions, String> {
-    let mut arguments = std::env::args().skip(1);
+    let argv: Vec<String> = std::env::args().skip(1).collect();
+    #[cfg(all(windows, feature = "developer-beta-notification-feed"))]
+    let argv = beta_arguments_file::expand(argv)?;
+    let mut arguments = argv.into_iter();
     let mut stdio_rpc = false;
     let mut allowed_roots = Vec::new();
     let mut principal_profile = None;
@@ -109,7 +114,7 @@ fn parse_args() -> Result<CliOptions, String> {
             "--relay-allow-insecure-localhost" => relay_allow_insecure_localhost = true,
             #[cfg(all(windows, feature = "developer-beta-notification-feed"))]
             "--dev-beta-local-toasts" => dev_beta_local_toasts = true,
-            _ => return Err(format!("unknown tetherd argument: {argument}")),
+            _ => return Err("unknown tetherd argument (value redacted)".to_owned()),
         }
     }
 

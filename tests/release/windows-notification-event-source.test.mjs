@@ -49,3 +49,30 @@ test("synthetic 401 handshake denial test must continue to guard against false c
   assert.match(relay, /assert!\(rx\.try_recv\(\)\.is_err\(\)/);
   assert.match(relay, /async fn accepted_upgrade_emits_connected_then_unknown_after_close_without_credentials/);
 });
+
+test("legacy private launcher argument-file support is opt-in, bounded and refuses overrides", () => {
+  const main = read("agent/tetherd/src/main.rs");
+  const loader = read("agent/tetherd/src/beta_arguments_file.rs");
+  assert.match(main, /#\[cfg\(all\(windows, feature = "developer-beta-notification-feed"\)\)\]\s*mod beta_arguments_file/);
+  assert.match(main, /beta_arguments_file::expand\(argv\)\?/);
+  assert.match(loader, /MAX_BYTES: u64 = 16 \* 1024/);
+  assert.match(loader, /MAX_ARGS: usize = 96/);
+  assert.match(loader, /file_attributes\(\) & REPARSE_POINT/);
+  assert.match(loader, /JSON string array/);
+  assert.match(loader, /duplicate security-sensitive beta argument/);
+  assert.match(loader, /accepts no command-line overrides/);
+  assert.match(main, /unknown tetherd argument \(value redacted\)/);
+});
+
+test("one-shot real-status notification cannot be confused with automatic presence", () => {
+  const script = read("scripts/windows/Test-LenoVerifiedStatusToastCanary.ps1");
+  assert.match(script, /STALE_OR_FUTURE_AUTHENTICATED_STATUS_EVIDENCE/);
+  assert.match(script, /BETA_KIT_HASH_MISMATCH/);
+  assert.match(script, /ValidateSet\('authenticated'\)/);
+  assert.match(script, /ValidateSet\('ready'\)/);
+  assert.match(script, /One-time check, not continuous monitoring\./);
+  assert.match(script, /\.Tag=\$tag/);
+  assert.match(script, /\.Group='tetherplane-verified-snapshot'/);
+  assert.match(script, /-Operation Unregister/);
+  assert.doesNotMatch(script, /Start-ScheduledTask|Stop-ScheduledTask|Register-ScheduledTask|--relay-url|--device-credential-file/i);
+});

@@ -36,6 +36,9 @@ jobs:
       - name: Authenticated and rejected WebSocket upgrade integration tests
         run: cargo test --locked -p tetherd --features developer-beta-notification-feed --bin tetherd relay_ws::notification_feed_contract_tests -- --nocapture
 
+      - name: Developer-beta JSON arguments-file compatibility tests
+        run: cargo test --locked -p tetherd --features developer-beta-notification-feed --bin tetherd beta_arguments_file::tests -- --nocapture
+
       - name: Agent feature strict lint
         run: cargo clippy --locked -p tetherd --features developer-beta-notification-feed --all-targets -- -D warnings
 
