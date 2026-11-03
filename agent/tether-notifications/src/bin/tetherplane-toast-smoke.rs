@@ -1,16 +1,16 @@
-//! Explicit manual diagnostic only. Does not accept generic device/event data.
-//! Cannot install identities, request approvals, or assert any connection state.
+//! Manual, packaged-only smoke test.
+//! Cannot register an app identity, authorize devices or assert connectivity.
 #[cfg(windows)]
 fn main() {
     use tether_notifications::{Notification, windows_native};
     let args: Vec<String> = std::env::args().skip(1).collect();
-    if args.len() != 3 || args[0] != "--smoke" || args[1] != "--registered-app-id" {
+    if args.as_slice() != ["--smoke"] {
         eprintln!(
-            "Usage: tetherplane-toast-smoke --smoke --registered-app-id <registered Tetherplane AUMID>"
+            "Usage: tetherplane-toast-smoke --smoke (requires installed Tetherplane package identity)"
         );
         std::process::exit(2);
     }
-    match windows_native::show_registered(&args[2], &Notification::diagnostic_smoke()) {
+    match windows_native::show_packaged(&Notification::diagnostic_smoke()) {
         Ok(()) => println!("TOAST_DISPATCH_ACCEPTED_VISIBILITY_UNVERIFIED"),
         Err(error) => {
             eprintln!("TOAST_DISPATCH_FAILED: {error}");
@@ -18,7 +18,6 @@ fn main() {
         }
     }
 }
-
 #[cfg(not(windows))]
 fn main() {
     eprintln!("Windows-only diagnostic binary");
