@@ -92,6 +92,33 @@ try {
   if ($LASTEXITCODE -ne 0) { throw 'PORTABLE_BETA_BUNDLED_NODE_NONPORTABLE' }
   $firstRun = Join-Path $repo 'scripts\windows\portable-first-run.mjs'
   Copy-Item -LiteralPath $firstRun -Destination (Join-Path $stage 'adapters\compact-mcp\portable-first-run.mjs')
+  # Device enrollment is explicit and separated from the local first-run test.
+  $enrollmentDir = Join-Path $stage 'scripts\windows'
+  New-Item -ItemType Directory -Path $enrollmentDir -Force | Out-Null
+  Copy-Item -LiteralPath (Join-Path $repo 'scripts\windows\remote-enroll.mjs') -Destination (Join-Path $enrollmentDir 'remote-enroll.mjs')
+  $pairCommand = @'
+@echo off
+setlocal
+set "ROOT=%~dp0"
+echo TETHERPLANE OPT-IN OWNER-APPROVED DEVICE PAIRING
+"%ROOT%runtime\node.exe" "%ROOT%scripts\windows\remote-enroll.mjs" pair-interactive
+set "result=%errorlevel%"
+if /I not "%~1"=="--no-pause" pause
+exit /b %result%
+'@
+  [IO.File]::WriteAllText((Join-Path $stage 'PAIR NEW DEVICE.cmd'),$pairCommand,[Text.Encoding]::ASCII)
+  $connectCommand = @'
+@echo off
+setlocal
+set "ROOT=%~dp0"
+echo TETHERPLANE OPT-IN STATUS-ONLY AGENT CONNECTION
+echo Requires separate authenticated owner approval first.
+"%ROOT%runtime\node.exe" "%ROOT%scripts\windows\remote-enroll.mjs" connect-interactive
+set "result=%errorlevel%"
+if /I not "%~1"=="--no-pause" pause
+exit /b %result%
+'@
+  [IO.File]::WriteAllText((Join-Path $stage 'CONNECT APPROVED DEVICE.cmd'),$connectCommand,[Text.Encoding]::ASCII)
 
   # CMD is an explicitly invoked local self-test; never auto-configure auth/remote.
   $cmd = @'
@@ -124,11 +151,23 @@ QUICK START ON A NEW AUTHORIZED WINDOWS MACHINE
   3. PASS means six MCP tools, local device.status and denied out-of-scope
      filesystem access work with disposable local data.
 
-THIS DOES NOT PAIR A NEW REMOTE DEVICE.
-  Remote OAuth and remote agent enrollment are intentionally not automated
-  or bypassed. Use existing authorized Tetherplane auth configuration and
-  approved onboarding procedure. Never copy a live agent argument file,
-  token, or credential from a different machine to a beta tester.
+OPTIONAL OWNER-APPROVED REMOTE ENROLLMENT (EXPERIMENTAL):
+  1. Run PAIR NEW DEVICE.cmd. Specify a TRUSTED HTTPS relay, a new
+     unique device ID, and an explicitly allowed folder.
+  2. A fresh 32-byte credential is generated on THIS device, stored in
+     an isolated owner-restricted Windows directory; only its hash is
+     sent to the relay. The device remains unpaired at this stage.
+  3. Approve the displayed short code using an ALREADY AUTHENTICATED
+     owner account through the existing relay /pair/approve mechanism.
+     This package does not mint OAuth clients, passwords, or bearer tokens.
+  4. Only after separate owner approval, run CONNECT APPROVED DEVICE.cmd.
+     The foreground agent starts with ONLY device.status and
+     device.capabilities permissions. Close the window to stop it.
+  5. Confirm first authenticated remote device.status from your existing
+     authorized MCP client. That is a SEPARATE test, not a result of the
+     pair-start request or local first-run test.
+  Neither helper changes a running protected agent or creates a startup task.
+  Do not copy secrets from an existing Tetherplane installation.
 
 WINDOWS POLICY:
   Unsigned binaries may be refused by Windows Application Control.
@@ -162,6 +201,10 @@ RELEASE HONESTY:
     runtime = $nodeVersion
     node_distribution_sha256 = $nodeDistHash.ToLowerInvariant()
     local_first_run = 'START HERE.cmd'
+    remote_pairing_helper = 'PAIR NEW DEVICE.cmd'
+    remote_connection_helper = 'CONNECT APPROVED DEVICE.cmd'
+    remote_principal_defaults = 'status_only'
+    owner_approval_required = $true
     remote_auth_configured = $false
     startup_task_installed = $false
   }
