@@ -58,3 +58,27 @@ Static CRT linkage removes a prerequisite but embeds CRT code, so security fixes
 - Toast [run 41794858757](https://github.com/muhamedsohaib/Tetherplane/actions/runs/41794858757) compiled all three native candidates and passed its runtime import checks, but the final test ZIP assembly failed at checksum verification. Its error referenced `verification\\ge\\assets\\windows\\icon-provenance.json`; the stage-relative string calculation was not robust to differing canonical directory representations.
 - Small source correction: derive relative paths from a canonical `Get-Item().FullName` stage prefix; explicitly verify stage containment, refuse empty/parent-relative paths, and test the actual Windows path calculation. The corrected packager requires a fresh CI run.
 - **Do not treat CI as clean-guest acceptance:** the Surface Windows 10 Sandbox originally lacked `VCRUNTIME140.dll` and must rerun with the exact corrected candidate before publishing or claiming under-30-second onboarding.
+
+## Owner-operated Windows 10 Sandbox CRT canary — PASSED (reported 2026-11-04)
+
+**Evidence origin:** Owner pasted the stdout report from the existing Surface Windows Sandbox. This is user-supplied test output, not a directly inspected log from the isolated guest. Do not claim independent collection via the Surface host agent.
+
+- `TEST=TETHERPLANE_SURFACE_SANDBOX_PORTABLE_CRT_CANARY`
+- `GUEST_ACCOUNT=WDAGUtilityAccount`
+- `SOURCE_COMMIT=eaf2c8a2f63228812409233487d0f9acf7ecae07`
+- `CI_RUN=41796216267`
+- `CI_KIT_SHA256=VERIFIED`
+- `PINNED_AGENT_SHA256=VERIFIED`
+- `PORTABLE_NATIVE_STATUS=PASS`
+- `HASH_VERIFY_TO_FIRST_LOCAL_STATUS_MS=470`
+- `OUTSIDE_ALLOW_FILESYSTEM=DENIED_AS_EXPECTED`
+- `RESULT=PASS_PORTABLE_CRT_ONLY_REMOTE_AUTH_UNTESTED`
+- `PORTABLE_STAGE_CLEANUP=PASS`
+- `Exit code: 0`
+- `HOST_CONFIG=NOT_MODIFIED_BY_SCRIPT`
+- `POWERSHELL_SCRIPTS=NOT_EXECUTED`
+- `PUBLIC_RELEASE=NOT_CREATED`
+
+**Conclusion:** The clean Windows 10 guest no longer reports the historical `VCRUNTIME140.dll` load failure when starting this exact CI-pinned portable test agent. Local status, one access-denial boundary and scratch cleanup passed. The `470 ms` starts at hash verification and ends at local `device.status`: it is **not** the download-to-install-to-OAuth-to-first-operation time.
+
+**Unverified:** `FULL_INSTALLER=NOT_TESTED`, `REMOTE_AUTHENTICATION=NOT_TESTED`, `TOAST_UI=NOT_TESTED`; no real remote pairing, five-run onboarding distribution, Windows 11 clean-install acceptance or authenticated first-use elapsed measurement. Preserve the GitHub protected release lane and original four-device authorization boundary. Next gate: test the full candidate installer on a fresh authorized guest through explicit user authorization and the first successful remote MCP operation, with independent access-denial and rollback checks.
