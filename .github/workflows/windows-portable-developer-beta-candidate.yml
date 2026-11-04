@@ -5,6 +5,7 @@ on:
   push:
     branches:
       - fix/windows-portable-msvc-crt-20261104
+      - feature/windows-owner-approved-enrollment-20261104
 
 permissions:
   contents: read
@@ -101,6 +102,14 @@ jobs:
           & cmd.exe /d /c ('"' + (Join-Path $extract 'START HERE.cmd') + '" --no-pause')
           if ($LASTEXITCODE -ne 0) { throw 'Portable first-run acceptance failed' }
           Write-Output 'PORTABLE_BETA_CMD_FIRST_RUN_ACCEPTANCE_OK'
+
+      - name: Verify owner-approved enrollment on isolated Windows relay
+        if: github.ref == 'refs/heads/feature/windows-owner-approved-enrollment-20261104'
+        shell: pwsh
+        run: |
+          $env:TETHERPLANE_ACCEPTANCE_PACKAGE = Join-Path $env:RUNNER_TEMP 'tetherplane-beta-extracted'
+          & (Join-Path $env:TETHERPLANE_ACCEPTANCE_PACKAGE 'runtime\node.exe') tests/release/windows-owner-approved-isolated-integration.mjs
+          if ($LASTEXITCODE -ne 0) { throw 'Isolated owner-approved pairing and native remote acceptance failed' }
 
       - name: Stage candidate and SHA-256 evidence
         shell: pwsh
