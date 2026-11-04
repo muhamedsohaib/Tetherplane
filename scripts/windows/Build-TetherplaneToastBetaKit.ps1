@@ -148,6 +148,14 @@ launch it against real device credentials, as that would risk displacing
 an existing authorized agent. Windows Notification Center history verifies
 recorded delivery, NOT whether a popup was visually seen.
 
+If the test prints BETA_WINDOWS_APPLICATION_CONTROL_BLOCKED, the existing
+Windows host policy refused the unsigned executable. This machine cannot
+run that binary under its current policy. Do NOT disable Application Control,
+antivirus or other protections to pass the test. Use a separately authorized
+developer machine that already permits unsigned test executables.
+Windows Do Not Disturb may suppress the popup even when the toast appears
+in Notification Center history. Do not call history success visual proof.
+
 The ZIP is unsigned. Do not redistribute as a production Windows release.
 The binary source commit and packaging source HEAD/working-copy status are
 recorded separately in KIT-MANIFEST.txt. SHA256SUMS.txt covers all other files.

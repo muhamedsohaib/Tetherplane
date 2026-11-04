@@ -59,3 +59,23 @@ test("native toast smoke fails closed when Windows Application Control blocks it
   assert.match(smoke, /finally\s*\{[\s\S]*?-Operation Unregister/);
   assert.doesNotMatch(smoke, /Set-MpPreference|Set-ProcessMitigation|Set-ExecutionPolicy|Add-MpPreference/i);
 });
+
+test("unsigned beta kit describes application-control denial without weakening Windows security", () => {
+  const kit = read("scripts/windows/Build-TetherplaneToastBetaKit.ps1").toString();
+  assert.match(kit, /BETA_WINDOWS_APPLICATION_CONTROL_BLOCKED/);
+  assert.match(kit, /Do NOT disable Application Control/);
+  assert.match(kit, /Do Not Disturb/);
+  assert.match(kit, /This is not an installer for real four-device notification monitoring/);
+  assert.match(kit, /production_ready=false/);
+});
+
+test("developer-beta release gate keeps unsigned prerelease separate from protected automatic tags", () => {
+  const release = read("docs/release/GITHUB_DEVELOPER_BETA_RELEASE_GATE_20261104.md").toString();
+  const auto = read(".github/workflows/release.yml").toString();
+  assert.match(release, /code signing, MSIX, or Microsoft Store/);
+  assert.match(release, /separate manual GitHub prerelease/);
+  assert.match(release, /specific commit, tag, assets, and public release text/);
+  assert.match(release, /not a full Tetherplane installer/);
+  assert.match(auto, /UNSIGNED_PUBLIC_RELEASE_BLOCKED/);
+  assert.doesNotMatch(auto, /gh release create|contents: write/);
+});
