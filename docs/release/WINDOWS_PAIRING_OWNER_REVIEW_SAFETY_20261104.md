@@ -23,6 +23,7 @@ The issue concerns account-binding integrity, not a hypothetical 30-second perfo
 - Purge expired pending pairing requests on new starts; deny allocation when 512 pending codes are active to bound unauthenticated storage.
 - Ensure newly generated codes are unique within the pending set.
 - Add authenticated POST /pair/preview with body {"userCode":"ABCD-1234"}. Response includes *only* deviceId and expiresAt; no secret, credential hash or automatic approval.
+- Preview and approval share a maximum 12 attempts per 60-second window per verified account, returning HTTP 429 / rate_limited after exhaustion. This protects the short-code review path against repeated guessing without creating new authentication privileges. Account attempt state is bounded and expired budgets are pruned.
 - Require existing authenticated identity on preview, as on approve. No new auth method, OAuth client registration, scope, or permission grant.
 - Set no-store on management JSON responses.
 
@@ -33,10 +34,11 @@ The preview supports the next human-facing approval UI. **It is not that UI.** C
 1. New duplicate-code regression passes, and a second code cannot silently rebind an account.
 2. Preview requires bearer authentication; returns only device ID and expiry; does not bind credentials or mutate pending state.
 3. Consumed and expired pairing codes fail closed.
-4. Unique-device pending requests are bounded and expired requests can be replaced.
-5. Existing control, identity, relay OAuth and remote E2E tests remain green on Windows and Linux CI.
-6. No real-device OAuth enrollment claim until an independently authorized new Windows machine completes a genuine HTTPS/WSS connection under its own identity with explicit owner approval, status-only permission denial, reconnect and revoke.
-7. Do not merge, deploy auth changes, replace any protected agent, or publish a new beta without separate explicit approval.
+4. Unique-device pending requests are bounded and expired requests can be replaced. Authenticated short-code probing is rate limited across both preview and approval.
+5. Static and signed OIDC end-to-end tests verify owner preview, missing bearer denial, and missing required OAuth scope denial.
+6. Existing control, identity, relay OAuth and remote E2E tests remain green on Windows and Linux CI.
+7. No real-device OAuth enrollment claim until an independently authorized new Windows machine completes a genuine HTTPS/WSS connection under its own identity with explicit owner approval, status-only permission denial, reconnect and revoke.
+8. Do not merge, deploy auth changes, replace any protected agent, or publish a new beta without separate explicit approval.
 
 ## Product opportunity and next acceptance
 

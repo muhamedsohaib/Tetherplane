@@ -272,3 +272,50 @@ async function closeServer(
     server.close((error) => (error ? reject(error) : resolve())),
   );
 }
+
+
+test("owner preview and approval share an authenticated short-code rate limit", async () => {
+  const registry = await DeviceRegistry.open();
+  const secret = "throttled-approval-device-credential";
+  const pairing = await registry.startPairing({
+    deviceId: "ReviewThrottle",
+    credentialHash: hashDeviceCredential(secret),
+  });
+  const gateway = new RelayControlHttpGateway({
+    registry,
+    authenticator: auth(),
+    disconnectDevice: () => undefined,
+  });
+  const server = createServer();
+  gateway.attach(server);
+  await listen(server);
+  const base = baseUrl(server);
+  try {
+    for (let i = 0; i < 12; i++) {
+      const denied = await jsonRequest(base, "/pair/preview", {
+        method: "POST", token: "token-a",
+        body: { userCode: "AAAA-0000" },
+      });
+      assert.equal(denied.status, 400);
+    }
+    // Even a correct short code cannot bypass a budget consumed by guesses.
+    const blocked = await jsonRequest(base, "/pair/approve", {
+      method: "POST", token: "token-a",
+      body: { userCode: pairing.userCode },
+    });
+    assert.equal(blocked.status, 429);
+    assert.equal(blocked.body.error.code, "rate_limited");
+    assert.equal(await registry.authenticateDevice("ReviewThrottle", secret), null);
+    // A valid request from another already-authenticated account can still
+    // review the code, but it does not approve or alter the device binding.
+    const alternateReview = await jsonRequest(base, "/pair/preview", {
+      method: "POST", token: "token-b",
+      body: { userCode: pairing.userCode },
+    });
+    assert.equal(alternateReview.status, 200);
+    assert.equal(await registry.authenticateDevice("ReviewThrottle", secret), null);
+  } finally {
+    gateway.close();
+    await closeServer(server);
+  }
+});

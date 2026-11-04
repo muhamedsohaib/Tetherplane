@@ -144,7 +144,7 @@ Owner review request (authenticated, read-only) and response:
 
     {"deviceId":"new-device-id","expiresAt":"<UTC timestamp>"}
 
-The review endpoint uses the same authenticated bearer account as /pair/approve and never returns the device credential, its hash or another account's device list. A missing bearer is rejected. An expired or consumed code cannot be previewed. The device ID must be verified by the human owner before approval; viewing alone never pairs a device. Never paste existing ChatGPT/plugin OAuth access tokens into an untrusted tool or post them in logs.
+The review endpoint uses the same authenticated bearer account as /pair/approve and never returns the device credential, its hash or another account's device list. A missing bearer is rejected. An expired or consumed code cannot be previewed. Both preview and approval are limited to 12 attempts per 60 seconds per authenticated account; excessive attempts return 429 (rate_limited). The device ID must be verified by the human owner before approval; viewing alone never pairs a device. Never paste existing ChatGPT/plugin OAuth access tokens into an untrusted tool or post them in logs.
 
 Approval request shape:
 

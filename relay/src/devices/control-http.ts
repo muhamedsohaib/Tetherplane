@@ -14,6 +14,8 @@ export class RelayControlHttpGateway {
   readonly #registry: DeviceRegistry;
   readonly #authenticator: ClientAuthenticator;
   readonly #disconnectDevice: (deviceId: string) => void;
+  // Shared review + approval budget prevents short-code enumeration.
+  readonly #pairingAttempts = new Map<string, { since: number; count: number }>();
   #attachedServer: Server | null = null;
   #requestHandler:
     | ((request: IncomingMessage, response: ServerResponse) => void)
@@ -72,6 +74,7 @@ export class RelayControlHttpGateway {
       ) {
         const identity = await this.#requireIdentity(request, response);
         if (!identity) return;
+        if (!this.#allowPairingAttempt(identity, response)) return;
         await this.#previewPairing(request, response);
         return;
       }
@@ -85,6 +88,7 @@ export class RelayControlHttpGateway {
           response,
         );
         if (!identity) return;
+        if (!this.#allowPairingAttempt(identity, response)) return;
         await this.#approvePairing(request, response, identity);
         return;
       }
@@ -151,6 +155,44 @@ export class RelayControlHttpGateway {
       credentialHash,
     });
     writeJson(response, 200, pending);
+  }
+
+  #allowPairingAttempt(
+    identity: ClientIdentity,
+    response: ServerResponse,
+  ): boolean {
+    const now = Date.now();
+    const windowMs = 60_000;
+    const maxAttempts = 12;
+    let budget = this.#pairingAttempts.get(identity.accountId);
+    if (budget && now - budget.since >= windowMs) {
+      this.#pairingAttempts.delete(identity.accountId);
+      budget = undefined;
+    }
+    if (!budget) {
+      if (this.#pairingAttempts.size >= 512) {
+        for (const [account, entry] of this.#pairingAttempts) {
+          if (now - entry.since >= windowMs) this.#pairingAttempts.delete(account);
+        }
+      }
+      if (this.#pairingAttempts.size >= 512) {
+        response.setHeader("retry-after", "60");
+        writeJson(response, 429, { error: { code: "rate_limited" } });
+        return false;
+      }
+      budget = { since: now, count: 0 };
+      this.#pairingAttempts.set(identity.accountId, budget);
+    }
+    if (budget.count >= maxAttempts) {
+      response.setHeader(
+        "retry-after",
+        String(Math.max(1, Math.ceil((windowMs - (now - budget.since)) / 1000))),
+      );
+      writeJson(response, 429, { error: { code: "rate_limited" } });
+      return false;
+    }
+    budget.count++;
+    return true;
   }
 
   async #previewPairing(
