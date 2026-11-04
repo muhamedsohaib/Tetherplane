@@ -67,6 +67,15 @@ if ($toastHash -ine $build['sha256'] -or $agentHash -ine $build['agent_sha256'])
     throw 'BETA_KIT_BUILD_ARTIFACT_HASH_MISMATCH'
 }
 Write-Output 'BETA_KIT_CI_SOURCE_HASHES_VERIFIED'
+# Refuse previously built CI artifacts that require a VC++ runtime absent on clean Windows.
+$runtimeAudit = Join-Path $repository 'scripts\windows\check-pe-runtime-imports.mjs'
+foreach($nativeFile in @($toastFile,$agentFile)) {
+    & node.exe $runtimeAudit $nativeFile
+    if ($LASTEXITCODE -ne 0) {
+        throw 'BETA_KIT_DYNAMIC_VC_RUNTIME_DEPENDENCY: rebuild CI with static CRT'
+    }
+}
+Write-Output 'BETA_KIT_PORTABLE_CRT_AUDIT_PASSED'
 $temporary = Join-Path $env:TEMP ('TPToastKitBuild-' + [guid]::NewGuid().ToString('N'))
 $stage = Join-Path $temporary 'stage'
 $verify = Join-Path $temporary 'verification'
@@ -172,6 +181,7 @@ See docs\ACCEPTANCE.md and toast-beta-build-evidence.txt.
         ('toast_sha256=' + $toastHash),
         ('agent_sha256=' + $agentHash),
         'kit_type=unpackaged_developer_beta',
+        'windows_dynamic_vc_runtime_imports=none',
         'production_ready=false'
     )
     [IO.File]::WriteAllLines((Join-Path $stage 'KIT-MANIFEST.txt'),$manifest,[Text.Encoding]::ASCII)

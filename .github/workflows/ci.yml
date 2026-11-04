@@ -19,6 +19,9 @@ jobs:
       - name: Enforce fail-closed public release policy
         run: node --test tests/release/windows-main-publication-block.test.mjs
 
+      - name: Verify Windows portable runtime source contracts
+        run: node --test tests/release/windows-portable-runtime.test.mjs
+
   quality:
     strategy:
       fail-fast: false
@@ -78,7 +81,13 @@ jobs:
 
       - name: Windows release binary
         if: runner.os == 'Windows'
-        run: cargo build --release -p tetherd
+        env:
+          RUSTFLAGS: "-C target-feature=+crt-static"
+        run: cargo build --locked --release -p tetherd
+
+      - name: Reject non-portable MSVC runtime dependencies
+        if: runner.os == 'Windows'
+        run: node scripts/windows/check-pe-runtime-imports.mjs target/release/tetherd.exe
 
       - name: Windows package/install smoke
         if: runner.os == 'Windows'

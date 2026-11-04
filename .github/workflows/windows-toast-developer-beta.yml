@@ -5,6 +5,7 @@ on:
   push:
     branches:
       - feature/windows-toast-notifications-design-20261103
+      - fix/windows-portable-msvc-crt-20261104
 
 permissions:
   contents: read
@@ -31,7 +32,7 @@ jobs:
         run: cargo test --locked -p tether-notifications --features dev-beta
 
       - name: Source-boundary regressions
-        run: node --test tests/release/windows-notification-event-source.test.mjs tests/release/windows-toast-icons.test.mjs
+        run: node --test tests/release/windows-notification-event-source.test.mjs tests/release/windows-toast-icons.test.mjs tests/release/windows-portable-runtime.test.mjs
 
       - name: Authenticated and rejected WebSocket upgrade integration tests
         run: cargo test --locked -p tetherd --features developer-beta-notification-feed --bin tetherd relay_ws::notification_feed_contract_tests -- --nocapture
@@ -43,12 +44,18 @@ jobs:
         run: cargo clippy --locked -p tetherd --features developer-beta-notification-feed --all-targets -- -D warnings
 
       - name: Native beta toast executable
+        env:
+          RUSTFLAGS: "-C target-feature=+crt-static"
         run: cargo build --locked --release -p tether-notifications --features dev-beta --bin tetherplane-toast-smoke
 
       - name: Optional beta agent binary for synthetic loopback tests
+        env:
+          RUSTFLAGS: "-C target-feature=+crt-static"
         run: cargo build --locked --release -p tetherd --features developer-beta-notification-feed
 
       - name: Build isolated GUI-subsystem parity candidate (never install)
+        env:
+          RUSTFLAGS: "-C target-feature=+crt-static"
         shell: pwsh
         run: |
           $release = "target/release"
@@ -74,6 +81,16 @@ jobs:
           $probe=Start-Process -FilePath "$release/tetherd-agentw-beta.exe" -ArgumentList @("--arguments-file", ('"' + $badArgumentFile + '"')) -Wait -PassThru -WindowStyle Hidden
           if ($probe.ExitCode -ne 2) { throw "GUI beta failed to reject absent synthetic arguments file" }
           Write-Output "GUI_BETA_INVALID_SYNTHETIC_ARGUMENTS_REJECTED"
+
+      - name: Reject native beta runtime DLL dependencies
+        shell: pwsh
+        run: |
+          node scripts/windows/check-pe-runtime-imports.mjs target/release/tetherplane-toast-smoke.exe
+          if ($LASTEXITCODE -ne 0) { throw "Toast binary depends on dynamic Visual C++ CRT" }
+          node scripts/windows/check-pe-runtime-imports.mjs target/release/tetherd.exe
+          if ($LASTEXITCODE -ne 0) { throw "Beta agent depends on dynamic Visual C++ CRT" }
+          node scripts/windows/check-pe-runtime-imports.mjs target/release/tetherd-agentw-beta.exe
+          if ($LASTEXITCODE -ne 0) { throw "GUI candidate depends on dynamic Visual C++ CRT" }
 
       - name: SHA-256 build evidence
         shell: pwsh

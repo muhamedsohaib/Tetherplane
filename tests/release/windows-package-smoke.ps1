@@ -121,6 +121,10 @@ try {
     if (-not (Test-Path -LiteralPath $installedTetherd)) {
         throw "installed tetherd is missing"
     }
+    & node (Join-Path $repo "scripts\windows\check-pe-runtime-imports.mjs") $installedTetherd
+    if ($LASTEXITCODE -ne 0) {
+        throw "installed Windows agent requires a nonportable VC++ runtime"
+    }
     if (-not (Test-Path -LiteralPath $installedWorker)) {
         throw "installed model worker is missing"
     }

@@ -13,8 +13,17 @@ $output = [IO.Path]::GetFullPath($OutputPath)
 if (-not $SkipBuild) {
     Push-Location $repo
     try {
-        cargo build --release -p tetherd
-        if ($LASTEXITCODE -ne 0) { throw "cargo release build failed" }
+        # Scoped to the agent release build. Restore any caller RUSTFLAGS afterward.
+        # The portable beta must not require a separately installed Visual C++ CRT.
+        $oldRustFlags = $env:RUSTFLAGS
+        try {
+            $env:RUSTFLAGS = (($oldRustFlags + ' -C target-feature=+crt-static').Trim())
+            cargo build --locked --release -p tetherd
+            if ($LASTEXITCODE -ne 0) { throw "portable cargo release build failed" }
+        }
+        finally {
+            $env:RUSTFLAGS = $oldRustFlags
+        }
         pnpm.cmd --filter @tetherplane/compact-mcp build
         if ($LASTEXITCODE -ne 0) { throw "Compact MCP build failed" }
         pnpm.cmd --filter @tetherplane/model-client build
@@ -35,6 +44,13 @@ foreach ($required in @($tetherd, $compactDist, $modelWorkerDist, $relayDist)) {
     if (-not (Test-Path -LiteralPath $required -PathType Leaf)) {
         throw "release artifact is missing: $required"
     }
+}
+# Check before clearing the output directory; -SkipBuild must not package an old
+# dynamically linked release binary from another source or build configuration.
+$runtimeAudit = Join-Path $repo "scripts\windows\check-pe-runtime-imports.mjs"
+& node.exe $runtimeAudit $tetherd
+if ($LASTEXITCODE -ne 0) {
+    throw "WINDOWS_PORTABLE_RUNTIME_IMPORT_GATE_FAILED: rebuild tetherd with static CRT"
 }
 
 Remove-Item -LiteralPath $output -Recurse -Force -ErrorAction SilentlyContinue
