@@ -145,6 +145,29 @@ for (const authMode of ["static", "oidc"] as const) test(`${authMode} black-box 
       null,
     );
 
+    // Both static and signed OIDC identities must use the same authenticated
+    // owner review path. Preview never activates the device.
+    const anonymousPreview = await jsonRequest(address.httpUrl, "/pair/preview", {
+      method: "POST", body: { userCode: started.body.userCode },
+    });
+    assert.equal(anonymousPreview.status, 401);
+    if (authMode === "oidc") {
+      const missingScopePreview = await jsonRequest(address.httpUrl, "/pair/preview", {
+        method: "POST", token: accessToken("owner-a", "client-a", ""),
+        body: { userCode: started.body.userCode },
+      });
+      assert.equal(missingScopePreview.status, 401);
+    }
+    const ownerPreview = await jsonRequest(address.httpUrl, "/pair/preview", {
+      method: "POST", token: tokenA,
+      body: { userCode: started.body.userCode },
+    });
+    assert.equal(ownerPreview.status, 200);
+    assert.deepEqual(Object.keys(ownerPreview.body).sort(), ["deviceId", "expiresAt"]);
+    assert.equal(ownerPreview.body.deviceId, "Leno");
+    assert.equal(ownerPreview.body.expiresAt, started.body.expiresAt);
+    assert.equal(await relay.registry.authenticateDevice("Leno", deviceSecret), null);
+
     const approved = await jsonRequest(
       address.httpUrl,
       "/pair/approve",
