@@ -3,7 +3,7 @@ import { randomBytes, createHash } from "node:crypto";
 import { spawnSync } from "node:child_process";
 import { existsSync } from "node:fs";
 import { fileURLToPath } from "node:url";
-import { mkdtemp, mkdir, readFile, readdir, rm, writeFile } from "node:fs/promises";
+import { mkdtemp, mkdir, readFile, readdir, realpath, rm, writeFile } from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
 import test from "node:test";
@@ -81,7 +81,7 @@ test("successful first pairing sends only SHA-256, prints owner code, creates no
     const profile = JSON.parse(await readFile(path.join(outcome.directory, "principal.json"), "utf8"));
     assert.deepEqual(profile.allowed_capabilities, ["device.status", "device.capabilities"]);
     assert.deepEqual(profile.allowed_devices, ["WIN_DEV_GUEST_11"]);
-    assert.deepEqual(profile.allowed_roots, [dirs.allowedRoot]);
+    assert.deepEqual(profile.allowed_roots, [await realpath(dirs.allowedRoot)]);
     const validated = await loadEnrollment(outcome.directory);
     const args = agentArguments(validated);
     assert.equal(args[args.indexOf("--relay-url") + 1], "wss://relay.example.test/device");
