@@ -39,6 +39,7 @@ export class DeviceRegistry {
   readonly #devices = new Map<string, DeviceRecord>();
   readonly #pendingByCode = new Map<string, PendingPairing>();
   readonly #pairingTtlMs: number;
+  static readonly MAX_PENDING_PAIRINGS = 512;
 
   private constructor(options: {
     stateFile?: string;
@@ -73,9 +74,31 @@ export class DeviceRegistry {
       throw new Error("device is already paired and must be revoked before re-pairing");
     }
 
+    // Only one unexpired pairing challenge per device ID. Otherwise two
+    // owners can approve competing codes and silently replace a binding.
+    for (const [code, pending] of this.#pendingByCode) {
+      if (pending.expiresAt <= Date.now()) {
+        this.#pendingByCode.delete(code);
+      } else if (pending.deviceId === input.deviceId) {
+        throw new Error("device pairing is already pending");
+      }
+    }
+    if (this.#pendingByCode.size >= DeviceRegistry.MAX_PENDING_PAIRINGS) {
+      throw new Error("too many pending device pairings");
+    }
+    let userCode: string | undefined;
+    for (let attempt = 0; attempt < 12; attempt++) {
+      const candidate = pairingCode();
+      if (!this.#pendingByCode.has(candidate)) {
+        userCode = candidate;
+        break;
+      }
+    }
+    if (!userCode) throw new Error("unable to allocate unique pairing code");
+
     const pending: PendingPairing = {
       pairingId: randomUUID(),
-      userCode: pairingCode(),
+      userCode,
       deviceId: input.deviceId,
       credentialHash: input.credentialHash.toLowerCase(),
       expiresAt: Date.now() + this.#pairingTtlMs,
@@ -88,15 +111,38 @@ export class DeviceRegistry {
     };
   }
 
+  previewPairing(input: { userCode: string }): {
+    deviceId: string;
+    expiresAt: string;
+  } {
+    const pending = this.#validPending(input.userCode);
+    return {
+      deviceId: pending.deviceId,
+      expiresAt: new Date(pending.expiresAt).toISOString(),
+    };
+  }
+
+  #validPending(userCode: string): PendingPairing {
+    const pending = this.#pendingByCode.get(userCode);
+    if (!pending || pending.expiresAt <= Date.now()) {
+      if (pending) this.#pendingByCode.delete(userCode);
+      throw new Error("pairing code is invalid or expired");
+    }
+    return pending;
+  }
+
   async approvePairing(input: {
     accountId: string;
     userCode: string;
   }): Promise<DeviceBinding> {
     validateAccountId(input.accountId);
-    const pending = this.#pendingByCode.get(input.userCode);
-    if (!pending || pending.expiresAt <= Date.now()) {
-      if (pending) this.#pendingByCode.delete(input.userCode);
-      throw new Error("pairing code is invalid or expired");
+    const pending = this.#validPending(input.userCode);
+    // Recheck at approval, even if a challenge predates a binding.
+    // No code may replace an active owner without explicit revocation.
+    const current = this.#devices.get(pending.deviceId);
+    if (current && current.revokedAt === null) {
+      this.#pendingByCode.delete(input.userCode);
+      throw new Error("device is already paired and must be revoked before re-pairing");
     }
     this.#pendingByCode.delete(input.userCode);
 

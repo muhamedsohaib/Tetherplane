@@ -47,6 +47,22 @@ test("HTTP pairing requires human approval and lists only the owning account dev
       null,
     );
 
+    const anonymousPreview = await jsonRequest(base, "/pair/preview", {
+      method: "POST",
+      body: { userCode: started.body.userCode },
+    });
+    assert.equal(anonymousPreview.status, 401);
+    const preview = await jsonRequest(base, "/pair/preview", {
+      method: "POST", token: "token-a",
+      body: { userCode: started.body.userCode },
+    });
+    assert.equal(preview.status, 200);
+    assert.deepEqual(Object.keys(preview.body).sort(), ["deviceId", "expiresAt"]);
+    assert.equal(preview.body.deviceId, "Leno");
+    assert.equal(preview.body.expiresAt, started.body.expiresAt);
+    assert.doesNotMatch(JSON.stringify(preview.body), /credentialHash|device-secret/);
+    assert.equal(await registry.authenticateDevice("Leno", secret), null);
+
     const approved = await jsonRequest(base, "/pair/approve", {
       method: "POST",
       token: "token-a",
@@ -54,6 +70,11 @@ test("HTTP pairing requires human approval and lists only the owning account dev
     });
     assert.equal(approved.status, 200);
     assert.equal(approved.body.accountId, "account-a");
+    const consumedPreview = await jsonRequest(base, "/pair/preview", {
+      method: "POST", token: "token-a",
+      body: { userCode: started.body.userCode },
+    });
+    assert.equal(consumedPreview.status, 400);
     assert.equal(
       await registry.authenticateDevice("Leno", secret),
       "account-a",

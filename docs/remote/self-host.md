@@ -124,8 +124,9 @@ Pairing is two-stage. The device contributes a locally generated secret only in 
 2. Compute its SHA-256 hash locally.
 3. Send deviceId and credentialHash to POST /pair/start.
 4. The relay returns a short human code.
-5. Approve that code with an authenticated account using POST /pair/approve.
-6. Start tetherd with the original local credential file.
+5. **Review first:** using an existing authenticated owner account, POST the code to /pair/preview. Verify the returned deviceId and expiresAt match the physical new device. This endpoint does not approve anything or return credential material.
+6. Only after that independent review, approve the code with the authenticated account using POST /pair/approve.
+7. Start tetherd with the original local credential file.
 
 The relay persists only the credential hash and account/device binding. The raw device credential stays on the device.
 
@@ -135,6 +136,15 @@ Pair start request shape:
       "deviceId": "Leno",
       "credentialHash": "<sha256-hex>"
     }
+
+Owner review request (authenticated, read-only) and response:
+
+    POST /pair/preview
+    {"userCode":"ABCD-1234"}
+
+    {"deviceId":"new-device-id","expiresAt":"<UTC timestamp>"}
+
+The review endpoint uses the same authenticated bearer account as /pair/approve and never returns the device credential, its hash or another account's device list. A missing bearer is rejected. An expired or consumed code cannot be previewed. The device ID must be verified by the human owner before approval; viewing alone never pairs a device. Never paste existing ChatGPT/plugin OAuth access tokens into an untrusted tool or post them in logs.
 
 Approval request shape:
 

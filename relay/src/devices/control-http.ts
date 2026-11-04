@@ -68,6 +68,16 @@ export class RelayControlHttpGateway {
 
       if (
         request.method === "POST" &&
+        url.pathname === "/pair/preview"
+      ) {
+        const identity = await this.#requireIdentity(request, response);
+        if (!identity) return;
+        await this.#previewPairing(request, response);
+        return;
+      }
+
+      if (
+        request.method === "POST" &&
         url.pathname === "/pair/approve"
       ) {
         const identity = await this.#requireIdentity(
@@ -141,6 +151,15 @@ export class RelayControlHttpGateway {
       credentialHash,
     });
     writeJson(response, 200, pending);
+  }
+
+  async #previewPairing(
+    request: IncomingMessage,
+    response: ServerResponse,
+  ): Promise<void> {
+    const body = await readObjectBody(request);
+    const userCode = stringField(body, "userCode");
+    writeJson(response, 200, this.#registry.previewPairing({ userCode }));
   }
 
   async #approvePairing(
@@ -251,5 +270,6 @@ function writeJson(
 ): void {
   response.statusCode = statusCode;
   response.setHeader("content-type", "application/json");
+  response.setHeader("cache-control", "no-store");
   response.end(JSON.stringify(body));
 }

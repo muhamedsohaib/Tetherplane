@@ -111,3 +111,98 @@ test("static client authentication binds account, client, and principal identity
   });
   assert.equal(await auth.authenticate("wrong"), null);
 });
+
+
+test("simultaneous pending device codes cannot overwrite a different owner account", async () => {
+  const registry = await DeviceRegistry.open();
+  const ownerSecret = "first-owner-device-credential-at-least-32";
+  const attackerSecret = "second-owner-device-credential-at-least-32";
+  const original = await registry.startPairing({
+    deviceId: "NewDevice",
+    credentialHash: hashDeviceCredential(ownerSecret),
+  });
+  await assert.rejects(
+    registry.startPairing({
+      deviceId: "NewDevice",
+      credentialHash: hashDeviceCredential(attackerSecret),
+    }),
+    /pending|already paired|in progress/i,
+  );
+  await registry.approvePairing({
+    accountId: "account-a",
+    userCode: original.userCode,
+  });
+  assert.equal(await registry.authenticateDevice("NewDevice", ownerSecret), "account-a");
+  assert.equal(await registry.authenticateDevice("NewDevice", attackerSecret), null);
+  assert.equal(registry.getDevice("NewDevice")?.accountId, "account-a");
+});
+
+test("pending owner review expires and never leaks device credential material", async () => {
+  const registry = await DeviceRegistry.open({ pairingTtlMs: 1000 });
+  const secret = "new-device-secret-for-owner-review-at-least-32";
+  const pending = await registry.startPairing({
+    deviceId: "ReviewDevice",
+    credentialHash: hashDeviceCredential(secret),
+  });
+  const preview = registry.previewPairing({ userCode: pending.userCode });
+  assert.deepEqual(Object.keys(preview).sort(), ["deviceId", "expiresAt"]);
+  assert.equal(preview.deviceId, "ReviewDevice");
+  assert.equal(preview.expiresAt, pending.expiresAt);
+  assert.doesNotMatch(JSON.stringify(preview), /secret|credentialHash/i);
+  assert.equal(await registry.authenticateDevice("ReviewDevice", secret), null);
+  await registry.approvePairing({ accountId: "account-a", userCode: pending.userCode });
+  assert.throws(() => registry.previewPairing({ userCode: pending.userCode }),
+    /invalid|expired/i);
+});
+
+
+test("expired pending code can be replaced while a live binding remains protected", async () => {
+  const registry = await DeviceRegistry.open({ pairingTtlMs: 15 });
+  const first = await registry.startPairing({
+    deviceId: "FreshGuest",
+    credentialHash: hashDeviceCredential("first-credential-longer-than-16"),
+  });
+  await assert.rejects(
+    registry.startPairing({
+      deviceId: "FreshGuest",
+      credentialHash: hashDeviceCredential("replacement-credential-longer-than-16"),
+    }),
+    /already pending/i,
+  );
+  await new Promise(resolve => setTimeout(resolve, 30));
+  assert.throws(() => registry.previewPairing({ userCode: first.userCode }), /expired|invalid/i);
+  const replacement = await registry.startPairing({
+    deviceId: "FreshGuest",
+    credentialHash: hashDeviceCredential("replacement-credential-longer-than-16"),
+  });
+  assert.notEqual(replacement.userCode, first.userCode);
+  const binding = await registry.approvePairing({
+    accountId: "account-a", userCode: replacement.userCode,
+  });
+  assert.equal(binding.accountId, "account-a");
+  await assert.rejects(
+    registry.startPairing({
+      deviceId: "FreshGuest",
+      credentialHash: hashDeviceCredential("third-credential-longer-than-16"),
+    }),
+    /already paired/i,
+  );
+});
+
+test("unauthenticated pending-pairing memory is bounded", async () => {
+  const registry = await DeviceRegistry.open();
+  for (let i = 0; i < DeviceRegistry.MAX_PENDING_PAIRINGS; i++) {
+    const requested = await registry.startPairing({
+      deviceId: "Guest-" + i,
+      credentialHash: hashDeviceCredential("guest-hash-source-" + i),
+    });
+    assert.match(requested.userCode, /^[A-F0-9]{4}-[A-F0-9]{4}$/);
+  }
+  await assert.rejects(
+    registry.startPairing({
+      deviceId: "OneMoreGuest",
+      credentialHash: hashDeviceCredential("one-more-secret-credential"),
+    }),
+    /too many pending/i,
+  );
+});
