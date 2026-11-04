@@ -76,6 +76,8 @@ test("developer-beta release gate keeps unsigned prerelease separate from protec
   assert.match(release, /separate manual GitHub prerelease/);
   assert.match(release, /specific commit, tag, assets, and public release text/);
   assert.match(release, /not a full Tetherplane installer/);
+  assert.match(release, /scripts\/live-acceptance\.mjs --describe/);
+  assert.match(read("docs/release.md").toString(), /GITHUB_DEVELOPER_BETA_RELEASE_GATE_20261104\.md/);
   assert.match(auto, /UNSIGNED_PUBLIC_RELEASE_BLOCKED/);
   assert.doesNotMatch(auto, /gh release create|contents: write/);
 });

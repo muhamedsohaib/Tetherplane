@@ -10,6 +10,7 @@
 - Current `main:.github/workflows/release.yml` intentionally rejects all `v*` tag-triggered unsigned publication with `UNSIGNED_PUBLIC_RELEASE_BLOCKED`. **Do not remove or bypass this protected publication guard.**
 - Isolated local branded-toast source: `feature/windows-toast-branded-icon-20261103` on Leno. It is not merged into remote `main`.
 - The existing **16-file toast ZIP** is a synthetic diagnostic kit, **not a full Tetherplane installer**. It includes a native toast smoke binary, a loopback test-only agent, approved ICO assets, source/binary provenance and checksums. Never publish that kit as the full product.
+- Read-only `node scripts/live-acceptance.mjs --describe` still targets **v0.1.0**, a clean `main` and the former `v*` publication path. It is historical evidence, **not an acceptance recipe for the new beta**. The historical Windows package-smoke script invokes per-process `-ExecutionPolicy Bypass`; that path was not run on Leno and must not be relied on to bypass host restrictions.
 
 ## Product acceptance — minimum honest developer-beta evidence
 

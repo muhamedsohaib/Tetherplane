@@ -1,5 +1,12 @@
 # Release and Installation
 
+> **Developer-beta status (2026-11-04):** The instructions below describe the historical
+> `v0.1.0` release path, which has already been published. For the next unsigned
+> GitHub developer beta, use `docs/release/GITHUB_DEVELOPER_BETA_RELEASE_GATE_20261104.md`.
+> The current `v*` tag workflow deliberately blocks automatic unsigned publication;
+> do not treat the toast diagnostic ZIP as an installable Tetherplane release.
+> No signing, MSIX, or Store requirement applies to the separately approved developer beta.
+
 ## Windows package
 
 scripts/package-windows.ps1 builds release tetherd, builds TypeScript packages, deploys production Compact MCP and relay dependencies, preserves the canonical adapter/protocol schema layout, and writes a source-commit manifest.
