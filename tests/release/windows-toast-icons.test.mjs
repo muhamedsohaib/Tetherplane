@@ -51,3 +51,11 @@ test("beta shortcut exposes its icon identity and the kit carries both variants"
   assert.match(builder, /tetherplane-black-on-white\.ico/);
   assert.match(builder, /tetherplane-white-on-black\.ico/);
 });
+
+test("native toast smoke fails closed when Windows Application Control blocks its executable", () => {
+  const smoke = read("scripts/windows/Test-TetherplaneToastBeta.ps1").toString();
+  assert.match(smoke, /BETA_WINDOWS_APPLICATION_CONTROL_BLOCKED/);
+  assert.match(smoke, /application control policy has blocked this file/i);
+  assert.match(smoke, /finally\s*\{[\s\S]*?-Operation Unregister/);
+  assert.doesNotMatch(smoke, /Set-MpPreference|Set-ProcessMitigation|Set-ExecutionPolicy|Add-MpPreference/i);
+});

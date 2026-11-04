@@ -36,7 +36,16 @@ try {
 
     # The Rust CLI will fail with nonzero code if Windows rejects native dispatch.
     # It only displays a static synthetic test; no production device identity is used.
-    & $exe --smoke --developer-beta | Out-Host
+    try {
+        & $exe --smoke --developer-beta | Out-Host
+    } catch {
+        # Fail closed on enforced Windows application-control rules. Never suggest bypasses.
+        # Keep the exact cause distinct from an agent, identity, or toast-code failure.
+        if ($_.Exception.Message -match '(?i)application control policy has blocked this file') {
+            throw 'BETA_WINDOWS_APPLICATION_CONTROL_BLOCKED: unsigned test binary was denied by host policy; no security-policy change was attempted.'
+        }
+        throw
+    }
     if ($LASTEXITCODE -ne 0) {
         throw ('BETA_NATIVE_TOAST_DISPATCH_FAILED_EXIT_' + $LASTEXITCODE)
     }

@@ -42,3 +42,13 @@ Scope: unpackaged, explicitly opt-in **GitHub developer beta**. No code signing,
 - The GitHub remote toast branch remains at `28ed103`; the branded changes are **committed only in the isolated local Leno branch** and were not pushed, merged, tagged or released.
 
 **Outstanding gate:** Test the actual unsigned native toast and registered icon on an authorized Windows host whose existing policy permits it, with no bypass, and independently confirm visible Notification Center rendering. Continue clean-install, authenticated operation, denials and four-device recovery acceptance before a full public beta claim.
+
+## Leno-only follow-up — November 4, 2026
+
+The owner directed that development continue exclusively on Leno; no additional remote-device changes were made by this follow-up.
+
+The native toast test's prior generic PowerShell execution error is now handled explicitly, with a fail-closed `BETA_WINDOWS_APPLICATION_CONTROL_BLOCKED` result when Windows refuses the pinned executable. On Leno, a fresh test against CI artifact `28ed103` and its verified SHA-256 returned `ApplicationControlRefusalRecognized=true`, `TestWasBlocked=true`, and `DisposableShortcutRemoved=true`. The installed Tetherplane agent, authentication, task configuration and Windows security policy were left untouched. This is a better diagnosis, **not a workaround or evidence that native execution is allowed on Leno**.
+
+The modified script parses under PowerShell 5.1, `git diff --check` passes, and combined source-level test execution reports **15/15 pass**, including the new failure-and-cleanup contract check. Leno's enforced application-control policy remains a host-specific unsigned-executable incompatibility.
+
+**Release implication:** an unsigned GitHub developer beta remains a permissible distribution strategy, but it must document that some managed/restrictive Windows machines will refuse the executable, and cannot claim universal one-click compatibility. Do not modify enterprise/device policy, disable security controls, or mislabel a blocked host as a software failure. Native notification execution on Leno is still a NO-GO under the current policy. Confirm clean installation and authenticated operation on a permitted authorized machine before a public release.
