@@ -1,0 +1,126 @@
+name: Windows Portable Developer Beta Candidate
+
+# Development artifact only: no GitHub release or protected branch change.
+on:
+  push:
+    branches:
+      - fix/windows-portable-msvc-crt-20261104
+
+permissions:
+  contents: read
+
+jobs:
+  unsigned-portable-windows-x64:
+    runs-on: windows-2025
+    timeout-minutes: 45
+    steps:
+      - name: Check out exact source without retained GitHub credentials
+        uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
+        with:
+          persist-credentials: false
+
+      - name: Install Rust toolchain
+        uses: dtolnay/rust-toolchain@stable
+
+      - name: Install pinned Node build runtime
+        uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4.4.0
+        with:
+          node-version: 22.23.4
+
+      - name: Enable pnpm 10
+        shell: pwsh
+        run: |
+          corepack enable
+          corepack prepare pnpm@10 --activate
+
+      - name: Install exact workspace dependencies
+        run: pnpm install --frozen-lockfile
+
+      - name: Validate native and portable source contracts
+        run: node --test tests/release/windows-main-publication-block.test.mjs tests/release/windows-portable-runtime.test.mjs tests/release/windows-toast-icons.test.mjs tests/release/windows-notification-event-source.test.mjs
+
+      - name: Build portable static CRT agent
+        env:
+          RUSTFLAGS: "-C target-feature=+crt-static"
+        run: cargo build --locked --release -p tetherd
+
+      - name: Verify compiled native imports
+        run: node scripts/windows/check-pe-runtime-imports.mjs target/release/tetherd.exe
+
+      - name: Build TypeScript MCP and support packages
+        shell: pwsh
+        run: |
+          pnpm --filter @tetherplane/compact-mcp build
+          if ($LASTEXITCODE -ne 0) { throw 'Compact MCP build failed' }
+          pnpm --filter @tetherplane/model-client build
+          if ($LASTEXITCODE -ne 0) { throw 'Model client build failed' }
+          pnpm --filter @tetherplane/relay build
+          if ($LASTEXITCODE -ne 0) { throw 'Relay build failed' }
+
+      - name: Assemble full production-dependency package
+        shell: pwsh
+        run: |
+          $full = Join-Path $env:RUNNER_TEMP 'tetherplane-full-runtime'
+          ./scripts/package-windows.ps1 -OutputPath $full -SkipBuild
+          if ($LASTEXITCODE -ne 0) { throw 'Full package build failed' }
+
+      - name: Full package install six-tool and uninstall acceptance
+        shell: pwsh
+        run: |
+          ./tests/release/windows-package-smoke.ps1
+          if ($LASTEXITCODE -ne 0) { throw 'Isolated installed-runtime smoke failed' }
+
+      - name: Fetch SHA-256 pinned official Node.js runtime
+        shell: pwsh
+        run: |
+          $version = 'v22.23.4'
+          $filename = 'node-v22.23.4-win-x64.zip'
+          $expected = 'CBC74B5E0982C9DBB41525FD8FB5DCD32FBEE237863F7829072F4639A1CE5F20'
+          $target = Join-Path $env:RUNNER_TEMP $filename
+          Invoke-WebRequest -UseBasicParsing -Uri "https://nodejs.org/dist/$version/$filename" -OutFile $target -TimeoutSec 120
+          if ((Get-FileHash -LiteralPath $target -Algorithm SHA256).Hash -ne $expected) {
+            throw 'Official Node distribution SHA-256 mismatch'
+          }
+          Write-Output 'NODE_LTS_DISTRIBUTION_SHA256_VERIFIED'
+
+      - name: Build one complete unsigned portable Windows ZIP
+        shell: pwsh
+        run: |
+          $package = Join-Path $env:RUNNER_TEMP 'tetherplane-full-runtime'
+          $node = Join-Path $env:RUNNER_TEMP 'node-v22.23.4-win-x64.zip'
+          $archive = Join-Path $env:RUNNER_TEMP 'Tetherplane-Windows-x64-Unsigned-Developer-Beta.zip'
+          ./scripts/windows/Build-UnsignedPortableDeveloperBeta.ps1 -FullPackagePath $package -PinnedNodeZip $node -OutputZip $archive -ExpectedCommit $env:GITHUB_SHA
+          if ($LASTEXITCODE -ne 0) { throw 'Portable developer-beta packaging failed' }
+
+      - name: Fresh extraction and CMD-only local first-run acceptance
+        shell: pwsh
+        run: |
+          $archive = Join-Path $env:RUNNER_TEMP 'Tetherplane-Windows-x64-Unsigned-Developer-Beta.zip'
+          $extract = Join-Path $env:RUNNER_TEMP 'tetherplane-beta-extracted'
+          Expand-Archive -LiteralPath $archive -DestinationPath $extract -ErrorAction Stop
+          & cmd.exe /d /c ('"' + (Join-Path $extract 'START HERE.cmd') + '" --no-pause')
+          if ($LASTEXITCODE -ne 0) { throw 'Portable first-run acceptance failed' }
+          Write-Output 'PORTABLE_BETA_CMD_FIRST_RUN_ACCEPTANCE_OK'
+
+      - name: Stage candidate and SHA-256 evidence
+        shell: pwsh
+        run: |
+          $output = Join-Path $pwd.Path 'Tetherplane-DevBeta-Build'
+          New-Item -ItemType Directory -Path $output -Force | Out-Null
+          $archive = Join-Path $env:RUNNER_TEMP 'Tetherplane-Windows-x64-Unsigned-Developer-Beta.zip'
+          Copy-Item -LiteralPath $archive -Destination $output
+          $hash = (Get-FileHash -LiteralPath $archive -Algorithm SHA256).Hash.ToLowerInvariant()
+          $name = [IO.Path]::GetFileName($archive)
+          ($hash + '  ' + $name) | Set-Content -LiteralPath (Join-Path $output 'SHA256SUMS-PortableBeta.txt') -Encoding ascii
+          Write-Output ('PORTABLE_BETA_ARCHIVE_SHA256=' + $hash)
+          Write-Output ('PORTABLE_BETA_SOURCE_COMMIT=' + $env:GITHUB_SHA)
+
+      - name: Upload candidate without publishing GitHub Release
+        uses: actions/upload-artifact@v4
+        with:
+          name: tetherplane-full-windows-x64-unsigned-devbeta
+          path: |
+            Tetherplane-DevBeta-Build/Tetherplane-Windows-x64-Unsigned-Developer-Beta.zip
+            Tetherplane-DevBeta-Build/SHA256SUMS-PortableBeta.txt
+          if-no-files-found: error
+          retention-days: 7
