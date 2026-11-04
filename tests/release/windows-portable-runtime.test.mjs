@@ -129,3 +129,42 @@ test("toast CI must inspect both native executables before test-artifact packagi
   assert.match(ci, /node scripts\/windows\/check-pe-runtime-imports\.mjs target\/release\/tetherplane-toast-smoke\.exe/);
   assert.match(ci, /node scripts\/windows\/check-pe-runtime-imports\.mjs target\/release\/tetherd\.exe/);
 });
+
+
+test("toast kit checksum paths use canonical source containment on Windows", {
+  skip: process.platform !== "win32",
+}, () => {
+  const builder = read("scripts/windows/Build-TetherplaneToastBetaKit.ps1");
+  assert.match(builder, /\$canonicalStage\s*=\s*\(Get-Item -LiteralPath \$stage/);
+  assert.match(builder, /\$canonicalFile\.StartsWith\(\$stagePrefix/);
+  assert.match(builder, /BETA_KIT_CHECKSUM_PATH_OUTSIDE_STAGE/);
+  assert.doesNotMatch(builder, /\$file\.FullName\.Substring\(\$stage\.Length/);
+
+  const root = mkdtempSync(join(tmpdir(), "tp-kit-canonical-path-"));
+  try {
+    const script = [
+      "$ErrorActionPreference='Stop'",
+      "$stage=Join-Path $env:TP_KIT_TEST_ROOT 'stage'",
+      "$folder=Join-Path $stage 'assets\\windows'",
+      "New-Item -ItemType Directory -Path $folder -Force|Out-Null",
+      "Set-Content -LiteralPath (Join-Path $folder 'icon-provenance.json') -Value '{}'",
+      "$canonicalStage=(Get-Item -LiteralPath $stage).FullName.TrimEnd('\\','/')",
+      "$stagePrefix=$canonicalStage+[IO.Path]::DirectorySeparatorChar",
+      "$file=Get-ChildItem -LiteralPath $stage -File -Recurse|Select-Object -First 1",
+      "$canonicalFile=(Get-Item -LiteralPath $file.FullName).FullName",
+      "if(-not $canonicalFile.StartsWith($stagePrefix,[StringComparison]::OrdinalIgnoreCase)){throw 'not contained'}",
+      "$canonicalFile.Substring($stagePrefix.Length).Replace('\\','/')",
+    ].join(";");
+    const result = spawnSync("powershell.exe", [
+      "-NoProfile", "-NonInteractive", "-Command", script,
+    ], {
+      env: { ...process.env, TP_KIT_TEST_ROOT: root },
+      encoding: "utf8",
+      timeout: 15000,
+    });
+    assert.equal(result.status, 0, result.stderr);
+    assert.equal(result.stdout.trim(), "assets/windows/icon-provenance.json");
+  } finally {
+    rmSync(root, { recursive: true, force: true });
+  }
+});

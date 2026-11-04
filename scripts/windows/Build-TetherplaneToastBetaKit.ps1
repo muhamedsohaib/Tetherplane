@@ -186,9 +186,20 @@ See docs\ACCEPTANCE.md and toast-beta-build-evidence.txt.
     )
     [IO.File]::WriteAllLines((Join-Path $stage 'KIT-MANIFEST.txt'),$manifest,[Text.Encoding]::ASCII)
     $checksums = @()
+    # Compare canonical FileInfo paths, not an unnormalized stage string.
+    # GitHub-hosted Windows runners may normalize the temp path differently.
+    $canonicalStage = (Get-Item -LiteralPath $stage -ErrorAction Stop).FullName.TrimEnd('\','/')
+    $stagePrefix = $canonicalStage + [IO.Path]::DirectorySeparatorChar
     foreach($file in @(Get-ChildItem -LiteralPath $stage -Recurse -File | Sort-Object FullName)) {
-        $relative = $file.FullName.Substring($stage.Length + 1).Replace('\','/')
-        $checksums += ((Get-FileHash -LiteralPath $file.FullName -Algorithm SHA256).Hash.ToLowerInvariant() + '  ' + $relative)
+        $canonicalFile = (Get-Item -LiteralPath $file.FullName -ErrorAction Stop).FullName
+        if (-not $canonicalFile.StartsWith($stagePrefix, [StringComparison]::OrdinalIgnoreCase)) {
+            throw 'BETA_KIT_CHECKSUM_PATH_OUTSIDE_STAGE'
+        }
+        $relative = $canonicalFile.Substring($stagePrefix.Length).Replace('\','/')
+        if ([string]::IsNullOrWhiteSpace($relative) -or $relative -match '(^|/)\.\.(/|$)') {
+            throw 'BETA_KIT_CHECKSUM_RELATIVE_PATH_INVALID'
+        }
+        $checksums += ((Get-FileHash -LiteralPath $canonicalFile -Algorithm SHA256).Hash.ToLowerInvariant() + '  ' + $relative)
     }
     [IO.File]::WriteAllLines((Join-Path $stage 'SHA256SUMS.txt'),$checksums,[Text.Encoding]::ASCII)
     $entries = @(Get-ChildItem -LiteralPath $stage -Force | Select-Object -ExpandProperty FullName)

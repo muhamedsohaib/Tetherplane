@@ -48,3 +48,13 @@ Static CRT linkage removes a prerequisite but embeds CRT code, so security fixes
 3. Copy the **new candidate artifact** (not public `v0.1.0`) into the already authorized Surface Windows 10 Sandbox. Preserve normal guest execution policy; prefer a native/CMD first-run path instead of a `.ps1` launch.
 4. Record a real agent `device.status`, local MCP operations, denied access, teardown and fresh-guest repetition; measure all elapsed stages independently. Verify the complete onboarding path with permitted authentication before claiming the **30-second connection target**.
 5. Keep protected `main` release guards, installed agent, Surface host, RTX and production OAuth untouched. Production or public release remains NO-GO until candidate-specific acceptance and explicit owner approval.
+
+## Hosted Windows validation and packaging correction (2026-11-04)
+
+- Pushed isolated commit `5b8349ac4418e1879954424eaec6184996b4c21d` to `fix/windows-portable-msvc-crt-20261104`. No merge, tag, publication, identity, host-security or installed-agent change.
+- GitHub main CI [run 41794858763](https://github.com/muhamedsohaib/Tetherplane/actions/runs/41794858763) completed **SUCCESS** across independent release-policy, Ubuntu quality and Windows quality jobs.
+- Hosted Windows `tetherd.exe`: `PE_RUNTIME_IMPORT_AUDIT` found 15 imported DLLs, **zero dynamic VC++ CRT imports**, `portableRuntimeCheck=PASS`.
+- That same hosted Windows CI performed a separate packaged binary check, `SIX_TOOL_SMOKE_OK`, and completed disposable `WINDOWS_PACKAGE_SMOKE_OK` for package/install/uninstall.
+- Toast [run 41794858757](https://github.com/muhamedsohaib/Tetherplane/actions/runs/41794858757) compiled all three native candidates and passed its runtime import checks, but the final test ZIP assembly failed at checksum verification. Its error referenced `verification\\ge\\assets\\windows\\icon-provenance.json`; the stage-relative string calculation was not robust to differing canonical directory representations.
+- Small source correction: derive relative paths from a canonical `Get-Item().FullName` stage prefix; explicitly verify stage containment, refuse empty/parent-relative paths, and test the actual Windows path calculation. The corrected packager requires a fresh CI run.
+- **Do not treat CI as clean-guest acceptance:** the Surface Windows 10 Sandbox originally lacked `VCRUNTIME140.dll` and must rerun with the exact corrected candidate before publishing or claiming under-30-second onboarding.
