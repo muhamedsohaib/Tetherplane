@@ -90,7 +90,7 @@ jobs:
           $nodeExe = (node -p 'process.execPath').Trim()
           $nodeLicense = Join-Path (Split-Path -Parent $nodeExe) 'LICENSE'
           $bridge = Join-Path $env:RUNNER_TEMP 'browser-companion-deploy\browser-bridge'
-          $host = Join-Path $env:RUNNER_TEMP 'browser-companion-deploy\host\host.mjs'
+          $hostBundle = Join-Path $env:RUNNER_TEMP 'browser-companion-deploy\host\host.mjs'
           $launcher = Join-Path $repo 'target\release\tetherplane-browserw.exe'
           $extension = Join-Path $repo 'extension\browser'
           $out1 = Join-Path $env:RUNNER_TEMP 'tp-browser-stage-one'
@@ -99,7 +99,7 @@ jobs:
           $zip2 = Join-Path $env:RUNNER_TEMP 'tetherplane-browser-companion-repeat.zip'
           $args = @('--source-root', $repo, '--source-sha', $env:GITHUB_SHA,
               '--browserw', $launcher, '--node', $nodeExe, '--node-license', $nodeLicense,
-              '--host', $host, '--bridge', $bridge, '--extension', $extension)
+              '--host', $hostBundle, '--bridge', $bridge, '--extension', $extension)
           & python scripts/release/windows_browser_companion_candidate.py stage @args --out-dir $out1 --archive $zip1
           if ($LASTEXITCODE -ne 0) { throw 'FIRST_STAGING_FAILED' }
           & python scripts/release/windows_browser_companion_candidate.py stage @args --out-dir $out2 --archive $zip2

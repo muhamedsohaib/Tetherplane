@@ -142,5 +142,12 @@ class CandidateTests(unittest.TestCase):
         self.assertEqual(self.cli('verify', '--archive', archive, '--source-sha', self.sha)[0], 2)
 
 
+    def test_workflow_avoids_powershell_readonly_host_variable(self):
+        workflow = (Path(__file__).resolve().parents[2] / '.github' / 'workflows' /
+                    'windows-browser-companion-quarantine.yml').read_text(encoding='utf-8')
+        self.assertNotRegex(workflow, r'(?mi)^\s*\$host\s*=')
+        self.assertIn("'--host', $hostBundle, '--bridge'", workflow)
+
+
 if __name__ == '__main__':
     unittest.main(verbosity=2)
