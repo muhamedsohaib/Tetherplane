@@ -59,13 +59,13 @@ try {
   let attempt=run();
   const missing=await exitWithin(attempt,6000);
   if(missing==="TIMEOUT")attempt.kill();
-  assert.equal(typeof missing,"number");assert.notEqual(missing,0);
+  assert.equal(missing,1,"missing approval must deny with exit 1, not crash while loading");
   assert.equal(await listening(ports[0]),false);
   console.log("RTX_BG_OWNER_MARKER_REQUIRED_PASS");
   await writeFile(marker,"tampered\n");
   attempt=run();const tampered=await exitWithin(attempt,6000);
   if(tampered==="TIMEOUT")attempt.kill();
-  assert.equal(typeof tampered,"number");assert.notEqual(tampered,0);
+  assert.equal(tampered,1,"tampered approval must deny with exit 1, not crash while loading");
   console.log("RTX_BG_TAMPERED_MARKER_DENIED_PASS");
   await writeFile(marker,"owner-approved-browser-background-v1\n");
   owner=run();

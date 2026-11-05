@@ -1,0 +1,80 @@
+name: Windows Native CRT Package Smoke (draft review only)
+
+on:
+  pull_request:
+    types: [opened, synchronize, reopened]
+
+permissions:
+  contents: read
+
+concurrency:
+  group: crt-native-smoke-review-20261102
+  cancel-in-progress: true
+
+jobs:
+  isolated-package-smoke:
+    if: >-
+      github.repository == 'muhamedsohaib/Tetherplane' &&
+      github.event.pull_request.head.repo.full_name == github.repository &&
+      github.head_ref == 'fix/windows-native-crt-static-clean-install-20261102' &&
+      github.base_ref == 'review/store-browser-background-optin-20261102' &&
+      github.event.pull_request.draft == true
+    runs-on: windows-latest
+    timeout-minutes: 45
+    steps:
+      - name: Checkout review branch without stored credentials
+        uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
+        with:
+          persist-credentials: false
+
+      - name: Verify exact review-branch scope
+        shell: pwsh
+        run: |
+          if ($env:GITHUB_HEAD_REF -cne 'fix/windows-native-crt-static-clean-install-20261102' -or
+              $env:GITHUB_BASE_REF -cne 'review/store-browser-background-optin-20261102') {
+            throw 'NATIVE_SMOKE_SCOPE_DENIED'
+          }
+          Write-Output "NATIVE_SMOKE_REVIEW_ONLY_SOURCE=$env:GITHUB_SHA"
+
+      - name: Install Windows Rust toolchain
+        uses: dtolnay/rust-toolchain@b725eda525362e7cf34af9a7243cac1e3f01a7ec # stable
+
+      - name: Install Node 22
+        uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4.4.0
+        with:
+          node-version: '22'
+
+      - name: Install exact pnpm workspace dependencies
+        shell: pwsh
+        run: |
+          corepack enable
+          if ($LASTEXITCODE -ne 0) { throw 'COREPACK_FAILED' }
+          corepack prepare pnpm@10.34.5 --activate
+          if ($LASTEXITCODE -ne 0) { throw 'PNPM_ACTIVATION_FAILED' }
+          pnpm install --frozen-lockfile
+          if ($LASTEXITCODE -ne 0) { throw 'PNPM_INSTALL_FAILED' }
+
+      - name: Build bundled JavaScript dependencies
+        shell: pwsh
+        run: |
+          pnpm -r build
+          if ($LASTEXITCODE -ne 0) { throw 'WORKSPACE_BUILD_FAILED' }
+
+      - name: Build all native Windows release executables
+        shell: pwsh
+        run: |
+          ./scripts/build-windows-agent-binaries.ps1
+          if ($LASTEXITCODE -ne 0) { throw 'WINDOWS_STATIC_CRT_BUILD_FAILED' }
+
+      - name: Verify all six native CRT import closures
+        shell: pwsh
+        run: |
+          node tests/release/windows-native-runtime-imports.mjs target/release
+          if ($LASTEXITCODE -ne 0) { throw 'NATIVE_CRT_IMPORTS_NOT_CLOSED' }
+
+      - name: Windows package/install smoke (disposable only)
+        shell: pwsh
+        run: |
+          ./tests/release/windows-package-smoke.ps1
+          if ($LASTEXITCODE -ne 0) { throw 'WINDOWS_PACKAGE_SMOKE_FAILED' }
+          Write-Output 'REVIEW_NATIVE_PACKAGE_SMOKE_PASS_NO_STORE_SIGNING'

@@ -13,8 +13,11 @@ $modelWindowlessExe = Join-Path $repo "target\release\tetherplane-modelw.exe"
 $storeSetupWindowlessExe = Join-Path $repo "target\release\tetherplane-setupw.exe"
 $storeAutostartWindowlessExe = Join-Path $repo "target\release\tetherplane-autostartw.exe"
 
+$priorRustFlags = $env:RUSTFLAGS
 Push-Location $repo
 try {
+    # Native Windows builds must not depend on a separately installed VC++ runtime.
+    $env:RUSTFLAGS = ("$priorRustFlags -C target-feature=+crt-static").Trim()
     # Never reuse a stale windowless artifact from a different source revision.
     Remove-Item -LiteralPath $windowlessExe -Force -ErrorAction SilentlyContinue
 
@@ -43,6 +46,7 @@ catch {
     throw
 }
 finally {
+    $env:RUSTFLAGS = $priorRustFlags
     Pop-Location
 }
 
