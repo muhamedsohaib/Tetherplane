@@ -1,0 +1,37 @@
+name: Browser Action Budget Lab (isolated review)
+
+on:
+  push:
+    branches:
+      - fix/browser-combined-action-budget-20261107
+    paths:
+      - 'agent/providers/browser/**'
+      - 'scripts/browser-unified-rpc-host.mjs'
+      - 'tests/release/browser-unified-rpc-host.test.mjs'
+      - '.github/workflows/browser-action-budget-lab.yml'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  deadline-contract:
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 25
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [windows-latest, ubuntu-latest]
+    steps:
+      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
+        with:
+          persist-credentials: false
+      - name: Verify combined browser router deadlines and denied routes
+        shell: bash
+        run: node --test tests/release/browser-unified-rpc-host.test.mjs
+      - name: Prepare stable Rust
+        shell: bash
+        run: rustup toolchain install stable --profile minimal
+      - name: Verify native browser RPC action-budget contract
+        shell: bash
+        run: cargo test -p tether-browser-provider --test snapshot_timeout_budget

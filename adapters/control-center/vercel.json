@@ -27,7 +27,8 @@
       "test/release-real-extension-acceptance-20261028": false,
       "test/release-origin-bound-human-grants-20261029": false,
       "fix/browser-owner-grants-integrated-20261101": false,
-      "feature/browser-combined-owner-20261106": false
+      "feature/browser-combined-owner-20261106": false,
+      "fix/browser-combined-action-budget-20261107": false
     }
   },
   "$schema": "https://openapi.vercel.sh/vercel.json"

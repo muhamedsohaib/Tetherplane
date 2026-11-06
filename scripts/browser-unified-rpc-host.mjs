@@ -104,7 +104,8 @@ export async function callUpstream({ port, request, timeoutMs = 3500 }) {
 export function createBrowserUnifiedHandler({
   agentToken, managedPort = 17655, ownerPort = 17657,
   timeoutMs = 3500, listTimeoutMs = 1500,
-  snapshotTimeoutMs = 6500, upstream = callUpstream,
+  snapshotTimeoutMs = 6500, actTimeoutMs = 12_000,
+  waitTimeoutMs = 12_000, upstream = callUpstream,
 } = {}) {
   if (typeof agentToken !== "string" || agentToken.length < 16 ||
     agentToken.length > 512 || /[\r\n\0]/.test(agentToken)) {
@@ -118,6 +119,10 @@ export function createBrowserUnifiedHandler({
   if (!Number.isInteger(snapshotTimeoutMs) || snapshotTimeoutMs <= timeoutMs ||
     snapshotTimeoutMs > 20_000) {
     throw new Error("Snapshot deadline must exceed the general upstream deadline");
+  }
+  if (![actTimeoutMs, waitTimeoutMs].every(v =>
+    Number.isInteger(v) && v > timeoutMs && v <= 20_000)) {
+    throw new Error("Browser action and wait deadlines must exceed the general deadline and remain bounded");
   }
   const invoke = async (source, request, budgetMs = timeoutMs) =>
     await upstream({
@@ -244,7 +249,9 @@ export function createBrowserUnifiedHandler({
     try {
       // Extension observation has its own five-second timeout. Leave enough
       // room for that explicit result to reach the router and native agent.
-      const budget = op === "snapshot" ? snapshotTimeoutMs : timeoutMs;
+      const budget = op === "snapshot" ? snapshotTimeoutMs
+        : op === "act" ? actTimeoutMs
+        : op === "wait" ? waitTimeoutMs : timeoutMs;
       const result = await invoke(target, sanitized, budget);
       if (!result || typeof result !== "object" ||
         (result.status !== "success" && result.status !== "error")) {
@@ -255,6 +262,10 @@ export function createBrowserUnifiedHandler({
       return result;
     } catch (error) {
       if (error instanceof Error && error.message === "Upstream deadline") {
+        if (op === "act") {
+          return failure(id, "action_outcome_unknown",
+            "Browser action was not confirmed before the upstream deadline; it may have executed. Inspect the tab instead of retrying.");
+        }
         return failure(id, "timeout", "browser operation exceeded its upstream deadline");
       }
       return failure(id, "capability_unavailable",

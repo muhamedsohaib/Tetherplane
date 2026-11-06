@@ -322,3 +322,46 @@ test("router snapshot timeout is bounded and returns a typed error", async () =>
     snapshotTimeoutMs: 200,
   }), /Snapshot deadline/);
 });
+
+test("owner-authorized act and wait use explicit budgets longer than semantic settle", async () => {
+  const calls = [];
+  const handler = createBrowserUnifiedHandler({
+    agentToken: token, timeoutMs: 200, listTimeoutMs: 100,
+    snapshotTimeoutMs: 650, actTimeoutMs: 900, waitTimeoutMs: 850,
+    upstream: async ({port, request, timeoutMs}) => {
+      calls.push({port,op:request.capability,budget:timeoutMs});
+      if (request.capability === "browser.act") {
+        await new Promise(resolve=>setTimeout(resolve,260));
+      }
+      return success(request,{performed:true});
+    },
+  });
+  const response=await handler(make("invoke","act",{page_id:"tab:44"}));
+  assert.equal(response.status,"success");
+  assert.deepEqual(calls,[{port:17657,op:"browser.act",budget:900}]);
+  calls.length=0;
+  const waiting=await handler(make("invoke","wait",{page_id:"tab:44"}));
+  assert.equal(waiting.status,"success");
+  assert.deepEqual(calls,[{port:17657,op:"browser.wait",budget:850}]);
+  assert.throws(()=>createBrowserUnifiedHandler({
+    agentToken:token,timeoutMs:200,listTimeoutMs:100,
+    snapshotTimeoutMs:650,actTimeoutMs:200,waitTimeoutMs:850,
+  }),/action and wait deadlines/);
+});
+
+test("unconfirmed owner action is explicit uncertainty, never CDP fallback", async () => {
+  const calls=[];
+  const handler=createBrowserUnifiedHandler({
+    agentToken:token,
+    upstream:async({port,request})=>{
+      calls.push({port,operation:request.capability});
+      if(request.capability==="browser.act")throw new Error("Upstream deadline");
+      return success(request,{pages:[]});
+    }
+  });
+  const response=await handler(make("invoke","act",{page_id:"tab:44"}));
+  assert.equal(response.status,"error");
+  assert.equal(response.error.code,"action_outcome_unknown");
+  assert.match(response.error.message,/may have executed/);
+  assert.deepEqual(calls,[{port:17657,operation:"browser.act"}]);
+});
