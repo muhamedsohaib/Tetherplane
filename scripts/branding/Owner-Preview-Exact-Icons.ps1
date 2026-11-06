@@ -16,6 +16,7 @@ $ManifestPath = Join-Path $Repo 'branding\brand-asset-manifest.json'
 $OldManifestHash = '0D69CFD4147F7EA7FB9C0E7DA107FFB5768D53BCD5BA9F5E74017D303EAA30AD'
 $OldPopupHash = '3974C4FBD3A27DAEE5B66DC3D8B68F0C8AA1BB4B89F44F2C834B29B866222BA3'
 $ExpectedOriginalPinPrefix = 'imhaedlo'
+$ExpectedPinFileHash = '87A01252E6436D149384235E76149C2BECBE35754A8123F6373EDC9C57F738B1'
 $Payload = @(
     'manifest.json', 'pair.html',
     'icons\brand-16.png', 'icons\brand-32.png',
@@ -39,6 +40,7 @@ function CheckIdentity {
     $id = (Get-Content -LiteralPath $idFile -Raw).Trim()
     Assert ($id -cmatch '^[a-p]{32}$') 'INVALID_OWNER_EXTENSION_ID'
     Assert ($id.StartsWith($ExpectedOriginalPinPrefix)) 'OWNER_PIN_CHANGED'
+    Assert ((GetHash $idFile) -ceq $ExpectedPinFileHash) 'OWNER_PIN_FILE_SHA256_CHANGED'
 }
 function ReadBrandManifest {
     Assert (Test-Path -LiteralPath $ManifestPath -PathType Leaf) 'SOURCE_BRAND_MANIFEST_MISSING_IMPORT_FIRST'
@@ -63,7 +65,7 @@ function CheckSource {
     Assert (($oldManifest.background | ConvertTo-Json -Compress) -ceq ($newManifest.background | ConvertTo-Json -Compress)) 'EXTENSION_BACKGROUND_DRIFT'
     Assert ($oldManifest.action.default_popup -ceq $newManifest.action.default_popup) 'EXTENSION_POPUP_DRIFT'
     if (-not (Test-Path -LiteralPath $Receipt -PathType Leaf)) {
-        Assert ($null -eq $oldManifest.icons) 'EXISTING_ICON_MANIFEST_UNEXPECTEDLY_PRESENT'
+        Assert ($oldManifest.PSObject.Properties.Name -notcontains 'icons') 'EXISTING_ICON_MANIFEST_UNEXPECTEDLY_PRESENT'
     }
     foreach ($size in @('16','32','48','128')) {
         Assert ($newManifest.icons.$size -ceq ('icons/brand-'+$size+'.png')) 'SOURCE_EXTENSION_ICON_MAPPING_DRIFT'
@@ -182,6 +184,7 @@ function SelfTest {
     Assert ($ExpectedOriginalPinPrefix -ceq 'imhaedlo') 'PIN_PREFIX_MISMATCH'
     Assert ($OldManifestHash.Length -eq 64) 'MANIFEST_PIN_INVALID'
     Assert ($OldPopupHash.Length -eq 64) 'POPUP_PIN_INVALID'
+    Assert ($ExpectedPinFileHash.Length -eq 64) 'OWNER_PIN_HASH_INVALID'
     Assert (@($Payload|Where-Object{$_ -match '^icons\\'}).Count -eq 5) 'ICON_COUNT_MISMATCH'
     Write-Output 'OWNER_EXACT_ICON_INSTALLER_SELFTEST_PASS'
 }

@@ -58,7 +58,7 @@ $targets = @($manifestEntries | ForEach-Object { $_.Name })
 foreach ($name in $targets) {
  $target = Join-Path $Repo ($name.Replace('/', '\'))
  if (Test-Path -LiteralPath $target) {
-  Assert ((Hash $target) -ceq $m.files.$name.sha256.ToUpperInvariant()) ('LOGO_SOURCE_DEST_DRIFT_'+$name)
+  Assert ((Hash $target) -ceq ([string]$m.files.PSObject.Properties[$name].Value.sha256).ToUpperInvariant()) ('LOGO_SOURCE_DEST_DRIFT_'+$name)
  }
 }
 foreach ($name in $targets) {
@@ -67,7 +67,7 @@ foreach ($name in $targets) {
  if (-not (Test-Path -LiteralPath $target)) {
   Copy-Item -LiteralPath (Join-Path $staging ($name.Replace('/', '\'))) -Destination $target -ErrorAction Stop
  }
- Assert ((Hash $target) -ceq $m.files.$name.sha256.ToUpperInvariant()) ('LOGO_SOURCE_COPY_MISMATCH_'+$name)
+ Assert ((Hash $target) -ceq ([string]$m.files.PSObject.Properties[$name].Value.sha256).ToUpperInvariant()) ('LOGO_SOURCE_COPY_MISMATCH_'+$name)
 }
 # The manifest itself is not covered by its own hash; retain the exact ZIP version.
 $manifestTarget = Join-Path $Repo 'branding\brand-asset-manifest.json'
