@@ -271,3 +271,54 @@ test("readiness is not inferred from a live socket when extension pages stall", 
   assert.ok(!seen.some(x => x.port === 17657 && x.op === "browser.status"));
   assert.ok(!JSON.stringify(status).includes("private.example"));
 });
+
+
+test("shared snapshots receive a longer bounded deadline than page listing", async () => {
+  const budgets = [];
+  const handler = createBrowserUnifiedHandler({
+    agentToken: token,
+    timeoutMs: 250,
+    listTimeoutMs: 180,
+    snapshotTimeoutMs: 850,
+    upstream: async ({ port, request, timeoutMs }) => {
+      budgets.push({port, operation: request.capability, timeoutMs});
+      if (request.capability === "browser.snapshot") {
+        await new Promise(resolve => setTimeout(resolve, 350));
+        return success(request, { nodes: [], semantic_revision: 1 });
+      }
+      return success(request, { pages: port === 17655 ? [cdppage] : [approved] });
+    },
+  });
+  const start = Date.now();
+  const res = await handler(make("invoke", "snapshot", {page_id: "tab:44"}));
+  assert.equal(res.status, "success");
+  assert.ok(Date.now() - start >= 300);
+  assert.deepEqual(budgets, [{ port: 17657, operation: "browser.snapshot", timeoutMs: 850 }]);
+
+  const pages = await handler(make("invoke", "pages"));
+  assert.equal(pages.status, "success");
+  assert.ok(budgets.some(b => b.operation === "browser.pages" && b.timeoutMs === 180));
+  assert.ok(!JSON.stringify(pages.data).includes("private.example"));
+});
+
+test("router snapshot timeout is bounded and returns a typed error", async () => {
+  const handler = createBrowserUnifiedHandler({
+    agentToken: token,
+    timeoutMs: 200,
+    listTimeoutMs: 100,
+    snapshotTimeoutMs: 400,
+    upstream: async ({request}) => {
+      if (request.capability === "browser.snapshot") {
+        throw new Error("Upstream deadline");
+      }
+      return success(request, {pages: []});
+    },
+  });
+  const response = await handler(make("invoke", "snapshot", {page_id: "tab:44"}));
+  assert.equal(response.status, "error");
+  assert.equal(response.error.code, "timeout");
+  assert.throws(() => createBrowserUnifiedHandler({
+    agentToken: token, timeoutMs: 200, listTimeoutMs: 100,
+    snapshotTimeoutMs: 200,
+  }), /Snapshot deadline/);
+});

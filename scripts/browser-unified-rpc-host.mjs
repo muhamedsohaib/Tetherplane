@@ -103,7 +103,8 @@ export async function callUpstream({ port, request, timeoutMs = 3500 }) {
 
 export function createBrowserUnifiedHandler({
   agentToken, managedPort = 17655, ownerPort = 17657,
-  timeoutMs = 3500, listTimeoutMs = 1500, upstream = callUpstream,
+  timeoutMs = 3500, listTimeoutMs = 1500,
+  snapshotTimeoutMs = 6500, upstream = callUpstream,
 } = {}) {
   if (typeof agentToken !== "string" || agentToken.length < 16 ||
     agentToken.length > 512 || /[\r\n\0]/.test(agentToken)) {
@@ -113,6 +114,10 @@ export function createBrowserUnifiedHandler({
   if (!Number.isInteger(listTimeoutMs) || listTimeoutMs < 100 ||
     listTimeoutMs >= timeoutMs || listTimeoutMs >= 3000) {
     throw new Error("Browser-list deadline must be shorter than the caller deadline");
+  }
+  if (!Number.isInteger(snapshotTimeoutMs) || snapshotTimeoutMs <= timeoutMs ||
+    snapshotTimeoutMs > 20_000) {
+    throw new Error("Snapshot deadline must exceed the general upstream deadline");
   }
   const invoke = async (source, request, budgetMs = timeoutMs) =>
     await upstream({
@@ -237,7 +242,10 @@ export function createBrowserUnifiedHandler({
         "browser page is unavailable or has not been shared");
     }
     try {
-      const result = await invoke(target, sanitized);
+      // Extension observation has its own five-second timeout. Leave enough
+      // room for that explicit result to reach the router and native agent.
+      const budget = op === "snapshot" ? snapshotTimeoutMs : timeoutMs;
+      const result = await invoke(target, sanitized, budget);
       if (!result || typeof result !== "object" ||
         (result.status !== "success" && result.status !== "error")) {
         throw new Error("Malformed backend response");
@@ -245,7 +253,10 @@ export function createBrowserUnifiedHandler({
       // Existing authenticated extension policy authorizes the exact tab,
       // origin, operation and TTL. Never route failed owner requests to CDP.
       return result;
-    } catch {
+    } catch (error) {
+      if (error instanceof Error && error.message === "Upstream deadline") {
+        return failure(id, "timeout", "browser operation exceeded its upstream deadline");
+      }
       return failure(id, "capability_unavailable",
         target === "owner"
           ? "owner-approved browser extension is not connected"

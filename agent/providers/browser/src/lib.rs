@@ -231,6 +231,13 @@ impl CapabilityProvider for BrowserProvider {
             };
             request_config.token = token;
         }
+        // Keep status/pages/handshake fast, but allow a bounded browser
+        // snapshot to finish after the extension's own 5-second deadline.
+        // A two-second RPC deadline would abandon an otherwise valid read
+        // before either the combined router or the extension can respond.
+        if invocation.capability == "browser.snapshot" {
+            request_config.timeout_ms = request_config.timeout_ms.max(8_000);
+        }
         let mut arguments = invocation.arguments.clone();
         if let Some(object) = arguments.as_object_mut() {
             object.remove("ownership");
