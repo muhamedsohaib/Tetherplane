@@ -1,0 +1,105 @@
+name: Browser Action Review Bundle (NO INSTALL)
+
+on:
+  push:
+    branches:
+      - fix/browser-combined-action-reliability-integrated-20261107
+    paths:
+      - 'scripts/release/browser-action-review-bundle.mjs'
+      - 'tests/release/browser-action-review-bundle.test.mjs'
+      - '.github/workflows/browser-action-review-bundle.yml'
+
+permissions:
+  contents: read
+
+jobs:
+  windows-review:
+    runs-on: windows-latest
+    timeout-minutes: 55
+    steps:
+      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
+        with:
+          persist-credentials: false
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4.4.0
+        with:
+          node-version: 24
+      - name: Verify review bundle integrity and scope tests
+        run: node --test tests/release/browser-action-review-bundle.test.mjs
+      - name: Install pinned workspace build dependencies
+        shell: pwsh
+        run: |
+          corepack enable
+          if ($LASTEXITCODE -ne 0) { throw 'COREPACK_FAILED' }
+          corepack prepare pnpm@10.34.5 --activate
+          if ($LASTEXITCODE -ne 0) { throw 'PNPM_FAILED' }
+          pnpm install --frozen-lockfile
+          if ($LASTEXITCODE -ne 0) { throw 'LOCKED_WORKSPACE_INSTALL_FAILED' }
+      - name: Compile approved browser candidate, never access an existing profile
+        shell: pwsh
+        run: |
+          pnpm --filter @tetherplane/browser-extension build
+          if ($LASTEXITCODE -ne 0) { throw 'EXTENSION_BUILD_FAILED' }
+          node --test tests/release/browser-real-extension-source-contract.test.mjs
+          if ($LASTEXITCODE -ne 0) { throw 'EDGE_SOURCE_CONTRACT_FAILED' }
+      - name: Compile exact source windowless agent on disposable Windows
+        shell: pwsh
+        run: |
+          rustup toolchain install stable --profile minimal
+          if ($LASTEXITCODE -ne 0) { throw 'RUST_SETUP_FAILED' }
+          ./scripts/build-windows-agent-binaries.ps1
+          if ($LASTEXITCODE -ne 0) { throw 'WINDOWLESS_AGENT_BUILD_FAILED' }
+      - name: Stage checksum inventory, round-trip ZIP, never install
+        shell: pwsh
+        run: |
+          $work = Join-Path $env:RUNNER_TEMP 'browser-action-review'
+          New-Item -ItemType Directory -Path $work -ErrorAction Stop | Out-Null
+          $stage = Join-Path $work 'staged'
+          node scripts/release/browser-action-review-bundle.mjs --stage $env:GITHUB_WORKSPACE $stage $env:GITHUB_SHA $env:GITHUB_REF
+          if ($LASTEXITCODE -ne 0) { throw 'REVIEW_STAGE_FAILED' }
+          $zip = Join-Path $work 'browser-action-review.zip'
+          Compress-Archive -Path (Join-Path $stage '*') -DestinationPath $zip -CompressionLevel Optimal
+          if ($LASTEXITCODE -ne 0) { throw 'REVIEW_ZIP_FAILED' }
+          $roundtrip = Join-Path $work 'roundtrip'
+          Expand-Archive -LiteralPath $zip -DestinationPath $roundtrip
+          node scripts/release/browser-action-review-bundle.mjs --verify $roundtrip $env:GITHUB_SHA $env:GITHUB_REF
+          if ($LASTEXITCODE -ne 0) { throw 'REVIEW_ROUNDTRIP_FAILED' }
+          $hash = (Get-FileHash -LiteralPath $zip -Algorithm SHA256).Hash.ToLowerInvariant()
+          [IO.File]::WriteAllText((Join-Path $work 'browser-action-review.sha256'), ($hash + '  browser-action-review.zip' + [char]10), [Text.UTF8Encoding]::new($false))
+          Write-Output "REVIEW_UNSIGNED_ARCHIVE_SHA256=$hash"
+          Write-Output "REVIEW_BUILD_SHA=$env:GITHUB_SHA"
+          Write-Output 'UNSIGNED_REVIEW_PACKAGE_NO_INSTALL_NO_RELEASE'
+      - name: Retain private-review candidate only for one day
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        with:
+          name: UNSIGNED-BROWSER-ACTION-REVIEW-${{ github.sha }}
+          path: |
+            ${{ runner.temp }}/browser-action-review/browser-action-review.zip
+            ${{ runner.temp }}/browser-action-review/browser-action-review.sha256
+          retention-days: 1
+          if-no-files-found: error
+
+  independent-verify:
+    needs: windows-review
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
+        with:
+          persist-credentials: false
+      - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4.3.0
+        with:
+          name: UNSIGNED-BROWSER-ACTION-REVIEW-${{ github.sha }}
+          path: ${{ runner.temp }}/browser-action-review
+      - name: Verify artifact byte identity on independent host
+        shell: bash
+        run: |
+          set -euo pipefail
+          cd "$RUNNER_TEMP/browser-action-review"
+          sha256sum -c browser-action-review.sha256
+          mkdir roundtrip
+          unzip -q browser-action-review.zip -d roundtrip
+          cd "$GITHUB_WORKSPACE"
+          node scripts/release/browser-action-review-bundle.mjs --verify "$RUNNER_TEMP/browser-action-review/roundtrip" "$GITHUB_SHA" "$GITHUB_REF"
+          echo 'INDEPENDENT_UNSIGNED_REVIEW_BUNDLE_VERIFIED_NO_GO'
