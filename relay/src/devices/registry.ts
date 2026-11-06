@@ -72,13 +72,33 @@ export class DeviceRegistry {
     if (current && current.revokedAt === null) {
       throw new Error("device is already paired and must be revoked before re-pairing");
     }
+    // Refuse overlapping approval codes for the same exact device ID.
+    // Otherwise separate owners could approve different credentials and
+    // the second approval would silently replace the first account binding.
+    const now = Date.now();
+    for (const [code, existing] of this.#pendingByCode) {
+      if (existing.expiresAt <= now) {
+        this.#pendingByCode.delete(code);
+      } else if (existing.deviceId === input.deviceId) {
+        throw new Error("device already has an active pending pairing code");
+      }
+    }
 
+    let code: string | null = null;
+    for (let attempt = 0; attempt < 16; attempt++) {
+      const generated = pairingCode();
+      if (!this.#pendingByCode.has(generated)) {
+        code = generated;
+        break;
+      }
+    }
+    if (!code) throw new Error("unable to allocate a unique pairing code");
     const pending: PendingPairing = {
       pairingId: randomUUID(),
-      userCode: pairingCode(),
+      userCode: code,
       deviceId: input.deviceId,
       credentialHash: input.credentialHash.toLowerCase(),
-      expiresAt: Date.now() + this.#pairingTtlMs,
+      expiresAt: now + this.#pairingTtlMs,
     };
     this.#pendingByCode.set(pending.userCode, pending);
     return {
@@ -99,6 +119,10 @@ export class DeviceRegistry {
       throw new Error("pairing code is invalid or expired");
     }
     this.#pendingByCode.delete(input.userCode);
+    const current = this.#devices.get(pending.deviceId);
+    if (current && current.revokedAt === null) {
+      throw new Error("device was already paired; explicit revocation is required");
+    }
 
     const record: DeviceRecord = {
       deviceId: pending.deviceId,

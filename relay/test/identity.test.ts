@@ -111,3 +111,63 @@ test("static client authentication binds account, client, and principal identity
   });
   assert.equal(await auth.authenticate("wrong"), null);
 });
+
+test("simultaneous pairing attempts cannot rebind one device ID to another account", async () => {
+  const dir = await mkdtemp(path.join(os.tmpdir(), "tether-relay-pair-race-"));
+  const stateFile = path.join(dir, "devices.json");
+  const ownerSecret = "owner-approved-secret-a-device";
+  const competingSecret = "competing-unapproved-secret-b-device";
+  try {
+    const registry = await DeviceRegistry.open({stateFile});
+    const [first, second] = await Promise.allSettled([
+      registry.startPairing({
+        deviceId: "New-Laptop",
+        credentialHash: hashDeviceCredential(ownerSecret),
+      }),
+      registry.startPairing({
+        deviceId: "New-Laptop",
+        credentialHash: hashDeviceCredential(competingSecret),
+      }),
+    ]);
+    const wins = [first, second].filter(x => x.status === "fulfilled");
+    const rejects = [first, second].filter(x => x.status === "rejected");
+    assert.equal(wins.length, 1);
+    assert.equal(rejects.length, 1);
+    assert.match(String(rejects[0].reason), /active pending pairing code/);
+
+    const approvedSecret = first.status === "fulfilled" ? ownerSecret : competingSecret;
+    const deniedSecret = first.status === "fulfilled" ? competingSecret : ownerSecret;
+    const acceptedCode = wins[0].value.userCode;
+    const bound = await registry.approvePairing({accountId: "account-owner", userCode: acceptedCode});
+    assert.equal(bound.accountId, "account-owner");
+    assert.equal(await registry.authenticateDevice("New-Laptop", approvedSecret), "account-owner");
+    assert.equal(await registry.authenticateDevice("New-Laptop", deniedSecret), null);
+    await assert.rejects(
+      registry.startPairing({deviceId: "New-Laptop", credentialHash: hashDeviceCredential(deniedSecret)}),
+      /already paired and must be revoked/,
+    );
+    const reloaded = await DeviceRegistry.open({stateFile});
+    assert.equal(await reloaded.authenticateDevice("New-Laptop", approvedSecret), "account-owner");
+    assert.equal(await reloaded.authenticateDevice("New-Laptop", deniedSecret), null);
+  } finally {
+    await rm(dir,{recursive:true,force:true});
+  }
+});
+
+test("different devices may enroll concurrently while an expired code cannot be approved", async () => {
+  const registry = await DeviceRegistry.open({pairingTtlMs: 150});
+  const olderSecret = "older-device-credential-for-expiry";
+  const currentSecret = "newer-device-credential-for-approval";
+  const old = await registry.startPairing({deviceId:"Expiring-Device",credentialHash:hashDeviceCredential(olderSecret)});
+  const other = await registry.startPairing({deviceId:"Another-Device",credentialHash:hashDeviceCredential("third-device-credential-unique")});
+  assert.notEqual(old.userCode,other.userCode);
+  await new Promise(resolve=>setTimeout(resolve,200));
+  const newer = await registry.startPairing({deviceId:"Expiring-Device",credentialHash:hashDeviceCredential(currentSecret)});
+  await assert.rejects(
+    registry.approvePairing({accountId:"account-wrong",userCode:old.userCode}),
+    /invalid or expired/,
+  );
+  await registry.approvePairing({accountId:"account-owner",userCode:newer.userCode});
+  assert.equal(await registry.authenticateDevice("Expiring-Device",olderSecret),null);
+  assert.equal(await registry.authenticateDevice("Expiring-Device",currentSecret),"account-owner");
+});
