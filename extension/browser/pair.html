@@ -1,79 +1,109 @@
 <!doctype html>
-<html>
+<html lang="en">
 <head>
   <meta charset="utf-8">
-  <title>Tetherplane Browser</title>
+  <meta name="viewport" content="width=device-width,initial-scale=1">
+  <title>Tetherplane | Authorized browser</title>
   <style>
-    body { font-family: system-ui, sans-serif; width: 340px; margin: 0; padding: 16px; }
-    form, section, details { display: grid; gap: 10px; }
-    label { display: grid; gap: 4px; font-size: 12px; }
-    .inline { display: flex; align-items: center; gap: 8px; }
-    input[type="url"], input[type="password"], select { box-sizing: border-box; width: 100%; padding: 7px; }
-    button { padding: 8px 10px; }
-    hr { width: 100%; border: 0; border-top: 1px solid #ddd; margin: 16px 0; }
-    h2 { font-size: 14px; margin: 0; }
-    p, summary { margin: 0; font-size: 12px; line-height: 1.4; }
-    #status, #share-status { min-height: 18px; font-size: 12px; }
+    :root { color-scheme: light; font-family: system-ui, -apple-system, "Segoe UI", sans-serif; font-size: 14px; }
+    * { box-sizing: border-box; }
+    body { width: 364px; margin: 0; color: #182436; background: #f6f8fc; }
+    .shell { padding: 18px; }
+    .brand { display: flex; align-items: center; gap: 10px; margin-bottom: 20px; }
+    .mark { width: 34px; height: 34px; border: 2px solid #174cb3; border-radius: 10px; position: relative; }
+    .mark:after { content: ""; position: absolute; inset: 8px; border: 2px solid #174cb3; border-radius: 4px; }
+    h1 { margin: 0; font-size: 17px; letter-spacing: -.035em; }
+    h2 { font-size: 14px; margin: 0 0 8px; }
+    .sub { margin: 2px 0 0; color: #617187; font-size: 11px; }
+    .card { background: #fff; border: 1px solid #e0e6f0; border-radius: 14px; padding: 16px; box-shadow: 0 4px 16px #17264308; }
+    .state { display: flex; gap: 8px; align-items: center; font-weight: 600; font-size: 12px; margin-bottom: 16px; }
+    .dot { display: inline-block; width: 9px; height: 9px; background: #99a5b8; border-radius: 50%; flex: 0 0 auto; }
+    .state[data-state="connected"] .dot { background: #19945f; }
+    .state[data-state="connecting"] .dot { background: #e5a11d; }
+    .state[data-state="error"] .dot { background: #d14c4c; }
+    p { font-size: 12px; line-height: 1.55; }
+    .summary { color: #586a82; margin: 4px 0 16px; }
+    button { appearance: none; font: inherit; border-radius: 9px; padding: 11px 12px; cursor: pointer; border: 1px solid #c8d4e2; background: white; color: #1b3557; font-weight: 600; }
+    button:hover:not(:disabled) { border-color: #4073d6; }
+    button:focus-visible, summary:focus-visible, select:focus-visible, input:focus-visible { outline: 3px solid #a5c5ff; outline-offset: 2px; }
+    button:disabled { opacity: .65; cursor: progress; }
+    .primary { display: block; width: 100%; background: #174cb3; color: white; border-color: #174cb3; font-size: 14px; padding: 13px; }
+    .primary:hover:not(:disabled) { background: #123f96; }
+    .secondary { display: block; width: 100%; margin-top: 9px; background: #fff; }
+    .hidden { display: none !important; }
+    .note { color: #6d7c90; font-size: 11px; margin: 12px 0 0; }
+    #share-status, #status { font-size: 12px; line-height: 1.5; margin-top: 10px; min-height: 1em; overflow-wrap: anywhere; }
+    #share-status[data-error="true"], #status[data-error="true"] { color: #b32937; }
+    details { background: #fff; border: 1px solid #e0e6f0; border-radius: 12px; padding: 12px 14px; margin-top: 12px; }
+    summary { cursor: pointer; color: #243b59; font-weight: 600; }
+    .details-content { margin-top: 12px; display: grid; gap: 11px; }
+    .control { display: grid; gap: 5px; font-size: 12px; }
+    .control input[type="url"], .control input[type="password"], select { width: 100%; min-width: 0; padding: 9px; border: 1px solid #cbd5e3; border-radius: 7px; background: white; color: #182436; }
+    label.check { display: flex; gap: 8px; align-items: flex-start; font-size: 12px; line-height: 1.4; }
+    label.check input { margin: 2px 0 0; }
+    .muted { color: #64758b; font-size: 11px; }
+    .divider { border: 0; border-top: 1px solid #e9edf4; margin: 4px 0; }
+    form { display: grid; gap: 9px; }
   </style>
 </head>
 <body>
-  <section aria-labelledby="pair-title">
-    <h2 id="pair-title">Tetherplane connection</h2>
-    <p>Pair directly with the local Tetherplane bridge. The launch token stays on this computer.</p>
-    <button id="pair-local" type="button">Pair with local Tetherplane</button>
-    <div id="status" role="status" aria-live="polite"></div>
+  <main class="shell">
+    <header class="brand">
+      <div class="mark" aria-hidden="true"></div>
+      <div><h1>Tetherplane</h1><p class="sub">Authorized browser access</p></div>
+    </header>
 
-    <details>
-      <summary>Advanced manual pairing</summary>
-      <form id="pair-form">
-        <label>
-          Loopback bridge URL
-          <input id="bridge-url" name="bridge_url" type="url" value="ws://127.0.0.1:8123/extension" autocomplete="off" required>
+    <section class="card" aria-labelledby="connect-title">
+      <div class="state" id="connection-indicator" data-state="disconnected" aria-live="polite">
+        <span class="dot" aria-hidden="true"></span>
+        <span id="connection-state">Checking local connection…</span>
+      </div>
+      <h2 id="connect-title">Connect the current tab</h2>
+      <p class="summary">One click connects the extension and shares only this tab for 5 minutes. It uses your existing signed-in browser session. No other tabs are shared.</p>
+      <button id="quick-connect" class="primary" type="button">Connect this tab</button>
+      <button id="detach-current" class="secondary hidden" type="button">Stop sharing this tab</button>
+      <div id="share-status" role="status" aria-live="polite"></div>
+      <p class="note">Sharing permits actions in this tab. Navigation and file uploads are off by default. Access expires automatically.</p>
+    </section>
+
+    <details id="permissions">
+      <summary>Duration and permissions</summary>
+      <div class="details-content">
+        <label class="control">Duration
+          <select id="share-ttl">
+            <option value="300000" selected>5 minutes</option>
+            <option value="600000">10 minutes</option>
+            <option value="1800000">30 minutes</option>
+            <option value="3600000">60 minutes</option>
+          </select>
         </label>
-        <label>
-          Ephemeral launch token
-          <input id="launch-token" name="launch_token" type="password" autocomplete="off" required>
-        </label>
-        <button type="submit">Pair manually</button>
-      </form>
+        <label class="check"><input id="share-navigate" type="checkbox"> Allow same-site navigation in this tab</label>
+        <label class="check"><input id="share-upload" type="checkbox"> Allow native file upload in this tab</label>
+        <hr class="divider">
+        <p class="muted">A separate site-wide grant allows Tetherplane to create new tabs on the selected website. It never authorizes other websites.</p>
+        <button id="approve-owned-site" type="button">Allow AI-created tabs for this site</button>
+        <button id="revoke-owned-site" type="button">Revoke AI-created tab access</button>
+      </div>
     </details>
-  </section>
 
-  <hr>
-
-  <section aria-labelledby="share-title">
-    <h2 id="share-title">Authenticated tab access</h2>
-    <p>Shares only the currently active Chrome tab. The grant expires automatically and never exposes cookies, passwords, or authorization headers.</p>
-
-    <label>
-      Duration
-      <select id="share-ttl">
-        <option value="300000">5 minutes</option>
-        <option value="600000" selected>10 minutes</option>
-        <option value="1800000">30 minutes</option>
-        <option value="3600000">60 minutes</option>
-      </select>
-    </label>
-
-    <label class="inline">
-      <input id="share-navigate" type="checkbox" checked>
-      Allow navigation in this tab
-    </label>
-
-    <label class="inline">
-      <input id="share-upload" type="checkbox">
-      Allow native file upload in this tab
-    </label>
-
-    <button id="share-current" type="button">Share current tab</button>
-    <p>Separate website grant: approve AI-created tabs only for the current tab's exact website origin. This does not approve other websites or logged-in accounts.</p>
-    <button id="approve-owned-site" type="button">Allow AI-created tabs for this website</button>
-    <button id="revoke-owned-site" type="button">Revoke AI-created tabs for this website</button>
-    <button id="detach-current" type="button">Stop sharing current tab</button>
-
-    <div id="share-status" role="status" aria-live="polite"></div>
-  </section>
-
+    <details id="troubleshoot">
+      <summary>Connection troubleshooting</summary>
+      <div class="details-content">
+        <p class="muted">Use local pairing only if the one-click connection does not recover. A completed pairing does not need to be repeated.</p>
+        <button id="pair-local" type="button">Retry local pairing</button>
+        <div id="status" role="status" aria-live="polite"></div>
+        <details>
+          <summary>Advanced manual pairing</summary>
+          <form id="pair-form" class="details-content">
+            <label class="control">Loopback bridge URL<input id="bridge-url" type="url" value="ws://127.0.0.1:17658" required></label>
+            <label class="control">Ephemeral launch token<input id="launch-token" type="password" autocomplete="off" required></label>
+            <button type="submit">Pair manually</button>
+          </form>
+        </details>
+      </div>
+    </details>
+    <p class="note">Grant or revoke access only here, in your local browser. Tetherplane does not export your cookies or passwords.</p>
+  </main>
   <script type="module" src="dist/pair.js"></script>
 </body>
 </html>

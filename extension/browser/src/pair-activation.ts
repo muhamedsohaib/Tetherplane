@@ -5,6 +5,9 @@ import type {
 export const BROWSER_CONNECT_MESSAGE_TYPE =
   "tetherplane.browser.connect";
 
+export const BROWSER_OWNER_STATUS_MESSAGE_TYPE =
+  "tetherplane.browser.owner_status";
+
 export type PairActivationDependencies = {
   save(config: ExtensionLaunchConfig): Promise<void>;
   sendMessage(

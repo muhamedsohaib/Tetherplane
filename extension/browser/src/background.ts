@@ -10,6 +10,7 @@ import { BridgeLoopCoordinator } from "./bridge-loop.ts";
 import { ExtensionTabController } from "./index.ts";
 import {
   isBrowserConnectMessage,
+  BROWSER_OWNER_STATUS_MESSAGE_TYPE,
 } from "./pair-activation.ts";
 import {
   ChromePageAgent,
@@ -24,6 +25,7 @@ import { ExtensionCommandRuntime } from "./runtime.ts";
 import { ExtensionBridgeClient } from "./session.ts";
 
 const RECONNECT_DELAY_MS = 1_000;
+let bridgeConnected = false;
 
 const sessionStorage =
   chrome.storage.session as unknown as ChromeStorageArea;
@@ -64,6 +66,51 @@ chrome.runtime.onMessage.addListener(
       sendResponse({ ok: false, error: "site approval must originate from the owner popup" });
       return false;
     }
+    if (message && typeof message === "object" &&
+        "type" in message &&
+        message.type === BROWSER_OWNER_STATUS_MESSAGE_TYPE) {
+      if (sender.url !== chrome.runtime.getURL("pair.html")) {
+        sendResponse({ ok: false, error: "Only the owner popup may query tab sharing" });
+        return false;
+      }
+
+      void Promise.all([
+        loadExtensionLaunchConfig(sessionStorage),
+        controllerPromise,
+      ]).then(async ([config, controller]) => {
+        const tabId = "tab_id" in message ? message.tab_id : undefined;
+        let shared = false;
+        let expiresAt: number | undefined;
+        if (typeof tabId === "number" && Number.isSafeInteger(tabId) && tabId >= 0) {
+          const page = controller.pages().find((candidate) =>
+            candidate.tab_id === tabId &&
+            candidate.ownership === "shared-authorized" &&
+            typeof candidate.grant?.expires_at_ms === "number" &&
+            candidate.grant.expires_at_ms > Date.now()
+          );
+          if (page) {
+            try {
+              const live = await controller.authorizeLivePage(page.page_id, "snapshot");
+              shared = live.ownership === "shared-authorized";
+              expiresAt = shared ? live.grant?.expires_at_ms : undefined;
+            } catch {
+              // A redirected, revoked, or expired grant is never presented as shared.
+            }
+          }
+        }
+        sendResponse({
+          ok: true,
+          paired: config !== null,
+          connected: bridgeConnected,
+          shared,
+          ...(expiresAt !== undefined ? { expires_at_ms: expiresAt } : {}),
+        });
+      }, () => {
+        sendResponse({ ok: false, error: "Local browser status is unavailable" });
+      });
+      return true;
+    }
+
     if (isBrowserConnectMessage(message)) {
       void bridgeLoop.ensureRunning().then(
         (started) => {
@@ -174,6 +221,7 @@ async function runBridgeLoop(
 
     try {
       await session.connect();
+      bridgeConnected = true;
 
       const pageAgent = new ChromePageAgent({
         controller,
@@ -212,6 +260,7 @@ async function runBridgeLoop(
         error,
       );
     } finally {
+      bridgeConnected = false;
       await operationalAgent
         ?.close()
         .catch(() => undefined);

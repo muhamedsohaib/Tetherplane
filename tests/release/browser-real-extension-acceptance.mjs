@@ -35,6 +35,7 @@ const result = {
   temporaryProfile: true,
   actualExtensionLoaded: false,
   pinnedLocalPairing: false,
+  oneClickOwnerPopupConnected: false,
   hostAuthenticatedExtension: false,
   browserRpcAuthenticated: false,
   realOwnedTabCreated: false,
@@ -262,11 +263,26 @@ try {
   }
 
   const clicked = await evaluatePage(popup.webSocketDebuggerUrl,
-    "document.querySelector('#pair-local').click(); true");
+    "(()=>{const details=document.querySelector('#troubleshoot');" +
+    "const control=document.querySelector('#pair-local');" +
+    "if(!details||!control)return false;" +
+    "details.open=true;control.click();return true;})()");
   assert.equal(clicked.result?.value, true);
 
-  await until(() => seen.some(x => x.startsWith("AUTH_EXTENSION_CONNECTED=")),
-    10000, "real Chrome extension did not authenticate to host");
+  try {
+    await until(() => seen.some(x => x.startsWith("AUTH_EXTENSION_CONNECTED=")),
+      10000, "real Chrome extension did not authenticate to host");
+  } catch (error) {
+    const ui = await evaluatePage(popup.webSocketDebuggerUrl,
+      "({status:document.querySelector('#status')?.textContent||''," +
+      "share:document.querySelector('#share-status')?.textContent||''," +
+      "localDisabled:document.querySelector('#pair-local')?.disabled??null})");
+    result.pairingPopupDiagnostics = ui.result?.value ?? {};
+    result.pairingHostSteps = seen.filter(v =>
+      v.startsWith("AUTH_PAIRING_READY") || v.startsWith("AUTH_EXTENSION_CONNECTED") ||
+      v.startsWith("AUTH_EXTENSION_WS_READY")).map(v => v.slice(0,35));
+    throw error;
+  }
   result.hostAuthenticatedExtension = true;
   await until(() => seen.some(x => x.startsWith("AUTH_BROWSER_RPC_READY=")),
     10000, "browser RPC did not become ready after extension pairing");
@@ -390,11 +406,30 @@ try {
       "chrome.tabs.get(" + humanTabId + ").then(tab=>tab.url)");
     return live.result?.value?.startsWith(fixtureUrl) === true;
   }, 10000, "ordinary owner test tab has not committed its website origin");
-  const locallyShared = await evaluatePage(popup.webSocketDebuggerUrl,
-    "chrome.runtime.sendMessage({type:'tetherplane.share_current_tab',tab_id:" +
-    humanTabId + ",ttl_ms:300000,allow_navigate:true,allow_upload:false})");
-  assert.equal(locallyShared.result?.value?.ok, true,
-    "synthetic local owner could not share the fixture tab");
+  // The one-click grant works even after the pairing endpoint is closed.
+  const activated = await evaluatePage(extensionTarget.webSocketDebuggerUrl,
+    "chrome.tabs.update(" + humanTabId +
+    ",{active:true}).then(t=>({id:t.id,active:t.active}))");
+  assert.equal(activated.result?.value?.active, true);
+  const oneClick = await evaluatePage(popup.webSocketDebuggerUrl,
+    "(()=>{const c=document.querySelector('#quick-connect');" +
+    "const nav=document.querySelector('#share-navigate');" +
+    "if(!c||!nav)return false;nav.checked=true;c.click();return true;})()");
+  assert.equal(oneClick.result?.value,true,
+    "one-click owner popup did not expose the primary Connect this tab action");
+  await until(async () => {
+    const approved = await rpc(rpcPort, "pages");
+    return approved.data?.pages?.find(p =>
+      p.tab_id===humanTabId && p.ownership==="shared-authorized") ?? null;
+  }, 12000, "one-click popup did not share the owner-selected tab");
+  const ui = await evaluatePage(popup.webSocketDebuggerUrl,
+    "({status:document.querySelector('#share-status')?.textContent||''," +
+    "connection:document.querySelector('#connection-state')?.textContent||''})");
+  result.oneClickPopupStatus = ui.result?.value ?? {};
+  assert.match(ui.result?.value?.status ?? "",
+    /Current tab connected|This tab is shared/,
+    "one-click popup did not confirm the owner grant");
+  result.oneClickOwnerPopupConnected=true;
 
   // Exercise actual shared ownership in Edge, not a mock: exact origin
   // permitting same-site navigation but rejecting a different loopback port.
@@ -491,7 +526,7 @@ if (result.cleaned && result.actualExtensionLoaded && result.hostAuthenticatedEx
     result.verifiedBrowserAction && result.humanTabDenied &&
     result.unapprovedOwnedCreationDenied && result.ownedSiteGrantedLocally &&
     result.ownedSiteRevocationDenied &&
-    result.sharedOriginPinned && result.crossOriginNavigationDenied &&
+    result.oneClickOwnerPopupConnected && result.sharedOriginPinned && result.crossOriginNavigationDenied &&
     result.redirectRevoked && result.tokenRedacted &&
     !result.error) result.verdict = "PASS";
 if (process.argv[4]) {
