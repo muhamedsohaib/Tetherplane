@@ -1,0 +1,93 @@
+name: Leno browser agent candidate (isolated unsigned nonrelease)
+
+on:
+  push:
+    branches:
+      - test/browser-leno-private-agent-candidate-20261106
+
+permissions:
+  contents: read
+
+jobs:
+  build-browser-candidate:
+    runs-on: windows-latest
+    timeout-minutes: 40
+    steps:
+      - name: Checkout pinned parent and nonrelease workflow
+        uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
+        with:
+          persist-credentials: false
+          fetch-depth: 2
+      - name: Verify exact reviewed parent and workflow-only change
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = 'Stop'
+          $expectedParent = '46c1a82d182a00b1652a6c07ca6c0e0aeca172a8'
+          $parent = (git rev-parse HEAD^).Trim()
+          if ($LASTEXITCODE -ne 0 -or $parent -ne $expectedParent) { throw 'UNREVIEWED_CANDIDATE_PARENT' }
+          $changed = @(git diff --name-only HEAD^ HEAD)
+          if ($LASTEXITCODE -ne 0 -or $changed.Count -ne 1 -or $changed[0] -ne '.github/workflows/browser-leno-nonrelease-candidate-20261106.yml') { throw 'UNEXPECTED_SOURCE_MUTATION' }
+          Write-Output 'EXACT_REVIEWED_PARENT_AND_WORKFLOW_ONLY_PASS'
+      - name: Install stable Rust with rustfmt
+        uses: dtolnay/rust-toolchain@b725eda525362e7cf34af9a7243cac1e3f01a7ec # stable
+        with:
+          components: rustfmt
+      - name: Verify formatting
+        shell: pwsh
+        run: |
+          cargo fmt --all -- --check
+          if ($LASTEXITCODE -ne 0) { throw 'FORMAT_FAILED' }
+      - name: Run browser provider and core agent Rust tests
+        shell: pwsh
+        run: |
+          cargo test --locked -p tether-browser-provider -p tetherd
+          if ($LASTEXITCODE -ne 0) { throw 'BROWSER_OR_AGENT_TESTS_FAILED' }
+      - name: Run Windows background process regression tests
+        shell: pwsh
+        run: |
+          cargo test --locked -p tether-process-provider windows_windowless_tests -- --nocapture
+          if ($LASTEXITCODE -ne 0) { throw 'WINDOWLESS_PROCESS_TESTS_FAILED' }
+      - name: Compile isolated windowless browser-enabled agent
+        shell: pwsh
+        run: |
+          cargo build --locked --release -p tetherd --features windows-headless-agent
+          if ($LASTEXITCODE -ne 0) { throw 'BROWSER_AGENT_BUILD_FAILED' }
+      - name: Verify PE GUI subsystem and record immutable provenance
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = 'Stop'
+          $binary = 'target/release/tetherd.exe'
+          if (-not (Test-Path -LiteralPath $binary -PathType Leaf)) { throw 'BINARY_NOT_FOUND' }
+          $bytes = [System.IO.File]::ReadAllBytes((Resolve-Path $binary).Path)
+          $peOffset = [BitConverter]::ToInt32($bytes,0x3c)
+          $subsystem = [BitConverter]::ToUInt16($bytes,$peOffset+24+68)
+          if ($subsystem -ne 2) { throw ('WINDOWLESS_PE_SUBSYSTEM_MISMATCH_' + $subsystem) }
+          $dest = 'target/leno-browser-nonrelease-candidate'
+          New-Item -ItemType Directory -Force -Path $dest | Out-Null
+          $output = Join-Path $dest 'tetherd-agentw.exe'
+          Copy-Item -LiteralPath $binary -Destination $output
+          $sha = (Get-FileHash -LiteralPath $output -Algorithm SHA256).Hash.ToLowerInvariant()
+          $proof = [ordered]@{
+            purpose = 'Leno browser provider verification, unsigned nonrelease candidate'
+            deploy_authorized = $false
+            production_install_performed = $false
+            authorizing_source_commit = '46c1a82d182a00b1652a6c07ca6c0e0aeca172a8'
+            exact_workflow_commit = (git rev-parse HEAD).Trim()
+            output_binary = 'tetherd-agentw.exe'
+            sha256 = $sha
+            windows_pe_subsystem = 2
+            build_features = @('windows-headless-agent')
+            rust_tests = 'passed'
+            signature_status = 'unsigned'
+            live_lenovo_acceptance = 'not_tested'
+          }
+          $proof | ConvertTo-Json -Depth 5 | Set-Content -LiteralPath (Join-Path $dest 'proof.json') -Encoding utf8
+          Write-Output ('BROWSER_NONRELEASE_PE_GUI_CANDIDATE_SHA256=' + $sha)
+          Write-Output 'BROWSER_NONRELEASE_CANDIDATE_READY_NO_DEPLOY'
+      - name: Retain short-lived unsigned candidate for inspection only
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        with:
+          name: leno-browser-unsigned-nonrelease-candidate
+          path: target/leno-browser-nonrelease-candidate/
+          if-no-files-found: error
+          retention-days: 3
