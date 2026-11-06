@@ -194,3 +194,55 @@ test("server is loopback-only; direct TCP requests honor auth", async () => {
     await server.close();
   }
 });
+
+
+test("stalled owner websocket does not block managed tabs beyond the caller deadline", async () => {
+  const allSockets = new Set();
+  const listen = async server => {
+    await new Promise(resolve => server.listen(0, "127.0.0.1", resolve));
+    return server.address().port;
+  };
+  const managed = net.createServer(socket => {
+    allSockets.add(socket);
+    socket.on("close", () => allSockets.delete(socket));
+    socket.on("data", input => {
+      const request = JSON.parse(input.toString().split("\n")[0]);
+      socket.end(JSON.stringify(success(request,
+        request.type === "handshake" ? { operations: ["pages"] } :
+        request.capability === "browser.pages" ? { pages: [cdppage] } :
+        { available: true })) + "\n");
+    });
+  });
+  const unresponsive = net.createServer(socket => {
+    allSockets.add(socket);
+    socket.on("close", () => allSockets.delete(socket));
+    socket.on("data", () => { /* Authenticated host never replies. */ });
+  });
+  try {
+    const managedPort = await listen(managed);
+    const ownerPort = await listen(unresponsive);
+    const handler = createBrowserUnifiedHandler({
+      agentToken: token, managedPort, ownerPort,
+      listTimeoutMs: 200, timeoutMs: 3500,
+    });
+    const began = Date.now();
+    const pages = await handler(make("invoke", "pages"));
+    const elapsed = Date.now() - began;
+    assert.equal(pages.status, "success");
+    assert.deepEqual(pages.data.pages, [cdppage]);
+    assert.ok(elapsed < 1300, "owner timeout must not stall CDP: " + elapsed);
+    const status = await handler(make("invoke", "status"));
+    assert.equal(status.data.capabilities.backends.cdp, true);
+    assert.equal(status.data.capabilities.backends.owner_extension, false);
+  } finally {
+    for (const socket of allSockets) socket.destroy();
+    await Promise.all([managed, unresponsive].map(server =>
+      new Promise(resolve => server.close(resolve))));
+  }
+});
+
+test("list timeout cannot exceed the outer RPC deadline", () => {
+  assert.throws(() => createBrowserUnifiedHandler({
+    agentToken: token, timeoutMs: 3500, listTimeoutMs: 3000,
+  }), /shorter than the caller deadline/);
+});

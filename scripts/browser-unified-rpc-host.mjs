@@ -103,18 +103,22 @@ export async function callUpstream({ port, request, timeoutMs = 3500 }) {
 
 export function createBrowserUnifiedHandler({
   agentToken, managedPort = 17655, ownerPort = 17657,
-  timeoutMs = 3500, upstream = callUpstream,
+  timeoutMs = 3500, listTimeoutMs = 1500, upstream = callUpstream,
 } = {}) {
   if (typeof agentToken !== "string" || agentToken.length < 16 ||
     agentToken.length > 512 || /[\r\n\0]/.test(agentToken)) {
     throw new Error("Valid local browser token required");
   }
   if (managedPort === ownerPort) throw new Error("Backends require separate ports");
-  const invoke = async (source, request) =>
+  if (!Number.isInteger(listTimeoutMs) || listTimeoutMs < 100 ||
+    listTimeoutMs >= timeoutMs || listTimeoutMs >= 3000) {
+    throw new Error("Browser-list deadline must be shorter than the caller deadline");
+  }
+  const invoke = async (source, request, budgetMs = timeoutMs) =>
     await upstream({
       port: source === "owner" ? ownerPort : managedPort,
       request,
-      timeoutMs,
+      timeoutMs: budgetMs,
     });
 
   return async function handle(request) {
@@ -158,7 +162,8 @@ export function createBrowserUnifiedHandler({
       token: agentToken, capability: request.capability, arguments: args };
     if (op === "status") {
       const [managed, owner] = await Promise.allSettled([
-        invoke("managed", sanitized), invoke("owner", sanitized),
+        invoke("managed", sanitized, listTimeoutMs),
+        invoke("owner", sanitized, listTimeoutMs),
       ]);
       const managedOK = managed.status === "fulfilled" &&
         managed.value.status === "success";
@@ -183,7 +188,8 @@ export function createBrowserUnifiedHandler({
     }
     if (op === "pages") {
       const [managed, owner] = await Promise.allSettled([
-        invoke("managed", sanitized), invoke("owner", sanitized),
+        invoke("managed", sanitized, listTimeoutMs),
+        invoke("owner", sanitized, listTimeoutMs),
       ]);
       const m = managed.status === "fulfilled" && managed.value.status === "success"
         ? managed.value.data?.pages : null;
