@@ -130,3 +130,114 @@ test("run exits cleanly on disconnected extension socket", async () => {
   await serving;
   assert.deepEqual(session.sent, []);
 });
+
+
+test("a hung read-only snapshot expires without blocking later observations", async () => {
+  const session = new BufferedSession();
+  let calls = 0;
+  let releaseFirst!: (value: unknown) => void;
+  const never = new Promise<unknown>(resolve => { releaseFirst = resolve; });
+  const fixtureState = {
+    page_id: "tab:7", url: "https://fixture.example/",
+    semantic_revision: 1, nodes: [], validation_messages: [], toasts: [],
+  };
+  const runtime = new ExtensionCommandRuntime({
+    session,
+    observeTimeoutMs: 40,
+    controller: {
+      pages: () => [{
+        page_id: "tab:7", tab_id: 7, active: true,
+        ownership: "shared-authorized", url: "https://fixture.example/",
+      }],
+      createOwnedTab: async () => ({}),
+      navigate: async () => ({}),
+      close: async () => undefined,
+    },
+    pageAgent: {
+      observe: async () => {
+        calls++;
+        return calls === 1 ? never : fixtureState;
+      },
+      perform: async () => undefined,
+    },
+  });
+  const run = runtime.run();
+  try {
+    session.push(command("hung", "observe", { page_id: "tab:7" }));
+    await until(() => calls === 1);
+    await until(() => session.sent.some(m => m.request_id === "hung"));
+    const timedOut = session.sent.find(m => m.request_id === "hung");
+    assert.equal(timedOut?.status, "error");
+    assert.equal((timedOut?.error as { code?: string })?.code, "timeout");
+
+    // A separate read after timeout can proceed. The old observation is
+    // uncancelled, so it remains counted against the concurrency ceiling.
+    session.push(command("healthy", "observe", { page_id: "tab:7" }));
+    await until(() => session.sent.some(m => m.request_id === "healthy"));
+    assert.equal(session.sent.find(m => m.request_id === "healthy")?.status, "success");
+    assert.equal(calls, 2);
+
+    session.push(command("check-pages", "pages"));
+    await until(() => session.sent.some(m => m.request_id === "check-pages"));
+    assert.equal(session.sent.find(m => m.request_id === "check-pages")?.status, "success");
+  } finally {
+    releaseFirst(fixtureState);
+    session.disconnect();
+    await run;
+  }
+});
+
+test("at most two underlying browser observations can remain unresolved", async () => {
+  const session = new BufferedSession();
+  let calls = 0;
+  const releases: Array<() => void> = [];
+  const runtime = new ExtensionCommandRuntime({
+    session,
+    observeTimeoutMs: 35,
+    controller: {
+      pages: () => [],
+      createOwnedTab: async () => ({}),
+      navigate: async () => ({}),
+      close: async () => undefined,
+    },
+    pageAgent: {
+      observe: async () => {
+        calls++;
+        return new Promise(resolve => releases.push(() => resolve({ nodes: [] })));
+      },
+      perform: async () => undefined,
+    },
+  });
+  const run = runtime.run();
+  try {
+    for (const id of ["first", "second", "third"]) {
+      session.push(command(id, "observe", { page_id: "tab:1" }));
+      await until(() => session.sent.some(m => m.request_id === id));
+    }
+    assert.equal(calls, 2);
+    const last = session.sent.find(m => m.request_id === "third");
+    assert.equal(last?.status, "error");
+    assert.equal((last?.error as { code?: string })?.code, "provider_busy");
+  } finally {
+    for (const release of releases) release();
+    session.disconnect();
+    await run;
+  }
+});
+
+test("observation deadline validates the configured maximum", () => {
+  const make = (observeTimeoutMs: number) => new ExtensionCommandRuntime({
+    session: new BufferedSession(),
+    observeTimeoutMs,
+    controller: {
+      pages: () => [],
+      createOwnedTab: async () => ({}),
+      navigate: async () => ({}),
+      close: async () => undefined,
+    },
+    pageAgent: { observe: async () => ({}), perform: async () => undefined },
+  });
+  assert.throws(() => make(0), /observe timeout/);
+  assert.throws(() => make(Number.POSITIVE_INFINITY), /observe timeout/);
+  assert.throws(() => make(30_001), /observe timeout/);
+});

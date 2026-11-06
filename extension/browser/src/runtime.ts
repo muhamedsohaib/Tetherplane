@@ -44,17 +44,25 @@ export class ExtensionCommandRuntime {
   readonly #pageAgent: ExtensionPageAgent;
   readonly #operationalAgent: ExtensionOperationalAgent | null;
   #commandInFlight = false;
+  #pendingObservations = 0;
+  readonly #observeTimeoutMs: number;
 
   constructor(options: {
     session: ExtensionRuntimeSession;
     controller: ExtensionCommandController;
     pageAgent: ExtensionPageAgent;
     operationalAgent?: ExtensionOperationalAgent;
+    observeTimeoutMs?: number;
   }) {
     this.#session = options.session;
     this.#controller = options.controller;
     this.#pageAgent = options.pageAgent;
     this.#operationalAgent = options.operationalAgent ?? null;
+    const deadline = options.observeTimeoutMs ?? 5_000;
+    if (!Number.isSafeInteger(deadline) || deadline < 20 || deadline > 30_000) {
+      throw new TypeError("observe timeout must be between 20 and 30000 ms");
+    }
+    this.#observeTimeoutMs = deadline;
   }
 
   async run(): Promise<void> {
@@ -96,6 +104,36 @@ export class ExtensionCommandRuntime {
       void this.handleMessage(message)
         .catch(() => undefined)
         .finally(() => { this.#commandInFlight = false; });
+    }
+  }
+
+  async #observeWithDeadline(pageId: string): Promise<unknown> {
+    // Chrome scripting does not offer a cancellation handle. Keep no more than
+    // two unresolved read-only injections in flight, even across deadlines.
+    if (this.#pendingObservations >= 2) {
+      throw new RuntimeCommandError("provider_busy",
+        "two browser observations are still pending");
+    }
+    this.#pendingObservations++;
+    const observed = Promise.resolve().then(() => this.#pageAgent.observe(pageId));
+    // Decrement only when the *underlying* browser injection really finishes.
+    // A deadline releases the command slot but does not claim cancellation.
+    void observed.then(
+      () => { this.#pendingObservations--; },
+      () => { this.#pendingObservations--; },
+    );
+    let timer: ReturnType<typeof setTimeout> | undefined;
+    try {
+      return await Promise.race([
+        observed,
+        new Promise<never>((_, reject) => {
+          timer = setTimeout(() => reject(new RuntimeCommandError(
+            "timeout", "authorized browser observation exceeded its deadline"
+          )), this.#observeTimeoutMs);
+        }),
+      ]);
+    } finally {
+      if (timer !== undefined) clearTimeout(timer);
     }
   }
 
@@ -189,9 +227,7 @@ export class ExtensionCommandRuntime {
         );
 
       case "observe":
-        return this.#pageAgent.observe(
-          requiredString(args, "page_id"),
-        );
+        return this.#observeWithDeadline(requiredString(args, "page_id"));
 
       case "perform": {
         const action = args.action;
