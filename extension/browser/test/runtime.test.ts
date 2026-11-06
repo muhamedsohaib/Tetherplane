@@ -357,3 +357,52 @@ test("command runtime routes upload downloads and diagnostics to operational age
     ],
   });
 });
+
+test("a hung Chrome action returns uncertainty, preserves observation and blocks repeat mutations", async () => {
+  const session = new FakeSession();
+  const controller = new FakeController();
+  const pageAgent = new FakePageAgent();
+  let attempted = 0;
+  pageAgent.perform = async () => {
+    attempted += 1;
+    await new Promise<void>(() => {});
+  };
+  const runtime = new ExtensionCommandRuntime({
+    session, controller, pageAgent, performDeadlineMs: 20,
+  });
+  await runtime.handleMessage({
+    type: "command", request_id: "stuck-click", operation: "perform",
+    args: {page_id:"tab:7",action:{kind:"click",backend_id:"frame:0|css:#harmless-fixture"}},
+  });
+  assert.equal(session.sent[0]?.status, "error");
+  assert.equal((session.sent[0]?.error as {code:string}).code, "action_outcome_unknown");
+  await runtime.handleMessage({
+    type: "command", request_id:"read-after-timeout", operation:"pages", args:{},
+  });
+  assert.equal(session.sent[1]?.status, "success");
+  await runtime.handleMessage({
+    type: "command", request_id:"retry-blocked", operation:"perform",
+    args:{page_id:"tab:7",action:{kind:"click",backend_id:"frame:0|css:#harmless-fixture"}},
+  });
+  assert.equal((session.sent[2]?.error as {code:string}).code,"action_outcome_unknown");
+  assert.equal(attempted,1,"a timeout must never cause a second click");
+  // A hung tab must not disable independent authorized pages.
+  await runtime.handleMessage({
+    type:"command",request_id:"other-tab-navigation",operation:"navigate",
+    args:{page_id:"tab:8",url:"https://fixture.example/other"},
+  });
+  assert.equal(session.sent[3]?.status,"success");
+  await runtime.handleMessage({
+    type:"command",request_id:"revoke-still-allowed",operation:"detach",args:{tab_id:7},
+  });
+  assert.equal(session.sent[4]?.status,"success");
+});
+
+test("perform deadline rejects invalid configuration", () => {
+  const session=new FakeSession(),controller=new FakeController(),pageAgent=new FakePageAgent();
+  for(const bad of [0,-1,NaN,20_001,1.5]){
+    assert.throws(()=>new ExtensionCommandRuntime({
+      session,controller,pageAgent,performDeadlineMs:bad,
+    }),/performDeadlineMs/);
+  }
+});

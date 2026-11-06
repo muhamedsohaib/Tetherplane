@@ -51,17 +51,21 @@ export class ExtensionCommandRuntime {
   readonly #controller: ExtensionCommandController;
   readonly #pageAgent: ExtensionPageAgent;
   readonly #operationalAgent: ExtensionOperationalAgent | null;
+  readonly #performDeadlineMs: number;
+  readonly #uncertainPageIds = new Set<string>();
 
   constructor(options: {
     session: ExtensionRuntimeSession;
     controller: ExtensionCommandController;
     pageAgent: ExtensionPageAgent;
     operationalAgent?: ExtensionOperationalAgent;
+    performDeadlineMs?: number;
   }) {
     this.#session = options.session;
     this.#controller = options.controller;
     this.#pageAgent = options.pageAgent;
     this.#operationalAgent = options.operationalAgent ?? null;
+    this.#performDeadlineMs = normalizePerformDeadline(options.performDeadlineMs);
   }
 
   async run(): Promise<void> {
@@ -104,8 +108,39 @@ export class ExtensionCommandRuntime {
       return;
     }
 
+    // A lost acknowledgement does not prove the click was never executed.
+    // Preserve read-only observation and revocation but refuse new mutations.
+    if (typeof args.page_id === "string" && this.#uncertainPageIds.has(args.page_id) &&
+        UNCERTAIN_ACTION_MUTATIONS.has(operation)) {
+      this.#sendError(requestId, "action_outcome_unknown",
+        "A previous browser action has an unknown outcome. Inspect and explicitly reconnect before another mutation.");
+      return;
+    }
+
     try {
-      const data = await this.#execute(operation, args);
+      let data: unknown;
+      if (operation === "perform") {
+        let deadline: ReturnType<typeof setTimeout> | undefined;
+        try {
+          const action = this.#execute(operation, args);
+          data = await Promise.race([
+            action,
+            new Promise<never>((_, reject) => {
+              deadline = setTimeout(() => {
+                if (typeof args.page_id === "string") this.#uncertainPageIds.add(args.page_id);
+                reject(new RuntimeCommandError(
+                  "action_outcome_unknown",
+                  "Browser action acknowledgement timed out. It may have executed; inspect the page rather than repeating it.",
+                ));
+              }, this.#performDeadlineMs);
+            }),
+          ]);
+        } finally {
+          if (deadline !== undefined) clearTimeout(deadline);
+        }
+      } else {
+        data = await this.#execute(operation, args);
+      }
       this.#session.send({
         type: "result",
         request_id: requestId,
@@ -255,6 +290,18 @@ class RuntimeCommandError extends Error {
     this.name = "RuntimeCommandError";
     this.code = code;
   }
+}
+
+const UNCERTAIN_ACTION_MUTATIONS = new Set([
+  "perform", "navigate", "close", "upload",
+]);
+
+function normalizePerformDeadline(value: number | undefined): number {
+  if (value === undefined) return 6_000;
+  if (!Number.isFinite(value) || !Number.isInteger(value) || value <= 0 || value > 20_000) {
+    throw new TypeError("performDeadlineMs must be an integer from 1 to 20000");
+  }
+  return value;
 }
 
 const BROWSER_OPERATIONS = new Set<BrowserOperation>([

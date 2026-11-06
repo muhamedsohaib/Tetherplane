@@ -39,6 +39,8 @@ export class ExtensionBackendError extends Error {
 }
 
 type PendingCommand = {
+  operation: string;
+  pageId: string | null;
   resolve(value: unknown): void;
   reject(error: ExtensionBackendError): void;
 };
@@ -48,17 +50,21 @@ export class ExtensionBrowserBackend
 {
   readonly #transport: ExtensionCommandTransport;
   readonly #pollIntervalMs: number;
+  readonly #commandDeadlineMs: number;
   readonly #pending = new Map<string, PendingCommand>();
+  readonly #unknownOutcomes = new Set<string>();
   #pumpRunning = false;
 
   constructor(options: {
     transport: ExtensionCommandTransport;
     pollIntervalMs?: number;
+    commandDeadlineMs?: number;
   }) {
     this.#transport = options.transport;
     this.#pollIntervalMs = normalizePollInterval(
       options.pollIntervalMs,
     );
+    this.#commandDeadlineMs = normalizeCommandDeadline(options.commandDeadlineMs);
   }
 
   capabilities(): Record<string, unknown> {
@@ -243,10 +249,37 @@ export class ExtensionBrowserBackend
     operation: string,
     args: Record<string, unknown>,
   ): Promise<unknown> {
+    const pageId = typeof args.page_id === "string" ? args.page_id : null;
+    if (pageId !== null && this.#unknownOutcomes.has(pageId) &&
+        MUTATIONS_AFTER_UNCERTAIN_ACTION.has(operation)) {
+      return Promise.reject(new ExtensionBackendError(
+        "action_outcome_unknown",
+        "An earlier browser action is unconfirmed; inspect the page and reconnect with explicit owner authorization before further mutations.",
+      ));
+    }
     const requestId = randomUUID();
 
     return new Promise((resolve, reject) => {
-      this.#pending.set(requestId, { resolve, reject });
+      const timer = setTimeout(() => {
+        const pending = this.#pending.get(requestId);
+        if (!pending) return;
+        this.#pending.delete(requestId);
+        if (operation === "perform" && pageId !== null) {
+          this.#unknownOutcomes.add(pageId);
+        }
+        pending.reject(new ExtensionBackendError(
+          operation === "perform" ? "action_outcome_unknown" : "timeout",
+          operation === "perform"
+            ? "Extension did not confirm the browser action in time; it may have executed. Do not retry without inspecting the page."
+            : "Extension command did not respond before the bounded deadline.",
+        ));
+      }, this.#commandDeadlineMs);
+      this.#pending.set(requestId, {
+        operation,
+        pageId,
+        resolve(value) { clearTimeout(timer); resolve(value); },
+        reject(error) { clearTimeout(timer); reject(error); },
+      });
       try {
         this.#transport.send({
           type: "command",
@@ -256,13 +289,11 @@ export class ExtensionBrowserBackend
         });
         this.#ensurePump();
       } catch (error) {
+        const pending = this.#pending.get(requestId);
         this.#pending.delete(requestId);
-        reject(
-          normalizeTransportError(
-            error,
-            "extension command could not be sent",
-          ),
-        );
+        pending?.reject(normalizeTransportError(
+          error, "extension command could not be sent",
+        ));
       }
     });
   }
@@ -300,6 +331,10 @@ export class ExtensionBrowserBackend
         const error = isRecord(message.error)
           ? message.error
           : {};
+        if (pending.operation === "perform" &&
+            pending.pageId !== null && error.code === "action_outcome_unknown") {
+          this.#unknownOutcomes.add(pending.pageId);
+        }
         pending.reject(
           new ExtensionBackendError(
             typeof error.code === "string"
@@ -317,7 +352,15 @@ export class ExtensionBrowserBackend
         "extension command channel disconnected",
       );
       for (const pending of this.#pending.values()) {
-        pending.reject(normalized);
+        if (pending.operation === "perform" && pending.pageId !== null) {
+          this.#unknownOutcomes.add(pending.pageId);
+          pending.reject(new ExtensionBackendError(
+            "action_outcome_unknown",
+            "Extension disconnected during a browser action; its outcome is unknown.",
+          ));
+        } else {
+          pending.reject(normalized);
+        }
       }
       this.#pending.clear();
     } finally {
@@ -500,6 +543,18 @@ function normalizePollInterval(value: number | undefined): number {
     throw new TypeError("pollIntervalMs must be positive");
   }
   return Math.min(Math.floor(value), 1_000);
+}
+
+const MUTATIONS_AFTER_UNCERTAIN_ACTION = new Set([
+  "perform", "navigate", "close", "upload",
+]);
+
+function normalizeCommandDeadline(value: number | undefined): number {
+  if (value === undefined) return 9_500;
+  if (!Number.isSafeInteger(value) || value === undefined || value < 1 || value > 60_000) {
+    throw new TypeError("commandDeadlineMs must be an integer from 1 to 60000");
+  }
+  return value;
 }
 
 function normalizeTimeout(value: number): number {

@@ -286,3 +286,48 @@ test("extension backend advertises authenticated-profile capabilities", () => {
     human_tab_sharing: true,
   });
 });
+
+test("lost extension act reply is bounded, explicit and never automatically retried", async () => {
+  const transport=new FakeTransport();
+  const backend=new ExtensionBrowserBackend({transport,commandDeadlineMs:25});
+  const performing=backend.perform("tab:fixture",{
+    kind:"click",backend_id:"frame:0|css:#harmless-fixture",
+  });
+  await assert.rejects(
+    () => performing,
+    (error:unknown)=>error instanceof ExtensionBackendError &&
+      error.code==="action_outcome_unknown",
+  );
+  assert.equal(transport.sent.length,1);
+  await assert.rejects(
+    ()=>backend.perform("tab:fixture",{kind:"click",backend_id:"frame:0|css:#harmless-fixture"}),
+    (error:unknown)=>error instanceof ExtensionBackendError &&
+      error.code==="action_outcome_unknown",
+  );
+  assert.equal(transport.sent.length,1,"do not send a duplicate unconfirmed click");
+  const oldId=String(transport.sent[0]?.request_id);
+  const observing=backend.observe("tab:fixture");
+  await new Promise(resolve=>setTimeout(resolve,0));
+  const currentId=String(transport.sent[1]?.request_id);
+  transport.push(success(oldId,{performed:true}));
+  transport.push(success(currentId,{
+    page_id:"tab:fixture",url:"https://fixture.example/",
+    semantic_revision:1,resource_revision:null,nodes:[],
+    validation_messages:[],toasts:[],
+  }));
+  assert.equal((await observing).page_id,"tab:fixture");
+});
+
+test("lost read reply times out without blocking later reads",async()=>{
+  const transport=new FakeTransport();
+  const backend=new ExtensionBrowserBackend({transport,commandDeadlineMs:20});
+  await assert.rejects(
+    ()=>backend.observe("tab:fixture"),
+    (error:unknown)=>error instanceof ExtensionBackendError && error.code==="timeout",
+  );
+  const next=backend.pages();
+  await new Promise(resolve=>setTimeout(resolve,0));
+  const id=String(transport.sent[1]?.request_id);
+  transport.push(success(id,{pages:[]}));
+  assert.deepEqual(await next,[]);
+});
