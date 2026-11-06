@@ -25,6 +25,7 @@ try {
         "browser\extension\manifest.json",
         "browser\extension\dist\background.js",
         "browser\extension\dist\pair.js",
+        "assets\synthetic-ci-only.txt",
         "manifest.json"
     )) {
         $path = Join-Path $package $relative

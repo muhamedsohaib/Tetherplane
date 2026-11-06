@@ -268,7 +268,8 @@ export class ExtensionBrowserBackend
           "extension command did not respond before its deadline",
         ));
       }, timeoutMs);
-      timer.unref?.();
+      // Keep the deadline referenced while the command promise is pending.
+      // Otherwise Node can exit before the timeout settles the request.
       this.#pending.set(requestId, { resolve, reject, timer });
       try {
         this.#transport.send({
