@@ -20,7 +20,7 @@ export function classify(result) {
     const code = String(result.error?.code ?? "");
     return [
       "timeout", "provider_busy", "permission_denied",
-      "provider_failure", "capability_unavailable",
+      "provider_failure", "capability_unavailable", "tab_suspended",
     ].includes(code) ? code : "other_error";
   }
   return "invalid_response";

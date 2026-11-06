@@ -38,3 +38,7 @@ test("summary emits only counts/timings and no supplied browser fields",()=>{
   assert.ok(!JSON.stringify(result).includes("CREDENTIAL"));
   assert.ok(!JSON.stringify(result).includes("private.example"));
 });
+
+test("suspended tabs are reported separately from timeouts",()=>{
+  assert.equal(classify({status:"error",error:{code:"tab_suspended"}}),"tab_suspended");
+});

@@ -12,6 +12,8 @@ type PageRecord = {
   tab_id: number;
   url: string;
   ownership: "human" | "tetherplane" | "shared-observe" | "shared-authorized";
+  frozen?: boolean;
+  discarded?: boolean;
   grant?: {
     operations: string[];
     origin?: string;
@@ -78,6 +80,7 @@ export class ChromePageAgent {
 
   async observe(pageId: string): Promise<BrowserObservedState> {
     const page = await this.#requireAuthorizedPage(pageId, "snapshot");
+    assertTabExecutable(page);
     const shared = Boolean(page.grant?.origin);
     const results = await this.#scripting.executeScript({
       target: shared
@@ -176,6 +179,7 @@ export class ChromePageAgent {
     }
 
     assertMutationAuthorized(page);
+    assertTabExecutable(page);
 
     const backendId = requiredString(action, "backend_id");
     const parsed = parseBackendId(backendId);
@@ -363,6 +367,18 @@ function requiredString(
     );
   }
   return value;
+}
+
+function assertTabExecutable(page: PageRecord): void {
+  // A frozen tab cannot execute a content script, and Chromium may queue
+  // injection until owner activation. Fail closed rather than permit delayed
+  // reads/actions after an unrelated wake event.
+  if (page.frozen === true || page.discarded === true) {
+    throw new ChromePageAgentError(
+      "tab_suspended",
+      "approved tab is frozen or discarded; select it in Edge to resume",
+    );
+  }
 }
 
 function uniqueStrings(values: string[]): string[] {

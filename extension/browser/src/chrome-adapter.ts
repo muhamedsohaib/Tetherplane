@@ -10,6 +10,9 @@ type ChromeTabLike = {
   windowId?: number;
   url?: string;
   active?: boolean;
+  // Chromium 132+ exposes a frozen-tab lifecycle flag, when supported.
+  frozen?: boolean;
+  discarded?: boolean;
 };
 
 export type ChromeTabsApi = {
@@ -206,6 +209,8 @@ function toExtensionTab(tab: ChromeTabLike): ExtensionTab | null {
     window_id: tab.windowId,
     url: typeof tab.url === "string" ? tab.url : "about:blank",
     active: tab.active === true,
+    ...(typeof tab.frozen === "boolean" ? { frozen: tab.frozen } : {}),
+    ...(typeof tab.discarded === "boolean" ? { discarded: tab.discarded } : {}),
   };
 }
 

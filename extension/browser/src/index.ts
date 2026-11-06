@@ -10,6 +10,8 @@ export type ExtensionTab = {
   window_id: number;
   url: string;
   active: boolean;
+  frozen?: boolean;
+  discarded?: boolean;
 };
 
 export type ExtensionTabsAdapter = {
@@ -35,6 +37,9 @@ export type ExtensionPageRecord = {
   window_id: number;
   url: string;
   active: boolean;
+  // Read from chrome.tabs.get for the current operation, not a grant.
+  frozen?: boolean;
+  discarded?: boolean;
   ownership: BrowserOwnership;
   grant?: {
     operations: BrowserOperation[];
@@ -307,7 +312,9 @@ export class ExtensionTabController {
           "operation was not approved for this AI-owned site");
       }
       return structuredClone({ ...page, url: live.url, active: live.active,
-        window_id: live.window_id });
+        window_id: live.window_id,
+        ...(typeof live.frozen === "boolean" ? { frozen: live.frozen } : {}),
+        ...(typeof live.discarded === "boolean" ? { discarded: live.discarded } : {}) });
     }
 
     if (page.ownership !== "shared-authorized" &&
@@ -351,6 +358,8 @@ export class ExtensionTabController {
 
     return structuredClone({
       ...page, url: live.url, active: live.active, window_id: live.window_id,
+      ...(typeof live.frozen === "boolean" ? { frozen: live.frozen } : {}),
+      ...(typeof live.discarded === "boolean" ? { discarded: live.discarded } : {}),
     });
   }
 

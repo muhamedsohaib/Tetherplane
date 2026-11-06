@@ -13,6 +13,8 @@ class FakeTabsApi {
     windowId: number;
     url: string;
     active: boolean;
+    frozen?: boolean;
+    discarded?: boolean;
   }>();
   lastCreate: Record<string, unknown> | null = null;
   lastUpdate: { tabId: number; properties: Record<string, unknown> } | null =
@@ -189,4 +191,20 @@ test("saving launch config writes only loopback URL and ephemeral token to suppl
     storage.values.tetherplane_launch_token,
     "ephemeral-token",
   );
+});
+
+test("tab adapter retains only present frozen and discarded lifecycle flags", async () => {
+  const api = new FakeTabsApi();
+  api.tabs.set(14, { id:14, windowId:2, url:"https://fixture.example/",
+    active:false, frozen:true, discarded:false });
+  const adapter = new ChromeTabsAdapter(api);
+  const tab = await adapter.get(14);
+  assert.equal(tab?.frozen, true);
+  assert.equal(tab?.discarded, false);
+  const listed = await adapter.list();
+  assert.equal(listed[0]?.frozen, true);
+  assert.equal(listed[0]?.discarded, false);
+  // The original mapping for older browser engines remains unchanged.
+  api.tabs.set(15, { id:15, windowId:2, url:"https://older.example/", active:true });
+  assert.equal((await adapter.get(15))?.frozen, undefined);
 });

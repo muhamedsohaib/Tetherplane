@@ -369,3 +369,38 @@ test("agent-owned website grant cannot observe a cross-origin embedded frame", a
   assert.deepEqual(observed.nodes.map(n => n.accessible_name), ["PUBLIC"]);
   assert.deepEqual(scripting.calls[0]?.target, {tabId:98,frameIds:[0]});
 });
+
+test("authorized frozen or discarded tab fails closed before Chrome injection", async () => {
+  for (const condition of ["frozen", "discarded"] as const) {
+    const scripting = new FakeScripting();
+    const existing = new FakeController();
+    const page = {
+      ...structuredClone(existing.page),
+      ownership:"shared-authorized" as const,
+      frozen:condition === "frozen",
+      discarded:condition === "discarded",
+      grant:{operations:["act", "snapshot"],origin:"https://fixture.example",
+        expires_at_ms:Date.now()+60_000},
+    };
+    const controller = {
+      pages: () => [page],
+      navigate: (pageId:string,url:string) => existing.navigate(pageId,url),
+      authorizeLivePage: async () => structuredClone(page),
+    };
+    const agent = new ChromePageAgent({controller,scripting});
+    await assert.rejects(
+      () => agent.observe("tab:7"),
+      (error:unknown) => typeof error === "object" && error !== null &&
+        "code" in error && error.code === "tab_suspended",
+    );
+    await assert.rejects(
+      () => agent.perform("tab:7",{
+        kind:"click",backend_id:"frame:0|css:#button",
+      }),
+      (error:unknown) => typeof error === "object" && error !== null &&
+        "code" in error && error.code === "tab_suspended",
+    );
+    // No injected click may wake later and run after the grant expires.
+    assert.equal(scripting.calls.length,0);
+  }
+});
