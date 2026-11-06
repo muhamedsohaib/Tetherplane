@@ -1,0 +1,120 @@
+name: Browser owner access private Windows candidate (nonrelease)
+
+# Review-only artifact: no GitHub release, live device, authentication or deployment.
+on:
+  push:
+    branches:
+      - feature/browser-combined-owner-20261106
+    paths:
+      - '.github/workflows/browser-owner-private-candidate.yml'
+      - 'agent/providers/browser/**'
+      - 'agent/tetherd/**'
+      - 'Cargo.toml'
+      - 'Cargo.lock'
+      - 'scripts/browser-owner-stability.mjs'
+      - 'tests/release/browser-owner-stability.test.mjs'
+      - 'scripts/browser-unified-rpc-host.mjs'
+      - 'tests/release/browser-unified-rpc-host.test.mjs'
+
+permissions:
+  contents: read
+
+jobs:
+  windows-private-agent:
+    if: github.repository == 'muhamedsohaib/Tetherplane' && github.ref == 'refs/heads/feature/browser-combined-owner-20261106'
+    runs-on: windows-latest
+    timeout-minutes: 40
+    steps:
+      - name: Checkout exact feature source
+        uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
+        with:
+          persist-credentials: false
+      - name: Validate reviewed repository and branch
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = 'Stop'
+          if ($env:GITHUB_REF -cne 'refs/heads/feature/browser-combined-owner-20261106') {
+            throw 'PRIVATE_BROWSER_BUILD_REF_NOT_APPROVED'
+          }
+          if ($env:GITHUB_REPOSITORY -cne 'muhamedsohaib/Tetherplane') {
+            throw 'PRIVATE_BROWSER_BUILD_REPO_NOT_APPROVED'
+          }
+          if ((git rev-parse HEAD).Trim() -cne $env:GITHUB_SHA) {
+            throw 'PRIVATE_BROWSER_BUILD_COMMIT_MISMATCH'
+          }
+      - uses: dtolnay/rust-toolchain@b725eda525362e7cf34af9a7243cac1e3f01a7ec # stable
+        with:
+          components: rustfmt, clippy
+      - name: Verify browser provider regression tests
+        shell: pwsh
+        run: |
+          cargo test --locked -p tether-browser-provider
+          if ($LASTEXITCODE -ne 0) { throw 'BROWSER_PROVIDER_TESTS_FAILED' }
+          cargo fmt --all -- --check
+          if ($LASTEXITCODE -ne 0) { throw 'RUST_FORMAT_FAILED' }
+      - name: Compile reviewed native Windows GUI agent
+        shell: pwsh
+        run: |
+          cargo build --release --locked -p tetherd --features windows-headless-agent
+          if ($LASTEXITCODE -ne 0) { throw 'PRIVATE_WINDOWS_AGENT_BUILD_FAILED' }
+      - name: Verify PE subsystem and issue digest proof
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = 'Stop'
+          $source = 'target/release/tetherd.exe'
+          if (-not (Test-Path -LiteralPath $source -PathType Leaf)) {
+            throw 'WINDOWS_AGENT_EXE_MISSING'
+          }
+          $bytes = [System.IO.File]::ReadAllBytes((Resolve-Path $source).Path)
+          if ($bytes.Length -lt 100000) { throw 'WINDOWS_AGENT_BINARY_UNEXPECTED_SIZE' }
+          $offset = [BitConverter]::ToInt32($bytes, 0x3c)
+          if ($offset -lt 64 -or $offset -gt 4096) { throw 'WINDOWS_PE_OFFSET_INVALID' }
+          $subsystem = [BitConverter]::ToUInt16($bytes, $offset + 24 + 68)
+          if ($subsystem -ne 2) { throw ('GUI_SUBSYSTEM_EXPECTED_2_GOT_' + $subsystem) }
+          $dir = 'private-browser-owner-candidate'
+          New-Item -ItemType Directory -Force -Path $dir | Out-Null
+          $target = Join-Path $dir 'tetherd-agentw.exe'
+          Copy-Item -LiteralPath $source -Destination $target -ErrorAction Stop
+          $sha = (Get-FileHash -LiteralPath $target -Algorithm SHA256).Hash.ToLowerInvariant()
+          $sig = Get-AuthenticodeSignature -LiteralPath $target
+          [ordered]@{
+            schema = 'tetherplane.review-only-agent-candidate.v1'
+            purpose = 'Owner-authorized Edge browser validation; NOT A RELEASE'
+            source_repository = $env:GITHUB_REPOSITORY
+            source_branch = $env:GITHUB_REF
+            source_commit = (git rev-parse HEAD).Trim()
+            sha256 = $sha
+            byte_length = (Get-Item -LiteralPath $target).Length
+            windows_pe_subsystem = 2
+            cargo_feature = 'windows-headless-agent'
+            authenticode_status = [string]$sig.Status
+            signed = ($sig.Status -eq 'Valid')
+            provider_tests = 'PASSED'
+            install_performed = $false
+            live_owner_browser_verified = $false
+            release = $false
+          } | ConvertTo-Json -Depth 4 |
+            Set-Content -LiteralPath (Join-Path $dir 'proof.json') -Encoding utf8
+          Write-Output ('REVIEW_BROWSER_SHA256_' + $sha)
+      - name: Upload private review candidate only
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        with:
+          name: tetherplane-owner-browser-windows-candidate-20261106
+          path: private-browser-owner-candidate/
+          if-no-files-found: error
+          retention-days: 2
+
+  browser-stability-tests:
+    if: github.repository == 'muhamedsohaib/Tetherplane' && github.ref == 'refs/heads/feature/browser-combined-owner-20261106'
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
+        with:
+          persist-credentials: false
+      - uses: actions/setup-node@49933ea5288ca8642d1e84afbd3f7d6820020 # v4.4.0
+        with:
+          node-version: 22
+      - name: Pure read-only stability and combined router regressions
+        run: |
+          node --test tests/release/browser-owner-stability.test.mjs tests/release/browser-unified-rpc-host.test.mjs
