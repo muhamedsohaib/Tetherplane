@@ -34,6 +34,7 @@ const fixtureHtml = '<!DOCTYPE html><html><body>' +
 const result = {
   temporaryProfile: true,
   actualExtensionLoaded: false,
+  extensionInstalledViaCdp: false,
   pinnedLocalPairing: false,
   oneClickOwnerPopupConnected: false,
   oneClickInitialPairing: false,
@@ -132,6 +133,42 @@ async function evaluatePage(endpoint, expression) {
     return await Promise.race([response, delay(6000).then(() => {throw new Error("CDP evaluation timeout");})]);
   } finally { socket.close(); }
 }
+// Branded Chrome/Edge no longer honor --load-extension. In a disposable
+// debug profile, request explicit unpacked installation over browser CDP.
+// Never connect to, or change, an existing owner browser session.
+async function browserCdp(endpoint, method, params) {
+  const socket = new WebSocket(endpoint);
+  try {
+    await Promise.race([
+      new Promise((resolve, reject) => {
+        socket.addEventListener("open", resolve, {once: true});
+        socket.addEventListener("error", () =>
+          reject(new Error("isolated Edge CDP browser socket failed")), {once: true});
+      }),
+      delay(5000).then(() => { throw new Error("isolated Edge CDP browser socket deadline"); }),
+    ]);
+    const response = new Promise((resolve, reject) => {
+      socket.addEventListener("message", event => {
+        let message;
+        try { message = JSON.parse(String(event.data)); } catch { return; }
+        if (message.id !== 7) return;
+        if (message.error) {
+          reject(new Error("isolated Edge CDP " + method + " unavailable: " +
+            String(message.error.code ?? "unknown") + " " +
+            String(message.error.message ?? "").slice(0, 100)));
+        } else {
+          resolve(message.result);
+        }
+      });
+    });
+    socket.send(JSON.stringify({id: 7, method, params}));
+    return await Promise.race([
+      response,
+      delay(6000).then(() => { throw new Error("isolated Edge CDP command deadline"); }),
+    ]);
+  } finally { socket.close(); }
+}
+
 async function stopOwnedBrowser() {
   if (browser && browser.exitCode === null) browser.kill();
   // Restrict further termination to msedge.exe processes whose command
@@ -163,8 +200,6 @@ try {
     "--headless=new", "--no-first-run", "--no-default-browser-check",
     "--disable-default-apps", "--remote-debugging-port=0",
     "--user-data-dir=" + profile,
-    "--disable-extensions-except=" + extension,
-    "--load-extension=" + extension,
     "about:blank",
   ], {windowsHide: true, stdio: "ignore"});
 
@@ -175,6 +210,21 @@ try {
     return Number.isSafeInteger(p) && p > 0 ? p : null;
   }, 15000, "isolated browser DevTools unavailable");
 
+  // The command-line --load-extension/--disable-extensions-except flags
+  // are no longer supported by branded Edge. Install only into this newly
+  // created, test-owned profile using browser-level DevTools.
+  const browserInfo = await until(async () => {
+    const response = await fetch("http://127.0.0.1:" + port + "/json/version");
+    const data = await response.json();
+    return typeof data.webSocketDebuggerUrl === "string" ? data : null;
+  }, 5000, "isolated Edge browser CDP endpoint unavailable");
+  const installResponse = await browserCdp(
+    browserInfo.webSocketDebuggerUrl, "Extensions.loadUnpacked", {path: extension});
+  const installedExtensionId = installResponse?.id;
+  assert.match(installedExtensionId, /^[a-p]{32}$/,
+    "isolated Edge did not install the reviewed unpacked extension");
+  result.extensionInstalledViaCdp = true;
+
   // Edge ships first-party extensions such as Microsoft Voices. Never take
   // the first chrome-extension target: bind to the actual Tetherplane manifest.
   const extensionTarget = await until(async () => {
@@ -182,7 +232,8 @@ try {
     const targets = await response.json();
     for (const candidate of targets) {
       const match = /^chrome-extension:\/\/([a-p]{32})\//.exec(candidate.url);
-      if (!match || !candidate.webSocketDebuggerUrl) continue;
+      if (!match || match[1] !== installedExtensionId ||
+          !candidate.webSocketDebuggerUrl) continue;
       try {
         const identity = await evaluatePage(candidate.webSocketDebuggerUrl,
           "({name:chrome.runtime.getManifest().name,id:chrome.runtime.id})");
@@ -195,7 +246,7 @@ try {
       }
     }
     return null;
-  }, 15000, "actual Tetherplane extension service worker missing");
+  }, 15000, "CDP-installed Tetherplane extension service worker missing");
   const id = extensionTarget.extension_id;
   assert.match(id, /^[a-p]{32}$/);
   result.actualExtensionLoaded = true;

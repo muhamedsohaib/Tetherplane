@@ -44,6 +44,8 @@ jobs:
         run: |
           node --test browser/bridge/test/ownership.test.ts browser/bridge/test/extension-session.test.ts browser/bridge/test/rpc-server.test.ts extension/browser/test/approval.test.ts extension/browser/test/runtime.test.ts extension/browser/test/page-agent.test.ts extension/browser/test/controller.test.ts extension/browser/test/operations.test.ts
           if ($LASTEXITCODE -ne 0) { throw "BROWSER_POLICY_REGRESSION=FAIL" }
+          node --test tests/release/browser-real-extension-source-contract.test.mjs
+          if ($LASTEXITCODE -ne 0) { throw "REAL_EXTENSION_SOURCE_CONTRACT=FAIL" }
       - name: Stage browser-only distribution without Rust or installing services
         shell: pwsh
         run: |
@@ -57,6 +59,14 @@ jobs:
           Copy-Item -LiteralPath 'extension\browser\manifest.json' -Destination (Join-Path $ext 'manifest.json')
           Copy-Item -LiteralPath 'extension\browser\pair.html' -Destination (Join-Path $ext 'pair.html')
           Copy-Item -LiteralPath 'extension\browser\dist' -Destination $ext -Recurse
+          Copy-Item -LiteralPath 'extension\browser\icons' -Destination $ext -Recurse
+          $manifest = Get-Content -LiteralPath (Join-Path $ext 'manifest.json') -Raw | ConvertFrom-Json
+          $icons = @($manifest.icons.PSObject.Properties.Value) + @($manifest.action.default_icon.PSObject.Properties.Value)
+          foreach ($icon in ($icons | Select-Object -Unique)) {
+            if (-not (Test-Path -LiteralPath (Join-Path $ext $icon) -PathType Leaf)) {
+              throw "isolated extension manifest references an unstaged icon"
+            }
+          }
           $hostBundle = Join-Path $browser 'host.mjs'
           pnpm.cmd --filter @tetherplane/browser-extension exec esbuild ../../scripts/browser-extension-host.ts --bundle --platform=node --format=esm --target=node22 --packages=external ("--outfile=" + $hostBundle)
           if ($LASTEXITCODE -ne 0 -or -not (Test-Path -LiteralPath $hostBundle)) { throw "isolated browser host bundling failed" }
