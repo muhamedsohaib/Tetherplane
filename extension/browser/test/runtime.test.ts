@@ -399,3 +399,44 @@ test("remote extension commands cannot grant or revoke human tab access", async 
   );
   assert.ok(context.session.sent.every(x=>x.status==="error"));
 });
+
+test("hung authorized action is bounded and cannot be repeated in the same tab", async () => {
+  const session=new FakeSession(),controller=new FakeController(),pageAgent=new FakePageAgent();
+  let attempts=0;
+  pageAgent.perform=async()=>{ attempts++; await new Promise<void>(()=>{}); };
+  const runtime=new ExtensionCommandRuntime({session,controller,pageAgent,performDeadlineMs:25});
+  await runtime.handleMessage({
+    type:"command",request_id:"stuck-synthetic",operation:"perform",
+    args:{page_id:"tab:7",action:{kind:"click",backend_id:"frame:0|css:#fixture"}},
+  });
+  assert.equal((session.sent[0]?.error as {code:string}).code,"action_outcome_unknown");
+  await runtime.handleMessage({
+    type:"command",request_id:"subsequent-pages",operation:"pages",args:{},
+  });
+  assert.equal(session.sent[1]?.status,"success");
+  await runtime.handleMessage({
+    type:"command",request_id:"do-not-repeat",operation:"perform",
+    args:{page_id:"tab:7",action:{kind:"click",backend_id:"frame:0|css:#fixture"}},
+  });
+  assert.equal((session.sent[2]?.error as {code:string}).code,"action_outcome_unknown");
+  assert.equal(attempts,1);
+  await runtime.handleMessage({
+    type:"command",request_id:"other-page",operation:"navigate",
+    args:{page_id:"tab:8",url:"https://fixture.example/another"},
+  });
+  assert.equal(session.sent[3]?.status,"success");
+  await runtime.handleMessage({
+    type:"command",request_id:"no-remote-revoke",operation:"detach",args:{tab_id:7},
+  });
+  assert.equal((session.sent[4]?.error as {code:string}).code,"permission_denied");
+  assert.equal(controller.localShareMutations,0);
+});
+
+test("perform deadline validation preserves observation and owner-grant policy", () => {
+  const session=new FakeSession(),controller=new FakeController(),pageAgent=new FakePageAgent();
+  for(const value of [0,1,-1,20001,NaN,1.5]){
+    assert.throws(()=>new ExtensionCommandRuntime({
+      session,controller,pageAgent,performDeadlineMs:value,
+    }),/performDeadlineMs/);
+  }
+});

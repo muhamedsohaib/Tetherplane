@@ -46,6 +46,8 @@ export class ExtensionCommandRuntime {
   #commandInFlight = false;
   #pendingObservations = 0;
   readonly #observeTimeoutMs: number;
+  readonly #performDeadlineMs: number;
+  readonly #unknownOutcomes = new Set<string>();
 
   constructor(options: {
     session: ExtensionRuntimeSession;
@@ -53,6 +55,7 @@ export class ExtensionCommandRuntime {
     pageAgent: ExtensionPageAgent;
     operationalAgent?: ExtensionOperationalAgent;
     observeTimeoutMs?: number;
+    performDeadlineMs?: number;
   }) {
     this.#session = options.session;
     this.#controller = options.controller;
@@ -63,6 +66,11 @@ export class ExtensionCommandRuntime {
       throw new TypeError("observe timeout must be between 20 and 30000 ms");
     }
     this.#observeTimeoutMs = deadline;
+    const actionDeadline = options.performDeadlineMs ?? 6_000;
+    if (!Number.isSafeInteger(actionDeadline) || actionDeadline < 20 || actionDeadline > 20_000) {
+      throw new TypeError("performDeadlineMs must be an integer from 20 to 20000");
+    }
+    this.#performDeadlineMs = actionDeadline;
   }
 
   async run(): Promise<void> {
@@ -165,8 +173,37 @@ export class ExtensionCommandRuntime {
       return;
     }
 
+    if (typeof args.page_id === "string" &&
+        this.#unknownOutcomes.has(args.page_id) &&
+        UNCERTAIN_ACTION_MUTATIONS.has(operation)) {
+      this.#sendError(requestId, "action_outcome_unknown",
+        "An earlier action may have executed. Inspect the page and reconnect with explicit owner approval before another mutation.");
+      return;
+    }
     try {
-      const data = await this.#execute(operation, args);
+      let data: unknown;
+      if (operation === "perform") {
+        let deadline: ReturnType<typeof setTimeout> | undefined;
+        const pageId = requiredString(args, "page_id");
+        try {
+          data = await Promise.race([
+            this.#execute(operation, args),
+            new Promise<never>((_, reject) => {
+              deadline = setTimeout(() => {
+                this.#unknownOutcomes.add(pageId);
+                reject(new RuntimeCommandError(
+                  "action_outcome_unknown",
+                  "Browser action acknowledgement timed out. It may have executed; inspect instead of retrying.",
+                ));
+              }, this.#performDeadlineMs);
+            }),
+          ]);
+        } finally {
+          if (deadline !== undefined) clearTimeout(deadline);
+        }
+      } else {
+        data = await this.#execute(operation, args);
+      }
       this.#session.send({
         type: "result",
         request_id: requestId,
@@ -308,6 +345,10 @@ export class ExtensionCommandRuntime {
     });
   }
 }
+
+const UNCERTAIN_ACTION_MUTATIONS = new Set([
+  "perform", "navigate", "close", "upload",
+]);
 
 class RuntimeCommandError extends Error {
   readonly code: string;

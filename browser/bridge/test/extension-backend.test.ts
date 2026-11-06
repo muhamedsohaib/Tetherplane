@@ -341,3 +341,81 @@ test("extension command deadline is validated and cannot be infinite", () => {
     /extension command timeout/,
   );
 });
+
+test("unacknowledged action is fenced per tab while late reply cannot confirm it", async () => {
+  const transport = new FakeTransport();
+  const backend = new ExtensionBrowserBackend({
+    transport,
+    pagesTimeoutMs: 50,
+    commandTimeoutMs: 80,
+    performTimeoutMs: 25,
+  });
+  const action = {kind: "click", backend_id: "frame:0|css:#fixture"} as const;
+  const first = backend.perform("tab:fixture", action);
+  await assert.rejects(
+    () => first,
+    (error: unknown) => error instanceof ExtensionBackendError &&
+      error.code === "action_outcome_unknown",
+  );
+  assert.equal(transport.sent.length, 1);
+  const oldId = String(transport.sent[0]?.request_id);
+
+  await assert.rejects(
+    () => backend.perform("tab:fixture", action),
+    (error: unknown) => error instanceof ExtensionBackendError &&
+      error.code === "action_outcome_unknown",
+  );
+  await assert.rejects(
+    () => backend.navigate("tab:fixture", "https://fixture.example/another"),
+    (error: unknown) => error instanceof ExtensionBackendError &&
+      error.code === "action_outcome_unknown",
+  );
+  assert.equal(transport.sent.length, 1, "never resend an unconfirmed action");
+
+  const reading = backend.observe("tab:fixture");
+  await new Promise(resolve => setTimeout(resolve, 0));
+  const currentId = String(transport.sent[1]?.request_id);
+  transport.push(success(oldId, {performed: true}));
+  transport.push(success(currentId, {
+    page_id: "tab:fixture", url: "https://fixture.example/",
+    semantic_revision: 1, resource_revision: null,
+    nodes: [], validation_messages: [], toasts: [],
+  }));
+  assert.equal((await reading).page_id, "tab:fixture");
+
+  const other = backend.perform("tab:independent", action);
+  await new Promise(resolve => setTimeout(resolve, 0));
+  const otherId = String(transport.sent[2]?.request_id);
+  transport.push(success(otherId, {performed:true}));
+  await other;
+  assert.equal(transport.sent.length, 3);
+});
+
+test("an explicit unknown action result fences future mutations without changing grants", async () => {
+  const transport = new FakeTransport();
+  const backend = new ExtensionBrowserBackend({transport, performTimeoutMs:100});
+  const action = {kind:"click", backend_id:"frame:0|css:#fixture"} as const;
+  const first=backend.perform("tab:fixture",action);
+  await new Promise(resolve=>setTimeout(resolve,0));
+  transport.push({
+    type:"result", request_id:transport.sent[0]?.request_id,
+    status:"error", error:{
+      code:"action_outcome_unknown",
+      message:"A previous click may have executed",
+    },
+  });
+  await assert.rejects(()=>first,(error:unknown)=>
+    error instanceof ExtensionBackendError && error.code==="action_outcome_unknown");
+  await assert.rejects(()=>backend.uploadFile("tab:fixture","frame:0|css:#upload","C:\\fixtures\\test.txt"),
+    (error:unknown)=>error instanceof ExtensionBackendError && error.code==="action_outcome_unknown");
+  assert.equal(transport.sent.length,1);
+});
+
+test("perform timeout deadline must be bounded independently of page listing", () => {
+  for (const performTimeoutMs of [0, -1, NaN, Number.POSITIVE_INFINITY, 120001]) {
+    assert.throws(
+      () => new ExtensionBrowserBackend({transport:new FakeTransport(), performTimeoutMs}),
+      /extension command timeout/,
+    );
+  }
+});

@@ -39,6 +39,8 @@ export class ExtensionBackendError extends Error {
 }
 
 type PendingCommand = {
+  operation: string;
+  pageId: string | null;
   resolve(value: unknown): void;
   reject(error: ExtensionBackendError): void;
   timer: ReturnType<typeof setTimeout>;
@@ -51,7 +53,9 @@ export class ExtensionBrowserBackend
   readonly #pollIntervalMs: number;
   readonly #commandTimeoutMs: number;
   readonly #pagesTimeoutMs: number;
+  readonly #performTimeoutMs: number;
   readonly #pending = new Map<string, PendingCommand>();
+  readonly #unknownOutcomes = new Set<string>();
   #pumpRunning = false;
 
   constructor(options: {
@@ -59,6 +63,7 @@ export class ExtensionBrowserBackend
     pollIntervalMs?: number;
     commandTimeoutMs?: number;
     pagesTimeoutMs?: number;
+    performTimeoutMs?: number;
   }) {
     this.#transport = options.transport;
     this.#pollIntervalMs = normalizePollInterval(
@@ -69,6 +74,9 @@ export class ExtensionBrowserBackend
     );
     this.#pagesTimeoutMs = normalizeCommandDeadline(
       options.pagesTimeoutMs, 5_000,
+    );
+    this.#performTimeoutMs = normalizeCommandDeadline(
+      options.performTimeoutMs, 9_500,
     );
   }
 
@@ -254,23 +262,35 @@ export class ExtensionBrowserBackend
     operation: string,
     args: Record<string, unknown>,
   ): Promise<unknown> {
+    const pageId = typeof args.page_id === "string" ? args.page_id : null;
+    if (pageId !== null && this.#unknownOutcomes.has(pageId) &&
+        MUTATIONS_AFTER_UNCERTAIN_ACTION.has(operation)) {
+      return Promise.reject(new ExtensionBackendError(
+        "action_outcome_unknown",
+        "An earlier action is unconfirmed. Inspect the page and explicitly reauthorize before another mutation.",
+      ));
+    }
     const requestId = randomUUID();
 
     return new Promise((resolve, reject) => {
-      const timeoutMs = operation === "pages"
-        ? this.#pagesTimeoutMs : this.#commandTimeoutMs;
+      const timeoutMs = operation === "pages" ? this.#pagesTimeoutMs
+        : operation === "perform" ? this.#performTimeoutMs
+        : this.#commandTimeoutMs;
       const timer = setTimeout(() => {
         const pending = this.#pending.get(requestId);
         if (!pending) return;
         this.#pending.delete(requestId);
+        if (operation === "perform" && pageId !== null) this.#unknownOutcomes.add(pageId);
         pending.reject(new ExtensionBackendError(
-          "timeout",
-          "extension command did not respond before its deadline",
+          operation === "perform" ? "action_outcome_unknown" : "timeout",
+          operation === "perform"
+            ? "Extension action reply was not received. The action may have executed; do not retry it."
+            : "extension command did not respond before its deadline",
         ));
       }, timeoutMs);
       // Keep the deadline referenced while the command promise is pending.
       // Otherwise Node can exit before the timeout settles the request.
-      this.#pending.set(requestId, { resolve, reject, timer });
+      this.#pending.set(requestId, {operation, pageId, resolve, reject, timer});
       try {
         this.#transport.send({
           type: "command",
@@ -326,6 +346,10 @@ export class ExtensionBrowserBackend
         const error = isRecord(message.error)
           ? message.error
           : {};
+        if (pending.operation === "perform" && pending.pageId !== null &&
+            error.code === "action_outcome_unknown") {
+          this.#unknownOutcomes.add(pending.pageId);
+        }
         pending.reject(
           new ExtensionBackendError(
             typeof error.code === "string"
@@ -344,7 +368,15 @@ export class ExtensionBrowserBackend
       );
       for (const pending of this.#pending.values()) {
         clearTimeout(pending.timer);
-        pending.reject(normalized);
+        if (pending.operation === "perform" && pending.pageId !== null) {
+          this.#unknownOutcomes.add(pending.pageId);
+          pending.reject(new ExtensionBackendError(
+            "action_outcome_unknown",
+            "Extension disconnected during an action; the outcome is unknown.",
+          ));
+        } else {
+          pending.reject(normalized);
+        }
       }
       this.#pending.clear();
     } finally {
@@ -518,6 +550,10 @@ function normalizeTransportError(
     error instanceof Error ? error.message : fallback,
   );
 }
+
+const MUTATIONS_AFTER_UNCERTAIN_ACTION = new Set([
+  "perform", "navigate", "close", "upload",
+]);
 
 function normalizeCommandDeadline(
   value: number | undefined,
