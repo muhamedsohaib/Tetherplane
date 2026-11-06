@@ -28,6 +28,7 @@ jobs:
       matrix:
         os: [ubuntu-latest, windows-latest]
     runs-on: ${{ matrix.os }}
+    timeout-minutes: 45
 
     steps:
       - uses: actions/checkout@v4
@@ -95,7 +96,12 @@ jobs:
       - name: TypeScript typecheck
         run: pnpm -r typecheck
 
+      - name: TypeScript tests (Windows sequential diagnostic)
+        if: runner.os == 'Windows'
+        run: pnpm -r --workspace-concurrency=1 test
+
       - name: TypeScript tests
+        if: runner.os != 'Windows'
         run: pnpm -r test
 
       - name: TypeScript builds
