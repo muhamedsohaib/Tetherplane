@@ -56,7 +56,7 @@ test("extension manifest, popup and package all resolve canonical icons", () => 
   }
   const popup = text("extension/browser/pair.html");
   assert.match(popup, /icons\/black-64\.png/);
-  assert.doesNotMatch(popup, /class="mark"|\.mark:after|#174cb3[^}]*border/);
+  assert.doesNotMatch(popup, /class="mark"|\.mark:after|\.mark\s*\{/);
   assert.match(text("scripts/package-windows.ps1"), /canonicalExtensionIcons/);
 });
 

@@ -1,0 +1,242 @@
+{
+  "schema": "tetherplane.exact-user-supplied-brand-icon-pack.v1",
+  "created_utc": "2026-11-06",
+  "variant_purposes": {
+    "black-alpha": "user-provided black transparent original; light surfaces",
+    "white-alpha": "transparent extraction of user-provided white-on-black JPEG",
+    "white-on-black": "user-provided white-on-black look; toolbar, windows and MSIX tiles"
+  },
+  "geometry_policy": "Only crop to nonempty emblem bounds, center square padding, and proportional LANCZOS scaling. No repainting, reshaping or added decoration.",
+  "source_sha256": {
+    "logo-black-original.png": "a68a4782baa855b2d58158e7a205802b875f64f84147c879a9b3d6e1c5677f09",
+    "logo-white-on-black-original.jpg": "c964d071774f67ec83b85207e5ff2511e441f3676b5d92893cffe974a74d0e12"
+  },
+  "store_submission_approved": false,
+  "packaged_release_signed": false,
+  "files": {
+    "branding/shared/white-48.png": {
+      "sha256": "49b38be8ee381b4f7829997f75dc481c2782e3b9152ac22d612fd0f3a2542a8d",
+      "bytes": 1227
+    },
+    "branding/shared/white-16.png": {
+      "sha256": "e44e7b58637c5c28d9ba4f865517c1a09e7dd7b0c5ba1fe3e86d3532dcdfdda6",
+      "bytes": 399
+    },
+    "branding/shared/black-64.png": {
+      "sha256": "9504a0bffac523e0f400506f555f878d6db99378244a6c29842168f76e92caf8",
+      "bytes": 1800
+    },
+    "branding/shared/black-50.png": {
+      "sha256": "0428a302694791e9b0fae2673800471daf28782d20cbf511fcaa8df9ef9fc6b2",
+      "bytes": 1323
+    },
+    "branding/shared/black-128.png": {
+      "sha256": "543c20315cc06aa79d2732b508dc983f14a6d78323c6beddb5a7583b203c879f",
+      "bytes": 4241
+    },
+    "branding/shared/black-32.png": {
+      "sha256": "a22328cc8a19f981f43cf637e715565fbf6ffd3a31ba8f6392a0f6d4797f4d98",
+      "bytes": 776
+    },
+    "branding/shared/black-44.png": {
+      "sha256": "61ce12ae089baffba9e708aeb685a1ba30d30ec62c2407dc12f801a1655af5b5",
+      "bytes": 1100
+    },
+    "branding/shared/white-on-black-48.png": {
+      "sha256": "27c1144aa76bcc7202b7fad75ec60a16f5c5036a74e23ce9cc2e3b070c0301aa",
+      "bytes": 1587
+    },
+    "branding/shared/white-on-black-300.png": {
+      "sha256": "18138d65ff2977973c12e204ec51a03d40427a392412f7626b8c7a9d7b7ecbaa",
+      "bytes": 17785
+    },
+    "branding/shared/black-150.png": {
+      "sha256": "249f9a220172a629c151147d88ad2ffaa1027c86a65aef34d4540bf59e4d1c20",
+      "bytes": 5055
+    },
+    "branding/shared/white-64.png": {
+      "sha256": "79bba113dd49d0d4227d655a8ee64f378ae2bb80802ebd1b5e4e0171bdb6996d",
+      "bytes": 1666
+    },
+    "branding/shared/white-on-black-128.png": {
+      "sha256": "f02c282c36ace0bcffff5610c9c45a53c7e3023bcc333b51efb8352238af3692",
+      "bytes": 5624
+    },
+    "branding/shared/black-512.png": {
+      "sha256": "7e6d074c5967e17bc5e57283fb2c0c050f0071a9dd1e212616a56bec2d513193",
+      "bytes": 26742
+    },
+    "branding/shared/white-50.png": {
+      "sha256": "cbea23a0356161acc48a6ded067a5d02ad06374da1a6bc1b95ca68a1f3db0f5f",
+      "bytes": 1262
+    },
+    "branding/shared/white-on-black-50.png": {
+      "sha256": "5bce41c40c9b23770c52f9846ede850247eb24b81dd8faf341219babfeea33d7",
+      "bytes": 1671
+    },
+    "branding/shared/white-on-black-150.png": {
+      "sha256": "537c28e3533181975cc6499734e35b0266c80cec39ee772da6780b59a909ff39",
+      "bytes": 6876
+    },
+    "branding/shared/white-300.png": {
+      "sha256": "c08f774a61fa9e492183604f5877907bfa9cd94155868a6136994de0435417c9",
+      "bytes": 13849
+    },
+    "branding/shared/white-44.png": {
+      "sha256": "8e9b8b48bf2752b96ef72d8d11f1e51f92c814944d977335ed511336984b71ad",
+      "bytes": 1040
+    },
+    "branding/shared/white-on-black-512.png": {
+      "sha256": "56bd79411f7b70cc6c4f756d5c94e9e9848e4b557f35ce44c6546e91ff824318",
+      "bytes": 39843
+    },
+    "branding/shared/black-48.png": {
+      "sha256": "dd19f4a84f3862b4ac009893d3a12351862c851a8e6188941a80bb1a50225d91",
+      "bytes": 1255
+    },
+    "branding/shared/black-24.png": {
+      "sha256": "23f8f165bc73d14aa24af74b837ce89de5b7f43c1189ec7a63cc38bfe42b789f",
+      "bytes": 548
+    },
+    "branding/shared/black-16.png": {
+      "sha256": "3351513d87d63abd7aeeb2a86ec44586721fd253417cd284409ed187472f1ca8",
+      "bytes": 350
+    },
+    "branding/shared/white-150.png": {
+      "sha256": "6be7db4f15a546d1380dcfdd6d07ccf2f454f13024a0dd50e954653a6b170e01",
+      "bytes": 4788
+    },
+    "branding/shared/white-32.png": {
+      "sha256": "d7bc916c51e7a7e9bc20cc24d1e586af4e3a9a627bea4d9325d82cc9db0bd2d6",
+      "bytes": 833
+    },
+    "branding/shared/white-24.png": {
+      "sha256": "869decac2287976d3171c8e49bbfba9f1169728e7a320ead4f26197329777cb9",
+      "bytes": 593
+    },
+    "branding/shared/white-256.png": {
+      "sha256": "8d355f228638ce3a3d3824fa81168f5db5873e49781c09ed2837f54128ef3cf7",
+      "bytes": 11025
+    },
+    "branding/shared/white-on-black-32.png": {
+      "sha256": "78199e59eaceed2ea6b8d3b828ddec0a8748093ca4b6d0e6741e7e998fd69abe",
+      "bytes": 1029
+    },
+    "branding/shared/white-on-black-16.png": {
+      "sha256": "40acfffd62c2a7e4f473a13b72df66566552f7c9a0875b579fa3898873fffa9c",
+      "bytes": 480
+    },
+    "branding/shared/white-128.png": {
+      "sha256": "696c2d458508c7560f5fbc8c01c514f1f91ed3d5b0bcb34afabc49698c8c1390",
+      "bytes": 3929
+    },
+    "branding/shared/black-300.png": {
+      "sha256": "222b9b98c13f712f5d921ae564e5f5c44f531bfb86fc21dcd75bbf04daed9eef",
+      "bytes": 12657
+    },
+    "branding/shared/black-256.png": {
+      "sha256": "d95c87d24b58b3cb443c49a4fc0a7c6ab7df5e2da1397e0f5724a65549b814a5",
+      "bytes": 9961
+    },
+    "branding/shared/white-on-black-24.png": {
+      "sha256": "33509c4c2c3c3aaa870c43da50096299c3d51351e590cf6cf6541b8b42720605",
+      "bytes": 745
+    },
+    "branding/shared/white-on-black-256.png": {
+      "sha256": "2e98ff348db165dcebec85a82b6a80a8f3db3f598848431427e3c07d12bd4b3c",
+      "bytes": 14165
+    },
+    "branding/shared/white-on-black-64.png": {
+      "sha256": "54330b87a83bb4ac7652f0c06f06d5db32514e5e989b1a18680e8855e1d74e8b",
+      "bytes": 2187
+    },
+    "branding/shared/white-512.png": {
+      "sha256": "dec576c1af4528ae5d074ba209581fce439638842b5c4c6b0b0a220a31bc18d7",
+      "bytes": 30182
+    },
+    "branding/shared/white-on-black-44.png": {
+      "sha256": "9e34f598eb4040c56fb7f9cd655b374726ce4ee41e247ba12285af9420c6170e",
+      "bytes": 1376
+    },
+    "branding/sources/logo-black-original.png": {
+      "sha256": "a68a4782baa855b2d58158e7a205802b875f64f84147c879a9b3d6e1c5677f09",
+      "bytes": 198843
+    },
+    "branding/sources/logo-white-on-black-original.jpg": {
+      "sha256": "c964d071774f67ec83b85207e5ff2511e441f3676b5d92893cffe974a74d0e12",
+      "bytes": 71648
+    },
+    "branding/windows/Logo150.png": {
+      "sha256": "537c28e3533181975cc6499734e35b0266c80cec39ee772da6780b59a909ff39",
+      "bytes": 6876
+    },
+    "branding/windows/Logo44.png": {
+      "sha256": "9e34f598eb4040c56fb7f9cd655b374726ce4ee41e247ba12285af9420c6170e",
+      "bytes": 1376
+    },
+    "branding/windows/Tetherplane.ico": {
+      "sha256": "d7f4058e6f6596273589745539f6e4fbcd17b67ccec760d8e34f2c30c9c404d6",
+      "bytes": 31343
+    },
+    "branding/windows/Logo300.png": {
+      "sha256": "18138d65ff2977973c12e204ec51a03d40427a392412f7626b8c7a9d7b7ecbaa",
+      "bytes": 17785
+    },
+    "branding/windows/Logo50.png": {
+      "sha256": "5bce41c40c9b23770c52f9846ede850247eb24b81dd8faf341219babfeea33d7",
+      "bytes": 1671
+    },
+    "branding/notifications/brand-128.png": {
+      "sha256": "f02c282c36ace0bcffff5610c9c45a53c7e3023bcc333b51efb8352238af3692",
+      "bytes": 5624
+    },
+    "branding/notifications/brand-64.png": {
+      "sha256": "54330b87a83bb4ac7652f0c06f06d5db32514e5e989b1a18680e8855e1d74e8b",
+      "bytes": 2187
+    },
+    "branding/notifications/brand-black-32.png": {
+      "sha256": "a22328cc8a19f981f43cf637e715565fbf6ffd3a31ba8f6392a0f6d4797f4d98",
+      "bytes": 776
+    },
+    "branding/notifications/brand-32.png": {
+      "sha256": "78199e59eaceed2ea6b8d3b828ddec0a8748093ca4b6d0e6741e7e998fd69abe",
+      "bytes": 1029
+    },
+    "branding/notifications/brand-black-64.png": {
+      "sha256": "9504a0bffac523e0f400506f555f878d6db99378244a6c29842168f76e92caf8",
+      "bytes": 1800
+    },
+    "branding/notifications/brand-black-128.png": {
+      "sha256": "543c20315cc06aa79d2732b508dc983f14a6d78323c6beddb5a7583b203c879f",
+      "bytes": 4241
+    },
+    "extension/browser/icons/black-64.png": {
+      "sha256": "9504a0bffac523e0f400506f555f878d6db99378244a6c29842168f76e92caf8",
+      "bytes": 1800
+    },
+    "extension/browser/icons/brand-128.png": {
+      "sha256": "f02c282c36ace0bcffff5610c9c45a53c7e3023bcc333b51efb8352238af3692",
+      "bytes": 5624
+    },
+    "extension/browser/icons/brand-48.png": {
+      "sha256": "27c1144aa76bcc7202b7fad75ec60a16f5c5036a74e23ce9cc2e3b070c0301aa",
+      "bytes": 1587
+    },
+    "extension/browser/icons/brand-32.png": {
+      "sha256": "78199e59eaceed2ea6b8d3b828ddec0a8748093ca4b6d0e6741e7e998fd69abe",
+      "bytes": 1029
+    },
+    "extension/browser/icons/brand-16.png": {
+      "sha256": "40acfffd62c2a7e4f473a13b72df66566552f7c9a0875b579fa3898873fffa9c",
+      "bytes": 480
+    },
+    "packaging/msix-store-runtime/app/assets/brand-128.png": {
+      "sha256": "f02c282c36ace0bcffff5610c9c45a53c7e3023bcc333b51efb8352238af3692",
+      "bytes": 5624
+    },
+    "packaging/msix-store-runtime/app/assets/brand-32.png": {
+      "sha256": "78199e59eaceed2ea6b8d3b828ddec0a8748093ca4b6d0e6741e7e998fd69abe",
+      "bytes": 1029
+    }
+  }
+}
