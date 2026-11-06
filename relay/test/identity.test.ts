@@ -133,11 +133,13 @@ test("simultaneous pairing attempts cannot rebind one device ID to another accou
     const rejects = [first, second].filter(x => x.status === "rejected");
     assert.equal(wins.length, 1);
     assert.equal(rejects.length, 1);
-    assert.match(String(rejects[0].reason), /active pending pairing code/);
+    assert.equal(rejects[0]?.status, "rejected");
+    assert.match(String(rejects[0]?.status === "rejected" ? rejects[0].reason : ""), /active pending pairing code/);
 
     const approvedSecret = first.status === "fulfilled" ? ownerSecret : competingSecret;
     const deniedSecret = first.status === "fulfilled" ? competingSecret : ownerSecret;
-    const acceptedCode = wins[0].value.userCode;
+    const acceptedCode = wins[0]?.status === "fulfilled" ? wins[0].value.userCode : null;
+    assert.ok(acceptedCode);
     const bound = await registry.approvePairing({accountId: "account-owner", userCode: acceptedCode});
     assert.equal(bound.accountId, "account-owner");
     assert.equal(await registry.authenticateDevice("New-Laptop", approvedSecret), "account-owner");
