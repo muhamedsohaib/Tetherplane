@@ -1,0 +1,72 @@
+name: Developer Beta Add Device Lab (review-only ZIP)
+
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  windows-developer-beta:
+    runs-on: windows-latest
+    timeout-minutes: 50
+    steps:
+      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
+        with:
+          persist-credentials: false
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4.4.0
+        with:
+          node-version: 24
+
+      - name: Verify onboarding contract and existing Store pairing semantics
+        shell: pwsh
+        run: |
+          node --test tests/release/developer-beta-add-device.test.mjs
+          if ($LASTEXITCODE -ne 0) { throw 'DEVELOPER_BETA_PAIRING_TESTS_FAIL' }
+          node --test tests/release/msix-store-runtime.test.mjs
+          if ($LASTEXITCODE -ne 0) { throw 'EXISTING_STORE_AUTH_REGRESSION_FAIL' }
+
+      - name: Build exact source native windowless agent and setup launcher
+        shell: pwsh
+        run: |
+          rustup toolchain install stable --profile minimal
+          if ($LASTEXITCODE -ne 0) { throw 'RUST_TOOLCHAIN_INSTALL_FAIL' }
+          .\scripts\build-windows-agent-binaries.ps1
+          if ($LASTEXITCODE -ne 0) { throw 'NATIVE_BINARY_BUILD_FAIL' }
+
+      - name: Download matching public Node license only
+        shell: pwsh
+        run: |
+          $version = (& node -p 'process.version').Trim()
+          if ($LASTEXITCODE -ne 0 -or $version -notmatch '^v24\.[0-9]+\.[0-9]+$') { throw 'NODE_VERSION_UNEXPECTED' }
+          $url = "https://raw.githubusercontent.com/nodejs/node/$version/LICENSE"
+          $file = Join-Path $env:RUNNER_TEMP 'node-distribution-LICENSE'
+          Invoke-WebRequest -Uri $url -OutFile $file -MaximumRedirection 2 -TimeoutSec 45
+          if ((Get-Item -LiteralPath $file).Length -lt 1000) { throw 'NODE_LICENSE_MISSING' }
+          "TETHERPLANE_NODE_LICENSE_PATH=$file" | Out-File -FilePath $env:GITHUB_ENV -Append
+
+      - name: Build non-installed, checksum-verified owner-approved ZIP
+        shell: pwsh
+        run: |
+          $parent = Join-Path $env:GITHUB_WORKSPACE 'target\developer-beta'
+          New-Item -ItemType Directory -Path $parent -ErrorAction Stop | Out-Null
+          $short = (git rev-parse --short=12 HEAD).Trim()
+          $name = "Tetherplane-DeveloperBeta-Windows-x64-$short"
+          $folder = Join-Path $parent $name
+          .\scripts\developer-beta\Build-DeveloperBeta.ps1 -OutputPath $folder -NodeLicenseFile $env:TETHERPLANE_NODE_LICENSE_PATH
+          if ($LASTEXITCODE -ne 0) { throw 'DEVELOPER_BETA_BUILD_FAILED' }
+          $archive = Join-Path $parent ($name + '.zip')
+          Compress-Archive -Path (Join-Path $folder '*') -DestinationPath $archive -CompressionLevel Optimal
+          if ($LASTEXITCODE -ne 0 -or -not (Test-Path -LiteralPath $archive -PathType Leaf)) { throw 'DEVELOPER_BETA_ZIP_FAILED' }
+          $hash = (Get-FileHash -LiteralPath $archive -Algorithm SHA256).Hash.ToLowerInvariant()
+          Write-Output "DEVELOPER_BETA_REVIEW_ZIP_SHA256=$hash"
+          Write-Output "DEVELOPER_BETA_REVIEW_COMMIT=$((git rev-parse HEAD).Trim())"
+          "TETHERPLANE_REVIEW_ZIP=$archive" | Out-File -FilePath $env:GITHUB_ENV -Append
+
+      - name: Retain review artifact only, not a release or installer
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        with:
+          name: tetherplane-developer-beta-review-only
+          path: ${{ env.TETHERPLANE_REVIEW_ZIP }}
+          if-no-files-found: error
+          retention-days: 7

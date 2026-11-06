@@ -47,6 +47,10 @@ Start the Compact MCP edge from the repository after building:
 
     node adapters/compact-mcp/dist/stdio-server.js --tetherd target/debug/tetherd.exe --allow C:\path\you\explicitly\allow
 
+## Add a Windows device (developer-beta review only)
+
+The review-only developer-beta ZIP provides a local owner-approval wizard launched by double-clicking `START HERE.cmd`. New devices generate their own credentials, request approval through the existing relay, and only start after relay-confirmed authorization. The device owner must still independently verify `device.status` and approve each browser tab separately. This is not a signed customer release. See [Add a Windows device — developer beta](docs/developer-beta-add-device.md).
+
 ## Windows release package
 
 Build a runtime package:
