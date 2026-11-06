@@ -1,6 +1,14 @@
 name: Developer Beta Add Device Lab (review-only ZIP)
 
 on:
+  push:
+    branches:
+      - feature/developer-beta-one-click-onboarding-20261107
+    paths:
+      - '.github/workflows/developer-beta-onboarding-lab.yml'
+      - 'packaging/developer-beta/**'
+      - 'scripts/developer-beta/**'
+      - 'tests/release/developer-beta-add-device.test.mjs'
   workflow_dispatch:
 
 permissions:
