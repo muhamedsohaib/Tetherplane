@@ -37,6 +37,7 @@ const result = {
   pinnedLocalPairing: false,
   oneClickOwnerPopupConnected: false,
   oneClickInitialPairing: false,
+  repeatedAuthorizedReads: false,
   hostAuthenticatedExtension: false,
   browserRpcAuthenticated: false,
   realOwnedTabCreated: false,
@@ -470,6 +471,25 @@ try {
   assert.equal(sharedPage?.grant?.origin, new URL(fixtureUrl).origin);
   result.sharedOriginPinned = true;
 
+  // Regression: repeated concurrent snapshots and page enumeration must
+  // remain responsive after a successful owner-approved tab snapshot.
+  // Only the local, disposable fixture is observed; no human account data.
+  for (let cycle = 0; cycle < 8; cycle++) {
+    const [snapshotAgain, listedAgain] = await Promise.all([
+      rpc(rpcPort, "snapshot", {page_id: sharedPage.page_id}),
+      rpc(rpcPort, "pages"),
+    ]);
+    assert.equal(snapshotAgain.status, "success",
+      "shared snapshot failed on cycle " + cycle + ": " +
+      String(snapshotAgain.error?.code ?? "unknown"));
+    assert.equal(listedAgain.status, "success",
+      "authorized pages blocked on cycle " + cycle);
+    assert.ok(listedAgain.data.pages.some(p =>
+      p.page_id === sharedPage.page_id && p.ownership === "shared-authorized"),
+      "owner-authorized tab disappeared while read-only requests overlapped");
+  }
+  result.repeatedAuthorizedReads = true;
+
   const unrelatedPort = await availablePort();
   const unauthorizedUrl = "http://127.0.0.1:" + unrelatedPort + "/not-approved";
   const wrongOrigin = await rpc(rpcPort, "navigate", {
@@ -557,7 +577,7 @@ if (result.cleaned && result.actualExtensionLoaded && result.hostAuthenticatedEx
     result.verifiedBrowserAction && result.humanTabDenied &&
     result.unapprovedOwnedCreationDenied && result.ownedSiteGrantedLocally &&
     result.ownedSiteRevocationDenied &&
-    result.oneClickInitialPairing && result.oneClickOwnerPopupConnected && result.sharedOriginPinned && result.crossOriginNavigationDenied &&
+    result.oneClickInitialPairing && result.oneClickOwnerPopupConnected && result.sharedOriginPinned && result.repeatedAuthorizedReads && result.crossOriginNavigationDenied &&
     result.redirectRevoked && result.tokenRedacted &&
     !result.error) result.verdict = "PASS";
 if (process.argv[4]) {

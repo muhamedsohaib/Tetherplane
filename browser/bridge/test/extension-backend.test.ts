@@ -286,3 +286,58 @@ test("extension backend advertises authenticated-profile capabilities", () => {
     human_tab_sharing: true,
   });
 });
+
+test("unanswered extension command expires and does not poison subsequent calls", async () => {
+  const transport = new FakeTransport();
+  const backend = new ExtensionBrowserBackend({
+    transport,
+    pagesTimeoutMs: 25,
+    commandTimeoutMs: 50,
+  });
+
+  const missing = backend.pages();
+  await assert.rejects(
+    () => missing,
+    (error: unknown) =>
+      error instanceof ExtensionBackendError &&
+      error.code === "timeout",
+  );
+
+  const firstId = String(transport.sent[0]?.request_id);
+  transport.push(success(firstId, { pages: [] }));
+  await new Promise(resolve => setTimeout(resolve, 0));
+
+  const next = backend.pages();
+  await new Promise(resolve => setTimeout(resolve, 0));
+  const secondId = String(transport.sent[1]?.request_id);
+  assert.notEqual(firstId, secondId);
+  transport.push(success(secondId, {
+    pages: [{
+      page_id: "tab:12",
+      tab_id: 12,
+      active: true,
+      ownership: "shared-authorized",
+      url: "https://fixture.example/",
+    }],
+  }));
+  const pages = await next;
+  assert.equal(pages.length, 1);
+  assert.equal(pages[0]?.page_id, "tab:12");
+});
+
+test("extension command deadline is validated and cannot be infinite", () => {
+  assert.throws(
+    () => new ExtensionBrowserBackend({
+      transport: new FakeTransport(),
+      commandTimeoutMs: 0,
+    }),
+    /extension command timeout/,
+  );
+  assert.throws(
+    () => new ExtensionBrowserBackend({
+      transport: new FakeTransport(),
+      pagesTimeoutMs: Number.POSITIVE_INFINITY,
+    }),
+    /extension command timeout/,
+  );
+});

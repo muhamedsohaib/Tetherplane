@@ -43,6 +43,7 @@ export class ExtensionCommandRuntime {
   readonly #controller: ExtensionCommandController;
   readonly #pageAgent: ExtensionPageAgent;
   readonly #operationalAgent: ExtensionOperationalAgent | null;
+  #commandInFlight = false;
 
   constructor(options: {
     session: ExtensionRuntimeSession;
@@ -64,7 +65,37 @@ export class ExtensionCommandRuntime {
       } catch {
         return;
       }
-      await this.handleMessage(message);
+      if (message.type !== "command") {
+        continue;
+      }
+      // Grant-filtered, read-only page enumeration must not queue behind a
+      // hung page observation or debugger command.
+      if (message.operation === "pages") {
+        void this.handleMessage(message).catch(() => undefined);
+        continue;
+      }
+      // Do not queue mutations which could execute unexpectedly after an
+      // owner revokes access or the caller gives up waiting.
+      if (this.#commandInFlight) {
+        const requestId = typeof message.request_id === "string"
+          ? message.request_id : null;
+        if (requestId) {
+          try {
+            this.#sendError(
+              requestId,
+              "provider_busy",
+              "another browser command is still in progress",
+            );
+          } catch {
+            return;
+          }
+        }
+        continue;
+      }
+      this.#commandInFlight = true;
+      void this.handleMessage(message)
+        .catch(() => undefined)
+        .finally(() => { this.#commandInFlight = false; });
     }
   }
 

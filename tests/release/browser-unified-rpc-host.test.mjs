@@ -246,3 +246,28 @@ test("list timeout cannot exceed the outer RPC deadline", () => {
     agentToken: token, timeoutMs: 3500, listTimeoutMs: 3000,
   }), /shorter than the caller deadline/);
 });
+
+test("readiness is not inferred from a live socket when extension pages stall", async () => {
+  const seen = [];
+  const handler = createBrowserUnifiedHandler({
+    agentToken: token,
+    listTimeoutMs: 200,
+    upstream: async ({ port, request }) => {
+      seen.push({ port, op: request.capability });
+      if (port === 17657 && request.capability === "browser.pages") {
+        throw new Error("worker command loop stalled");
+      }
+      if (port === 17657 && request.capability === "browser.status") {
+        return success(request, { available: true });
+      }
+      return success(request, { available: true, pages: [cdppage] });
+    },
+  });
+  const status = await handler(make("invoke", "status"));
+  assert.equal(status.status, "success");
+  assert.equal(status.data.capabilities.backends.cdp, true);
+  assert.equal(status.data.capabilities.backends.owner_extension, false);
+  assert.ok(seen.some(x => x.port === 17657 && x.op === "browser.pages"));
+  assert.ok(!seen.some(x => x.port === 17657 && x.op === "browser.status"));
+  assert.ok(!JSON.stringify(status).includes("private.example"));
+});

@@ -161,14 +161,24 @@ export function createBrowserUnifiedHandler({
     const sanitized = { type: "invoke", request_id: id,
       token: agentToken, capability: request.capability, arguments: args };
     if (op === "status") {
+      // A listening authenticated RPC socket is not proof that the Edge
+      // extension worker is responsive. Only report owner_extension=true
+      // after a bounded grant-filtered pages request is answered. Do not
+      // include page metadata in the status response.
+      const ownerHealth = {
+        ...sanitized,
+        capability: "browser.pages",
+        arguments: {},
+      };
       const [managed, owner] = await Promise.allSettled([
         invoke("managed", sanitized, listTimeoutMs),
-        invoke("owner", sanitized, listTimeoutMs),
+        invoke("owner", ownerHealth, listTimeoutMs),
       ]);
       const managedOK = managed.status === "fulfilled" &&
         managed.value.status === "success";
       const ownerOK = owner.status === "fulfilled" &&
-        owner.value.status === "success";
+        owner.value.status === "success" &&
+        Array.isArray(owner.value.data?.pages);
       if (!managedOK && !ownerOK) {
         return failure(id, "capability_unavailable", "browser backends are unavailable");
       }

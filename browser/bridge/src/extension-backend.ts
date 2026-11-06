@@ -41,6 +41,7 @@ export class ExtensionBackendError extends Error {
 type PendingCommand = {
   resolve(value: unknown): void;
   reject(error: ExtensionBackendError): void;
+  timer: ReturnType<typeof setTimeout>;
 };
 
 export class ExtensionBrowserBackend
@@ -48,16 +49,26 @@ export class ExtensionBrowserBackend
 {
   readonly #transport: ExtensionCommandTransport;
   readonly #pollIntervalMs: number;
+  readonly #commandTimeoutMs: number;
+  readonly #pagesTimeoutMs: number;
   readonly #pending = new Map<string, PendingCommand>();
   #pumpRunning = false;
 
   constructor(options: {
     transport: ExtensionCommandTransport;
     pollIntervalMs?: number;
+    commandTimeoutMs?: number;
+    pagesTimeoutMs?: number;
   }) {
     this.#transport = options.transport;
     this.#pollIntervalMs = normalizePollInterval(
       options.pollIntervalMs,
+    );
+    this.#commandTimeoutMs = normalizeCommandDeadline(
+      options.commandTimeoutMs, 30_000,
+    );
+    this.#pagesTimeoutMs = normalizeCommandDeadline(
+      options.pagesTimeoutMs, 5_000,
     );
   }
 
@@ -246,7 +257,19 @@ export class ExtensionBrowserBackend
     const requestId = randomUUID();
 
     return new Promise((resolve, reject) => {
-      this.#pending.set(requestId, { resolve, reject });
+      const timeoutMs = operation === "pages"
+        ? this.#pagesTimeoutMs : this.#commandTimeoutMs;
+      const timer = setTimeout(() => {
+        const pending = this.#pending.get(requestId);
+        if (!pending) return;
+        this.#pending.delete(requestId);
+        pending.reject(new ExtensionBackendError(
+          "timeout",
+          "extension command did not respond before its deadline",
+        ));
+      }, timeoutMs);
+      timer.unref?.();
+      this.#pending.set(requestId, { resolve, reject, timer });
       try {
         this.#transport.send({
           type: "command",
@@ -257,6 +280,7 @@ export class ExtensionBrowserBackend
         this.#ensurePump();
       } catch (error) {
         this.#pending.delete(requestId);
+        clearTimeout(timer);
         reject(
           normalizeTransportError(
             error,
@@ -291,6 +315,7 @@ export class ExtensionBrowserBackend
           continue;
         }
         this.#pending.delete(message.request_id);
+        clearTimeout(pending.timer);
 
         if (message.status === "success") {
           pending.resolve(message.data);
@@ -317,6 +342,7 @@ export class ExtensionBrowserBackend
         "extension command channel disconnected",
       );
       for (const pending of this.#pending.values()) {
+        clearTimeout(pending.timer);
         pending.reject(normalized);
       }
       this.#pending.clear();
@@ -490,6 +516,17 @@ function normalizeTransportError(
     "provider_failure",
     error instanceof Error ? error.message : fallback,
   );
+}
+
+function normalizeCommandDeadline(
+  value: number | undefined,
+  defaultMs: number,
+): number {
+  const ms = value ?? defaultMs;
+  if (!Number.isSafeInteger(ms) || ms < 20 || ms > 120_000) {
+    throw new TypeError("extension command timeout must be 20 to 120000 ms");
+  }
+  return ms;
 }
 
 function normalizePollInterval(value: number | undefined): number {
