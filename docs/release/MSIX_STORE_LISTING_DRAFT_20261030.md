@@ -1,5 +1,8 @@
 # Microsoft Store listing — Tetherplane (review copy only)
 
+> **2026-11-06 branding supersession (source/UI only):** The owner supplied an exact black-transparent emblem PNG and a white-on-black emblem JPEG. Their unmodified originals and proportional icon exports are recorded in `docs/brand/TETHERPLANE_EXACT_ICON_SOURCE_20261106.md` and `branding/brand-asset-manifest.json`. These replace earlier blue/halftone/placeholders for **new UI artwork**. Historical descriptions below are retained for audit. This does not grant Store submission, signing, owner-approved hash-manifest, publisher-account, or live installation approval.
+
+
 **DRAFT; NOT SUBMITTED.** Prepared against current Store preview in PR #109. The account's verified personal-name publisher is pending Microsoft support request `2610290010001747`; do not use the legacy public `ARCUS Labs` publisher as a substitute if the request requires a change.
 
 ## Store fields (English, Windows desktop only)

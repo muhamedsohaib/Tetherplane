@@ -1,5 +1,8 @@
 # Store candidate rebased as an isolated integration **preview** — 30 October 2026
 
+> **2026-11-06 branding supersession (source/UI only):** The owner supplied an exact black-transparent emblem PNG and a white-on-black emblem JPEG. Their unmodified originals and proportional icon exports are recorded in `docs/brand/TETHERPLANE_EXACT_ICON_SOURCE_20261106.md` and `branding/brand-asset-manifest.json`. These replace earlier blue/halftone/placeholders for **new UI artwork**. Historical descriptions below are retained for audit. This does not grant Store submission, signing, owner-approved hash-manifest, publisher-account, or live installation approval.
+
+
 **Disposition: NO-GO; draft-only; no Store submission or real-device mutation.**
 
 ## Exact reviewed inputs

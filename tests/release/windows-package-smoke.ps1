@@ -85,6 +85,12 @@ try {
         "browser\\extension\\pair.html",
         "browser\\extension\\dist\\background.js",
         "browser\\extension\\dist\\pair.js",
+        "browser\\extension\\icons\\brand-16.png",
+        "browser\\extension\\icons\\brand-32.png",
+        "browser\\extension\\icons\\brand-48.png",
+        "browser\\extension\\icons\\brand-128.png",
+        "browser\\extension\\icons\\black-64.png",
+        "assets\\Tetherplane.ico",
         "launch\\tetherplane-browser.ps1",
         "launch\\tetherplane-browser-setup.ps1"
     )) {
@@ -240,6 +246,12 @@ try {
         "browser\\extension\\pair.html",
         "browser\\extension\\dist\\background.js",
         "browser\\extension\\dist\\pair.js",
+        "browser\\extension\\icons\\brand-16.png",
+        "browser\\extension\\icons\\brand-32.png",
+        "browser\\extension\\icons\\brand-48.png",
+        "browser\\extension\\icons\\brand-128.png",
+        "browser\\extension\\icons\\black-64.png",
+        "assets\\Tetherplane.ico",
         "launch\\tetherplane-browser.ps1",
         "launch\\tetherplane-browser-setup.ps1"
     )) {

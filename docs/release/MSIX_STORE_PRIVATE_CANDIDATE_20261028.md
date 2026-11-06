@@ -1,5 +1,7 @@
 # Tetherplane — Microsoft Store private-audience candidate (28 October 2026)
 
+> **2026-11-06 branding supersession (source/UI only):** The owner supplied an exact black-transparent emblem PNG and a white-on-black emblem JPEG. Their unmodified originals and proportional icon exports are recorded in `docs/brand/TETHERPLANE_EXACT_ICON_SOURCE_20261106.md` and `branding/brand-asset-manifest.json`. These replace earlier blue/halftone/placeholders for **new UI artwork**. Historical descriptions below are retained for audit. This does not grant Store submission, signing, owner-approved hash-manifest, publisher-account, or live installation approval.
+
 **Status: SOURCE CANDIDATE / RELEASE NO-GO.** No Partner Center upload, certification submission, trusted Store signature, public release, deployment, account change, or device mutation is authorized by this branch.
 
 ## Observed Partner Center product identity (owner screenshot)

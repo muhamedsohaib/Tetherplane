@@ -246,11 +246,11 @@ export async function createWizard(options = {}) {
       const host = "127.0.0.1:" + server.address().port;
       if (req.headers.host !== host) return send(res, 400, { error: "Invalid local host." });
       const url = new URL(req.url || "/", origin);
-      if (req.method === "GET" && ["/", "/setup-client.js", "/setup.css"].includes(url.pathname)) {
+      if (req.method === "GET" && ["/", "/setup-client.js", "/setup.css", "/assets/brand-32.png", "/assets/brand-128.png"].includes(url.pathname)) {
         const name = url.pathname === "/" ? "setup.html" : url.pathname.slice(1);
         const body = await readAssets(join(appDirectory, name));
-        res.writeHead(200, { ...NO_CACHE, "content-type": name.endsWith(".js") ? "text/javascript" : name.endsWith(".css") ? "text/css" : "text/html",
-          "content-security-policy": "default-src 'none'; script-src 'self'; style-src 'self'; connect-src 'self'; form-action 'none'; base-uri 'none'; frame-ancestors 'none'" });
+        res.writeHead(200, { ...NO_CACHE, "content-type": name.endsWith(".png") ? "image/png" : name.endsWith(".js") ? "text/javascript" : name.endsWith(".css") ? "text/css" : "text/html",
+          "content-security-policy": "default-src 'none'; script-src 'self'; style-src 'self'; img-src 'self'; connect-src 'self'; form-action 'none'; base-uri 'none'; frame-ancestors 'none'" });
         res.end(body);
         return;
       }

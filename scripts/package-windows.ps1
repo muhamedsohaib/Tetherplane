@@ -48,7 +48,7 @@ foreach ($required in @($tetherd, $tetherdWindowless, $browserWindowless, $model
 
 Remove-Item -LiteralPath $output -Recurse -Force -ErrorAction SilentlyContinue
 New-Item -ItemType Directory -Force -Path $output | Out-Null
-New-Item -ItemType Directory -Force -Path (Join-Path $output "bin"),(Join-Path $output "launch"),(Join-Path $output "adapters"),(Join-Path $output "protocol\schemas") | Out-Null
+New-Item -ItemType Directory -Force -Path (Join-Path $output "bin"),(Join-Path $output "launch"),(Join-Path $output "assets"),(Join-Path $output "adapters"),(Join-Path $output "protocol\schemas") | Out-Null
 
 Copy-Item -LiteralPath $tetherd -Destination (Join-Path $output "bin\tetherd.exe")
 Copy-Item -LiteralPath $tetherdWindowless -Destination (Join-Path $output "bin\tetherd-agentw.exe")
@@ -87,6 +87,12 @@ New-Item -ItemType Directory -Force -Path $extensionRoot | Out-Null
 Copy-Item -LiteralPath (Join-Path $repo "extension\browser\manifest.json") -Destination (Join-Path $extensionRoot "manifest.json")
 Copy-Item -LiteralPath (Join-Path $repo "extension\browser\pair.html") -Destination (Join-Path $extensionRoot "pair.html")
 Copy-Item -LiteralPath (Join-Path $repo "extension\browser\dist") -Destination $extensionRoot -Recurse -Force
+$canonicalWindowsIcon = Join-Path $repo "branding\windows\Tetherplane.ico"
+if (-not (Test-Path -LiteralPath $canonicalWindowsIcon -PathType Leaf)) { throw "Canonical Windows icon is missing" }
+Copy-Item -LiteralPath $canonicalWindowsIcon -Destination (Join-Path $output "assets\Tetherplane.ico") -Force
+$canonicalExtensionIcons = Join-Path $repo "extension\browser\icons"
+if (-not (Test-Path -LiteralPath $canonicalExtensionIcons -PathType Container)) { throw "Canonical extension logo assets are missing" }
+Copy-Item -LiteralPath $canonicalExtensionIcons -Destination $extensionRoot -Recurse -Force
 
 # Bundle only the reviewed existing authenticated browser host. Bare runtime
 # dependencies are resolved against the deployed browser/bridge node_modules

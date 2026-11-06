@@ -19,6 +19,18 @@
     "type": "module"
   },
   "action": {
-    "default_popup": "pair.html"
+    "default_popup": "pair.html",
+    "default_icon": {
+      "16": "icons/brand-16.png",
+      "32": "icons/brand-32.png",
+      "48": "icons/brand-48.png",
+      "128": "icons/brand-128.png"
+    }
+  },
+  "icons": {
+    "16": "icons/brand-16.png",
+    "32": "icons/brand-32.png",
+    "48": "icons/brand-48.png",
+    "128": "icons/brand-128.png"
   }
 }

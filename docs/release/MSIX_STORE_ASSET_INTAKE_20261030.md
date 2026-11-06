@@ -1,5 +1,8 @@
 # Tetherplane Store image intake — isolated review-only workflow (30 October 2026)
 
+> **2026-11-06 branding supersession (source/UI only):** The owner supplied an exact black-transparent emblem PNG and a white-on-black emblem JPEG. Their unmodified originals and proportional icon exports are recorded in `docs/brand/TETHERPLANE_EXACT_ICON_SOURCE_20261106.md` and `branding/brand-asset-manifest.json`. These replace earlier blue/halftone/placeholders for **new UI artwork**. Historical descriptions below are retained for audit. This does not grant Store submission, signing, owner-approved hash-manifest, publisher-account, or live installation approval.
+
+
 **Release and Store submission: NO-GO.** This is a source-asset preparation procedure only, stacked on draft PR #109. No publisher identity changes, signing, Store upload, actual device install or production runtime mutations.
 
 ## Canonical owner-selected source assets and approval

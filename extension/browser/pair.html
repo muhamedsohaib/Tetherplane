@@ -10,8 +10,7 @@
     body { width: 364px; margin: 0; color: #182436; background: #f6f8fc; }
     .shell { padding: 18px; }
     .brand { display: flex; align-items: center; gap: 10px; margin-bottom: 20px; }
-    .mark { width: 34px; height: 34px; border: 2px solid #174cb3; border-radius: 10px; position: relative; }
-    .mark:after { content: ""; position: absolute; inset: 8px; border: 2px solid #174cb3; border-radius: 4px; }
+    .brand-mark { width: 34px; height: 34px; object-fit: contain; flex: 0 0 auto; }
     h1 { margin: 0; font-size: 17px; letter-spacing: -.035em; }
     h2 { font-size: 14px; margin: 0 0 8px; }
     .sub { margin: 2px 0 0; color: #617187; font-size: 11px; }
@@ -49,7 +48,7 @@
 <body>
   <main class="shell">
     <header class="brand">
-      <div class="mark" aria-hidden="true"></div>
+      <img class="brand-mark" src="icons/black-64.png" width="34" height="34" alt="" aria-hidden="true">
       <div><h1>Tetherplane</h1><p class="sub">Authorized browser access</p></div>
     </header>
 
