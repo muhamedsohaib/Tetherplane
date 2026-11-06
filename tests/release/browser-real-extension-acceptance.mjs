@@ -36,6 +36,7 @@ const result = {
   actualExtensionLoaded: false,
   pinnedLocalPairing: false,
   oneClickOwnerPopupConnected: false,
+  oneClickInitialPairing: false,
   hostAuthenticatedExtension: false,
   browserRpcAuthenticated: false,
   realOwnedTabCreated: false,
@@ -262,11 +263,21 @@ try {
     throw error;
   }
 
+  // First-run acceptance: one owner click pairs the extension AND
+  // grants the currently selected website without using advanced controls.
+  const firstTab = await evaluatePage(extensionTarget.webSocketDebuggerUrl,
+    "chrome.tabs.create({url:" + JSON.stringify(fixtureUrl) +
+    ",active:true}).then(t=>({id:t.id,active:t.active}))");
+  const firstTabId = firstTab.result?.value?.id;
+  assert.ok(Number.isSafeInteger(firstTabId));
+  await until(async () => {
+    const live = await evaluatePage(extensionTarget.webSocketDebuggerUrl,
+      "chrome.tabs.get(" + firstTabId + ").then(t=>t.url)");
+    return live.result?.value?.startsWith(fixtureUrl) === true;
+  }, 10000, "first-run fixture tab did not load");
   const clicked = await evaluatePage(popup.webSocketDebuggerUrl,
-    "(()=>{const details=document.querySelector('#troubleshoot');" +
-    "const control=document.querySelector('#pair-local');" +
-    "if(!details||!control)return false;" +
-    "details.open=true;control.click();return true;})()");
+    "(()=>{const control=document.querySelector('#quick-connect');" +
+    "if(!control)return false;control.click();return true;})()");
   assert.equal(clicked.result?.value, true);
 
   try {
@@ -292,6 +303,17 @@ try {
   assert.equal(handshake.status, "success");
   assert.ok(handshake.data.operations.includes("create_tab"));
   result.browserRpcAuthenticated = true;
+  await until(async () => {
+    const pages = await rpc(rpcPort, "pages");
+    return pages.data?.pages?.find(p =>
+      p.tab_id === firstTabId && p.ownership === "shared-authorized") ?? null;
+  }, 12000, "first-run one-click popup did not grant the selected tab");
+  const initialPopup = await evaluatePage(popup.webSocketDebuggerUrl,
+    "({status:document.querySelector('#share-status')?.textContent||''," +
+    "connection:document.querySelector('#connection-state')?.textContent||''})");
+  assert.match(initialPopup.result?.value?.status ?? "",
+    /Current tab connected|This tab is shared/);
+  result.oneClickInitialPairing = true;
 
   // Remote ownership must not authorize a site. Only the owner's local
   // popup can approve an exact website origin for AI-created tabs.
@@ -411,6 +433,15 @@ try {
     "chrome.tabs.update(" + humanTabId +
     ",{active:true}).then(t=>({id:t.id,active:t.active}))");
   assert.equal(activated.result?.value?.active, true);
+  // Reopening the popup on another tab must refresh the per-tab status.
+  await evaluatePage(popup.webSocketDebuggerUrl, "location.reload(); true");
+  await until(async () => {
+    try {
+      const page = await evaluatePage(popup.webSocketDebuggerUrl,
+        "({ready:document.readyState,connect:!!document.querySelector('#quick-connect')})");
+      return page.result?.value?.ready === "complete" && page.result?.value?.connect;
+    } catch { return false; }
+  }, 10000, "owner popup did not reopen for the second tab");
   const oneClick = await evaluatePage(popup.webSocketDebuggerUrl,
     "(()=>{const c=document.querySelector('#quick-connect');" +
     "const nav=document.querySelector('#share-navigate');" +
@@ -526,7 +557,7 @@ if (result.cleaned && result.actualExtensionLoaded && result.hostAuthenticatedEx
     result.verifiedBrowserAction && result.humanTabDenied &&
     result.unapprovedOwnedCreationDenied && result.ownedSiteGrantedLocally &&
     result.ownedSiteRevocationDenied &&
-    result.oneClickOwnerPopupConnected && result.sharedOriginPinned && result.crossOriginNavigationDenied &&
+    result.oneClickInitialPairing && result.oneClickOwnerPopupConnected && result.sharedOriginPinned && result.crossOriginNavigationDenied &&
     result.redirectRevoked && result.tokenRedacted &&
     !result.error) result.verdict = "PASS";
 if (process.argv[4]) {
