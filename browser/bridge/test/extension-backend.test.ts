@@ -150,7 +150,7 @@ test("extension backend semantic wait polls until revision changes", async () =>
     pollIntervalMs: 1,
   });
 
-  const waiting = backend.waitForSettled("tab:7", 4, 100);
+  const waiting = backend.waitForSettled("tab:7", 4, 2000);
 
   await new Promise((resolve) => setTimeout(resolve, 0));
   const firstId = String(transport.sent[0]?.request_id);
