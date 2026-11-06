@@ -22,6 +22,7 @@ import {
   type ChromeDownloadsApi,
 } from "./operations.ts";
 import { ExtensionCommandRuntime } from "./runtime.ts";
+import { grantPermissionFields } from "./popup-status.ts";
 import { ExtensionBridgeClient } from "./session.ts";
 
 const RECONNECT_DELAY_MS = 1_000;
@@ -81,6 +82,7 @@ chrome.runtime.onMessage.addListener(
         const tabId = "tab_id" in message ? message.tab_id : undefined;
         let shared = false;
         let expiresAt: number | undefined;
+        let grantFlags: ReturnType<typeof grantPermissionFields> | undefined;
         if (typeof tabId === "number" && Number.isSafeInteger(tabId) && tabId >= 0) {
           const page = controller.pages().find((candidate) =>
             candidate.tab_id === tabId &&
@@ -93,6 +95,9 @@ chrome.runtime.onMessage.addListener(
               const live = await controller.authorizeLivePage(page.page_id, "snapshot");
               shared = live.ownership === "shared-authorized";
               expiresAt = shared ? live.grant?.expires_at_ms : undefined;
+              grantFlags = shared && live.grant
+                ? grantPermissionFields(live.grant.operations)
+                : undefined;
             } catch {
               // A redirected, revoked, or expired grant is never presented as shared.
             }
@@ -104,6 +109,7 @@ chrome.runtime.onMessage.addListener(
           connected: bridgeConnected,
           shared,
           ...(expiresAt !== undefined ? { expires_at_ms: expiresAt } : {}),
+          ...(grantFlags ?? {}),
         });
       }, () => {
         sendResponse({ ok: false, error: "Local browser status is unavailable" });

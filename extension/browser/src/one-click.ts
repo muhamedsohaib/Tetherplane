@@ -5,6 +5,8 @@ export type OwnerBrowserStatus = {
   connected: boolean;
   shared: boolean;
   expires_at_ms?: number;
+  grant_navigate?: boolean;
+  grant_upload?: boolean;
 };
 
 export type OneClickDependencies = {

@@ -12,6 +12,7 @@ import {
   connectCurrentTab,
   type OwnerBrowserStatus,
 } from "./one-click.ts";
+import { describeOwnerPopup } from "./popup-status.ts";
 import {
   approveOwnedSite,
   revokeOwnedSite,
@@ -32,6 +33,9 @@ const primary = getElement<HTMLButtonElement>("#quick-connect");
 const disconnect = getElement<HTMLButtonElement>("#detach-current");
 const indicator = getElement<HTMLElement>("#connection-indicator");
 const connectionState = getElement<HTMLElement>("#connection-state");
+const connectTitle = getElement<HTMLElement>("#connect-title");
+const connectSummary = getElement<HTMLElement>("#connect-summary");
+const grantPermissions = getElement<HTMLElement>("#grant-permissions");
 const shareStatus = getElement<HTMLElement>("#share-status");
 const status = getElement<HTMLElement>("#status");
 const ttl = getElement<HTMLSelectElement>("#share-ttl");
@@ -104,6 +108,12 @@ async function readStatus(): Promise<OwnerBrowserStatus> {
     ...(typeof record.expires_at_ms === "number"
       ? { expires_at_ms: record.expires_at_ms }
       : {}),
+    ...(typeof record.grant_navigate === "boolean"
+      ? { grant_navigate: record.grant_navigate }
+      : {}),
+    ...(typeof record.grant_upload === "boolean"
+      ? { grant_upload: record.grant_upload }
+      : {}),
   };
 }
 
@@ -162,19 +172,14 @@ async function connect(): Promise<void> {
       },
     );
     renderStatus(result);
-    const minutes = Math.round(Number(ttl.value) / 60_000);
-    setMessage(
-      shareStatus,
-      `Current tab connected. Access expires in ${minutes} minute${minutes === 1 ? "" : "s"}.`,
-      false,
-    );
   } catch (error) {
-    setMessage(shareStatus, humanError(error), true);
     try {
       renderStatus(await readStatus());
     } catch {
       setConnectionIndicator("error", "Local connection unavailable");
     }
+    // An unsuccessful connect must remain visible even after status refresh.
+    setMessage(shareStatus, humanError(error), true);
   } finally {
     setBusy(false);
   }
@@ -217,7 +222,9 @@ async function pairLocally(): Promise<void> {
     setMessage(
       status,
       updated.connected
-        ? "Connected. Select Connect this tab to authorize the active tab."
+        ? updated.shared
+          ? "Connected. An existing local tab authorization is active."
+          : "Connected. Select Connect this tab to authorize the active tab."
         : "Pairing saved. The browser host is still reconnecting.",
       false,
     );
@@ -274,22 +281,16 @@ async function refresh(): Promise<void> {
 }
 
 function renderStatus(state: OwnerBrowserStatus): void {
-  if (state.connected) {
-    setConnectionIndicator("connected", "Extension connected locally");
-  } else if (state.paired) {
-    setConnectionIndicator("connecting", "Paired · reconnecting");
-  } else {
-    setConnectionIndicator("disconnected", "Not yet paired");
-  }
-  primary.classList.toggle("hidden", state.shared);
-  disconnect.classList.toggle("hidden", !state.shared);
-  if (state.shared && typeof state.expires_at_ms === "number") {
-    const minutes = Math.max(
-      1,
-      Math.ceil((state.expires_at_ms - Date.now()) / 60_000),
-    );
-    setMessage(shareStatus, `This tab is shared · ${minutes} min remaining.`, false);
-  }
+  const view = describeOwnerPopup(state);
+  setConnectionIndicator(view.connectionState, view.connectionText);
+  connectTitle.textContent = view.heading;
+  connectSummary.textContent = view.summary;
+  grantPermissions.textContent = view.permissionText;
+  primary.dataset.idleLabel = view.connectLabel;
+  if (!busy) primary.textContent = view.connectLabel;
+  primary.classList.toggle("hidden", !view.showConnect);
+  disconnect.classList.toggle("hidden", !view.showStopSharing);
+  setMessage(shareStatus, view.statusText, false);
 }
 
 function setConnectionIndicator(
@@ -305,7 +306,7 @@ function setBusy(value: boolean): void {
   primary.disabled = value;
   disconnect.disabled = value;
   pairButton.disabled = value;
-  primary.textContent = value ? "Connecting…" : "Connect this tab";
+  primary.textContent = value ? "Connecting…" : (primary.dataset.idleLabel ?? "Connect this tab");
 }
 
 function setMessage(
