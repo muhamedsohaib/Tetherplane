@@ -400,6 +400,9 @@ function collectDocumentSemanticState(expectedOrigin?: string): FrameObservation
         "button",
         "input",
         "textarea",
+        "[contenteditable=\"true\"]",
+        "[contenteditable=\"plaintext-only\"]",
+        "[contenteditable=\"\"]",
         "select",
         "a[href]",
         "[role]",
@@ -421,6 +424,9 @@ function collectDocumentSemanticState(expectedOrigin?: string): FrameObservation
     const explicit = element.getAttribute("role");
     if (explicit) {
       return explicit;
+    }
+    if (element instanceof HTMLElement && element.isContentEditable) {
+      return "textbox";
     }
     const tag = element.tagName.toLowerCase();
     if (tag === "button") return "button";
@@ -463,6 +469,13 @@ function collectDocumentSemanticState(expectedOrigin?: string): FrameObservation
         .join(" ");
       if (labels.trim()) return normalizedText(labels);
     }
+
+    // Unlabelled form controls frequently supply a visible placeholder.
+    // Prefer that stable instruction over the changing text of an editor.
+    const placeholder = element.getAttribute("placeholder") ??
+      element.getAttribute("aria-placeholder") ??
+      element.getAttribute("data-placeholder");
+    if (placeholder?.trim()) return normalizedText(placeholder);
 
     return normalizedText(
       element.getAttribute("alt") ??
@@ -523,6 +536,12 @@ function collectDocumentSemanticState(expectedOrigin?: string): FrameObservation
       element instanceof HTMLSelectElement
     ) {
       return normalizedText(element.value);
+    }
+    if (element instanceof HTMLElement && element.isContentEditable &&
+        ["", "true", "plaintext-only"].includes(
+          (element.getAttribute("contenteditable") ?? "false").toLowerCase(),
+        )) {
+      return normalizedText(element.innerText ?? element.textContent);
     }
     return undefined;
   }
@@ -739,36 +758,51 @@ function performDocumentAction(
   }
 
   if (kind === "fill") {
-    if (
-      !(
-        element instanceof HTMLInputElement ||
-        element instanceof HTMLTextAreaElement
-      ) ||
-      typeof action.value !== "string"
-    ) {
+    if (typeof action.value !== "string") {
       return {
         ok: false,
         code: "invalid_arguments",
-        message: "fill requires a text input and string value",
+        message: "fill requires a string value",
       };
     }
 
-    const prototype =
-      element instanceof HTMLInputElement
-        ? HTMLInputElement.prototype
-        : HTMLTextAreaElement.prototype;
-    const descriptor = Object.getOwnPropertyDescriptor(
-      prototype,
-      "value",
-    );
-    descriptor?.set?.call(element, action.value);
-    element.dispatchEvent(
-      new Event("input", { bubbles: true }),
-    );
-    element.dispatchEvent(
-      new Event("change", { bubbles: true }),
-    );
-    return { ok: true };
+    if (element instanceof HTMLInputElement ||
+        element instanceof HTMLTextAreaElement) {
+      const prototype =
+        element instanceof HTMLInputElement
+          ? HTMLInputElement.prototype
+          : HTMLTextAreaElement.prototype;
+      const descriptor = Object.getOwnPropertyDescriptor(
+        prototype,
+        "value",
+      );
+      descriptor?.set?.call(element, action.value);
+      element.dispatchEvent(new Event("input", { bubbles: true }));
+      element.dispatchEvent(new Event("change", { bubbles: true }));
+      return { ok: true };
+    }
+
+    // Explicitly editable roots only. Never focus a human-owned window,
+    // synthesize keyboard events, access the system clipboard, or inject HTML.
+    // The outer page authorization/origin checks still apply to this action.
+    if (element instanceof HTMLElement && element.isContentEditable &&
+        ["", "true", "plaintext-only"].includes(
+          (element.getAttribute("contenteditable") ?? "false").toLowerCase(),
+        )) {
+      element.replaceChildren(document.createTextNode(action.value));
+      element.dispatchEvent(new InputEvent("input", {
+        bubbles: true,
+        inputType: "insertText",
+        data: action.value,
+      }));
+      return { ok: true };
+    }
+
+    return {
+      ok: false,
+      code: "invalid_arguments",
+      message: "fill requires a text input or editable root",
+    };
   }
 
   if (kind === "select") {
