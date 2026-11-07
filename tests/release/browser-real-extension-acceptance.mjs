@@ -30,6 +30,10 @@ const fixtureHtml = '<!DOCTYPE html><html><body>' +
   '<input aria-label="Release marker" id="marker" value="before">' +
   '<button aria-label="Commit fixture action" onclick="document.querySelector(' +
   "'#marker').value='clicked'\"" + '>Commit fixture action</button>' +
+  '<input id="post-title" placeholder="What&#39;s on your mind?">' +
+  '<div id="rich-editor" role="textbox" contenteditable="true" aria-label="Post body"></div>' +
+  '<p role="status" id="editor-events">waiting</p>' +
+  '<script>document.querySelector("#rich-editor").addEventListener("input", function(){document.querySelector("#editor-events").textContent="rich-editor-input-fired";});</script>' +
   '</body></html>';
 const result = {
   temporaryProfile: true,
@@ -46,6 +50,7 @@ const result = {
   ownedSiteGrantedLocally: false,
   ownedSiteRevocationDenied: false,
   verifiedBrowserAction: false,
+  richTextEditorFilled: false,
   humanTabDenied: false,
   sharedOriginPinned: false,
   crossOriginNavigationDenied: false,
@@ -463,6 +468,37 @@ try {
   assert.equal(action.status, "success", JSON.stringify(action.error));
   assert.equal(action.data.state, "verified", JSON.stringify(action.data));
   result.verifiedBrowserAction = true;
+
+  // Acceptance regression: a real owner-approved Chrome extension must
+  // identify placeholder-labelled inputs and edit authorized rich-text controls.
+  const formSnapshot = await rpc(rpcPort, "snapshot", {page_id: pageId});
+  assert.equal(formSnapshot.status, "success", JSON.stringify(formSnapshot.error));
+  const title = formSnapshot.data.nodes.find(n => n.accessible_name === "What's on your mind?");
+  const richEditor = formSnapshot.data.nodes.find(n => n.accessible_name === "Post body");
+  assert.ok(title, "placeholder-based title is not discoverable");
+  assert.ok(richEditor, "contenteditable textbox is not discoverable");
+  const titleValue = "Tetherplane developer testing";
+  const postTitle = await rpc(rpcPort, "act", {
+    page_id: pageId,
+    actions: [{kind: "fill", target: title.ref, value: titleValue}],
+    expectations: [{kind: "value", target: title.ref, equals: titleValue}],
+    timeout_ms: 5000,
+  });
+  assert.equal(postTitle.status, "success", JSON.stringify(postTitle.error));
+  assert.equal(postTitle.data.state, "verified", JSON.stringify(postTitle.data));
+  const postBody = "Looking for developers to try MCP computer automation";
+  const bodyAction = await rpc(rpcPort, "act", {
+    page_id: pageId,
+    actions: [{kind: "fill", target: richEditor.ref, value: postBody}],
+    expectations: [
+      {kind: "value", target: richEditor.ref, equals: postBody},
+      {kind: "text", includes: "rich-editor-input-fired"},
+    ],
+    timeout_ms: 5000,
+  });
+  assert.equal(bodyAction.status, "success", JSON.stringify(bodyAction.error));
+  assert.equal(bodyAction.data.state, "verified", JSON.stringify(bodyAction.data));
+  result.richTextEditorFilled = true;
 
   // The extension popup may close or be absent from Chrome's tab list.
   // Exercise a real ordinary HTTP tab, then revoke a local synthetic grant.
