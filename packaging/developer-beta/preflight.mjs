@@ -25,7 +25,7 @@ const extraRoots=[
 
 function permittedRelativeFile(file){
  if(typeof file!=="string"||file.startsWith("/")||file.includes("\\")||
-   file.split("/").some(part=>!part||part==="."||part===".."||/[\\x00-\\x1f:]/.test(part)))return false;
+   file.split("/").some(part=>!part||part==="."||part===".."||/[\x00-\x1f:]/.test(part)))return false;
  return files.includes(file)||extraRoots.some(prefix=>file.startsWith(prefix));
 }
 async function regularFileBelow(rootDir,relative){
