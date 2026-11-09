@@ -5,6 +5,7 @@ on:
     branches:
       - feature/developer-beta-one-click-onboarding-20261107
       - fix/developer-beta-browser-payload-20261109
+      - feature/developer-beta-single-zip-three-steps-20261109
     paths:
       - '.github/workflows/developer-beta-onboarding-lab.yml'
       - 'packaging/developer-beta/**'
@@ -17,6 +18,11 @@ on:
       - 'scripts/developer-beta/**'
       - 'tests/release/developer-beta-add-device.test.mjs'
   workflow_dispatch:
+    inputs:
+      public_relay_url:
+        description: "Optional existing public wss:// relay /device URL (never put secrets here)"
+        required: false
+        type: string
 
 permissions:
   contents: read
@@ -76,13 +82,15 @@ jobs:
 
       - name: Build non-installed, checksum-verified owner-approved ZIP
         shell: pwsh
+        env:
+          TETHERPLANE_PUBLIC_RELAY_URL: ${{ inputs.public_relay_url }}
         run: |
           $parent = Join-Path $env:GITHUB_WORKSPACE 'target\developer-beta'
           New-Item -ItemType Directory -Path $parent -ErrorAction Stop | Out-Null
           $short = (git rev-parse --short=12 HEAD).Trim()
           $name = "Tetherplane-DeveloperBeta-Windows-x64-$short"
           $folder = Join-Path $parent $name
-          .\scripts\developer-beta\Build-DeveloperBeta.ps1 -OutputPath $folder -NodeLicenseFile $env:TETHERPLANE_NODE_LICENSE_PATH
+          .\scripts\developer-beta\Build-DeveloperBeta.ps1 -OutputPath $folder -NodeLicenseFile $env:TETHERPLANE_NODE_LICENSE_PATH -PublicRelayUrl $env:TETHERPLANE_PUBLIC_RELAY_URL
           if ($LASTEXITCODE -ne 0) { throw 'DEVELOPER_BETA_BUILD_FAILED' }
           $archive = Join-Path $parent ($name + '.zip')
           Compress-Archive -Path (Join-Path $folder '*') -DestinationPath $archive -CompressionLevel Optimal
