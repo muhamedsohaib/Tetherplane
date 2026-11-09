@@ -100,6 +100,33 @@ jobs:
           Write-Output "DEVELOPER_BETA_REVIEW_COMMIT=$((git rev-parse HEAD).Trim())"
           "TETHERPLANE_REVIEW_ZIP=$archive" | Out-File -FilePath $env:GITHUB_ENV -Append
 
+      - name: Verify one extraction and the included Notepad instructions
+        shell: pwsh
+        run: |
+          $archive = $env:TETHERPLANE_REVIEW_ZIP
+          if (-not (Test-Path -LiteralPath $archive -PathType Leaf)) { throw 'BETA_ARCHIVE_MISSING' }
+          $extracted = Join-Path $env:RUNNER_TEMP ('tetherplane-extract-'+[guid]::NewGuid().ToString('N'))
+          if (Test-Path -LiteralPath $extracted) { throw 'BETA_EXTRACT_COLLISION' }
+          try {
+            Expand-Archive -LiteralPath $archive -DestinationPath $extracted -ErrorAction Stop
+            $guide = Join-Path $extracted 'READ ME FIRST.txt'
+            if (-not (Test-Path -LiteralPath $guide -PathType Leaf)) { throw 'BETA_NOTEPAD_MISSING' }
+            if (-not (Test-Path -LiteralPath (Join-Path $extracted 'START HERE.cmd') -PathType Leaf)) { throw 'BETA_LAUNCHER_MISSING' }
+            $txt = Get-Content -LiteralPath $guide -Raw
+            $steps = @([regex]::Matches($txt,'(?m)^([1-3])\. '))
+            if ($steps.Count -ne 3) { throw 'BETA_NOTEPAD_NOT_THREE_STEPS' }
+            $node = Join-Path $extracted 'runtime\node.exe'
+            $preflight = Join-Path $extracted 'app\preflight.mjs'
+            & $node $preflight --check
+            if ($LASTEXITCODE -ne 0) { throw 'BETA_EXTRACTED_PACKAGE_INTEGRITY_FAILED' }
+            Write-Output 'BETA_ONE_EXTRACT_THREE_STEPS_PASS'
+          }
+          finally {
+            if (Test-Path -LiteralPath $extracted) {
+              Remove-Item -LiteralPath $extracted -Recurse -Force -ErrorAction Stop
+            }
+          }
+
       - name: Retain review artifact only, not a release or installer
         uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
         with:
