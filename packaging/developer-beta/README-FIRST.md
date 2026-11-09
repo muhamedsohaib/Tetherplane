@@ -15,6 +15,12 @@ This is an **unsigned Tetherplane developer beta**, not a public customer instal
 
 Open the authenticated **Tetherplane Control Center → Device Authority**. Review the new device ID and short-lived code, approve only the intended device, then verify that `device.status` succeeds. This is the same existing relay/account authorization; **do not register another OAuth client**, and do not disclose the relay's private tokens. A browser tab on this new device requires a **separate, explicit, expiring tab grant** from the Edge extension. Device pairing never approves all tabs.
 
+## Browser payload in this review candidate
+
+The reviewed ZIP includes the existing browser host, its runtime dependencies, the windowless browser launcher and the unpacked extension. Every included file is covered by the beta checksum inventory. **They are staged, not automatically enabled.** Device pairing does not enroll the extension, start persistent browser access, share human-owned tabs or grant origins.
+
+There is no approved automatic browser-enrollment workflow in this developer-beta setup. A browser-first real-user trial remains **NO-GO** until the extension is connected through an independently verified, explicit owner-consent workflow and the complete installed browser candidate passes Windows, authorization/revocation, restart and trust gates. Do not manually load the unpacked extension into an ordinary personal browser profile based solely on the ZIP's presence.
+
 ## Reconnect / stop / revoke
 
 Reopen **START HERE.cmd** on the new device to resume its saved identity. No startup task is silently installed. **Stop this session's agent** terminates only this local process. To remove remote access, the authenticated owner must **Revoke Device** under Device Authority and verify the call is denied afterward. Do not delete or replace saved credentials to force pairing. A damaged existing identity is blocked and preserved for review.
