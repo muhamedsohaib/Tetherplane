@@ -110,9 +110,9 @@ try {
  }
  Push-Location $repo
  try {
-  $host=Join-Path $browserRoot 'host.mjs'
-  & pnpm.cmd --filter @tetherplane/browser-extension exec esbuild (Join-Path $repo 'scripts\browser-extension-host.ts') --bundle --platform=node --format=esm --target=node22 --packages=external ("--outfile="+$host)
-  if($LASTEXITCODE -ne 0 -or -not(Test-Path -LiteralPath $host -PathType Leaf)){throw 'BETA_BROWSER_HOST_BUNDLE_FAILED'}
+  $hostBundle=Join-Path $browserRoot 'host.mjs'
+  & pnpm.cmd --filter @tetherplane/browser-extension exec esbuild (Join-Path $repo 'scripts\browser-extension-host.ts') --bundle --platform=node --format=esm --target=node22 --packages=external ("--outfile="+$hostBundle)
+  if($LASTEXITCODE -ne 0 -or -not(Test-Path -LiteralPath $hostBundle -PathType Leaf)){throw 'BETA_BROWSER_HOST_BUNDLE_FAILED'}
  } finally {Pop-Location}
 } finally {
  Remove-Item -LiteralPath $deployScratch -Recurse -Force -ErrorAction SilentlyContinue
