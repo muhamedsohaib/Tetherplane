@@ -215,4 +215,8 @@ test("integrity requires every browser asset and covers its dependency inventory
  await rm(join(root,"unverified-helper.js"));
  await writeFile(join(root,"browser","node_modules","ws","package.json"),"tampered");
  await assert.rejects(()=>verifyCandidate(root),/integrity check failed/);
+ await writeFile(join(root,"browser","node_modules","ws","package.json"),
+   "synthetic fixture browser/node_modules/ws/package.json");
+ await writeFile(join(root,"READ ME FIRST.txt"),"tampered");
+ await assert.rejects(()=>verifyCandidate(root),/Package integrity check failed: READ ME FIRST\\.txt/);
 });
