@@ -89,7 +89,13 @@ try {
  } finally {Pop-Location}
  $browserRoot=Join-Path $dest 'browser'
  New-Item -ItemType Directory -Path $browserRoot -ErrorAction Stop|Out-Null
- Copy-Item -Path (Join-Path $browserDeploy '*') -Destination $browserRoot -Recurse -Force -ErrorAction Stop
+ # Keep only the runtime closure; pnpm deploy can include source/tests/docs
+ # that must not silently become executable beta package contents.
+ foreach($name in @('package.json','dist','node_modules')){
+  $source=Join-Path $browserDeploy $name
+  if(-not(Test-Path -LiteralPath $source)){throw ('BETA_BROWSER_DEPLOY_PART_MISSING_'+$name)}
+  Copy-Item -LiteralPath $source -Destination (Join-Path $browserRoot $name) -Recurse -Force -ErrorAction Stop
+ }
  $extensionRoot=Join-Path $browserRoot 'extension'
  New-Item -ItemType Directory -Path $extensionRoot -ErrorAction Stop|Out-Null
  foreach($name in @('manifest.json','pair.html')){
