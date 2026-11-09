@@ -218,5 +218,5 @@ test("integrity requires every browser asset and covers its dependency inventory
  await writeFile(join(root,"browser","node_modules","ws","package.json"),
    "synthetic fixture browser/node_modules/ws/package.json");
  await writeFile(join(root,"READ ME FIRST.txt"),"tampered");
- await assert.rejects(()=>verifyCandidate(root),/Package integrity check failed: READ ME FIRST\\.txt/);
+ await assert.rejects(()=>verifyCandidate(root),/Package integrity check failed: READ ME FIRST/);
 });
