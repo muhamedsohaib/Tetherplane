@@ -4,6 +4,13 @@ on:
   push:
     branches:
       - feature/developer-beta-one-click-onboarding-20261107
+      - fix/developer-beta-browser-payload-20261109
+    paths:
+      - '.github/workflows/developer-beta-onboarding-lab.yml'
+      - 'packaging/developer-beta/**'
+      - 'scripts/developer-beta/**'
+      - 'tests/release/developer-beta-add-device.test.mjs'
+  pull_request:
     paths:
       - '.github/workflows/developer-beta-onboarding-lab.yml'
       - 'packaging/developer-beta/**'
@@ -41,6 +48,20 @@ jobs:
           if ($LASTEXITCODE -ne 0) { throw 'RUST_TOOLCHAIN_INSTALL_FAIL' }
           .\scripts\build-windows-agent-binaries.ps1
           if ($LASTEXITCODE -ne 0) { throw 'NATIVE_BINARY_BUILD_FAIL' }
+
+      - name: Build reviewed browser runtime and extension (not enrolled)
+        shell: pwsh
+        run: |
+          corepack enable
+          if ($LASTEXITCODE -ne 0) { throw 'BETA_COREPACK_ENABLE_FAILED' }
+          corepack prepare pnpm@10 --activate
+          if ($LASTEXITCODE -ne 0) { throw 'BETA_PNPM_ENABLE_FAILED' }
+          pnpm.cmd install --frozen-lockfile
+          if ($LASTEXITCODE -ne 0) { throw 'BETA_WORKSPACE_INSTALL_FAILED' }
+          pnpm.cmd --filter @tetherplane/browser-bridge build
+          if ($LASTEXITCODE -ne 0) { throw 'BETA_BROWSER_BRIDGE_BUILD_FAILED' }
+          pnpm.cmd --filter @tetherplane/browser-extension build
+          if ($LASTEXITCODE -ne 0) { throw 'BETA_BROWSER_EXTENSION_BUILD_FAILED' }
 
       - name: Download matching public Node license only
         shell: pwsh
