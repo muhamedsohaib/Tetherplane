@@ -1,6 +1,6 @@
 // Portable developer-beta launcher. No installation, task changes, or credential reads.
 import {createHash} from "node:crypto";
-import {readFile,lstat} from "node:fs/promises";
+import {readFile,lstat,readdir} from "node:fs/promises";
 import {execFileSync,spawn} from "node:child_process";
 import path from "node:path";
 import {fileURLToPath} from "node:url";
@@ -11,7 +11,7 @@ const files=[
  "runtime/node.exe","runtime/LICENSE.node.txt","app/preflight.mjs",
  "app/runtime-app.mjs","app/state-security.mjs","app/setup.html",
  "app/setup-client.js","app/setup.css","app/assets/brand-32.png",
- "app/assets/brand-128.png","START HERE.cmd",
+ "app/assets/brand-128.png","START HERE.cmd","README-FIRST.md",
  "browser/package.json","browser/dist/index.js","browser/host.mjs",
  "browser/extension/manifest.json","browser/extension/pair.html",
  "browser/extension/dist/background.js","browser/extension/dist/pair.js",
@@ -41,9 +41,32 @@ async function regularFileBelow(rootDir,relative){
  return cursor;
 }
 
+async function listPackagedFiles(rootDir){
+ const pending=[{absolute:rootDir,relative:""}], found=[];
+ let visited=0;
+ while(pending.length){
+  const {absolute,relative}=pending.pop();
+  const entries=await readdir(absolute,{withFileTypes:true});
+  for(const entry of entries){
+   if(++visited>15000)throw Error("Package has too many entries");
+   const rel=relative?relative+"/"+entry.name:entry.name;
+   const absolutePath=path.join(absolute,entry.name);
+   const info=await lstat(absolutePath);
+   if(info.isSymbolicLink())throw Error("Package includes a link: "+rel);
+   if(info.isDirectory())pending.push({absolute:absolutePath,relative:rel});
+   else if(info.isFile())found.push(rel);
+   else throw Error("Package includes a non-file entry: "+rel);
+  }
+ }
+ return found;
+}
+
 export async function verifyCandidate(dir=root){
  const packageRoot=path.resolve(dir);
- const meta=JSON.parse(await readFile(path.join(packageRoot,"developer-beta.json"),"utf8"));
+ const manifest=path.join(packageRoot,"developer-beta.json");
+ const manifestInfo=await lstat(manifest);
+ if(!manifestInfo.isFile()||manifestInfo.isSymbolicLink())throw Error("Package manifest must be a regular file");
+ const meta=JSON.parse(await readFile(manifest,"utf8"));
  if(meta.schema!=="tetherplane.developer-beta.package.v1")throw Error("Unexpected developer-beta metadata");
  if(!/^[a-f0-9]{40}$/.test(meta.source_commit))throw Error("Invalid source revision");
  if(meta.file_hashes===null || typeof meta.file_hashes!=="object" ||
@@ -60,6 +83,9 @@ export async function verifyCandidate(dir=root){
    keys.some(x=>!permittedRelativeFile(x))||
    new Set(keys.map(x=>x.toLowerCase())).size!==keys.length||
    files.some(x=>!keys.includes(x)))throw Error("Package file manifest changed");
+ const actualFiles=(await listPackagedFiles(packageRoot)).filter(x=>x!=="developer-beta.json");
+ if(actualFiles.length!==keys.length||actualFiles.some(x=>!Object.hasOwn(meta.file_hashes,x)))
+   throw Error("Package contains an unverified or missing file");
  for(const item of keys){
   if(!/^[a-f0-9]{64}$/.test(meta.file_hashes[item]))
    throw Error("Package digest entry invalid: "+item);
