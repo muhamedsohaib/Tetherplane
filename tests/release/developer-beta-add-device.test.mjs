@@ -143,7 +143,7 @@ test("integrity requires every browser asset and covers its dependency inventory
   "runtime/node.exe","runtime/LICENSE.node.txt","app/preflight.mjs",
   "app/runtime-app.mjs","app/state-security.mjs","app/setup.html",
   "app/setup-client.js","app/setup.css","app/assets/brand-32.png",
-  "app/assets/brand-128.png","START HERE.cmd",
+  "app/assets/brand-128.png","START HERE.cmd","README-FIRST.md",
   "browser/package.json","browser/dist/index.js","browser/host.mjs",
   "browser/extension/manifest.json","browser/extension/pair.html",
   "browser/extension/dist/background.js","browser/extension/dist/pair.js",
@@ -188,6 +188,9 @@ test("integrity requires every browser asset and covers its dependency inventory
  await expectRejected({file_hashes:{...hashes,"../outside.json":"0".repeat(64)}},/manifest changed/);
  await expectRejected({file_hashes:{...hashes,"browser/extra-script.js":"0".repeat(64)}},/manifest changed/);
  await writeFile(manifest,JSON.stringify(metadata));
+ await writeFile(join(root,"unverified-helper.js"),"not part of package inventory");
+ await assert.rejects(()=>verifyCandidate(root),/unverified or missing file/);
+ await rm(join(root,"unverified-helper.js"));
  await writeFile(join(root,"browser","node_modules","ws","package.json"),"tampered");
  await assert.rejects(()=>verifyCandidate(root),/integrity check failed/);
 });
