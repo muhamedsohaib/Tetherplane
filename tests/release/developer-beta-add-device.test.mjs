@@ -135,6 +135,28 @@ test("beta browser payload is staged but no browser grant or startup is implied"
  assert.doesNotMatch(launch,/tetherplane-browserw\.exe|--browser-bridge|--grant-tab/);
 });
 
+test("Notepad 3-step guide ships inside the verified single ZIP without a trust bypass",async()=>{
+ const guide=await readFile(join(repo,"packaging","developer-beta","READ ME FIRST.txt"),"utf8");
+ const builder=await readFile(join(repo,"scripts","developer-beta","Build-DeveloperBeta.ps1"),"utf8");
+ const preflight=await readFile(join(repo,"packaging","developer-beta","preflight.mjs"),"utf8");
+ const steps=[...guide.matchAll(/^([1-3])\. /gm)].map(m=>Number(m[1]));
+ assert.deepEqual(steps,[1,2,3],"Instructions must contain exactly three numbered steps");
+ assert.match(guide,/extract this ENTIRE[\s\S]*ZIP/i);
+ assert.match(guide,/START HERE\.cmd/);
+ assert.match(guide,/Request owner approval/i);
+ assert.match(guide,/Device Authority/);
+ assert.match(guide,/device\.status/);
+ assert.match(guide,/do not disable Smart App Control/i);
+ assert.match(guide,/browser access is SEPARATE/i);
+ assert.match(guide,/does NOT mean the connection works/i);
+ assert.doesNotMatch(guide,/run anyway to continue/i);
+ assert.match(builder,/Copy-Item -LiteralPath \$quickStart/);
+ assert.match(builder,/'READ ME FIRST\.txt'/);
+ assert.match(preflight,/"READ ME FIRST\.txt"/);
+ assert.equal([...guide].every(ch=>ch.charCodeAt(0)<128),true,
+   "Notepad quick-start must remain portable ASCII");
+});
+
 test("integrity requires every browser asset and covers its dependency inventory",async t=>{
  const root=await mkdtemp(join(tmpdir(),"tp-beta-integrity-"));
  t.after(()=>rm(root,{recursive:true,force:true,maxRetries:5,retryDelay:150}));
@@ -143,7 +165,7 @@ test("integrity requires every browser asset and covers its dependency inventory
   "runtime/node.exe","runtime/LICENSE.node.txt","app/preflight.mjs",
   "app/runtime-app.mjs","app/state-security.mjs","app/setup.html",
   "app/setup-client.js","app/setup.css","app/assets/brand-32.png",
-  "app/assets/brand-128.png","START HERE.cmd","README-FIRST.md",
+  "app/assets/brand-128.png","START HERE.cmd","README-FIRST.md","READ ME FIRST.txt",
   "browser/package.json","browser/dist/index.js","browser/host.mjs",
   "browser/extension/manifest.json","browser/extension/pair.html",
   "browser/extension/dist/background.js","browser/extension/dist/pair.js",
@@ -193,4 +215,8 @@ test("integrity requires every browser asset and covers its dependency inventory
  await rm(join(root,"unverified-helper.js"));
  await writeFile(join(root,"browser","node_modules","ws","package.json"),"tampered");
  await assert.rejects(()=>verifyCandidate(root),/integrity check failed/);
+ await writeFile(join(root,"browser","node_modules","ws","package.json"),
+   "synthetic fixture browser/node_modules/ws/package.json");
+ await writeFile(join(root,"READ ME FIRST.txt"),"tampered");
+ await assert.rejects(()=>verifyCandidate(root),/Package integrity check failed: READ ME FIRST/);
 });
