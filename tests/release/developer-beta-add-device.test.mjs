@@ -141,18 +141,18 @@ test("Notepad 3-step guide ships inside the verified single ZIP without a trust 
  const preflight=await readFile(join(repo,"packaging","developer-beta","preflight.mjs"),"utf8");
  const steps=[...guide.matchAll(/^([1-3])\. /gm)].map(m=>Number(m[1]));
  assert.deepEqual(steps,[1,2,3],"Instructions must contain exactly three numbered steps");
- assert.match(guide,/extract this ENTIRE[\\s\\S]*ZIP/i);
- assert.match(guide,/START HERE\\.cmd/);
+ assert.match(guide,/extract this ENTIRE[\s\S]*ZIP/i);
+ assert.match(guide,/START HERE\.cmd/);
  assert.match(guide,/Request owner approval/i);
  assert.match(guide,/Device Authority/);
- assert.match(guide,/device\\.status/);
+ assert.match(guide,/device\.status/);
  assert.match(guide,/do not disable Smart App Control/i);
  assert.match(guide,/browser access is SEPARATE/i);
  assert.match(guide,/does NOT mean the connection works/i);
  assert.doesNotMatch(guide,/run anyway to continue/i);
- assert.match(builder,/Copy-Item -LiteralPath \\$quickStart/);
- assert.match(builder,/'READ ME FIRST\\.txt'/);
- assert.match(preflight,/"READ ME FIRST\\.txt"/);
+ assert.match(builder,/Copy-Item -LiteralPath \$quickStart/);
+ assert.match(builder,/'READ ME FIRST\.txt'/);
+ assert.match(preflight,/"READ ME FIRST\.txt"/);
  assert.equal([...guide].every(ch=>ch.charCodeAt(0)<128),true,
    "Notepad quick-start must remain portable ASCII");
 });
