@@ -122,7 +122,7 @@ $hashFiles=@('bin/tetherd-agentw.exe','bin/tetherplane-setupw.exe','bin/tetherpl
  'runtime/node.exe','runtime/LICENSE.node.txt','app/preflight.mjs',
  'app/runtime-app.mjs','app/state-security.mjs','app/setup.html',
  'app/setup-client.js','app/setup.css','app/assets/brand-32.png',
- 'app/assets/brand-128.png','START HERE.cmd')
+ 'app/assets/brand-128.png','START HERE.cmd','README-FIRST.md')
 $browserFiles=Get-ChildItem -LiteralPath (Join-Path $dest 'browser') -Recurse -Force -ErrorAction Stop
 foreach($entry in $browserFiles){
  if(($entry.Attributes -band [IO.FileAttributes]::ReparsePoint) -ne 0){
