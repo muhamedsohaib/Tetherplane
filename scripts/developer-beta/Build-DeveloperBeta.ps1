@@ -78,13 +78,17 @@ $browserRequired=@(
 foreach($file in $browserRequired){
  if(-not(Test-Path -LiteralPath $file -PathType Leaf)){throw ('BETA_BROWSER_PAYLOAD_SOURCE_MISSING_'+$file)}
 }
-$deployScratch=Join-Path ([IO.Path]::GetTempPath()) ('tp-beta-browser-'+[guid]::NewGuid().ToString('N'))
-New-Item -ItemType Directory -Path $deployScratch -ErrorAction Stop|Out-Null
+# pnpm legacy deploy resolves the destination relative to the workspace.
+# An absolute path under TEMP is misinterpreted as a nested repository path
+# on Windows. Use a unique, ignored target/ location; clean up only that path.
+$deployRelative='target\beta-browser-deploy-'+[guid]::NewGuid().ToString('N')
+$deployScratch=Join-Path $repo $deployRelative
+if(Test-Path -LiteralPath $deployScratch){throw 'BETA_BROWSER_DEPLOY_SCRATCH_COLLISION'}
 try {
  $browserDeploy=Join-Path $deployScratch 'bridge'
  Push-Location $repo
  try {
-  & pnpm.cmd --config.node-linker=hoisted --filter @tetherplane/browser-bridge deploy --legacy --prod $browserDeploy
+  & pnpm.cmd --config.node-linker=hoisted --filter @tetherplane/browser-bridge deploy --legacy --prod (Join-Path $deployRelative 'bridge')
   if($LASTEXITCODE -ne 0){throw 'BETA_BROWSER_DEPENDENCIES_DEPLOY_FAILED'}
  } finally {Pop-Location}
  $browserRoot=Join-Path $dest 'browser'
