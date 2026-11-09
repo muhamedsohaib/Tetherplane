@@ -11,7 +11,7 @@ const files=[
  "runtime/node.exe","runtime/LICENSE.node.txt","app/preflight.mjs",
  "app/runtime-app.mjs","app/state-security.mjs","app/setup.html",
  "app/setup-client.js","app/setup.css","app/assets/brand-32.png",
- "app/assets/brand-128.png","START HERE.cmd","README-FIRST.md",
+ "app/assets/brand-128.png","START HERE.cmd","README-FIRST.md","READ ME FIRST.txt",
  "browser/package.json","browser/dist/index.js","browser/host.mjs",
  "browser/extension/manifest.json","browser/extension/pair.html",
  "browser/extension/dist/background.js","browser/extension/dist/pair.js",
