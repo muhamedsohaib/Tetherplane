@@ -1,7 +1,8 @@
 // Disposable Windows package-only acceptance of the native owner-browser
 // launcher. No real browser profile, pairing, HKCU autoruns or device identity.
 import assert from "node:assert/strict";
-import { spawn, execFileSync } from "node:child_process";
+import { spawn, execFile, execFileSync } from "node:child_process";
+import { promisify } from "node:util";
 import { randomBytes } from "node:crypto";
 import { mkdtemp, mkdir, writeFile, readFile, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
@@ -50,25 +51,40 @@ async function until(condition, deadlineMs, message) {
   throw new Error(message);
 }
 
-function ownedNode(parentPid) {
-  const command = `$p=@(Get-CimInstance Win32_Process -Filter "ParentProcessId=${parentPid} AND Name='node.exe'" -ErrorAction SilentlyContinue); @($p | ForEach-Object {$_.ProcessId}) -join ','`;
-  try {
-    const output = execFileSync("powershell.exe", ["-NoProfile", "-NonInteractive", "-Command", command], {
-      encoding: "utf8", windowsHide: true, timeout: 6000,
-    }).trim();
-    const pids = output.split(",").filter(Boolean).map(Number);
-    assert.ok(pids.every(Number.isSafeInteger));
-    return pids;
-  } catch (error) {
-    throw new Error("Unable to identify disposable browser child", { cause: error });
+// A cold Windows CI runner can take longer than six seconds to initialize
+// CIM/Windows PowerShell. Query only the disposable parent/child once,
+// asynchronously, with a bounded retry. A missing or ambiguous child still
+// fails the release gate; this is not a test skip or security exception.
+const execFileAsync = promisify(execFile);
+async function inspectWindowlessBrowserChild(parentPid) {
+  const command = [
+    "$ErrorActionPreference='Stop'",
+    `$children=@(Get-CimInstance Win32_Process -Filter "ParentProcessId=${parentPid} AND Name='node.exe'" -ErrorAction Stop)`,
+    `$parent=Get-Process -Id ${parentPid} -ErrorAction Stop`,
+    "$childProcesses=@($children | ForEach-Object { Get-Process -Id $_.ProcessId -ErrorAction Stop })",
+    "[pscustomobject]@{childPids=@($children | ForEach-Object { [int]$_.ProcessId });parentWindowless=($parent.MainWindowHandle -eq [IntPtr]::Zero);childWindowless=@($childProcesses | ForEach-Object { $_.MainWindowHandle -eq [IntPtr]::Zero })} | ConvertTo-Json -Compress -Depth 3",
+  ].join("; ");
+  for (let attempt = 1; attempt <= 2; attempt++) {
+    try {
+      const {stdout} = await execFileAsync("powershell.exe",
+        ["-NoProfile", "-NonInteractive", "-Command", command],
+        {encoding: "utf8", windowsHide: true, timeout: 15000, maxBuffer: 32768});
+      const inspection = JSON.parse(stdout.trim());
+      assert.ok(Array.isArray(inspection.childPids), "child PID evidence must be an array");
+      assert.ok(inspection.childPids.every(Number.isSafeInteger), "invalid child PID evidence");
+      assert.equal(typeof inspection.parentWindowless, "boolean", "parent visibility missing");
+      assert.ok(Array.isArray(inspection.childWindowless), "child visibility evidence missing");
+      assert.equal(inspection.childWindowless.length, inspection.childPids.length,
+        "child visibility evidence is incomplete");
+      assert.ok(inspection.childWindowless.every(v => typeof v === "boolean"));
+      return inspection;
+    } catch (error) {
+      if (attempt === 2) {
+        throw new Error("Unable to inspect the disposable browser parent/child", {cause: error});
+      }
+      await sleep(250);
+    }
   }
-}
-
-function noVisibleWindow(pid) {
-  const cmd = `$p=Get-Process -Id ${pid} -ErrorAction Stop; if($p.MainWindowHandle -eq [IntPtr]::Zero){'NONE'} else {'VISIBLE'}`;
-  return execFileSync("powershell.exe", ["-NoProfile", "-NonInteractive", "-Command", cmd], {
-    encoding: "utf8", windowsHide: true, timeout: 6000,
-  }).trim() === "NONE";
 }
 
 const ports = [];
@@ -114,11 +130,11 @@ try {
     return (await listening(wsPort)) && (await listening(pairingPort));
   }, 15000, "windowless browser host did not start");
   assert.equal(await listening(rpcPort), false, "unpaired browser RPC opened without human approval");
-  assert.equal(noVisibleWindow(supervisor.pid), true, "browser supervisor opened a foreground window");
-  const pids = ownedNode(supervisor.pid);
-  assert.equal(pids.length, 1, "expected exactly one owned Node browser host");
-  ownedNodePid = pids[0];
-  assert.equal(noVisibleWindow(ownedNodePid), true, "browser child opened a foreground console");
+  const inspection = await inspectWindowlessBrowserChild(supervisor.pid);
+  assert.equal(inspection.parentWindowless, true, "browser supervisor opened a foreground window");
+  assert.equal(inspection.childPids.length, 1, "expected exactly one owned Node browser host");
+  ownedNodePid = inspection.childPids[0];
+  assert.deepEqual(inspection.childWindowless, [true], "browser child opened a foreground console");
 
   // The browser host must notice if its native parent disappears, so a
   // user-session shutdown cannot strand an unattached browser companion.
