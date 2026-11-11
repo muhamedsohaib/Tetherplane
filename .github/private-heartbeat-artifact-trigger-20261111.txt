@@ -1,0 +1,4 @@
+Tetherplane private Windows heartbeat artifact build trigger
+Reviewed exact agent source: 4240ba8b3e638770082a0c62814924b45c99aa76
+Intended branch: test/private-heartbeat-artifact-4240ba8-20261111
+Nonproduction, unsigned, no installation, no deployment, no GitHub Release.
