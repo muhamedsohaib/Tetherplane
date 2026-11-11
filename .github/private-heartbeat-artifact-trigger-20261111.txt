@@ -3,3 +3,4 @@ Reviewed exact agent source: 4240ba8b3e638770082a0c62814924b45c99aa76
 Intended branch: test/private-heartbeat-artifact-4240ba8-20261111
 Nonproduction, unsigned, no installation, no deployment, no GitHub Release.
 Replacement build attempt: rustfmt dependency included, no source or deployment changes.
+Third attempt: full checkout history; ancestor and source diff guards retained.
