@@ -27,7 +27,7 @@ jobs:
         uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
         with:
           persist-credentials: false
-          fetch-depth: 3
+          fetch-depth: 0
 
       - name: Enforce exact source and disabled Vercel preview
         shell: pwsh
@@ -36,8 +36,8 @@ jobs:
           $base = '4240ba8b3e638770082a0c62814924b45c99aa76'
           $branch = 'test/private-heartbeat-artifact-4240ba8-20261111'
           if ($env:GITHUB_REF -cne ('refs/heads/' + $branch)) { throw 'UNEXPECTED_GIT_REF' }
-          $baseInHistory = (git rev-parse HEAD~4).Trim()
-          if ($LASTEXITCODE -ne 0 -or $baseInHistory -cne $base) { throw 'UNEXPECTED_SOURCE_PARENT' }
+          git merge-base --is-ancestor $base HEAD
+          if ($LASTEXITCODE -ne 0) { throw 'EXACT_SOURCE_NOT_ANCESTOR' }
           $changed = @(git diff --name-only $base HEAD)
           if ($LASTEXITCODE -ne 0) { throw 'SOURCE_DIFF_FAILED' }
           $allowed = @(
