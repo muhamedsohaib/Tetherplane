@@ -1,0 +1,166 @@
+name: Private Browser-Integrated Heartbeat Windows Artifact (nonrelease)
+
+on:
+  push:
+    branches:
+      - test/browser-heartbeat-46c1a82-20261111
+    paths:
+      - .github/private-browser-heartbeat-trigger-20261111.txt
+
+permissions:
+  contents: read
+
+concurrency:
+  group: private-browser-heartbeat-46c1a82-windows
+  cancel-in-progress: false
+
+jobs:
+  windows-agent-artifact:
+    if: github.repository == 'muhamedsohaib/Tetherplane' && github.ref == 'refs/heads/test/browser-heartbeat-46c1a82-20261111' && github.event_name == 'push'
+    runs-on: windows-latest
+    timeout-minutes: 55
+    env:
+      RUSTUP_TOOLCHAIN: '1.99.1'
+      CARGO_INCREMENTAL: '0'
+    steps:
+      - name: Checkout isolated build-only source
+        uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
+        with:
+          persist-credentials: false
+          fetch-depth: 0
+
+      - name: Enforce exact source and disabled Vercel preview
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = 'Stop'
+          $base = '46c1a82d182a00b1652a6c07ca6c0e0aeca172a8'
+          $branch = 'test/browser-heartbeat-46c1a82-20261111'
+          if ($env:GITHUB_REF -cne ('refs/heads/' + $branch)) { throw 'UNEXPECTED_GIT_REF' }
+          git merge-base --is-ancestor $base HEAD
+          if ($LASTEXITCODE -ne 0) { throw 'EXACT_SOURCE_NOT_ANCESTOR' }
+          $changed = @(git diff --name-only $base HEAD)
+          if ($LASTEXITCODE -ne 0) { throw 'SOURCE_DIFF_FAILED' }
+          $allowed = @(
+            '.github/workflows/private-browser-heartbeat-agent-20261111.yml',
+            'agent/tetherd/src/relay_ws.rs',
+            'adapters/control-center/vercel.json',
+            '.github/private-browser-heartbeat-trigger-20261111.txt'
+          )
+          if ($changed.Count -ne 4 -or @($changed | Where-Object { $_ -cnotin $allowed }).Count -gt 0) {
+            throw ('UNAPPROVED_SOURCE_DELTA: ' + ($changed -join ','))
+          }
+          $lastChange = @(git diff --name-only HEAD^ HEAD)
+          if ($LASTEXITCODE -ne 0 -or $lastChange.Count -ne 1 -or
+              $lastChange[0] -cne '.github/private-browser-heartbeat-trigger-20261111.txt') {
+            throw 'UNEXPECTED_TRIGGER_COMMIT_CONTENTS'
+          }
+          $agentBlob = (git rev-parse 'HEAD:agent/tetherd/src/relay_ws.rs').Trim()
+          $lockBlob = (git rev-parse 'HEAD:Cargo.lock').Trim()
+          if ($agentBlob -cne '3f785ee544500fb461db670e7d2ed0da7f25a697' -or
+              $lockBlob -cne '00a4c70f4d6619ac9dbca8e0a58d9c5d2957081d') {
+            throw 'CANDIDATE_SOURCE_OR_LOCKFILE_CHANGED'
+          }
+          $vercelConfig = Get-Content 'adapters/control-center/vercel.json' -Raw | ConvertFrom-Json
+          $disabled = $vercelConfig.git.deploymentEnabled.PSObject.Properties[$branch]
+          if ($null -eq $disabled -or $disabled.Value -cne $false) {
+            throw 'VERCEL_BRANCH_PREVIEW_NOT_DISABLED'
+          }
+          Write-Output 'EXACT_SOURCE_AND_NO_DEPLOYMENT_PRECHECK_PASS'
+
+      - name: Install verified Windows Rust toolchain
+        uses: dtolnay/rust-toolchain@b725eda525362e7cf34af9a7243cac1e3f01a7ec # pinned action
+        with:
+          toolchain: '1.99.1'
+          components: rustfmt
+
+      - name: Verify pinned compiler and formatting
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = 'Stop'
+          $version = (& rustc --version)
+          if ($LASTEXITCODE -ne 0 -or $version -notmatch '^rustc 1\.99\.1 ') {
+            throw ('RUST_TOOLCHAIN_MISMATCH: ' + $version)
+          }
+          cargo fmt --all -- --check
+          if ($LASTEXITCODE -ne 0) { throw 'RUST_FORMAT_FAILED' }
+
+      - name: Run targeted WebSocket heartbeat tests
+        shell: pwsh
+        run: |
+          cargo test -p tetherd --locked relay_ws::tests -- --nocapture
+          if ($LASTEXITCODE -ne 0) { throw 'HEARTBEAT_REGRESSIONS_FAILED' }
+
+      - name: Browser and full agent Rust regression tests
+        shell: pwsh
+        run: |
+          cargo test -p tetherd -p tether-browser-provider -p tether-core --locked
+          if ($LASTEXITCODE -ne 0) { throw 'BROWSER_OR_AGENT_REGRESSIONS_FAILED' }
+
+      - name: Build unsigned windowless Windows agent only
+        shell: pwsh
+        run: |
+          cargo build --release --locked -p tetherd --features windows-headless-agent
+          if ($LASTEXITCODE -ne 0) { throw 'WINDOWLESS_CANDIDATE_BUILD_FAILED' }
+
+      - name: Verify PE and produce SHA256 provenance
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = 'Stop'
+          $candidate = 'target/release/tetherd.exe'
+          if (-not (Test-Path -LiteralPath $candidate -PathType Leaf)) {
+            throw 'AGENT_BINARY_NOT_FOUND'
+          }
+          $bytes = [IO.File]::ReadAllBytes((Resolve-Path $candidate).Path)
+          if ($bytes.Length -lt 100000 -or $bytes[0] -ne 0x4d -or $bytes[1] -ne 0x5a) {
+            throw 'INVALID_WINDOWS_PE_BINARY'
+          }
+          $peOffset = [BitConverter]::ToInt32($bytes, 0x3c)
+          if ($peOffset -lt 64 -or ($peOffset + 96) -ge $bytes.Length) {
+            throw 'INVALID_PE_HEADER_OFFSET'
+          }
+          $subsystem = [BitConverter]::ToUInt16($bytes, $peOffset + 24 + 68)
+          if ($subsystem -ne 2) { throw ('EXPECTED_GUI_SUBSYSTEM_2_GOT_' + $subsystem) }
+          $dir = 'isolated-browser-heartbeat-artifact'
+          New-Item -ItemType Directory -Path $dir -Force | Out-Null
+          $out = Join-Path $dir 'tetherd-agentw.exe'
+          Copy-Item -LiteralPath $candidate -Destination $out -ErrorAction Stop
+          $signature = (Get-AuthenticodeSignature -LiteralPath $out).Status.ToString()
+          if ($signature -cne 'NotSigned') { throw ('UNEXPECTED_SIGNATURE_STATUS_' + $signature) }
+          $hash = (Get-FileHash -LiteralPath $out -Algorithm SHA256).Hash.ToLowerInvariant()
+          $proof = [ordered]@{
+            schema = 'tetherplane.unsigned_nonrelease_browser_heartbeat_agent.v1'
+            intended_use = 'Review and isolated canary preparation only; NOT approved for installation or release'
+            browser_source_baseline_commit = '46c1a82d182a00b1652a6c07ca6c0e0aeca172a8'
+            heartbeat_source_commit = '4240ba8b3e638770082a0c62814924b45c99aa76'
+            heartbeat_patch_sha256 = '62785655a3207880f291bcc36a8deb58c7289dbdc0e65926cb840dd40c34c142'
+            relay_ws_git_blob = '3f785ee544500fb461db670e7d2ed0da7f25a697'
+            prior_browser_integrated_binary_sha256 = 'a9ccf5180c164883272df5c3308d842c2efe36fc861821e7c3cd55239d1f08dc'
+            build_only_workflow_commit = (git rev-parse HEAD).Trim()
+            rustc = (& rustc --version)
+            cargo = (& cargo --version)
+            target = 'x86_64-pc-windows-msvc'
+            build_feature = 'windows-headless-agent'
+            cargo_lock_sha256 = (Get-FileHash -LiteralPath 'Cargo.lock' -Algorithm SHA256).Hash.ToLowerInvariant()
+            binary_name = 'tetherd-agentw.exe'
+            binary_sha256 = $hash
+            binary_size = (Get-Item -LiteralPath $out).Length
+            windows_pe_subsystem = $subsystem
+            signed = $false
+            deployed = $false
+            installed = $false
+            real_device_acceptance = 'NOT_TESTED'
+          }
+          [IO.File]::WriteAllText((Join-Path $dir 'proof.json'), ($proof | ConvertTo-Json -Depth 5), [Text.UTF8Encoding]::new($false))
+          [IO.File]::WriteAllText((Join-Path $dir 'SHA256SUMS.txt'), ($hash + '  tetherd-agentw.exe' + [Environment]::NewLine), [Text.UTF8Encoding]::new($false))
+          Write-Output 'PRIVATE_UNSIGNED_WINDOWS_AGENT_SHA256_READY'
+
+      - name: Upload private build artifact without installing or deploying
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        with:
+          name: tetherplane-browser-heartbeat-46c1a82-windows-x64-unsigned
+          path: |
+            isolated-browser-heartbeat-artifact/tetherd-agentw.exe
+            isolated-browser-heartbeat-artifact/proof.json
+            isolated-browser-heartbeat-artifact/SHA256SUMS.txt
+          if-no-files-found: error
+          retention-days: 7
