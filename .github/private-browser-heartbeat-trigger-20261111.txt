@@ -1,0 +1,4 @@
+Private nonproduction Windows browser+heartbeat artifact build.
+Base source 46c1a82d182a00b1652a6c07ca6c0e0aeca172a8
+Heartbeat source 4240ba8b3e638770082a0c62814924b45c99aa76
+One source file integrated; no Vercel deployment, install, production swap, signing or release.
