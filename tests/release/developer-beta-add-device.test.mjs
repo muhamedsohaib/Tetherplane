@@ -146,3 +146,56 @@ test("integrity check catches tampering and exact allowlist changes",async t=>{
  await writeFile(join(root,"app","runtime-app.mjs"),"tampered");
  await assert.rejects(()=>verifyCandidate(root),/integrity check failed/);
 });
+
+
+test("customer wizard preserves single-instance protection and explains saved identity", async t=>{
+ const {app}=await createStage(t);
+ const html=await readFile(join(app,"setup.html"),"utf8");
+ const client=await readFile(join(app,"setup-client.js"),"utf8");
+ assert.match(client,/agentLocallyRunning/);
+ assert.match(client,/markAgentRunning/);
+ assert.match(client,/resumeStart"\)\.disabled=true/);
+ assert.match(client,/if\(agentLocallyRunning\)/);
+ assert.match(client,/This wizard already owns a running agent/);
+ assert.match(client,/Agent running locally/);
+ assert.doesNotMatch(client,/remote connection verified successfully/);
+ assert.match(html,/saved, owner-approved Tetherplane identity/);
+ assert.doesNotMatch(html,/Existing Store-preview credentials will be preserved/);
+});
+
+test("generated customer wizard JavaScript runs with mocked local saved-agent state", async t=>{
+ const {app}=await createStage(t);
+ const source=await readFile(join(app,"setup-client.js"),"utf8");
+ const vm=await import("node:vm");
+ const elements={};
+ const handlers={};
+ for(const id of ["setup","feedback","code","status","start","resumeStart","stop","challenge","resume","blocked","waiting","copyCode"]){
+   elements[id]={disabled:false,hidden:false,textContent:"",addEventListener:(event,fn)=>{handlers[id+":"+event]=fn}};
+ }
+ elements.setup.deviceId={value:""};
+ elements.setup.allowRoot={value:""};
+ const calls=[];
+ const ctx={
+   document:{getElementById:id=>elements[id]},
+   location:{hash:"#test-setup-token",pathname:"/"},
+   history:{replaceState(){}},
+   crypto:{randomUUID:()=>"12345678-0000-4000-8000-000000000000"},
+   fetch:async(path,opts)=>{
+     calls.push(path);
+     if(path==="/api/status")return {ok:true,json:async()=>({state:"agent_started_not_verified",hasSavedIdentity:true,identityBlocked:false})};
+     if(path==="/api/start")throw Error("Unexpected duplicate agent start");
+     throw Error("Unexpected request "+path);
+   },
+   navigator:{clipboard:{writeText:async()=>{}}},
+   FormData:class {},
+   setInterval(){return 0},
+   Date,Error,JSON,String,Promise,Object
+ };
+ vm.runInNewContext(source,ctx,{timeout:1500});
+ await new Promise(resolve=>setImmediate(resolve));
+ assert.equal(elements.resumeStart.disabled,true);
+ assert.equal(elements.start.disabled,true);
+ assert.match(elements.status.textContent,/Agent running locally/);
+ await handlers["resumeStart:click"]();
+ assert.equal(calls.filter(x=>x==="/api/start").length,0);
+});

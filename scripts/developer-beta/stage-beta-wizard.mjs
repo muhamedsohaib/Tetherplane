@@ -15,6 +15,43 @@ export function validatePublicRelay(value=""){
   throw Error("Use an existing wss:// relay address ending /device without secrets");
  return u.href;
 }
+function clarifyCustomerAgentStatus(s){
+ s=s.replace(/\r\n/g,"\n");
+ s=change(s,'let approvalProbeBusy=false;',
+  'let approvalProbeBusy=false;\nlet agentLocallyRunning=false;\n'+
+  'function markAgentRunning(){\n'+
+  ' agentLocallyRunning=true;\n'+
+  ' status.textContent="Agent running locally - verify device.status with your owner account";\n'+
+  ' document.getElementById("start").disabled=true;\n'+
+  ' document.getElementById("resumeStart").disabled=true;\n'+
+  '}\n',"running_status_helper");
+ s=change(s,'status.textContent=result.state+" — verify device.status on owner computer";',
+  '    if(result.state==="agent_started_not_verified")markAgentRunning();\n'+
+  '    else status.textContent=result.state+" - verify device.status on owner computer";',"manual_status");
+ s=change(s,'status.textContent=r.state+" — remote device.status not verified";',
+  '    agentLocallyRunning=r.state==="agent_started_not_verified";\n'+
+  '    document.getElementById("start").disabled=agentLocallyRunning;\n'+
+  '    document.getElementById("resumeStart").disabled=agentLocallyRunning;\n'+
+  '    status.textContent=agentLocallyRunning\n'+
+  '      ? "Agent running locally - verify device.status with your owner account"\n'+
+  '      : r.state+" - remote device.status not verified";',"status_refresh");
+ s=change(s,'status.textContent=r.state+" — verify authenticated device.status";',
+  '   if(r.state==="agent_started_not_verified")markAgentRunning();\n'+
+  '   else status.textContent=r.state+" - verify authenticated device.status";',"auto_approval_status");
+ s=change(s,'async function start() {\n  feedback.textContent = "";',
+  'async function start() {\n'+
+  '  if(agentLocallyRunning){feedback.textContent="Agent already running; no duplicate was started.";return;}\n'+
+  '  feedback.textContent = "";',"duplicate_start_ui_guard");
+ s=change(s,'  } catch(error) { showError(error); }\n}\ndocument.getElementById("start")',
+  '  } catch(error) {\n'+
+  '    if(/This wizard already owns a running agent/.test(String(error?.message||""))){\n'+
+  '      markAgentRunning();\n'+
+  '      feedback.textContent="Agent already running; no duplicate was started.";\n'+
+  '    } else showError(error);\n'+
+  '  }\n}\ndocument.getElementById("start")',"duplicate_race");
+ return s;
+}
+
 export function stage(name,original,relay=""){
  let s=original;
  if(name==="runtime-app.mjs"){
@@ -67,6 +104,8 @@ export function stage(name,original,relay=""){
     '<p class="foot"><strong>Approval ≠ connected.</strong> Independently verify device.status from your authenticated owner account. Stop ends this session; revoke the device in Device Authority to remove access.</p>',"truth"]
   ];
   for(const [a,b,k] of replacements)s=change(s,a,b,k);
+  s=change(s,"Existing Store-preview credentials will be preserved. Confirm you authorized this device before starting.",
+    "A saved, owner-approved Tetherplane identity is available. Restarting the agent does not require another pairing code.","saved_identity_copy");
   const publicUrl=validatePublicRelay(relay).replaceAll("&","&amp;").replaceAll('"',"&quot;");
   s=change(s,'Relay endpoint <input name="relayUrl" required placeholder="wss://your-authorized-relay.example/device" autocomplete="off">',
    'Connection address <input name="relayUrl" required placeholder="wss://your-authorized-relay.example/device" value="'+publicUrl+'" autocomplete="off">',"relay");
@@ -108,7 +147,7 @@ export function stage(name,original,relay=""){
    ' try{await navigator.clipboard.writeText(code.textContent);feedback.textContent="Code copied."}\n'+
    ' catch{feedback.textContent="Select and copy the code manually."}\n'+
    '});\n';
-  return s;
+  return clarifyCustomerAgentStatus(s);
  }
  if(name==="setup.css")return s+'\nsmall{display:block;margin-top:7px;color:#9fb1c3;line-height:1.5}#waiting{color:#b7e5d3;font-weight:500}button:focus-visible,input:focus-visible{outline:2px solid #8ed3d3;outline-offset:2px}\n';
  throw Error("BETA_UNKNOWN_SOURCE");
