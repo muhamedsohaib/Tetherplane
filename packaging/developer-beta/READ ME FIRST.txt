@@ -1,0 +1,42 @@
+TETHERPLANE - 3-STEP NEW DEVICE SETUP (WINDOWS x64)
+==================================================
+PRIVATE DEVELOPER BETA - NOT A SIGNED PUBLIC RELEASE
+
+Before you start: Use only a consenting, non-sensitive Windows 10/11
+x64 test laptop with no existing Tetherplane agent. Extract this ENTIRE
+ZIP to a new folder first. Keep the files together. Do not run the
+launcher from inside the ZIP.
+
+1. Double-click "START HERE.cmd" in the extracted folder.
+   It checks the package and opens a local setup page.
+   No separate Node.js installation or PowerShell command is needed.
+
+2. In that page, confirm the secure connection address from the owner
+   (wss://.../device), keep the suggested "Tetherplane Shared" folder,
+   then click "Request owner approval". Nothing connects before approval.
+
+3. Show the displayed device ID and short code to the Tetherplane owner.
+   The owner checks and approves that EXACT ID/code in their signed-in
+   Control Center > Device Authority. Wait for the local agent to start.
+   The owner must then verify this device using authenticated device.status.
+   "Agent started" alone does NOT mean the connection works.
+
+STOP IF WINDOWS BLOCKS IT. These Tetherplane binaries are unsigned;
+do not disable Smart App Control, antivirus, SmartScreen, or other
+Windows security checks, and do not choose "run anyway" to bypass a block.
+Tell the owner what Windows displayed.
+
+Browser access is SEPARATE: device pairing does not grant any browser
+tabs. Each human-owned tab needs its own explicit, expiring owner grant.
+The included browser files are not automatically activated.
+
+To stop: Use "Stop this session's agent" in the setup page.
+To revoke: The owner uses Control Center > Device Authority and confirms
+access is denied afterward. Reopening START HERE.cmd is the supported
+way to resume a saved, approved identity; no startup task is added.
+
+NEVER send passwords, OAuth tokens or device credentials. Share only
+the device ID and short-lived pairing code with the intended owner.
+
+For detailed limitations and troubleshooting, see README-FIRST.md.
+If you need to verify source and file checksums, see developer-beta.json.

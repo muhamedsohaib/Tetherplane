@@ -2,6 +2,14 @@
 
 This is an **unsigned Tetherplane developer beta**, not a public customer installer or Microsoft Store package. It is designed only for a consenting, non-sensitive Windows x64 test device. **Do not disable Windows Smart App Control, antivirus or any signature checks.** If Windows blocks execution, stop and report the block; do not work around it.
 
+## Quick start (the three actions on the new device)
+
+Open **READ ME FIRST.txt** in Notepad. The entire first-user workflow is: **extract the one ZIP**, **double-click START HERE.cmd**, and **request owner approval / show the code**. The existing owner must separately approve the exact device in Device Authority and then verify authenticated `device.status`. There is no need to install Node.js, run PowerShell or copy any secrets.
+
+The optional secure relay preset is not an authorization grant. If the connection address is blank, obtain only the owner's existing public `wss://.../device` address and enter it in the setup page. The owner must verify the relay is reachable from this new computer, not merely from an existing Tailscale-connected device.
+
+The included extension and browser-host files are intentionally **not automatically activated**. Browser-first testing requires separate verified consent. Never bypass Windows security warnings to run this unsigned beta.
+
 ## On the new computer
 
 1. Receive the exact, owner-reviewed beta ZIP from the existing Tetherplane operator. Independently compare its SHA-256 with the hash supplied by that operator. Extract the entire ZIP to a new empty folder. Do not run on a machine with another Tetherplane agent.
@@ -14,6 +22,12 @@ This is an **unsigned Tetherplane developer beta**, not a public customer instal
 ## On the existing owner computer
 
 Open the authenticated **Tetherplane Control Center → Device Authority**. Review the new device ID and short-lived code, approve only the intended device, then verify that `device.status` succeeds. This is the same existing relay/account authorization; **do not register another OAuth client**, and do not disclose the relay's private tokens. A browser tab on this new device requires a **separate, explicit, expiring tab grant** from the Edge extension. Device pairing never approves all tabs.
+
+## Browser payload in this review candidate
+
+The reviewed ZIP includes the existing browser host, its runtime dependencies, the windowless browser launcher and the unpacked extension. Every included file is covered by the beta checksum inventory. **They are staged, not automatically enabled.** Device pairing does not enroll the extension, start persistent browser access, share human-owned tabs or grant origins.
+
+There is no approved automatic browser-enrollment workflow in this developer-beta setup. A browser-first real-user trial remains **NO-GO** until the extension is connected through an independently verified, explicit owner-consent workflow and the complete installed browser candidate passes Windows, authorization/revocation, restart and trust gates. Do not manually load the unpacked extension into an ordinary personal browser profile based solely on the ZIP's presence.
 
 ## Reconnect / stop / revoke
 

@@ -125,13 +125,54 @@ test("local approval wizard creates only the explicitly proposed shared folder; 
  assert.equal(stop.status,200);
 });
 
-test("integrity check catches tampering and exact allowlist changes",async t=>{
+test("beta browser payload is staged but no browser grant or startup is implied",async()=>{
+ const builder=await readFile(join(repo,"scripts","developer-beta","Build-DeveloperBeta.ps1"),"utf8");
+ const launch=await readFile(join(repo,"packaging","developer-beta","START HERE.cmd"),"utf8");
+ assert.match(builder,/BETA_BROWSER_PAYLOAD_SOURCE_MISSING/);
+ assert.match(builder,/browser-extension-host\.ts/);
+ assert.match(builder,/browser_payload_included=\$true/);
+ assert.match(builder,/browser_activation='owner_explicit_separate'/);
+ assert.doesNotMatch(launch,/tetherplane-browserw\.exe|--browser-bridge|--grant-tab/);
+});
+
+test("Notepad 3-step guide ships inside the verified single ZIP without a trust bypass",async()=>{
+ const guide=await readFile(join(repo,"packaging","developer-beta","READ ME FIRST.txt"),"utf8");
+ const builder=await readFile(join(repo,"scripts","developer-beta","Build-DeveloperBeta.ps1"),"utf8");
+ const preflight=await readFile(join(repo,"packaging","developer-beta","preflight.mjs"),"utf8");
+ const steps=[...guide.matchAll(/^([1-3])\. /gm)].map(m=>Number(m[1]));
+ assert.deepEqual(steps,[1,2,3],"Instructions must contain exactly three numbered steps");
+ assert.match(guide,/extract this ENTIRE[\s\S]*ZIP/i);
+ assert.match(guide,/START HERE\.cmd/);
+ assert.match(guide,/Request owner approval/i);
+ assert.match(guide,/Device Authority/);
+ assert.match(guide,/device\.status/);
+ assert.match(guide,/do not disable Smart App Control/i);
+ assert.match(guide,/browser access is SEPARATE/i);
+ assert.match(guide,/does NOT mean the connection works/i);
+ assert.doesNotMatch(guide,/run anyway to continue/i);
+ assert.match(builder,/Copy-Item -LiteralPath \$quickStart/);
+ assert.match(builder,/'READ ME FIRST\.txt'/);
+ assert.match(preflight,/"READ ME FIRST\.txt"/);
+ assert.equal([...guide].every(ch=>ch.charCodeAt(0)<128),true,
+   "Notepad quick-start must remain portable ASCII");
+});
+
+test("integrity requires every browser asset and covers its dependency inventory",async t=>{
  const root=await mkdtemp(join(tmpdir(),"tp-beta-integrity-"));
  t.after(()=>rm(root,{recursive:true,force:true,maxRetries:5,retryDelay:150}));
- const files=["bin/tetherd-agentw.exe","bin/tetherplane-setupw.exe","runtime/node.exe",
-  "runtime/LICENSE.node.txt","app/preflight.mjs","app/runtime-app.mjs","app/state-security.mjs",
-  "app/setup.html","app/setup-client.js","app/setup.css",
-  "app/assets/brand-32.png","app/assets/brand-128.png","START HERE.cmd"];
+ const files=[
+  "bin/tetherd-agentw.exe","bin/tetherplane-setupw.exe","bin/tetherplane-browserw.exe",
+  "runtime/node.exe","runtime/LICENSE.node.txt","app/preflight.mjs",
+  "app/runtime-app.mjs","app/state-security.mjs","app/setup.html",
+  "app/setup-client.js","app/setup.css","app/assets/brand-32.png",
+  "app/assets/brand-128.png","START HERE.cmd","README-FIRST.md","READ ME FIRST.txt",
+  "browser/package.json","browser/dist/index.js","browser/host.mjs",
+  "browser/extension/manifest.json","browser/extension/pair.html",
+  "browser/extension/dist/background.js","browser/extension/dist/pair.js",
+  "browser/extension/icons/brand-16.png","browser/extension/icons/brand-32.png",
+  "browser/extension/icons/brand-48.png","browser/extension/icons/brand-128.png",
+  "browser/node_modules/ws/package.json"
+ ];
  const hashes={};
  for(const file of files){
   const p=join(root,...file.split("/"));
@@ -140,13 +181,45 @@ test("integrity check catches tampering and exact allowlist changes",async t=>{
   await writeFile(p,content);
   hashes[file]=createHash("sha256").update(content).digest("hex");
  }
- const metadata={schema:"tetherplane.developer-beta.package.v1",source_commit:"a".repeat(40),file_hashes:hashes};
- await writeFile(join(root,"developer-beta.json"),JSON.stringify(metadata));
- assert.equal((await verifyCandidate(root)).files_verified,files.length);
- await writeFile(join(root,"app","runtime-app.mjs"),"tampered");
- await assert.rejects(()=>verifyCandidate(root),/integrity check failed/);
-});
+ const metadata={
+  schema:"tetherplane.developer-beta.package.v1",
+  source_commit:"a".repeat(40),
+  browser_payload_included:true,
+  browser_activation:"owner_explicit_separate",
+  tetherplane_product_signed:false,
+  explicit_owner_pairing_required:true,
+  no_automatic_startup_task:true,
+  no_authentication_secrets_in_package:true,
+  file_hashes:hashes,
+ };
+ const manifest=join(root,"developer-beta.json");
+ async function expectRejected(changed,pattern){
+  await writeFile(manifest,JSON.stringify({...metadata,...changed}));
+  await assert.rejects(()=>verifyCandidate(root),pattern);
+ }
+ await writeFile(manifest,JSON.stringify(metadata));
+ const verified=await verifyCandidate(root);
+ assert.equal(verified.files_verified,files.length);
+ assert.equal(verified.browser_payload_included,true);
+ assert.equal(verified.browser_activation,"owner_explicit_separate");
 
+ await expectRejected({browser_activation:"automatic"},/owner-approval|trust/);
+ const missing={...hashes};
+ delete missing["browser/host.mjs"];
+ await expectRejected({file_hashes:missing},/manifest changed/);
+ await expectRejected({file_hashes:{...hashes,"../outside.json":"0".repeat(64)}},/manifest changed/);
+ await expectRejected({file_hashes:{...hashes,"browser/extra-script.js":"0".repeat(64)}},/manifest changed/);
+ await writeFile(manifest,JSON.stringify(metadata));
+ await writeFile(join(root,"unverified-helper.js"),"not part of package inventory");
+ await assert.rejects(()=>verifyCandidate(root),/unverified or missing file/);
+ await rm(join(root,"unverified-helper.js"));
+ await writeFile(join(root,"browser","node_modules","ws","package.json"),"tampered");
+ await assert.rejects(()=>verifyCandidate(root),/integrity check failed/);
+ await writeFile(join(root,"browser","node_modules","ws","package.json"),
+   "synthetic fixture browser/node_modules/ws/package.json");
+ await writeFile(join(root,"READ ME FIRST.txt"),"tampered");
+ await assert.rejects(()=>verifyCandidate(root),/Package integrity check failed: READ ME FIRST/);
+});
 
 test("customer wizard preserves single-instance protection and explains saved identity", async t=>{
  const {app}=await createStage(t);

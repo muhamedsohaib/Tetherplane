@@ -32,7 +32,8 @@ if($relay){
 }
 $bin=@(
  @{name='tetherd-agentw.exe';src=(Join-Path $repo 'target\release\tetherd-agentw.exe')},
- @{name='tetherplane-setupw.exe';src=(Join-Path $repo 'target\release\tetherplane-setupw.exe')}
+ @{name='tetherplane-setupw.exe';src=(Join-Path $repo 'target\release\tetherplane-setupw.exe')},
+ @{name='tetherplane-browserw.exe';src=(Join-Path $repo 'target\release\tetherplane-browserw.exe')}
 )
 foreach($entry in $bin){if(-not(Test-Path -LiteralPath $entry.src -PathType Leaf) -or (Get-Item -LiteralPath $entry.src).Length -lt 50000){throw ('BETA_NATIVE_BINARY_MISSING_'+$entry.name)}}
 $appNames=@('runtime-app.mjs','state-security.mjs','setup.html','setup-client.js','setup.css')
@@ -41,7 +42,8 @@ $stage=Join-Path $repo 'scripts\developer-beta\stage-beta-wizard.mjs'
 $start=Join-Path $repo 'packaging\developer-beta\START HERE.cmd'
 $preflight=Join-Path $repo 'packaging\developer-beta\preflight.mjs'
 $readme=Join-Path $repo 'packaging\developer-beta\README-FIRST.md'
-foreach($file in @($stage,$start,$preflight,$readme)){if(-not(Test-Path -LiteralPath $file -PathType Leaf)){throw 'BETA_BUILDER_SOURCE_MISSING'}}
+$quickStart=Join-Path $repo 'packaging\developer-beta\READ ME FIRST.txt'
+foreach($file in @($stage,$start,$preflight,$readme,$quickStart)){if(-not(Test-Path -LiteralPath $file -PathType Leaf)){throw 'BETA_BUILDER_SOURCE_MISSING'}}
 New-Item -ItemType Directory -Path $dest -ErrorAction Stop|Out-Null
 foreach($sub in @('bin','runtime','app','app\assets')){
  New-Item -ItemType Directory -Path (Join-Path $dest $sub) -Force -ErrorAction Stop|Out-Null
@@ -58,16 +60,95 @@ foreach($icon in @('brand-32.png','brand-128.png')){
 Copy-Item -LiteralPath $preflight -Destination (Join-Path $dest 'app\preflight.mjs') -ErrorAction Stop
 Copy-Item -LiteralPath $start -Destination (Join-Path $dest 'START HERE.cmd') -ErrorAction Stop
 Copy-Item -LiteralPath $readme -Destination (Join-Path $dest 'README-FIRST.md') -ErrorAction Stop
+Copy-Item -LiteralPath $quickStart -Destination (Join-Path $dest 'READ ME FIRST.txt') -ErrorAction Stop
 & $node $stage --stage (Join-Path $dest 'app') $relay
 if($LASTEXITCODE -ne 0){throw 'BETA_WIZARD_STAGE_FAILED'}
+# Stage only the existing reviewed browser host and unpacked extension.
+# Device pairing does not grant access to tabs or start the browser host.
+$browserRequired=@(
+ (Join-Path $repo 'browser\bridge\dist\index.js'),
+ (Join-Path $repo 'scripts\browser-extension-host.ts'),
+ (Join-Path $repo 'extension\browser\manifest.json'),
+ (Join-Path $repo 'extension\browser\pair.html'),
+ (Join-Path $repo 'extension\browser\dist\background.js'),
+ (Join-Path $repo 'extension\browser\dist\pair.js'),
+ (Join-Path $repo 'extension\browser\icons\brand-16.png'),
+ (Join-Path $repo 'extension\browser\icons\brand-32.png'),
+ (Join-Path $repo 'extension\browser\icons\brand-48.png'),
+ (Join-Path $repo 'extension\browser\icons\brand-128.png')
+)
+foreach($file in $browserRequired){
+ if(-not(Test-Path -LiteralPath $file -PathType Leaf)){throw ('BETA_BROWSER_PAYLOAD_SOURCE_MISSING_'+$file)}
+}
+# pnpm legacy deploy resolves the destination relative to the workspace.
+# An absolute path under TEMP is misinterpreted as a nested repository path
+# on Windows. Use a unique, ignored target/ location; clean up only that path.
+$deployRelative='target\beta-browser-deploy-'+[guid]::NewGuid().ToString('N')
+$deployScratch=Join-Path $repo $deployRelative
+if(Test-Path -LiteralPath $deployScratch){throw 'BETA_BROWSER_DEPLOY_SCRATCH_COLLISION'}
+try {
+ $browserDeploy=Join-Path $deployScratch 'bridge'
+ Push-Location $repo
+ try {
+  & pnpm.cmd --config.node-linker=hoisted --filter @tetherplane/browser-bridge deploy --legacy --prod (Join-Path $deployRelative 'bridge')
+  if($LASTEXITCODE -ne 0){throw 'BETA_BROWSER_DEPENDENCIES_DEPLOY_FAILED'}
+ } finally {Pop-Location}
+ $browserRoot=Join-Path $dest 'browser'
+ New-Item -ItemType Directory -Path $browserRoot -ErrorAction Stop|Out-Null
+ # Keep only the runtime closure; pnpm deploy can include source/tests/docs
+ # that must not silently become executable beta package contents.
+ foreach($name in @('package.json','dist','node_modules')){
+  $source=Join-Path $browserDeploy $name
+  if(-not(Test-Path -LiteralPath $source)){throw ('BETA_BROWSER_DEPLOY_PART_MISSING_'+$name)}
+  Copy-Item -LiteralPath $source -Destination (Join-Path $browserRoot $name) -Recurse -Force -ErrorAction Stop
+ }
+ $extensionRoot=Join-Path $browserRoot 'extension'
+ New-Item -ItemType Directory -Path $extensionRoot -ErrorAction Stop|Out-Null
+ foreach($name in @('manifest.json','pair.html')){
+  Copy-Item -LiteralPath (Join-Path $repo ('extension\browser\'+$name)) -Destination (Join-Path $extensionRoot $name) -ErrorAction Stop
+ }
+ foreach($name in @('dist','icons')){
+  Copy-Item -LiteralPath (Join-Path $repo ('extension\browser\'+$name)) -Destination (Join-Path $extensionRoot $name) -Recurse -ErrorAction Stop
+ }
+ Push-Location $repo
+ try {
+  $hostBundle=Join-Path $browserRoot 'host.mjs'
+  & pnpm.cmd --filter @tetherplane/browser-extension exec esbuild (Join-Path $repo 'scripts\browser-extension-host.ts') --bundle --platform=node --format=esm --target=node22 --packages=external ("--outfile="+$hostBundle)
+  if($LASTEXITCODE -ne 0 -or -not(Test-Path -LiteralPath $hostBundle -PathType Leaf)){throw 'BETA_BROWSER_HOST_BUNDLE_FAILED'}
+ } finally {Pop-Location}
+} finally {
+ Remove-Item -LiteralPath $deployScratch -Recurse -Force -ErrorAction SilentlyContinue
+}
+
 foreach($js in @('app\runtime-app.mjs','app\setup-client.js','app\preflight.mjs')){
  & $node --check (Join-Path $dest $js)
  if($LASTEXITCODE -ne 0){throw ('BETA_JS_SYNTAX_FAILED_'+$js)}
 }
-$hashFiles=@('bin/tetherd-agentw.exe','bin/tetherplane-setupw.exe','runtime/node.exe',
- 'runtime/LICENSE.node.txt','app/preflight.mjs','app/runtime-app.mjs','app/state-security.mjs',
- 'app/setup.html','app/setup-client.js','app/setup.css',
- 'app/assets/brand-32.png','app/assets/brand-128.png','START HERE.cmd')
+$hashFiles=@('bin/tetherd-agentw.exe','bin/tetherplane-setupw.exe','bin/tetherplane-browserw.exe',
+ 'runtime/node.exe','runtime/LICENSE.node.txt','app/preflight.mjs',
+ 'app/runtime-app.mjs','app/state-security.mjs','app/setup.html',
+ 'app/setup-client.js','app/setup.css','app/assets/brand-32.png',
+ 'app/assets/brand-128.png','START HERE.cmd','README-FIRST.md','READ ME FIRST.txt')
+$browserFiles=Get-ChildItem -LiteralPath (Join-Path $dest 'browser') -Recurse -Force -ErrorAction Stop
+foreach($entry in $browserFiles){
+ if(($entry.Attributes -band [IO.FileAttributes]::ReparsePoint) -ne 0){
+  throw 'BETA_BROWSER_PAYLOAD_REPARSE_POINT_REJECTED'
+ }
+}
+$browserRelative=@($browserFiles | Where-Object {-not $_.PSIsContainer} | ForEach-Object {
+ if(-not $_.FullName.StartsWith(($dest+[IO.Path]::DirectorySeparatorChar),[StringComparison]::OrdinalIgnoreCase)){
+  throw 'BETA_BROWSER_PAYLOAD_PATH_ESCAPE'
+ }
+ $_.FullName.Substring($dest.Length+1).Replace('\','/')
+})
+$hashFiles=@($hashFiles+$browserRelative | Sort-Object -Unique)
+foreach($file in @('browser/package.json','browser/dist/index.js','browser/host.mjs',
+ 'browser/extension/manifest.json','browser/extension/pair.html',
+ 'browser/extension/dist/background.js','browser/extension/dist/pair.js',
+ 'browser/extension/icons/brand-16.png','browser/extension/icons/brand-32.png',
+ 'browser/extension/icons/brand-48.png','browser/extension/icons/brand-128.png')){
+ if($hashFiles -cnotcontains $file){throw ('BETA_BROWSER_PAYLOAD_REQUIRED_FILE_MISSING_'+$file)}
+}
 $hashes=[ordered]@{}
 foreach($file in $hashFiles){
  $local=Join-Path $dest ($file.Replace('/','\'))
@@ -84,6 +165,8 @@ $record=[ordered]@{
  default_share='user-profile/Tetherplane Shared (explicit opt-in)'
  no_automatic_startup_task=$true
  no_authentication_secrets_in_package=$true
+ browser_payload_included=$true
+ browser_activation='owner_explicit_separate'
  file_hashes=$hashes
 }
 [IO.File]::WriteAllText((Join-Path $dest 'developer-beta.json'),
@@ -91,4 +174,4 @@ $record=[ordered]@{
  (New-Object Text.UTF8Encoding($false)))
 & (Join-Path $dest 'runtime\node.exe') (Join-Path $dest 'app\preflight.mjs') --check
 if($LASTEXITCODE -ne 0){throw 'BETA_PACKAGE_INTEGRITY_SELFTEST_FAILED'}
-[ordered]@{verdict='DEVELOPER_BETA_SOURCE_PACKAGE_READY_NOT_INSTALLED';source_commit=$head;package_path=$dest;files_verified=$hashFiles.Count;node_version=$version;relay_preset=[bool]$relay;owner_approval_required=$true}|ConvertTo-Json -Compress -Depth 4
+[ordered]@{verdict='DEVELOPER_BETA_SOURCE_PACKAGE_READY_NOT_INSTALLED';source_commit=$head;package_path=$dest;files_verified=$hashFiles.Count;node_version=$version;relay_preset=[bool]$relay;owner_approval_required=$true;browser_payload_included=$true;browser_activation='owner_explicit_separate'}|ConvertTo-Json -Compress -Depth 4
