@@ -30,7 +30,8 @@
       "feature/browser-combined-owner-20261106": false,
       "ci/windows-browser-bridge-file-serial-20261106": false,
       "fix/windows-edge-extension-cdp-install-20261107": false,
-      "feature/developer-beta-one-click-onboarding-20261107": false
+      "feature/developer-beta-one-click-onboarding-20261107": false,
+      "candidate/cuck-first-customer-recovery-20261112": false
     }
   },
   "$schema": "https://openapi.vercel.sh/vercel.json"

@@ -4,6 +4,7 @@ on:
   push:
     branches:
       - feature/developer-beta-one-click-onboarding-20261107
+      - candidate/cuck-first-customer-recovery-20261112
     paths:
       - '.github/workflows/developer-beta-onboarding-lab.yml'
       - 'packaging/developer-beta/**'
