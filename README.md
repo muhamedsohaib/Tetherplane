@@ -1,8 +1,12 @@
-# Tetherplane
+# Tetherplane — open-source MCP server for authorized AI computer use
 
-Tetherplane is an open-source control plane for AI-operated computers. It gives AI clients a small, provider-neutral interface for files, processes, browsers, desktop UI, batching, local policy, durable jobs, and optional remote routing.
+**Tetherplane** is a self-hostable [Model Context Protocol (MCP)](https://modelcontextprotocol.io/) control plane that connects AI agents to **computers their owners explicitly authorize**. Its six-tool MCP interface supports files and search, terminal processes, browser automation, Windows desktop operations, and batching — locally or through an authenticated remote relay.
 
-The local agent is the final authority. Remote relays and AI clients can route requests, but they cannot override stricter local policy.
+**Built for human coexistence:** Tetherplane prioritizes background operations and semantic automation instead of taking over a person's browser, keyboard, or cursor. The local agent enforces device and capability policy; the AI client and remote relay cannot override a local denial.
+
+> **Release status:** The historical `v0.1.0` GitHub release exists, but the latest [Windows three-step onboarding candidate (PR #135)](https://github.com/muhamedsohaib/Tetherplane/pull/135) is unsigned and still awaiting independent clean-device acceptance. Do not disable Windows security protections to run it. This README is not a declaration of general-availability readiness.
+
+**Start here:** [What is Tetherplane?](docs/what-is-tetherplane.md) · [Developer setup](#local-quick-start) · [Security policy](SECURITY.md) · [Self-hosted remote mode](docs/remote/self-host.md) · [Acceptance requirements](docs/live-acceptance.md)
 
 ## Default AI-facing surface
 
@@ -61,7 +65,7 @@ Ordinary uninstall removes installed binaries but preserves state. State purge r
 
 The Windows Compact MCP edge requires a system Node.js runtime. Runtime package dependencies are staged with the release package; pnpm is not required at runtime.
 
-Before publishing `v0.1.0`, run the operator-observed live acceptance procedure in `docs/live-acceptance.md`. The final publication gate includes local filesystem/process/browser/desktop proof on Leno plus a separately authenticated remote relay call while the operator watches for disruption.
+Historical `v0.1.0` publication is not evidence that newer developer-beta packages are release-ready. Before any new public release, complete the operator-observed acceptance requirements in `docs/live-acceptance.md`, including local filesystem/process/browser/desktop proof and authenticated remote verification without human disruption.
 
 ## Remote mode
 
