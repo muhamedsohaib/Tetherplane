@@ -1,0 +1,3 @@
+interface:
+  display_name: "Tetherplane"
+  short_description: "Operate owner-approved computers via connected MCP"

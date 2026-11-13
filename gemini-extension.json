@@ -1,0 +1,6 @@
+{
+  "name": "tetherplane",
+  "version": "0.1.0",
+  "description": "Read safety-first instructions for a preconfigured, authenticated Tetherplane MCP server. This extension does not install or authenticate Tetherplane.",
+  "contextFileName": "GEMINI.md"
+}

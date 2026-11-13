@@ -1,0 +1,11 @@
+{
+  "name": "tetherplane",
+  "version": "0.1.0",
+  "description": "Operate explicitly authorized computers through a separately configured Tetherplane MCP connection; release review-only.",
+  "author": {
+    "name": "Tetherplane contributors"
+  },
+  "homepage": "https://github.com/muhamedsohaib/Tetherplane",
+  "repository": "https://github.com/muhamedsohaib/Tetherplane",
+  "license": "MIT OR Apache-2.0"
+}

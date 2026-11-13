@@ -1,0 +1,39 @@
+{
+  "schemaVersion": 1,
+  "product": {
+    "name": "Tetherplane",
+    "repository": "https://github.com/muhamedsohaib/Tetherplane",
+    "license": "MIT OR Apache-2.0",
+    "description": "Tetherplane is an open-source control plane that enables AI agents to securely operate authorized computers through MCP, including files, terminal processes, browsers, and desktop interfaces, locally or remotely.",
+    "tools": [
+      "device",
+      "files",
+      "process",
+      "browser",
+      "desktop",
+      "batch"
+    ],
+    "tags": [
+      "mcp",
+      "windows",
+      "remote-device",
+      "desktop-automation",
+      "browser-automation",
+      "agent-tools",
+      "security",
+      "self-hosted"
+    ]
+  },
+  "release": {
+    "channel": "review-only",
+    "sourceCommit": "13609814029aad7f6db4889cab019ae18ccf535d",
+    "windows": "unsigned developer beta; not accepted on an independently observed clean device",
+    "generalAvailability": false
+  },
+  "links": {
+    "source": "https://github.com/muhamedsohaib/Tetherplane",
+    "security": "https://github.com/muhamedsohaib/Tetherplane/blob/main/SECURITY.md",
+    "betaGuide": "https://github.com/muhamedsohaib/Tetherplane/blob/feature/developer-beta-single-zip-three-steps-20261109/docs/developer-beta-add-device.md",
+    "reviewPR": "https://github.com/muhamedsohaib/Tetherplane/pull/135"
+  }
+}

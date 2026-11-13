@@ -1,0 +1,19 @@
+{
+  "name": "tetherplane",
+  "version": "0.1.0",
+  "description": "Safety-first instructions for operating computers through a separately authenticated, owner-authorized Tetherplane MCP connection. No automatic installation or pairing.",
+  "author": {
+    "name": "Tetherplane contributors"
+  },
+  "homepage": "https://github.com/muhamedsohaib/Tetherplane",
+  "repository": "https://github.com/muhamedsohaib/Tetherplane",
+  "license": "MIT OR Apache-2.0",
+  "keywords": [
+    "mcp",
+    "computer-use",
+    "remote-device",
+    "background-automation",
+    "authorization"
+  ],
+  "skills": "./skills/"
+}
