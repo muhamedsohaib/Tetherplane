@@ -4,8 +4,11 @@ PRIVATE DEVELOPER BETA - NOT A SIGNED PUBLIC RELEASE
 
 Before you start: Use only a consenting, non-sensitive Windows 10/11
 x64 test laptop with no existing Tetherplane agent. Extract this ENTIRE
-ZIP to a new folder first. Keep the files together. Do not run the
-launcher from inside the ZIP.
+ZIP into a NEW EMPTY subfolder, for example Downloads\TetherplaneBeta.
+Never extract directly into Downloads, Desktop, or a user-profile root:
+Windows junctions such as "Application Data" can trigger the safety
+check. Do not delete junctions or bypass this check. Keep all files
+together. Do not run the launcher from inside the ZIP.
 
 1. Double-click "START HERE.cmd" in the extracted folder.
    It checks the package and opens a local setup page.
