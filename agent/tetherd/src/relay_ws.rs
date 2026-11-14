@@ -70,10 +70,7 @@ where
         .map_err(|error| RelayFailure::Retryable(format!("websocket {operation} failed: {error}")))
 }
 
-async fn heartbeat_tick<S>(
-    socket: &mut S,
-    heartbeat: &mut Heartbeat,
-) -> Result<(), RelayFailure>
+async fn heartbeat_tick<S>(socket: &mut S, heartbeat: &mut Heartbeat) -> Result<(), RelayFailure>
 where
     S: Sink<Message, Error = WebSocketError> + Unpin,
 {
