@@ -15,7 +15,7 @@ use tether_core::{
 use tokio_tungstenite::connect_async;
 use tokio_tungstenite::tungstenite::client::IntoClientRequest;
 use tokio_tungstenite::tungstenite::http::header::AUTHORIZATION;
-use tokio_tungstenite::tungstenite::http::{HeaderName, HeaderValue, StatusCode};
+use tokio_tungstenite::tungstenite::http::{HeaderName, HeaderValue, Request, StatusCode};
 use tokio_tungstenite::tungstenite::{Error as WebSocketError, Message};
 use url::Url;
 
@@ -180,11 +180,7 @@ pub(crate) async fn serve(runtime: Arc<AgentRuntime>, config: RelayConfig) -> Re
     }
 }
 
-async fn connect_and_run(
-    runtime: Arc<AgentRuntime>,
-    config: &RelayConfig,
-    metrics: &mut RecoveryMetrics,
-) -> Result<(), RelayFailure> {
+fn relay_request(config: &RelayConfig) -> Result<Request<()>, RelayFailure> {
     let mut request = config
         .url
         .as_str()
@@ -198,6 +194,28 @@ async fn connect_and_run(
         .map_err(|_| RelayFailure::Fatal("device ID contains invalid header bytes".into()))?;
     request.headers_mut().insert(AUTHORIZATION, authorization);
     request.headers_mut().insert(DEVICE_ID_HEADER, device_id);
+
+    Ok(request)
+}
+
+fn result_message(route_id: &str, result: &ResultEnvelope) -> Result<Message, RelayFailure> {
+    let payload = serde_json::to_string(&RelayOutbound {
+        kind: "result",
+        route_id,
+        result,
+    })
+    .map_err(|error| {
+        RelayFailure::Fatal(format!("failed to serialize relay result: {error}"))
+    })?;
+    Ok(Message::Text(payload.into()))
+}
+
+async fn connect_and_run(
+    runtime: Arc<AgentRuntime>,
+    config: &RelayConfig,
+    metrics: &mut RecoveryMetrics,
+) -> Result<(), RelayFailure> {
+    let request = relay_request(config)?;
 
     let (mut socket, _) = tokio::time::timeout(CONNECT_TIMEOUT, connect_async(request))
         .await
@@ -243,19 +261,9 @@ async fn connect_and_run(
             } => {
                 active = None;
                 let (route_id, result) = result;
-                let payload = serde_json::to_string(&RelayOutbound {
-                    kind: "result",
-                    route_id: &route_id,
-                    result: &result,
-                })
-                .map_err(|error| {
-                    RelayFailure::Fatal(format!(
-                        "failed to serialize relay result: {error}"
-                    ))
-                })?;
                 send_bounded(
                     &mut socket,
-                    Message::Text(payload.into()),
+                    result_message(&route_id, &result)?,
                     SEND_TIMEOUT,
                     "result send",
                 )
