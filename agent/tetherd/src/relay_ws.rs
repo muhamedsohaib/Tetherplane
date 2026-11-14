@@ -1,6 +1,8 @@
 use std::path::Path;
 use std::sync::Arc;
-use std::time::Duration;
+use std::time::{Duration, Instant};
+
+use tokio::time::MissedTickBehavior;
 
 use futures_util::{SinkExt, StreamExt};
 use serde::{Deserialize, Serialize};
@@ -19,6 +21,47 @@ use url::Url;
 use crate::runtime::AgentRuntime;
 
 const DEVICE_ID_HEADER: HeaderName = HeaderName::from_static("x-tetherplane-device-id");
+const CONNECT_TIMEOUT: Duration = Duration::from_secs(10);
+const HEARTBEAT_INTERVAL: Duration = Duration::from_secs(5);
+const HEARTBEAT_PONG_TIMEOUT: Duration = Duration::from_secs(10);
+
+#[derive(Default)]
+struct Heartbeat {
+    next_id: u64,
+    pending: Option<(u64, Instant)>,
+}
+
+impl Heartbeat {
+    fn on_tick(&mut self, now: Instant) -> Result<Option<Vec<u8>>, RelayFailure> {
+        if let Some((_, sent_at)) = self.pending {
+            if now.duration_since(sent_at) >= HEARTBEAT_PONG_TIMEOUT {
+                return Err(RelayFailure::Retryable(
+                    "relay websocket heartbeat pong timed out".to_owned(),
+                ));
+            }
+            return Ok(None);
+        }
+
+        self.next_id = self.next_id.wrapping_add(1);
+        self.pending = Some((self.next_id, now));
+        Ok(Some(self.next_id.to_be_bytes().to_vec()))
+    }
+
+    fn on_pong(&mut self, payload: &[u8]) {
+        if let Some((id, _)) = self.pending
+            && payload == id.to_be_bytes().as_slice()
+        {
+            self.pending = None;
+        }
+    }
+
+    fn on_invocation_completed(&mut self) {
+        // Long-running device work may prevent the receive loop from processing
+        // a queued pong. Do not classify a healthy connection as stale solely
+        // because an authorized invocation took longer than the heartbeat TTL.
+        self.pending = None;
+    }
+}
 
 pub(crate) struct RelayConfig {
     pub url: String,
@@ -28,6 +71,7 @@ pub(crate) struct RelayConfig {
     pub reconnect_delay: Duration,
 }
 
+#[derive(Debug)]
 enum RelayFailure {
     Fatal(String),
     Retryable(String),
@@ -113,15 +157,28 @@ async fn connect_and_run(
     request.headers_mut().insert(AUTHORIZATION, authorization);
     request.headers_mut().insert(DEVICE_ID_HEADER, device_id);
 
-    let (mut socket, _) = connect_async(request)
+    let (mut socket, _) = tokio::time::timeout(CONNECT_TIMEOUT, connect_async(request))
         .await
+        .map_err(|_| {
+            RelayFailure::Retryable("relay websocket connection attempt timed out".to_owned())
+        })?
         .map_err(|error| classify_connect_error(&error))?;
 
-    while let Some(next) = socket.next().await {
-        let message = next.map_err(|error| {
-            RelayFailure::Retryable(format!("websocket receive failed: {error}"))
-        })?;
-        match message {
+    let mut heartbeat = Heartbeat::default();
+    let mut interval = tokio::time::interval(HEARTBEAT_INTERVAL);
+    interval.set_missed_tick_behavior(MissedTickBehavior::Delay);
+    interval.tick().await; // The first tick is immediate; start after one full interval.
+
+    loop {
+        tokio::select! {
+            next = socket.next() => {
+                let Some(next) = next else {
+                    return Ok(());
+                };
+                let message = next.map_err(|error| {
+                    RelayFailure::Retryable(format!("websocket receive failed: {error}"))
+                })?;
+                match message {
             Message::Text(text) => {
                 let inbound =
                     serde_json::from_str::<RelayInbound>(text.as_str()).map_err(|error| {
@@ -140,6 +197,8 @@ async fn connect_and_run(
                             } else {
                                 wrong_device_result(&invocation, &config.device_id)
                             };
+                        heartbeat.on_invocation_completed();
+                        interval.reset();
                         let payload = serde_json::to_string(&RelayOutbound {
                             kind: "result",
                             route_id: &route_id,
@@ -166,12 +225,20 @@ async fn connect_and_run(
                     RelayFailure::Retryable(format!("websocket pong failed: {error}"))
                 })?;
             }
-            Message::Close(_) => return Ok(()),
-            Message::Binary(_) | Message::Pong(_) | Message::Frame(_) => {}
+                    Message::Close(_) => return Ok(()),
+                    Message::Pong(payload) => heartbeat.on_pong(&payload),
+                    Message::Binary(_) | Message::Frame(_) => {}
+                }
+            }
+            _ = interval.tick() => {
+                if let Some(payload) = heartbeat.on_tick(Instant::now())? {
+                    socket.send(Message::Ping(payload.into())).await.map_err(|error| {
+                        RelayFailure::Retryable(format!("websocket heartbeat send failed: {error}"))
+                    })?;
+                }
+            }
         }
     }
-
-    Ok(())
 }
 
 fn classify_connect_error(error: &WebSocketError) -> RelayFailure {
@@ -213,7 +280,64 @@ fn wrong_device_result(invocation: &InvocationEnvelope, local_device_id: &str) -
 }
 #[cfg(test)]
 mod tests {
-    use super::validate_relay_url;
+    use std::time::{Duration, Instant};
+
+    use super::{Heartbeat, RelayFailure, validate_relay_url};
+
+    #[test]
+    fn unanswered_heartbeat_forces_reconnection() {
+        let start = Instant::now();
+        let mut heartbeat = Heartbeat::default();
+        let ping = heartbeat.on_tick(start).expect("first heartbeat succeeds");
+        assert_eq!(ping.expect("send a ping").len(), 8);
+        assert!(
+            heartbeat
+                .on_tick(start + Duration::from_secs(5))
+                .expect("still within timeout")
+                .is_none()
+        );
+        assert!(matches!(
+            heartbeat.on_tick(start + Duration::from_secs(10)),
+            Err(RelayFailure::Retryable(_))
+        ));
+    }
+
+    #[test]
+    fn only_the_matching_pong_acknowledges_the_heartbeat() {
+        let start = Instant::now();
+        let mut heartbeat = Heartbeat::default();
+        let ping = heartbeat
+            .on_tick(start)
+            .expect("first heartbeat succeeds")
+            .expect("send a ping");
+        heartbeat.on_pong(&u64::MAX.to_be_bytes());
+        assert!(matches!(
+            heartbeat.on_tick(start + Duration::from_secs(10)),
+            Err(RelayFailure::Retryable(_))
+        ));
+
+        heartbeat.on_pong(&ping);
+        assert!(
+            heartbeat
+                .on_tick(start + Duration::from_secs(11))
+                .expect("matching pong clears deadline")
+                .is_some()
+        );
+    }
+
+    #[test]
+    fn completed_long_running_invocation_resets_stale_heartbeat() {
+        let start = Instant::now();
+        let mut heartbeat = Heartbeat::default();
+        heartbeat.on_tick(start).expect("first heartbeat succeeds");
+        heartbeat.on_invocation_completed();
+        assert!(
+            heartbeat
+                .on_tick(start + Duration::from_secs(120))
+                .expect("long invocation does not cause false timeout")
+                .is_some()
+        );
+    }
 
     #[test]
     fn relay_url_requires_wss_except_explicit_loopback_test_mode() {
