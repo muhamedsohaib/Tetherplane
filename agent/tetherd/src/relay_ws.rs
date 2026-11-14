@@ -34,6 +34,32 @@ const MAX_STATUS_QUEUED: usize = 16;
 type WorkItem = (String, InvocationEnvelope);
 type RunningInvocation = Pin<Box<dyn Future<Output = (String, ResultEnvelope)> + Send>>;
 
+struct RejectedWork {
+    route_id: String,
+    invocation: InvocationEnvelope,
+    queue: &'static str,
+}
+
+fn capacity_result(invocation: &InvocationEnvelope, queue: &'static str) -> ResultEnvelope {
+    ResultEnvelope {
+        protocol_version: invocation.protocol_version.clone(),
+        request_id: invocation.request_id,
+        status: ResultStatus::Error,
+        data: None,
+        delta: None,
+        error: Some(CapabilityError {
+            code: ErrorCode::ResourceConflict,
+            message: "agent invocation queue is busy; retry later".to_owned(),
+            recovery_hint: Some("retry after an in-flight request completes".to_owned()),
+            details: json!({ "queue": queue }),
+        }),
+        verification: VerificationStatus::Failed,
+        continuation: None,
+        policy: None,
+        timing: Timing { duration_ms: 0 },
+    }
+}
+
 // Only the read-only status operation gets an out-of-band execution lane.
 // Everything, including status, still goes through AgentRuntime::execute for
 // device targeting, local policy checks, and audit attribution.
@@ -66,21 +92,25 @@ impl InvocationSchedule {
         &mut self,
         route_id: String,
         invocation: InvocationEnvelope,
-    ) -> Result<(), RelayFailure> {
+    ) -> Result<(), Box<RejectedWork>> {
         if invocation.capability == "device.status" {
             if self.status_active.len() + self.status_waiting.len()
                 >= MAX_STATUS_IN_FLIGHT + MAX_STATUS_QUEUED
             {
-                return Err(RelayFailure::Retryable(
-                    "status control lane is saturated".to_owned(),
-                ));
+                return Err(Box::new(RejectedWork {
+                    route_id,
+                    invocation,
+                    queue: "status",
+                }));
             }
             self.status_waiting.push_back((route_id, invocation));
         } else {
             if self.regular_waiting.len() >= MAX_QUEUED_INVOCATIONS {
-                return Err(RelayFailure::Retryable(
-                    "relay invocation queue is full".to_owned(),
-                ));
+                return Err(Box::new(RejectedWork {
+                    route_id,
+                    invocation,
+                    queue: "regular",
+                }));
             }
             self.regular_waiting.push_back((route_id, invocation));
         }
@@ -384,7 +414,18 @@ async fn connect_and_run(
                                 route_id,
                                 invocation,
                             } => {
-                                scheduler.enqueue(route_id, invocation)?;
+                                if let Err(rejected) = scheduler.enqueue(route_id, invocation) {
+                                    // Capacity pressure must not close the authenticated WebSocket
+                                    // or cancel unrelated in-flight mutations.
+                                    let result = capacity_result(&rejected.invocation, rejected.queue);
+                                    send_bounded(
+                                        &mut socket,
+                                        result_message(&rejected.route_id, &result)?,
+                                        SEND_TIMEOUT,
+                                        "overload result send",
+                                    )
+                                    .await?;
+                                }
                             }
                         }
                     }
@@ -448,7 +489,74 @@ fn wrong_device_result(invocation: &InvocationEnvelope, local_device_id: &str) -
 mod tests {
     use std::time::{Duration, Instant};
 
-    use super::{Heartbeat, RelayFailure, validate_relay_url};
+    use super::{
+        Heartbeat, InvocationSchedule, RelayFailure, capacity_result, validate_relay_url,
+        MAX_QUEUED_INVOCATIONS, MAX_STATUS_IN_FLIGHT, MAX_STATUS_QUEUED,
+    };
+    use serde_json::json;
+    use tether_core::{ErrorCode, InvocationEnvelope, ResultStatus};
+
+    fn invocation(capability: &str) -> InvocationEnvelope {
+        serde_json::from_value(json!({
+            "protocol_version": "1.0",
+            "request_id": "00000000-0000-4000-8000-000000000001",
+            "device_id": "test-device",
+            "principal_id": "test-owner",
+            "capability": capability,
+            "arguments": {},
+            "actor": { "id": "test-client", "kind": "ai_client" },
+            "session_id": null,
+            "response_mode": "normal",
+            "idempotency_key": null,
+            "preconditions": [],
+            "expectations": []
+        }))
+        .expect("valid synthetic invocation")
+    }
+
+    #[test]
+    fn saturated_status_returns_a_routed_error_without_dropping_regular_work() {
+        let mut scheduler = InvocationSchedule::default();
+        for index in 0..(MAX_STATUS_IN_FLIGHT + MAX_STATUS_QUEUED) {
+            scheduler
+                .enqueue(format!("status-{index}"), invocation("device.status"))
+                .expect("capacity available");
+        }
+        let denied = scheduler
+            .enqueue("overload".into(), invocation("device.status"))
+            .err()
+            .expect("status lane should be saturated");
+        assert_eq!(denied.route_id, "overload");
+        let result = capacity_result(&denied.invocation, denied.queue);
+        assert_eq!(result.status, ResultStatus::Error);
+        assert_eq!(result.request_id, denied.invocation.request_id);
+        assert_eq!(result.error.expect("overload error").code, ErrorCode::ResourceConflict);
+        assert_eq!(scheduler.status_waiting.len(), MAX_STATUS_IN_FLIGHT + MAX_STATUS_QUEUED);
+        scheduler
+            .enqueue("regular-0".into(), invocation("process.run"))
+            .expect("regular work remains admissible");
+        assert_eq!(scheduler.regular_waiting.len(), 1);
+    }
+
+    #[test]
+    fn saturated_regular_queue_does_not_prevent_status_admission() {
+        let mut scheduler = InvocationSchedule::default();
+        for index in 0..MAX_QUEUED_INVOCATIONS {
+            scheduler
+                .enqueue(format!("regular-{index}"), invocation("process.run"))
+                .expect("regular queue capacity");
+        }
+        let denied = scheduler
+            .enqueue("excess-regular".into(), invocation("process.run"))
+            .err()
+            .expect("regular queue must reject excess");
+        assert_eq!(denied.queue, "regular");
+        scheduler
+            .enqueue("status".into(), invocation("device.status"))
+            .expect("independent status lane remains available");
+        assert_eq!(scheduler.status_waiting.len(), 1);
+        assert_eq!(scheduler.regular_waiting.len(), MAX_QUEUED_INVOCATIONS);
+    }
 
     #[test]
     fn unanswered_heartbeat_forces_reconnection() {
