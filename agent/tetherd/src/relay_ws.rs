@@ -490,8 +490,8 @@ mod tests {
     use std::time::{Duration, Instant};
 
     use super::{
-        Heartbeat, InvocationSchedule, RelayFailure, capacity_result, validate_relay_url,
-        MAX_QUEUED_INVOCATIONS, MAX_STATUS_IN_FLIGHT, MAX_STATUS_QUEUED,
+        Heartbeat, InvocationSchedule, MAX_QUEUED_INVOCATIONS, MAX_STATUS_IN_FLIGHT,
+        MAX_STATUS_QUEUED, RelayFailure, capacity_result, validate_relay_url,
     };
     use serde_json::json;
     use tether_core::{ErrorCode, InvocationEnvelope, ResultStatus};
@@ -530,8 +530,14 @@ mod tests {
         let result = capacity_result(&denied.invocation, denied.queue);
         assert_eq!(result.status, ResultStatus::Error);
         assert_eq!(result.request_id, denied.invocation.request_id);
-        assert_eq!(result.error.expect("overload error").code, ErrorCode::ResourceConflict);
-        assert_eq!(scheduler.status_waiting.len(), MAX_STATUS_IN_FLIGHT + MAX_STATUS_QUEUED);
+        assert_eq!(
+            result.error.expect("overload error").code,
+            ErrorCode::ResourceConflict
+        );
+        assert_eq!(
+            scheduler.status_waiting.len(),
+            MAX_STATUS_IN_FLIGHT + MAX_STATUS_QUEUED
+        );
         scheduler
             .enqueue("regular-0".into(), invocation("process.run"))
             .expect("regular work remains admissible");
