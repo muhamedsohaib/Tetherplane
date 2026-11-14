@@ -375,13 +375,56 @@ for (const authMode of ["static", "oidc"] as const) test(`${authMode} black-box 
     await statusClient.close();
     statusClient = null;
 
+    // A disconnect during a mutation must never trigger an automatic replay.
+    // The old caller receives "disconnected"; the matching durable
+    // idempotency reservation must fail closed as action_unverified.
+    const interruptedMarker = path.join(allowedRoot, "interrupted-run.txt");
+    const interruptedScript = `require("node:fs").appendFileSync(${JSON.stringify(interruptedMarker)}, "once\\n"); setTimeout(() => {}, 6500);`;
+    const interruptedArguments = {
+      name: "process",
+      arguments: {
+        op: "run",
+        device: "Leno",
+        idempotency_key: "remote-e2e-interrupted-process-once",
+        args: {
+          program: process.execPath,
+          args: ["-e", interruptedScript],
+          wait_ms: 5000,
+        },
+      },
+    } as const;
+    const interruptedCall = clientA.callTool(interruptedArguments);
+    await until(async () => {
+      try {
+        return (await readFile(interruptedMarker, "utf8")) === "once\\n";
+      } catch {
+        return false;
+      }
+    }, 2_000, () => childStateError(child, stderr));
+
     relay.deviceGateway.disconnectDevice("Leno");
     await until(() => !relay.router.isOnline("Leno"));
+    const disconnectedCall = await interruptedCall;
+    assert.equal(disconnectedCall.isError, true);
+    assert.equal(errorCode(disconnectedCall), "disconnected");
     await until(
       () => relay.router.isOnline("Leno"),
       7_000,
       () => childStateError(child, stderr),
     );
+    const interruptedReplay = await clientA.callTool(interruptedArguments);
+    assert.equal(interruptedReplay.isError, true);
+    assert.equal(
+      errorCode(interruptedReplay),
+      "action_unverified",
+      "a canceled mutation must remain unverified, never silently reexecute",
+    );
+    assert.equal(
+      await readFile(interruptedMarker, "utf8"),
+      "once\\n",
+      "the interrupted process must not run twice",
+    );
+    console.log("in-flight process.run disconnect: fail-closed idempotency verified");
 
     const replayedAppend =
       await clientA.callTool(appendArguments);
