@@ -70,6 +70,25 @@ where
         .map_err(|error| RelayFailure::Retryable(format!("websocket {operation} failed: {error}")))
 }
 
+async fn heartbeat_tick<S>(
+    socket: &mut S,
+    heartbeat: &mut Heartbeat,
+) -> Result<(), RelayFailure>
+where
+    S: Sink<Message, Error = WebSocketError> + Unpin,
+{
+    if let Some(payload) = heartbeat.on_tick(Instant::now())? {
+        send_bounded(
+            socket,
+            Message::Ping(payload.into()),
+            SEND_TIMEOUT,
+            "heartbeat send",
+        )
+        .await?;
+    }
+    Ok(())
+}
+
 #[derive(Default)]
 struct Heartbeat {
     next_id: u64,
@@ -311,17 +330,7 @@ async fn connect_and_run(
                     Message::Binary(_) | Message::Frame(_) => {}
                 }
             }
-            _ = interval.tick() => {
-                if let Some(payload) = heartbeat.on_tick(Instant::now())? {
-                    send_bounded(
-                        &mut socket,
-                        Message::Ping(payload.into()),
-                        SEND_TIMEOUT,
-                        "heartbeat send",
-                    )
-                    .await?;
-                }
-            }
+            _ = interval.tick() => heartbeat_tick(&mut socket, &mut heartbeat).await?,
         }
     }
 }
