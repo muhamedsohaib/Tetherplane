@@ -393,6 +393,14 @@ for (const authMode of ["static", "oidc"] as const) test(`${authMode} black-box 
         },
       },
     } as const;
+    const operationGet = {
+      name: "process",
+      arguments: {
+        op: "operation_get",
+        device: "Leno",
+        args: { idempotency_key: "remote-e2e-interrupted-process-once" },
+      },
+    } as const;
     const interruptedCall = clientA.callTool(interruptedArguments);
     await until(async () => {
       try {
@@ -401,6 +409,20 @@ for (const authMode of ["static", "oidc"] as const) test(`${authMode} black-box 
         return false;
       }
     }, 2_000, () => childStateError(child, stderr));
+    statusClient = await connectRemoteClient(
+      address.mcpUrl,
+      tokenA,
+      "remote-account-a-live-operation-inspection",
+    );
+    const pendingReceipt = await statusClient.callTool(operationGet);
+    assert.equal(pendingReceipt.isError, undefined);
+    assert.equal(
+      structured(pendingReceipt).state,
+      "unverified_or_in_flight",
+      "receipt lookup must stay responsive during the running mutation",
+    );
+    await statusClient.close();
+    statusClient = null;
 
     relay.deviceGateway.disconnectDevice("Leno");
     await until(() => !relay.router.isOnline("Leno"));
@@ -417,14 +439,7 @@ for (const authMode of ["static", "oidc"] as const) test(`${authMode} black-box 
       tokenA,
       "remote-account-a-operation-reconcile",
     );
-    const operationGet = {
-      name: "process",
-      arguments: {
-        op: "operation_get",
-        device: "Leno",
-        args: { idempotency_key: "remote-e2e-interrupted-process-once" },
-      },
-    } as const;
+
     const deniedOperation = await clientB.callTool(operationGet);
     assert.equal(deniedOperation.isError, true);
     assert.equal(errorCode(deniedOperation), "permission_denied");
