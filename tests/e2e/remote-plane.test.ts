@@ -64,6 +64,7 @@ for (const authMode of ["static", "oidc"] as const) test(`${authMode} black-box 
         allowed_capabilities: [
           "device.status",
           "device.capabilities",
+          "process.run",
           "filesystem.read",
           "filesystem.write",
           "filesystem.append",
@@ -124,6 +125,7 @@ for (const authMode of ["static", "oidc"] as const) test(`${authMode} black-box 
   let child: ChildProcess | null = null;
   let clientA: Client | null = null;
   let clientB: Client | null = null;
+  let statusClient: Client | null = null;
 
   try {
     const started = await jsonRequest(
@@ -324,6 +326,55 @@ for (const authMode of ["static", "oidc"] as const) test(`${authMode} black-box 
     );
     assert.equal(writeAudit.actor.id, "client-a");
 
+    // Start an authorized operation that holds the ordinary execution lane.
+    // The independent client must still be able to invoke device.status while
+    // that operation is running, not merely after it finishes.
+    statusClient = await connectRemoteClient(
+      address.mcpUrl,
+      tokenA,
+      "remote-account-a-status-priority",
+    );
+    const workMarker = path.join(allowedRoot, "slow-work-started.txt");
+    const script = `require("node:fs").writeFileSync(${JSON.stringify(workMarker)}, "started"); setTimeout(() => {}, 3500);`;
+    let ordinaryFinished = false;
+    const slowWork = clientA.callTool({
+      name: "process",
+      arguments: {
+        op: "run",
+        device: "Leno",
+        args: {
+          program: process.execPath,
+          args: ["-e", script],
+          wait_ms: 2500,
+        },
+      },
+    }).then((result) => {
+      ordinaryFinished = true;
+      return result;
+    });
+    await until(async () => {
+      try {
+        return (await readFile(workMarker, "utf8")) === "started";
+      } catch {
+        return false;
+      }
+    }, 2_000, () => childStateError(child, stderr));
+    assert.equal(ordinaryFinished, false, "long-running operation must still be pending");
+    const statusStart = Date.now();
+    const priorityStatus = await statusClient.callTool({
+      name: "device",
+      arguments: { op: "status", device: "Leno" },
+    });
+    const statusMs = Date.now() - statusStart;
+    assert.equal(priorityStatus.isError, undefined, "status remains authorized");
+    assert.ok(statusMs < 1_000, `device.status took ${statusMs}ms under load`);
+    assert.equal(ordinaryFinished, false, "status must complete before ordinary work");
+    const slowResult = await slowWork;
+    assert.equal(slowResult.isError, undefined, "long-running command still completes");
+    console.log(`device.status priority under active process.run: ${statusMs}ms`);
+    await statusClient.close();
+    statusClient = null;
+
     relay.deviceGateway.disconnectDevice("Leno");
     await until(() => !relay.router.isOnline("Leno"));
     await until(
@@ -400,6 +451,7 @@ for (const authMode of ["static", "oidc"] as const) test(`${authMode} black-box 
       "revoked tetherd must fail future relay authentication",
     );
   } finally {
+    await statusClient?.close().catch(() => undefined);
     await clientB?.close().catch(() => undefined);
     await clientA?.close().catch(() => undefined);
     if (child && child.exitCode === null) {
