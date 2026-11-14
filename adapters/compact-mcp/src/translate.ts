@@ -59,6 +59,9 @@ function canonicalCapability(
     return `audit.${operation.slice("audit_".length)}`;
   }
 
+  if (tool === "process" && operation === "operation_get") {
+    return "operation.get";
+  }
   if (tool === "files") {
     switch (operation) {
       case "search":
