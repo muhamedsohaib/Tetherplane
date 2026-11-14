@@ -42,17 +42,19 @@ test("a silently blackholed WebSocket reconnects without restarting or re-pairin
   const sockets = new Set<Socket>();
   let connections = 0;
   let frozenConnection = 0;
+  let frozenDirection: "both" | "relay-to-agent" = "both";
   const proxy = createServer((downstream) => {
     const connectionNumber = ++connections;
     const upstream = connectTcp({ host: "127.0.0.1", port: address.port });
     sockets.add(downstream);
     sockets.add(upstream);
-    const forward = () => connectionNumber !== frozenConnection;
     downstream.on("data", (data: Buffer) => {
-      if (forward()) upstream.write(data);
+      if (connectionNumber !== frozenConnection || frozenDirection === "relay-to-agent") {
+        upstream.write(data);
+      }
     });
     upstream.on("data", (data: Buffer) => {
-      if (forward()) downstream.write(data);
+      if (connectionNumber !== frozenConnection) downstream.write(data);
     });
     downstream.once("close", () => {
       sockets.delete(downstream);
@@ -161,12 +163,45 @@ test("a silently blackholed WebSocket reconnects without restarting or re-pairin
     );
     console.log(`relay blackhole recovery: new TCP connection ${detectionMs}ms; usable device.status ${usableStatusMs}ms`);
 
+    // Asymmetric loss: the relay can receive pings, but its pong frames
+    // cannot reach the agent. This must still recover without a process restart.
+    const firstRecoveredConnection = connections;
+    frozenConnection = firstRecoveredConnection;
+    frozenDirection = "relay-to-agent";
+    const asymmetricStartedAt = Date.now();
+    await until(
+      () => connections > firstRecoveredConnection,
+      30_000,
+      () => assertAgentAlive(child, stderr),
+    );
+    await until(async () => {
+      try {
+        const status = await connectedClient.callTool({
+          name: "device",
+          arguments: { op: "status", device: agentName },
+        });
+        return status.isError !== true;
+      } catch {
+        return false;
+      }
+    }, Math.max(1, asymmetricStartedAt + 30_000 - Date.now()), () => assertAgentAlive(child, stderr));
+    const asymmetricStatusMs = Date.now() - asymmetricStartedAt;
+    assert.ok(asymmetricStatusMs < 30_000, "asymmetric loss must recover device.status within 30s");
+    assert.equal(child.pid, agentPid, "asymmetric loss must preserve the agent PID");
+    assert.equal(child.exitCode, null, "agent must remain alive after asymmetric loss");
+    console.log(`relay asymmetric loss recovery: usable device.status ${asymmetricStatusMs}ms`);
+
     assert.equal(
       await relay.registry.authenticateDevice(agentName, secret),
       "blackhole-test-owner",
       "the same device credentials remain valid after recovery",
     );
     assert.match(stderr.join(""), /heartbeat pong timed out/, "watchdog should diagnose a missing pong");
+    assert.ok(
+      (stderr.join("").match(/transport_reconnected_ms=/g) ?? []).length >= 2,
+      "recovery telemetry must record both restored sessions",
+    );
+    assert.ok(!stderr.join("").includes(secret), "recovery logs must not expose device credentials");
   } finally {
     await client?.close().catch(() => undefined);
     if (child && child.exitCode === null) {

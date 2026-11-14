@@ -1,10 +1,11 @@
+use std::collections::VecDeque;
+use std::future::{Future, pending};
 use std::path::Path;
+use std::pin::Pin;
 use std::sync::Arc;
 use std::time::{Duration, Instant};
 
-use tokio::time::MissedTickBehavior;
-
-use futures_util::{SinkExt, StreamExt};
+use futures_util::{Sink, SinkExt, StreamExt};
 use serde::{Deserialize, Serialize};
 use serde_json::json;
 use tether_core::{
@@ -14,7 +15,7 @@ use tether_core::{
 use tokio_tungstenite::connect_async;
 use tokio_tungstenite::tungstenite::client::IntoClientRequest;
 use tokio_tungstenite::tungstenite::http::header::AUTHORIZATION;
-use tokio_tungstenite::tungstenite::http::{HeaderName, HeaderValue, StatusCode};
+use tokio_tungstenite::tungstenite::http::{HeaderName, HeaderValue, Request, StatusCode};
 use tokio_tungstenite::tungstenite::{Error as WebSocketError, Message};
 use url::Url;
 
@@ -24,6 +25,66 @@ const DEVICE_ID_HEADER: HeaderName = HeaderName::from_static("x-tetherplane-devi
 const CONNECT_TIMEOUT: Duration = Duration::from_secs(10);
 const HEARTBEAT_INTERVAL: Duration = Duration::from_secs(5);
 const HEARTBEAT_PONG_TIMEOUT: Duration = Duration::from_secs(10);
+const SEND_TIMEOUT: Duration = Duration::from_secs(3);
+const MAX_QUEUED_INVOCATIONS: usize = 16;
+
+type RunningInvocation = Pin<Box<dyn Future<Output = (String, ResultEnvelope)> + Send>>;
+
+#[derive(Default)]
+struct RecoveryMetrics {
+    disconnected_at: Option<Instant>,
+    attempts: u64,
+}
+
+impl RecoveryMetrics {
+    fn on_disconnected(&mut self) {
+        self.disconnected_at.get_or_insert_with(Instant::now);
+        self.attempts = self.attempts.saturating_add(1);
+    }
+
+    fn on_connected(&mut self) {
+        if let Some(start) = self.disconnected_at.take() {
+            // No credentials, device identifiers, addresses or invocation contents.
+            eprintln!(
+                "relay recovery: transport_reconnected_ms={} attempts={}",
+                start.elapsed().as_millis(),
+                self.attempts
+            );
+        }
+        self.attempts = 0;
+    }
+}
+
+async fn send_bounded<S>(
+    sink: &mut S,
+    message: Message,
+    timeout: Duration,
+    operation: &'static str,
+) -> Result<(), RelayFailure>
+where
+    S: Sink<Message, Error = WebSocketError> + Unpin,
+{
+    tokio::time::timeout(timeout, sink.send(message))
+        .await
+        .map_err(|_| RelayFailure::Retryable(format!("websocket {operation} timed out")))?
+        .map_err(|error| RelayFailure::Retryable(format!("websocket {operation} failed: {error}")))
+}
+
+async fn heartbeat_tick<S>(socket: &mut S, heartbeat: &mut Heartbeat) -> Result<(), RelayFailure>
+where
+    S: Sink<Message, Error = WebSocketError> + Unpin,
+{
+    if let Some(payload) = heartbeat.on_tick(Instant::now())? {
+        send_bounded(
+            socket,
+            Message::Ping(payload.into()),
+            SEND_TIMEOUT,
+            "heartbeat send",
+        )
+        .await?;
+    }
+    Ok(())
+}
 
 #[derive(Default)]
 struct Heartbeat {
@@ -53,13 +114,6 @@ impl Heartbeat {
         {
             self.pending = None;
         }
-    }
-
-    fn on_invocation_completed(&mut self) {
-        // Long-running device work may prevent the receive loop from processing
-        // a queued pong. Do not classify a healthy connection as stale solely
-        // because an authorized invocation took longer than the heartbeat TTL.
-        self.pending = None;
     }
 }
 
@@ -125,13 +179,16 @@ pub(crate) fn load_device_credential(path: &Path) -> Result<String, String> {
 pub(crate) async fn serve(runtime: Arc<AgentRuntime>, config: RelayConfig) -> Result<(), String> {
     validate_relay_url(&config.url, config.allow_insecure_localhost)?;
 
+    let mut metrics = RecoveryMetrics::default();
     loop {
-        match connect_and_run(Arc::clone(&runtime), &config).await {
+        match connect_and_run(Arc::clone(&runtime), &config, &mut metrics).await {
             Ok(()) => {
+                metrics.on_disconnected();
                 tokio::time::sleep(config.reconnect_delay).await;
             }
             Err(RelayFailure::Fatal(message)) => return Err(message),
             Err(RelayFailure::Retryable(message)) => {
+                metrics.on_disconnected();
                 eprintln!("relay connection lost: {message}");
                 tokio::time::sleep(config.reconnect_delay).await;
             }
@@ -139,10 +196,7 @@ pub(crate) async fn serve(runtime: Arc<AgentRuntime>, config: RelayConfig) -> Re
     }
 }
 
-async fn connect_and_run(
-    runtime: Arc<AgentRuntime>,
-    config: &RelayConfig,
-) -> Result<(), RelayFailure> {
+fn relay_request(config: &RelayConfig) -> Result<Request<()>, RelayFailure> {
     let mut request = config
         .url
         .as_str()
@@ -157,20 +211,78 @@ async fn connect_and_run(
     request.headers_mut().insert(AUTHORIZATION, authorization);
     request.headers_mut().insert(DEVICE_ID_HEADER, device_id);
 
+    Ok(request)
+}
+
+fn result_message(route_id: &str, result: &ResultEnvelope) -> Result<Message, RelayFailure> {
+    let payload = serde_json::to_string(&RelayOutbound {
+        kind: "result",
+        route_id,
+        result,
+    })
+    .map_err(|error| RelayFailure::Fatal(format!("failed to serialize relay result: {error}")))?;
+    Ok(Message::Text(payload.into()))
+}
+
+async fn connect_and_run(
+    runtime: Arc<AgentRuntime>,
+    config: &RelayConfig,
+    metrics: &mut RecoveryMetrics,
+) -> Result<(), RelayFailure> {
+    let request = relay_request(config)?;
+
     let (mut socket, _) = tokio::time::timeout(CONNECT_TIMEOUT, connect_async(request))
         .await
         .map_err(|_| {
             RelayFailure::Retryable("relay websocket connection attempt timed out".to_owned())
         })?
         .map_err(|error| classify_connect_error(&error))?;
+    metrics.on_connected();
 
     let mut heartbeat = Heartbeat::default();
     let mut interval = tokio::time::interval(HEARTBEAT_INTERVAL);
-    interval.set_missed_tick_behavior(MissedTickBehavior::Delay);
+    interval.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Delay);
     interval.tick().await; // The first tick is immediate; start after one full interval.
 
+    // Execute invocations sequentially as before, but poll the active future
+    // alongside socket traffic. Long-running device work must not prevent pong
+    // processing or heartbeat deadlines from being enforced.
+    let mut active: Option<RunningInvocation> = None;
+    let mut waiting = VecDeque::<(String, InvocationEnvelope)>::new();
+
     loop {
+        if active.is_none()
+            && let Some((route_id, invocation)) = waiting.pop_front()
+        {
+            let runtime = Arc::clone(&runtime);
+            let local_device_id = config.device_id.clone();
+            active = Some(Box::pin(async move {
+                let result = if invocation.device_id.as_deref() == Some(local_device_id.as_str()) {
+                    runtime.execute(invocation).await
+                } else {
+                    wrong_device_result(&invocation, &local_device_id)
+                };
+                (route_id, result)
+            }));
+        }
+
         tokio::select! {
+            result = async {
+                match active.as_mut() {
+                    Some(future) => future.await,
+                    None => pending::<(String, ResultEnvelope)>().await,
+                }
+            } => {
+                active = None;
+                let (route_id, result) = result;
+                send_bounded(
+                    &mut socket,
+                    result_message(&route_id, &result)?,
+                    SEND_TIMEOUT,
+                    "result send",
+                )
+                .await?;
+            }
             next = socket.next() => {
                 let Some(next) = next else {
                     return Ok(());
@@ -192,52 +304,30 @@ async fn connect_and_run(
                                 route_id,
                                 invocation,
                             } => {
-                                let result =
-                                    if invocation.device_id.as_deref() == Some(config.device_id.as_str()) {
-                                        runtime.execute(invocation).await
-                                    } else {
-                                        wrong_device_result(&invocation, &config.device_id)
-                                    };
-                                heartbeat.on_invocation_completed();
-                                interval.reset();
-                                let payload = serde_json::to_string(&RelayOutbound {
-                                    kind: "result",
-                                    route_id: &route_id,
-                                    result: &result,
-                                })
-                                .map_err(|error| {
-                                    RelayFailure::Fatal(format!(
-                                        "failed to serialize relay result: {error}"
-                                    ))
-                                })?;
-                                socket
-                                    .send(Message::Text(payload.into()))
-                                    .await
-                                    .map_err(|error| {
-                                        RelayFailure::Retryable(format!(
-                                            "websocket result send failed: {error}"
-                                        ))
-                                    })?;
+                                if waiting.len() >= MAX_QUEUED_INVOCATIONS {
+                                    return Err(RelayFailure::Retryable(
+                                        "relay invocation queue is full".to_owned(),
+                                    ));
+                                }
+                                waiting.push_back((route_id, invocation));
                             }
                         }
                     }
                     Message::Ping(payload) => {
-                        socket.send(Message::Pong(payload)).await.map_err(|error| {
-                            RelayFailure::Retryable(format!("websocket pong failed: {error}"))
-                        })?;
+                        send_bounded(
+                            &mut socket,
+                            Message::Pong(payload),
+                            SEND_TIMEOUT,
+                            "pong send",
+                        )
+                        .await?;
                     }
                     Message::Close(_) => return Ok(()),
                     Message::Pong(payload) => heartbeat.on_pong(&payload),
                     Message::Binary(_) | Message::Frame(_) => {}
                 }
             }
-            _ = interval.tick() => {
-                if let Some(payload) = heartbeat.on_tick(Instant::now())? {
-                    socket.send(Message::Ping(payload.into())).await.map_err(|error| {
-                        RelayFailure::Retryable(format!("websocket heartbeat send failed: {error}"))
-                    })?;
-                }
-            }
+            _ = interval.tick() => heartbeat_tick(&mut socket, &mut heartbeat).await?,
         }
     }
 }
@@ -327,17 +417,30 @@ mod tests {
     }
 
     #[test]
-    fn completed_long_running_invocation_resets_stale_heartbeat() {
+    fn invocation_cannot_mask_unanswered_heartbeat() {
         let start = Instant::now();
         let mut heartbeat = Heartbeat::default();
         heartbeat.on_tick(start).expect("first heartbeat succeeds");
-        heartbeat.on_invocation_completed();
-        assert!(
-            heartbeat
-                .on_tick(start + Duration::from_secs(120))
-                .expect("long invocation does not cause false timeout")
-                .is_some()
-        );
+        assert!(matches!(
+            heartbeat.on_tick(start + Duration::from_secs(120)),
+            Err(RelayFailure::Retryable(_))
+        ));
+    }
+
+    #[tokio::test]
+    async fn stalled_websocket_send_has_a_deadline() {
+        let blocked = futures_util::sink::unfold((), |(), _: super::Message| async {
+            std::future::pending::<Result<(), super::WebSocketError>>().await
+        });
+        let mut blocked = Box::pin(blocked);
+        let result = super::send_bounded(
+            &mut blocked,
+            super::Message::Ping(vec![1].into()),
+            Duration::from_millis(30),
+            "heartbeat send",
+        )
+        .await;
+        assert!(matches!(result, Err(RelayFailure::Retryable(_))));
     }
 
     #[test]
