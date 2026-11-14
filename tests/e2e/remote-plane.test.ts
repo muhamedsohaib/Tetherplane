@@ -65,6 +65,7 @@ for (const authMode of ["static", "oidc"] as const) test(`${authMode} black-box 
           "device.status",
           "device.capabilities",
           "process.run",
+          "operation.get",
           "filesystem.read",
           "filesystem.write",
           "filesystem.append",
@@ -375,11 +376,10 @@ for (const authMode of ["static", "oidc"] as const) test(`${authMode} black-box 
     await statusClient.close();
     statusClient = null;
 
-    // A disconnect during a mutation must never trigger an automatic replay.
-    // The old caller receives "disconnected"; the matching durable
-    // idempotency reservation must fail closed as action_unverified.
+    // Supervised process.run survives WebSocket loss and writes its durable
+    // completion receipt without automatically replaying the mutation.
     const interruptedMarker = path.join(allowedRoot, "interrupted-run.txt");
-    const interruptedScript = `require("node:fs").appendFileSync(${JSON.stringify(interruptedMarker)}, "once\\n"); setTimeout(() => {}, 6500);`;
+    const interruptedScript = `require("node:fs").appendFileSync(${JSON.stringify(interruptedMarker)}, "once\\n"); setTimeout(() => {}, 3000);`;
     const interruptedArguments = {
       name: "process",
       arguments: {
@@ -412,19 +412,57 @@ for (const authMode of ["static", "oidc"] as const) test(`${authMode} black-box 
       7_000,
       () => childStateError(child, stderr),
     );
-    const interruptedReplay = await clientA.callTool(interruptedArguments);
-    assert.equal(interruptedReplay.isError, true);
-    assert.equal(
-      errorCode(interruptedReplay),
-      "action_unverified",
-      "a canceled mutation must remain unverified, never silently reexecute",
+    statusClient = await connectRemoteClient(
+      address.mcpUrl,
+      tokenA,
+      "remote-account-a-operation-reconcile",
     );
+    const operationGet = {
+      name: "process",
+      arguments: {
+        op: "operation_get",
+        device: "Leno",
+        args: { idempotency_key: "remote-e2e-interrupted-process-once" },
+      },
+    } as const;
+    const deniedOperation = await clientB.callTool(operationGet);
+    assert.equal(deniedOperation.isError, true);
+    assert.equal(errorCode(deniedOperation), "permission_denied");
+
+    // The same idempotency key is inspectable without spawning a new command.
+    // The process may still be executing when the connection is restored.
+    const initialReceipt = await statusClient.callTool(operationGet);
+    assert.equal(initialReceipt.isError, undefined);
+    assert.ok(
+      ["unverified_or_in_flight", "invocation_completed"].includes(
+        String(structured(initialReceipt).state),
+      ),
+      "operation.get must expose the durable receipt state",
+    );
+
+    await until(async () => {
+      const receipt = await statusClient!.callTool(operationGet);
+      if (receipt.isError) return false;
+      return structured(receipt).state === "invocation_completed";
+    }, 10_000, () => childStateError(child, stderr));
+    const completedReceipt = await statusClient.callTool(operationGet);
+    assert.equal(completedReceipt.isError, undefined);
+    assert.equal(structured(completedReceipt).state, "invocation_completed");
+    assert.equal(
+      (structured(completedReceipt).result as { data?: { running?: boolean } }).data?.running,
+      false,
+      "receipt must report the terminated test subprocess",
+    );
+    const interruptedReplay = await clientA.callTool(interruptedArguments);
+    assert.equal(interruptedReplay.isError, undefined, "completed receipt must replay without execution");
     assert.equal(
       await readFile(interruptedMarker, "utf8"),
       "once\n",
-      "the interrupted process must not run twice",
+      "replay must not spawn a duplicate external process",
     );
-    console.log("in-flight process.run disconnect: fail-closed idempotency verified");
+    console.log("in-flight process.run disconnect: durable completion reconciled without replay");
+    await statusClient.close();
+    statusClient = null;
 
     const replayedAppend =
       await clientA.callTool(appendArguments);
