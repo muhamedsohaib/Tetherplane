@@ -420,12 +420,17 @@ mod tests {
 
         receipt_request.principal_id = Some("service:other".into());
         assert_eq!(
-            reopened.inspect_process(&receipt_request).expect("isolated")["state"],
+            reopened
+                .inspect_process(&receipt_request)
+                .expect("isolated")["state"],
             "not_found"
         );
         receipt_request.principal_id = None;
         assert_eq!(
-            reopened.inspect_process(&receipt_request).expect_err("requires a principal").code,
+            reopened
+                .inspect_process(&receipt_request)
+                .expect_err("requires a principal")
+                .code,
             ErrorCode::PermissionDenied
         );
         let _ = std::fs::remove_dir_all(dir);
