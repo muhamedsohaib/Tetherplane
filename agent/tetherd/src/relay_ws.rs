@@ -204,9 +204,7 @@ fn result_message(route_id: &str, result: &ResultEnvelope) -> Result<Message, Re
         route_id,
         result,
     })
-    .map_err(|error| {
-        RelayFailure::Fatal(format!("failed to serialize relay result: {error}"))
-    })?;
+    .map_err(|error| RelayFailure::Fatal(format!("failed to serialize relay result: {error}")))?;
     Ok(Message::Text(payload.into()))
 }
 
