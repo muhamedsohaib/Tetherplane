@@ -179,52 +179,53 @@ async fn connect_and_run(
                     RelayFailure::Retryable(format!("websocket receive failed: {error}"))
                 })?;
                 match message {
-            Message::Text(text) => {
-                let inbound =
-                    serde_json::from_str::<RelayInbound>(text.as_str()).map_err(|error| {
-                        RelayFailure::Retryable(format!(
-                            "relay sent invalid invocation message: {error}"
-                        ))
-                    })?;
-                match inbound {
-                    RelayInbound::Invoke {
-                        route_id,
-                        invocation,
-                    } => {
-                        let result =
-                            if invocation.device_id.as_deref() == Some(config.device_id.as_str()) {
-                                runtime.execute(invocation).await
-                            } else {
-                                wrong_device_result(&invocation, &config.device_id)
-                            };
-                        heartbeat.on_invocation_completed();
-                        interval.reset();
-                        let payload = serde_json::to_string(&RelayOutbound {
-                            kind: "result",
-                            route_id: &route_id,
-                            result: &result,
-                        })
-                        .map_err(|error| {
-                            RelayFailure::Fatal(format!(
-                                "failed to serialize relay result: {error}"
-                            ))
-                        })?;
-                        socket
-                            .send(Message::Text(payload.into()))
-                            .await
-                            .map_err(|error| {
+                    Message::Text(text) => {
+                        let inbound = serde_json::from_str::<RelayInbound>(text.as_str()).map_err(
+                            |error| {
                                 RelayFailure::Retryable(format!(
-                                    "websocket result send failed: {error}"
+                                    "relay sent invalid invocation message: {error}"
                                 ))
-                            })?;
+                            },
+                        )?;
+                        match inbound {
+                            RelayInbound::Invoke {
+                                route_id,
+                                invocation,
+                            } => {
+                                let result =
+                                    if invocation.device_id.as_deref() == Some(config.device_id.as_str()) {
+                                        runtime.execute(invocation).await
+                                    } else {
+                                        wrong_device_result(&invocation, &config.device_id)
+                                    };
+                                heartbeat.on_invocation_completed();
+                                interval.reset();
+                                let payload = serde_json::to_string(&RelayOutbound {
+                                    kind: "result",
+                                    route_id: &route_id,
+                                    result: &result,
+                                })
+                                .map_err(|error| {
+                                    RelayFailure::Fatal(format!(
+                                        "failed to serialize relay result: {error}"
+                                    ))
+                                })?;
+                                socket
+                                    .send(Message::Text(payload.into()))
+                                    .await
+                                    .map_err(|error| {
+                                        RelayFailure::Retryable(format!(
+                                            "websocket result send failed: {error}"
+                                        ))
+                                    })?;
+                            }
+                        }
                     }
-                }
-            }
-            Message::Ping(payload) => {
-                socket.send(Message::Pong(payload)).await.map_err(|error| {
-                    RelayFailure::Retryable(format!("websocket pong failed: {error}"))
-                })?;
-            }
+                    Message::Ping(payload) => {
+                        socket.send(Message::Pong(payload)).await.map_err(|error| {
+                            RelayFailure::Retryable(format!("websocket pong failed: {error}"))
+                        })?;
+                    }
                     Message::Close(_) => return Ok(()),
                     Message::Pong(payload) => heartbeat.on_pong(&payload),
                     Message::Binary(_) | Message::Frame(_) => {}
