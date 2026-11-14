@@ -225,7 +225,7 @@ async fn connect_and_run(
             let runtime = Arc::clone(&runtime);
             let local_device_id = config.device_id.clone();
             active = Some(Box::pin(async move {
-                let result = if invocation.device_id.as_deref() == Some(&local_device_id) {
+                let result = if invocation.device_id.as_deref() == Some(local_device_id.as_str()) {
                     runtime.execute(invocation).await
                 } else {
                     wrong_device_result(&invocation, &local_device_id)
