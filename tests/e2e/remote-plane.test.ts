@@ -506,6 +506,39 @@ for (const authMode of ["static", "oidc"] as const) test(`${authMode} black-box 
       "relay restart must not duplicate an idempotent mutation",
     );
 
+    // Restart the agent process itself with the same owned state directory.
+    // Completed receipts must remain available and cannot spawn a duplicate.
+    const previousAgent = child;
+    previousAgent.kill();
+    await waitForExit(previousAgent, 7_000);
+    await until(() => !relay.router.isOnline("Leno"));
+    child = spawn(tetherdPath, previousAgent.spawnargs.slice(1), {
+      cwd: repoRoot,
+      stdio: ["ignore", "ignore", "pipe"],
+      windowsHide: true,
+    });
+    child.stderr?.setEncoding("utf8");
+    child.stderr?.on("data", (chunk) => stderr.push(String(chunk)));
+    await until(
+      () => relay.router.isOnline("Leno"),
+      10_000,
+      () => childStateError(child, stderr),
+    );
+    const afterAgentRestart = await clientA.callTool({
+      name: "process",
+      arguments: {
+        op: "operation_get",
+        device: "Leno",
+        args: { idempotency_key: "remote-e2e-interrupted-process-once" },
+      },
+    });
+    assert.equal(afterAgentRestart.isError, undefined);
+    assert.equal(structured(afterAgentRestart).state, "invocation_completed");
+    const replayAfterAgentRestart = await clientA.callTool(interruptedArguments);
+    assert.equal(replayAfterAgentRestart.isError, undefined);
+    assert.equal(await readFile(interruptedMarker, "utf8"), "once\n");
+    console.log("completed process receipt survived agent restart without duplicate execution");
+
     const revoked = await jsonRequest(
       address.httpUrl,
       "/devices/Leno/revoke",
