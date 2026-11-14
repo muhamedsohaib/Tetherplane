@@ -345,9 +345,9 @@ for (const authMode of ["static", "oidc"] as const) test(`${authMode} black-box 
     // Rebind the same port and restore the registry from disk.
     const initialAgentPid = child.pid;
     const previousPort = address.port;
-    await clientB.close();
+    await clientB?.close();
     clientB = null;
-    await clientA.close();
+    await clientA?.close();
     clientA = null;
     await relay.close();
 
@@ -370,7 +370,7 @@ for (const authMode of ["static", "oidc"] as const) test(`${authMode} black-box 
     assert.equal(postRestartAppend.isError, undefined);
     assert.equal(
       await readFile(remoteFile, "utf8"),
-      "base\\nonce\\n",
+      "base\nonce\n",
       "relay restart must not duplicate an idempotent mutation",
     );
 
