@@ -62,7 +62,11 @@ struct InvocationSchedule {
 }
 
 impl InvocationSchedule {
-    fn enqueue(&mut self, route_id: String, invocation: InvocationEnvelope) -> Result<(), RelayFailure> {
+    fn enqueue(
+        &mut self,
+        route_id: String,
+        invocation: InvocationEnvelope,
+    ) -> Result<(), RelayFailure> {
         if invocation.capability == "device.status" {
             if self.status_active.len() + self.status_waiting.len()
                 >= MAX_STATUS_IN_FLIGHT + MAX_STATUS_QUEUED
