@@ -142,6 +142,12 @@ test("Notepad 3-step guide ships inside the verified single ZIP without a trust 
  const steps=[...guide.matchAll(/^([1-3])\. /gm)].map(m=>Number(m[1]));
  assert.deepEqual(steps,[1,2,3],"Instructions must contain exactly three numbered steps");
  assert.match(guide,/extract this ENTIRE[\s\S]*ZIP/i);
+ assert.match(guide,/NEW EMPTY subfolder/);
+ assert.match(guide,/Application Data/);
+ assert.match(guide,/Do not delete junctions or bypass this check/);
+ assert.match(preflight,/Package includes a link:/);
+ assert.match(preflight,/Do not bypass this check/);
+ assert.match(preflight,/new empty subfolder/);
  assert.match(guide,/START HERE\.cmd/);
  assert.match(guide,/Request owner approval/i);
  assert.match(guide,/Device Authority/);

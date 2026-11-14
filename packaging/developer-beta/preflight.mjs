@@ -52,7 +52,8 @@ async function listPackagedFiles(rootDir){
    const rel=relative?relative+"/"+entry.name:entry.name;
    const absolutePath=path.join(absolute,entry.name);
    const info=await lstat(absolutePath);
-   if(info.isSymbolicLink())throw Error("Package includes a link: "+rel);
+   if(info.isSymbolicLink())throw Error("Package includes a link: "+rel+
+     ". Do not bypass this check. If extracted into a user profile or common folder root, re-extract the reviewed ZIP into a new empty subfolder.");
    if(info.isDirectory())pending.push({absolute:absolutePath,relative:rel});
    else if(info.isFile())found.push(rel);
    else throw Error("Package includes a non-file entry: "+rel);
