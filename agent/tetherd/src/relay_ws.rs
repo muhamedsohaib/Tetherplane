@@ -525,8 +525,7 @@ mod tests {
         }
         let denied = scheduler
             .enqueue("overload".into(), invocation("device.status"))
-            .err()
-            .expect("status lane should be saturated");
+            .expect_err("status lane should be saturated");
         assert_eq!(denied.route_id, "overload");
         let result = capacity_result(&denied.invocation, denied.queue);
         assert_eq!(result.status, ResultStatus::Error);
@@ -555,8 +554,7 @@ mod tests {
         }
         let denied = scheduler
             .enqueue("excess-regular".into(), invocation("process.run"))
-            .err()
-            .expect("regular queue must reject excess");
+            .expect_err("regular queue must reject excess");
         assert_eq!(denied.queue, "regular");
         scheduler
             .enqueue("status".into(), invocation("device.status"))
