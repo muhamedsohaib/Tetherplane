@@ -121,6 +121,7 @@ test("a silently blackholed WebSocket reconnects without restarting or re-pairin
     // recover the session without a server-side close frame.
     frozenConnection = 1;
     const blackoutStartedAt = Date.now();
+    const recoveryDeadline = blackoutStartedAt + 30_000;
 
     await until(
       () => connections >= 2,
@@ -152,7 +153,13 @@ test("a silently blackholed WebSocket reconnects without restarting or re-pairin
       } catch {
         return false;
       }
-    }, 10_000, () => assertAgentAlive(child, stderr));
+    }, Math.max(1, recoveryDeadline - Date.now()), () => assertAgentAlive(child, stderr));
+    const usableStatusMs = Date.now() - blackoutStartedAt;
+    assert.ok(
+      usableStatusMs < 30_000,
+      `device.status must be usable within 30s of the blackhole (took ${usableStatusMs}ms)`,
+    );
+    console.log(`relay blackhole recovery: new TCP connection ${detectionMs}ms; usable device.status ${usableStatusMs}ms`);
 
     assert.equal(
       await relay.registry.authenticateDevice(agentName, secret),
