@@ -35,6 +35,7 @@ struct RecordPaths {
     completed: PathBuf,
 }
 
+#[derive(Clone)]
 pub struct IdempotencyStore {
     directory: PathBuf,
 }
