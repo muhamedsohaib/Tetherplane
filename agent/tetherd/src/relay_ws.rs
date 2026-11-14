@@ -99,7 +99,6 @@ impl Heartbeat {
             self.pending = None;
         }
     }
-
 }
 
 pub(crate) struct RelayConfig {
