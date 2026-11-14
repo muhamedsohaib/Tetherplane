@@ -51,10 +51,7 @@ impl IdempotencyStore {
     /// Read an operation receipt without replaying the original mutation.
     /// The caller's bound principal and routed device determine the lookup key.
     /// A pending receipt is deliberately not evidence of a running process.
-    pub fn inspect_process(
-        &self,
-        request: &InvocationEnvelope,
-    ) -> Result<Value, CapabilityError> {
+    pub fn inspect_process(&self, request: &InvocationEnvelope) -> Result<Value, CapabilityError> {
         if request.principal_id.as_deref().is_none_or(str::is_empty)
             || request.device_id.as_deref().is_none_or(str::is_empty)
         {
