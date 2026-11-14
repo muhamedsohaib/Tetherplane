@@ -61,7 +61,7 @@ fn capacity_result(invocation: &InvocationEnvelope, queue: &'static str) -> Resu
     }
 }
 
-// Only the read-only status operation gets an out-of-band execution lane.
+// Only read-only status and operation receipt inspection get the control lane.
 // Everything, including status, still goes through AgentRuntime::execute for
 // device targeting, local policy checks, and audit attribution.
 fn execute_work(
@@ -126,7 +126,7 @@ impl InvocationSchedule {
         route_id: String,
         invocation: InvocationEnvelope,
     ) -> Result<(), Box<RejectedWork>> {
-        if invocation.capability == "device.status" {
+        if matches!(invocation.capability.as_str(), "device.status" | "operation.get") {
             if self.status_active.len() + self.status_waiting.len()
                 >= MAX_STATUS_IN_FLIGHT + MAX_STATUS_QUEUED
             {
