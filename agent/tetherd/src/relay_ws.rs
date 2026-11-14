@@ -34,6 +34,7 @@ const MAX_STATUS_QUEUED: usize = 16;
 type WorkItem = (String, InvocationEnvelope);
 type RunningInvocation = Pin<Box<dyn Future<Output = (String, ResultEnvelope)> + Send>>;
 
+#[derive(Debug)]
 struct RejectedWork {
     route_id: String,
     invocation: InvocationEnvelope,
