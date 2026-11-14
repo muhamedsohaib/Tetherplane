@@ -74,7 +74,8 @@ impl IdempotencyStore {
                 details: json!({}),
             })?;
         let mut original = request.clone();
-        original.capability = "process.run".to_owned();
+        original.capability.clear();
+        original.capability.push_str("process.run");
         original.idempotency_key = Some(key.to_owned());
         let paths = self.record_paths(&original, key)?;
         if paths.completed.exists() {
