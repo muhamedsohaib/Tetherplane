@@ -89,7 +89,7 @@ for (const authMode of ["static", "oidc"] as const) test(`${authMode} black-box 
   };
   const tokenA = authMode === "oidc" ? accessToken("owner-a", "client-a") : "remote-client-token-a";
   const tokenB = authMode === "oidc" ? accessToken("owner-b", "client-b") : "remote-client-token-b";
-  const relay = await RelayServer.create({
+  const createRelay = () => RelayServer.create({
     stateFile: relayState,
     ...(authMode === "oidc" ? { oauth: { resource: audience, issuer, scopes: ["tetherplane:access"] } } : {}),
     authenticator: authMode === "oidc" ? new OidcClientAuthenticator({
@@ -115,7 +115,8 @@ for (const authMode of ["static", "oidc"] as const) test(`${authMode} black-box 
     allowInsecureLocalhost: true,
     routeTimeoutMs: 3_000,
   });
-  const address = await relay.listen({
+  let relay = await createRelay();
+  let address = await relay.listen({
     host: "127.0.0.1",
     port: 0,
   });
@@ -338,6 +339,39 @@ for (const authMode of ["static", "oidc"] as const) test(`${authMode} black-box 
       await readFile(remoteFile, "utf8"),
       "base\nonce\n",
       "same idempotency key after reconnect must not duplicate append",
+    );
+
+    // A full relay restart must not require restarting or re-pairing tetherd.
+    // Rebind the same port and restore the registry from disk.
+    const initialAgentPid = child.pid;
+    const previousPort = address.port;
+    await clientB.close();
+    clientB = null;
+    await clientA.close();
+    clientA = null;
+    await relay.close();
+
+    relay = await createRelay();
+    address = await relay.listen({ host: "127.0.0.1", port: previousPort });
+    await until(
+      () => relay.router.isOnline("Leno"),
+      30_000,
+      () => childStateError(child, stderr),
+    );
+    assert.equal(child.pid, initialAgentPid, "device process must survive relay restart");
+    assert.equal(child.exitCode, null, "device process remains alive");
+    clientA = await connectRemoteClient(address.mcpUrl, tokenA, "remote-account-a-restarted");
+    const postRestartStatus = await clientA.callTool({
+      name: "device",
+      arguments: { op: "status", device: "Leno" },
+    });
+    assert.equal(postRestartStatus.isError, undefined);
+    const postRestartAppend = await clientA.callTool(appendArguments);
+    assert.equal(postRestartAppend.isError, undefined);
+    assert.equal(
+      await readFile(remoteFile, "utf8"),
+      "base\\nonce\\n",
+      "relay restart must not duplicate an idempotent mutation",
     );
 
     const revoked = await jsonRequest(
