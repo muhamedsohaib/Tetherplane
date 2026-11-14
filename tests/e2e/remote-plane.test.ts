@@ -396,7 +396,7 @@ for (const authMode of ["static", "oidc"] as const) test(`${authMode} black-box 
     const interruptedCall = clientA.callTool(interruptedArguments);
     await until(async () => {
       try {
-        return (await readFile(interruptedMarker, "utf8")) === "once\\n";
+        return (await readFile(interruptedMarker, "utf8")) === "once\n";
       } catch {
         return false;
       }
@@ -421,7 +421,7 @@ for (const authMode of ["static", "oidc"] as const) test(`${authMode} black-box 
     );
     assert.equal(
       await readFile(interruptedMarker, "utf8"),
-      "once\\n",
+      "once\n",
       "the interrupted process must not run twice",
     );
     console.log("in-flight process.run disconnect: fail-closed idempotency verified");
