@@ -65,6 +65,7 @@ for (const authMode of ["static", "oidc"] as const) test(`${authMode} black-box 
           "device.status",
           "device.capabilities",
           "process.run",
+          "operation.get",
           "filesystem.read",
           "filesystem.write",
           "filesystem.append",
@@ -375,11 +376,10 @@ for (const authMode of ["static", "oidc"] as const) test(`${authMode} black-box 
     await statusClient.close();
     statusClient = null;
 
-    // A disconnect during a mutation must never trigger an automatic replay.
-    // The old caller receives "disconnected"; the matching durable
-    // idempotency reservation must fail closed as action_unverified.
+    // Supervised process.run survives WebSocket loss and writes its durable
+    // completion receipt without automatically replaying the mutation.
     const interruptedMarker = path.join(allowedRoot, "interrupted-run.txt");
-    const interruptedScript = `require("node:fs").appendFileSync(${JSON.stringify(interruptedMarker)}, "once\\n"); setTimeout(() => {}, 6500);`;
+    const interruptedScript = `require("node:fs").appendFileSync(${JSON.stringify(interruptedMarker)}, "once\\n"); setTimeout(() => {}, 3000);`;
     const interruptedArguments = {
       name: "process",
       arguments: {
@@ -393,6 +393,14 @@ for (const authMode of ["static", "oidc"] as const) test(`${authMode} black-box 
         },
       },
     } as const;
+    const operationGet = {
+      name: "process",
+      arguments: {
+        op: "operation_get",
+        device: "Leno",
+        args: { idempotency_key: "remote-e2e-interrupted-process-once" },
+      },
+    } as const;
     const interruptedCall = clientA.callTool(interruptedArguments);
     await until(async () => {
       try {
@@ -401,6 +409,20 @@ for (const authMode of ["static", "oidc"] as const) test(`${authMode} black-box 
         return false;
       }
     }, 2_000, () => childStateError(child, stderr));
+    statusClient = await connectRemoteClient(
+      address.mcpUrl,
+      tokenA,
+      "remote-account-a-live-operation-inspection",
+    );
+    const pendingReceipt = await statusClient.callTool(operationGet);
+    assert.equal(pendingReceipt.isError, undefined);
+    assert.equal(
+      structured(pendingReceipt).state,
+      "unverified_or_in_flight",
+      "receipt lookup must stay responsive during the running mutation",
+    );
+    await statusClient.close();
+    statusClient = null;
 
     relay.deviceGateway.disconnectDevice("Leno");
     await until(() => !relay.router.isOnline("Leno"));
@@ -412,19 +434,50 @@ for (const authMode of ["static", "oidc"] as const) test(`${authMode} black-box 
       7_000,
       () => childStateError(child, stderr),
     );
-    const interruptedReplay = await clientA.callTool(interruptedArguments);
-    assert.equal(interruptedReplay.isError, true);
-    assert.equal(
-      errorCode(interruptedReplay),
-      "action_unverified",
-      "a canceled mutation must remain unverified, never silently reexecute",
+    statusClient = await connectRemoteClient(
+      address.mcpUrl,
+      tokenA,
+      "remote-account-a-operation-reconcile",
     );
+
+    const deniedOperation = await clientB.callTool(operationGet);
+    assert.equal(deniedOperation.isError, true);
+    assert.equal(errorCode(deniedOperation), "permission_denied");
+
+    // The same idempotency key is inspectable without spawning a new command.
+    // The process may still be executing when the connection is restored.
+    const initialReceipt = await statusClient.callTool(operationGet);
+    assert.equal(initialReceipt.isError, undefined);
+    assert.ok(
+      ["unverified_or_in_flight", "invocation_completed"].includes(
+        String(structured(initialReceipt).state),
+      ),
+      "operation.get must expose the durable receipt state",
+    );
+
+    await until(async () => {
+      const receipt = await statusClient!.callTool(operationGet);
+      if (receipt.isError) return false;
+      return structured(receipt).state === "invocation_completed";
+    }, 10_000, () => childStateError(child, stderr));
+    const completedReceipt = await statusClient.callTool(operationGet);
+    assert.equal(completedReceipt.isError, undefined);
+    assert.equal(structured(completedReceipt).state, "invocation_completed");
+    assert.equal(
+      (structured(completedReceipt).result as { data?: { running?: boolean } }).data?.running,
+      false,
+      "receipt must report the terminated test subprocess",
+    );
+    const interruptedReplay = await clientA.callTool(interruptedArguments);
+    assert.equal(interruptedReplay.isError, undefined, "completed receipt must replay without execution");
     assert.equal(
       await readFile(interruptedMarker, "utf8"),
       "once\n",
-      "the interrupted process must not run twice",
+      "replay must not spawn a duplicate external process",
     );
-    console.log("in-flight process.run disconnect: fail-closed idempotency verified");
+    console.log("in-flight process.run disconnect: durable completion reconciled without replay");
+    await statusClient.close();
+    statusClient = null;
 
     const replayedAppend =
       await clientA.callTool(appendArguments);
@@ -467,6 +520,39 @@ for (const authMode of ["static", "oidc"] as const) test(`${authMode} black-box 
       "base\nonce\n",
       "relay restart must not duplicate an idempotent mutation",
     );
+
+    // Restart the agent process itself with the same owned state directory.
+    // Completed receipts must remain available and cannot spawn a duplicate.
+    const previousAgent = child;
+    previousAgent.kill();
+    await waitForExit(previousAgent, 7_000);
+    await until(() => !relay.router.isOnline("Leno"));
+    child = spawn(tetherdPath, previousAgent.spawnargs.slice(1), {
+      cwd: repoRoot,
+      stdio: ["ignore", "ignore", "pipe"],
+      windowsHide: true,
+    });
+    child.stderr?.setEncoding("utf8");
+    child.stderr?.on("data", (chunk) => stderr.push(String(chunk)));
+    await until(
+      () => relay.router.isOnline("Leno"),
+      10_000,
+      () => childStateError(child, stderr),
+    );
+    const afterAgentRestart = await clientA.callTool({
+      name: "process",
+      arguments: {
+        op: "operation_get",
+        device: "Leno",
+        args: { idempotency_key: "remote-e2e-interrupted-process-once" },
+      },
+    });
+    assert.equal(afterAgentRestart.isError, undefined);
+    assert.equal(structured(afterAgentRestart).state, "invocation_completed");
+    const replayAfterAgentRestart = await clientA.callTool(interruptedArguments);
+    assert.equal(replayAfterAgentRestart.isError, undefined);
+    assert.equal(await readFile(interruptedMarker, "utf8"), "once\n");
+    console.log("completed process receipt survived agent restart without duplicate execution");
 
     const revoked = await jsonRequest(
       address.httpUrl,

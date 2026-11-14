@@ -3,7 +3,7 @@ use std::io::Write;
 use std::path::{Path, PathBuf};
 
 use serde::{Deserialize, Serialize};
-use serde_json::json;
+use serde_json::{Value, json};
 use sha2::{Digest, Sha256};
 use tether_core::{
     CapabilityError, ErrorCode, InvocationEnvelope, ResultEnvelope, ResultStatus, Timing,
@@ -35,6 +35,7 @@ struct RecordPaths {
     completed: PathBuf,
 }
 
+#[derive(Clone)]
 pub struct IdempotencyStore {
     directory: PathBuf,
 }
@@ -46,6 +47,64 @@ impl IdempotencyStore {
             provider_failure(format!("failed to create idempotency directory: {error}"))
         })?;
         Ok(Self { directory })
+    }
+
+    /// Read an operation receipt without replaying the original mutation.
+    /// The caller's bound principal and routed device determine the lookup key.
+    /// A pending receipt is deliberately not evidence of a running process.
+    pub fn inspect_process(&self, request: &InvocationEnvelope) -> Result<Value, CapabilityError> {
+        if request.principal_id.as_deref().is_none_or(str::is_empty)
+            || request.device_id.as_deref().is_none_or(str::is_empty)
+        {
+            return Err(CapabilityError {
+                code: ErrorCode::PermissionDenied,
+                message: "operation inspection requires a bound principal and target device".into(),
+                recovery_hint: None,
+                details: json!({}),
+            });
+        }
+        let key = request
+            .arguments
+            .get("idempotency_key")
+            .and_then(Value::as_str)
+            .filter(|key| !key.is_empty() && key.len() <= 256)
+            .ok_or_else(|| CapabilityError {
+                code: ErrorCode::InvalidArguments,
+                message: "operation.get requires an idempotency_key of 1 to 256 bytes".into(),
+                recovery_hint: None,
+                details: json!({}),
+            })?;
+        let mut original = request.clone();
+        original.capability.clear();
+        original.capability.push_str("process.run");
+        original.idempotency_key = Some(key.to_owned());
+        let paths = self.record_paths(&original, key)?;
+        if paths.completed.exists() {
+            let record = read_json::<CompletedRecord>(
+                &paths.completed,
+                "completed process invocation receipt",
+            )?;
+            return Ok(json!({
+                "state": "invocation_completed",
+                "capability": "process.run",
+                "result": record.result,
+                "process_terminal_state": "inspect process.read if a live handle exists; a launch receipt does not prove process exit",
+                "automatic_retry": false,
+            }));
+        }
+        if paths.pending.exists() {
+            return Ok(json!({
+                "state": "unverified_or_in_flight",
+                "capability": "process.run",
+                "explanation": "execution may be active, canceled or interrupted by an agent crash; inspect effects before manual reconciliation",
+                "automatic_retry": false,
+            }));
+        }
+        Ok(json!({
+            "state": "not_found",
+            "capability": "process.run",
+            "automatic_retry": false,
+        }))
     }
 
     pub fn lookup(
@@ -310,5 +369,70 @@ fn provider_failure(message: String) -> CapabilityError {
         message,
         recovery_hint: None,
         details: serde_json::json!({}),
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::{IdempotencyLookup, IdempotencyStore};
+    use serde_json::json;
+    use tether_core::{ErrorCode, InvocationEnvelope};
+    use uuid::Uuid;
+
+    #[test]
+    fn pending_process_receipt_survives_restart_and_cannot_cross_principal_scope() {
+        let dir = std::env::temp_dir().join(format!(
+            "tetherplane-process-receipt-{}",
+            Uuid::new_v4().as_simple()
+        ));
+        let original: InvocationEnvelope = serde_json::from_value(json!({
+            "protocol_version": "1.0",
+            "request_id": "00000000-0000-4000-8000-000000000501",
+            "device_id": "Leno",
+            "principal_id": "service:owner",
+            "job_id": null,
+            "capability": "process.run",
+            "arguments": { "program": "synthetic-test-command", "args": [] },
+            "actor": { "id": "owner-client", "kind": "ai_client" },
+            "session_id": null,
+            "response_mode": "normal",
+            "idempotency_key": "receipt-on-crash",
+            "preconditions": [],
+            "expectations": []
+        }))
+        .expect("synthetic invocation");
+        let store = IdempotencyStore::new(&dir).expect("state directory");
+        store.reserve(&original).expect("persist reservation");
+        drop(store);
+
+        let reopened = IdempotencyStore::new(&dir).expect("reopen state");
+        assert!(matches!(
+            reopened.lookup(&original).expect("lookup"),
+            IdempotencyLookup::Pending
+        ));
+        let mut receipt_request = original.clone();
+        receipt_request.capability = "operation.get".into();
+        receipt_request.arguments = json!({ "idempotency_key": "receipt-on-crash" });
+        assert_eq!(
+            reopened.inspect_process(&receipt_request).expect("receipt")["state"],
+            "unverified_or_in_flight"
+        );
+
+        receipt_request.principal_id = Some("service:other".into());
+        assert_eq!(
+            reopened
+                .inspect_process(&receipt_request)
+                .expect("isolated")["state"],
+            "not_found"
+        );
+        receipt_request.principal_id = None;
+        assert_eq!(
+            reopened
+                .inspect_process(&receipt_request)
+                .expect_err("requires a principal")
+                .code,
+            ErrorCode::PermissionDenied
+        );
+        let _ = std::fs::remove_dir_all(dir);
     }
 }

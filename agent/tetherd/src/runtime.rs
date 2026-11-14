@@ -70,8 +70,11 @@ impl AgentRuntime {
             None
         };
         let audit_available = audit_store.is_some();
+        let mut immutable_ledger = None;
         let idempotency_store = if let Some(state_dir) = state_dir {
-            Some(Arc::new(Mutex::new(IdempotencyStore::new(state_dir)?)))
+            let store = IdempotencyStore::new(state_dir)?;
+            immutable_ledger = Some(Arc::new(store.clone()));
+            Some(Arc::new(Mutex::new(store)))
         } else {
             None
         };
@@ -108,6 +111,11 @@ impl AgentRuntime {
         router.register(Arc::new(ProcessProvider::with_ownership(Arc::clone(
             &ownership,
         ))))?;
+        if let Some(store) = immutable_ledger {
+            router.register(Arc::new(OperationProvider { store }))?;
+        } else {
+            router.register(Arc::new(UnavailableProvider::new("operation")))?;
+        }
         if let Some(state_dir) = state_dir.as_ref() {
             router.register(Arc::new(JobProvider::new(state_dir)?))?;
         } else {
@@ -163,8 +171,10 @@ impl AgentRuntime {
         let Some(store) = &self.idempotency_store else {
             return unavailable_result(&invocation);
         };
+        // Preserve the existing serialized replay semantics, including for
+        // concurrent callers with the same key. Receipt inspection uses a
+        // separate immutable view and does not wait for this lock.
         let guard = store.lock().await;
-
         match guard.lookup(&invocation) {
             Ok(IdempotencyLookup::Replay(result)) => *result,
             Ok(IdempotencyLookup::Conflict) => conflict_result(&invocation),
@@ -173,7 +183,6 @@ impl AgentRuntime {
                 if let Err(error) = guard.reserve(&invocation) {
                     return store_failure_result(&invocation, error);
                 }
-
                 let result = self.router.execute(invocation.clone()).await;
                 if let Err(error) = guard.complete(&invocation, &result) {
                     return store_failure_result(&invocation, error);
@@ -205,6 +214,37 @@ fn create_desktop_provider(
     _ownership: &Arc<TrustedOwnershipRegistry>,
 ) -> Option<Arc<DesktopProvider>> {
     None
+}
+
+struct OperationProvider {
+    store: Arc<IdempotencyStore>,
+}
+
+#[async_trait]
+impl CapabilityProvider for OperationProvider {
+    fn namespace(&self) -> &'static str {
+        "operation"
+    }
+
+    async fn execute(
+        &self,
+        invocation: &InvocationEnvelope,
+    ) -> Result<ProviderResult, CapabilityError> {
+        if invocation.capability != "operation.get" {
+            return Err(CapabilityError {
+                code: ErrorCode::CapabilityUnavailable,
+                message: "unsupported operation inspection capability".into(),
+                recovery_hint: None,
+                details: json!({}),
+            });
+        }
+        let receipt = self.store.inspect_process(invocation)?;
+        Ok(ProviderResult {
+            data: receipt,
+            delta: None,
+            verification: VerificationStatus::NotApplicable,
+        })
+    }
 }
 
 struct DeviceProvider {
@@ -251,6 +291,7 @@ impl DeviceProvider {
                 { "namespace": "filesystem", "available": true, "operations": self.operations("filesystem", &["read", "read_many", "list", "info", "write", "append", "mkdir", "move", "patch"]) },
                 { "namespace": "search", "available": true, "operations": self.operations("search", &["start", "read", "stop", "list"]) },
                 { "namespace": "process", "available": true, "operations": self.operations("process", &["run", "read", "input", "list_sessions", "list_system", "terminate"]) },
+                { "namespace": "operation", "available": self.job_available, "operations": if self.job_available { self.operations("operation", &["get"]) } else { Vec::<String>::new() } },
                 { "namespace": "batch", "available": true, "operations": self.operations("batch", &["execute"]) },
                 { "namespace": "job", "available": self.job_available, "operations": if self.job_available { self.operations("job", &["create", "get", "checkpoint", "acquire_lease", "release_lease"]) } else { Vec::<String>::new() } },
                 { "namespace": "audit", "available": self.audit_available, "operations": if self.audit_available { self.operations("audit", &["read"]) } else { Vec::<String>::new() } },

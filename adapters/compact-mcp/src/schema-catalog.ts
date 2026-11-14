@@ -72,6 +72,9 @@ const CATALOG: Record<string, JsonSchema> = {
   }),
   "search.stop": objectSchema(["handle"], { handle: string }),
   "search.list": objectSchema([], {}),
+  "operation.get": objectSchema(["idempotency_key"], {
+    idempotency_key: { type: "string", minLength: 1, maxLength: 256 },
+  }),
   "process.run": objectSchema(["program"], {
     program: string,
     args: { type: "array", items: string },
@@ -215,6 +218,9 @@ export function listSchemaOperations(namespace: string): string[] {
 }
 
 function normalizeKey(namespace: string, operation: string): string {
+  if (namespace === "process" && operation === "operation_get") {
+    return "operation.get";
+  }
   if (namespace === "device" && operation.startsWith("job_")) {
     return `job.${operation.slice("job_".length)}`;
   }

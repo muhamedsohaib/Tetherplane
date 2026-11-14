@@ -61,7 +61,7 @@ fn capacity_result(invocation: &InvocationEnvelope, queue: &'static str) -> Resu
     }
 }
 
-// Only the read-only status operation gets an out-of-band execution lane.
+// Only read-only status and operation receipt inspection get the control lane.
 // Everything, including status, still goes through AgentRuntime::execute for
 // device targeting, local policy checks, and audit attribution.
 fn execute_work(
@@ -72,7 +72,39 @@ fn execute_work(
 ) -> RunningInvocation {
     Box::pin(async move {
         let result = if invocation.device_id.as_deref() == Some(device_id.as_str()) {
-            runtime.execute(invocation).await
+            if invocation.capability == "process.run" && invocation.idempotency_key.is_some() {
+                // The supervised task is owned by the agent runtime, not by the
+                // WebSocket receive loop. Dropping this waiting future on a
+                // network disconnect does NOT cancel the underlying execution.
+                let worker_runtime = Arc::clone(&runtime);
+                let worker_invocation = invocation.clone();
+                match tokio::spawn(async move {
+                    worker_runtime.execute(worker_invocation).await
+                })
+                .await
+                {
+                    Ok(result) => result,
+                    Err(_) => ResultEnvelope {
+                        protocol_version: invocation.protocol_version.clone(),
+                        request_id: invocation.request_id,
+                        status: ResultStatus::Error,
+                        data: None,
+                        delta: None,
+                        error: Some(CapabilityError {
+                            code: ErrorCode::ActionUnverified,
+                            message: "supervised execution ended unexpectedly; inspect operation.get before retry".into(),
+                            recovery_hint: Some("inspect the original idempotency key and actual process effects".into()),
+                            details: json!({}),
+                        }),
+                        verification: VerificationStatus::Failed,
+                        continuation: None,
+                        policy: None,
+                        timing: Timing { duration_ms: 0 },
+                    },
+                }
+            } else {
+                runtime.execute(invocation).await
+            }
         } else {
             wrong_device_result(&invocation, &device_id)
         };
@@ -94,7 +126,10 @@ impl InvocationSchedule {
         route_id: String,
         invocation: InvocationEnvelope,
     ) -> Result<(), Box<RejectedWork>> {
-        if invocation.capability == "device.status" {
+        if matches!(
+            invocation.capability.as_str(),
+            "device.status" | "operation.get"
+        ) {
             if self.status_active.len() + self.status_waiting.len()
                 >= MAX_STATUS_IN_FLIGHT + MAX_STATUS_QUEUED
             {
