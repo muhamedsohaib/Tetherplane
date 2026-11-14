@@ -70,8 +70,11 @@ impl AgentRuntime {
             None
         };
         let audit_available = audit_store.is_some();
+        let mut immutable_ledger = None;
         let idempotency_store = if let Some(state_dir) = state_dir {
-            Some(Arc::new(Mutex::new(IdempotencyStore::new(state_dir)?)))
+            let store = IdempotencyStore::new(state_dir)?;
+            immutable_ledger = Some(Arc::new(store.clone()));
+            Some(Arc::new(Mutex::new(store)))
         } else {
             None
         };
@@ -108,10 +111,8 @@ impl AgentRuntime {
         router.register(Arc::new(ProcessProvider::with_ownership(Arc::clone(
             &ownership,
         ))))?;
-        if let Some(store) = idempotency_store.as_ref() {
-            router.register(Arc::new(OperationProvider {
-                store: Arc::clone(store),
-            }))?;
+        if let Some(store) = immutable_ledger {
+            router.register(Arc::new(OperationProvider { store }))?;
         } else {
             router.register(Arc::new(UnavailableProvider::new("operation")))?;
         }
@@ -170,30 +171,26 @@ impl AgentRuntime {
         let Some(store) = &self.idempotency_store else {
             return unavailable_result(&invocation);
         };
-        // Reserve atomically, then release the lock before executing the
-        // side effect. This lets operation.get inspect a live reservation and
-        // prevents unrelated idempotent operations from being serialized.
-        {
-            let guard = store.lock().await;
-            match guard.lookup(&invocation) {
-                Ok(IdempotencyLookup::Replay(result)) => return *result,
-                Ok(IdempotencyLookup::Conflict) => return conflict_result(&invocation),
-                Ok(IdempotencyLookup::Pending) => return pending_result(&invocation),
-                Ok(IdempotencyLookup::Miss) => {
-                    if let Err(error) = guard.reserve(&invocation) {
-                        return store_failure_result(&invocation, error);
-                    }
-                }
-                Err(error) => return store_failure_result(&invocation, error),
-            }
-        }
-
-        let result = self.router.execute(invocation.clone()).await;
+        // Preserve the existing serialized replay semantics, including for
+        // concurrent callers with the same key. Receipt inspection uses a
+        // separate immutable view and does not wait for this lock.
         let guard = store.lock().await;
-        if let Err(error) = guard.complete(&invocation, &result) {
-            return store_failure_result(&invocation, error);
+        match guard.lookup(&invocation) {
+            Ok(IdempotencyLookup::Replay(result)) => *result,
+            Ok(IdempotencyLookup::Conflict) => conflict_result(&invocation),
+            Ok(IdempotencyLookup::Pending) => pending_result(&invocation),
+            Ok(IdempotencyLookup::Miss) => {
+                if let Err(error) = guard.reserve(&invocation) {
+                    return store_failure_result(&invocation, error);
+                }
+                let result = self.router.execute(invocation.clone()).await;
+                if let Err(error) = guard.complete(&invocation, &result) {
+                    return store_failure_result(&invocation, error);
+                }
+                result
+            }
+            Err(error) => store_failure_result(&invocation, error),
         }
-        result
     }
 }
 
@@ -220,7 +217,7 @@ fn create_desktop_provider(
 }
 
 struct OperationProvider {
-    store: Arc<Mutex<IdempotencyStore>>,
+    store: Arc<IdempotencyStore>,
 }
 
 #[async_trait]
@@ -241,7 +238,7 @@ impl CapabilityProvider for OperationProvider {
                 details: json!({}),
             });
         }
-        let receipt = self.store.lock().await.inspect_process(invocation)?;
+        let receipt = self.store.inspect_process(invocation)?;
         Ok(ProviderResult {
             data: receipt,
             delta: None,
