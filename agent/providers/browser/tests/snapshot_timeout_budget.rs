@@ -82,3 +82,88 @@ async fn authorized_snapshot_may_respond_after_short_handshake_timeout() {
     assert_eq!(output.data["revision"], 7);
     server.await.unwrap();
 }
+
+#[tokio::test]
+async fn authorized_action_survives_short_browser_handshake_deadline() {
+    let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
+    let address = listener.local_addr().unwrap().to_string();
+    let server = tokio::spawn(async move {
+        for step in 0..2 {
+            let (stream, _) = listener.accept().await.unwrap();
+            let (read, mut write) = stream.into_split();
+            let mut lines = BufReader::new(read).lines();
+            let line = lines.next_line().await.unwrap().unwrap();
+            let request: serde_json::Value = serde_json::from_str(&line).unwrap();
+            if step == 0 {
+                assert_eq!(request["type"], "handshake");
+                let response = json!({"status":"success","request_id":request["request_id"],
+                    "data":{"protocol_version":"1.0","operations":["act"]}});
+                write
+                    .write_all(format!("{response}\n").as_bytes())
+                    .await
+                    .unwrap();
+            } else {
+                assert_eq!(request["capability"], "browser.act");
+                // Longer than the deliberately short handshake deadline.
+                tokio::time::sleep(Duration::from_millis(750)).await;
+                let response = json!({"status":"success","request_id":request["request_id"],
+                    "verification":"executed_unverified","data":{"state":"executed_unverified"}});
+                write
+                    .write_all(format!("{response}\n").as_bytes())
+                    .await
+                    .unwrap();
+            }
+        }
+    });
+    let provider = BrowserProvider::connect(BrowserBridgeConfig {
+        address,
+        token: None,
+        timeout_ms: 500,
+    })
+    .await
+    .unwrap();
+    let result = provider.execute(&request("browser.act")).await.unwrap();
+    assert_eq!(result.data["state"], "executed_unverified");
+    server.await.unwrap();
+}
+
+#[tokio::test]
+async fn unconfirmed_browser_action_is_classified_as_action_unverified() {
+    let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
+    let address = listener.local_addr().unwrap().to_string();
+    let server = tokio::spawn(async move {
+        for step in 0..2 {
+            let (stream, _) = listener.accept().await.unwrap();
+            let (read, mut write) = stream.into_split();
+            let mut lines = BufReader::new(read).lines();
+            let line = lines.next_line().await.unwrap().unwrap();
+            let request: serde_json::Value = serde_json::from_str(&line).unwrap();
+            if step == 0 {
+                let response = json!({"status":"success","request_id":request["request_id"],
+                    "data":{"protocol_version":"1.0","operations":["act"]}});
+                write
+                    .write_all(format!("{response}\n").as_bytes())
+                    .await
+                    .unwrap();
+            } else {
+                let response = json!({"status":"error","request_id":request["request_id"],
+                    "error":{"code":"action_outcome_unknown","message":"action may have executed"}});
+                write
+                    .write_all(format!("{response}\n").as_bytes())
+                    .await
+                    .unwrap();
+            }
+        }
+    });
+    let provider = BrowserProvider::connect(BrowserBridgeConfig {
+        address,
+        token: None,
+        timeout_ms: 500,
+    })
+    .await
+    .unwrap();
+    let error = provider.execute(&request("browser.act")).await.unwrap_err();
+    assert_eq!(error.code, tether_core::ErrorCode::ActionUnverified);
+    assert!(error.message.contains("may have executed"));
+    server.await.unwrap();
+}

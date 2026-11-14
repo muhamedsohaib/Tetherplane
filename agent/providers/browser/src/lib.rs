@@ -237,6 +237,12 @@ impl CapabilityProvider for BrowserProvider {
         // before either the combined router or the extension can respond.
         if invocation.capability == "browser.snapshot" {
             request_config.timeout_ms = request_config.timeout_ms.max(8_000);
+        } else if invocation.capability == "browser.act" || invocation.capability == "browser.wait"
+        {
+            // The combined router can spend 12 seconds awaiting action and
+            // semantic verification. Native RPC must outlive that bounded
+            // upstream budget, never abandoning the request after 2 seconds.
+            request_config.timeout_ms = request_config.timeout_ms.max(14_000);
         }
         let mut arguments = invocation.arguments.clone();
         if let Some(object) = arguments.as_object_mut() {
@@ -262,6 +268,18 @@ impl CapabilityProvider for BrowserProvider {
         .inspect_err(|error| {
             if error.code == ErrorCode::Disconnected || error.code == ErrorCode::Timeout {
                 self.replace_live_operations(None);
+            }
+        })
+        .map_err(|error| {
+            if invocation.capability == "browser.act" && error.code == ErrorCode::Timeout {
+                CapabilityError {
+                    code: ErrorCode::ActionUnverified,
+                    message: "Browser action result was not confirmed before the native deadline; it may have executed".into(),
+                    recovery_hint: Some("Inspect the authorized page and do not retry the action automatically".into()),
+                    details: json!({}),
+                }
+            } else {
+                error
             }
         })?;
 
@@ -337,9 +355,10 @@ fn map_error_code(code: &str) -> ErrorCode {
         "stale_reference" => ErrorCode::StaleReference,
         "resource_conflict" => ErrorCode::ResourceConflict,
         "precondition_failed" => ErrorCode::PreconditionFailed,
-        "action_unverified" | "validation_failed" | "semantic_wait_timeout" => {
-            ErrorCode::ActionUnverified
-        }
+        "action_unverified"
+        | "action_outcome_unknown"
+        | "validation_failed"
+        | "semantic_wait_timeout" => ErrorCode::ActionUnverified,
         "timeout" => ErrorCode::Timeout,
         "disconnected" => ErrorCode::Disconnected,
         _ => ErrorCode::ProviderFailure,
