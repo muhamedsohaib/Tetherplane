@@ -5,6 +5,7 @@ use std::pin::Pin;
 use std::sync::Arc;
 use std::time::{Duration, Instant};
 
+use futures_util::stream::FuturesUnordered;
 use futures_util::{Sink, SinkExt, StreamExt};
 use serde::{Deserialize, Serialize};
 use serde_json::json;
@@ -27,8 +28,90 @@ const HEARTBEAT_INTERVAL: Duration = Duration::from_secs(5);
 const HEARTBEAT_PONG_TIMEOUT: Duration = Duration::from_secs(10);
 const SEND_TIMEOUT: Duration = Duration::from_secs(3);
 const MAX_QUEUED_INVOCATIONS: usize = 16;
+const MAX_STATUS_IN_FLIGHT: usize = 4;
+const MAX_STATUS_QUEUED: usize = 16;
 
+type WorkItem = (String, InvocationEnvelope);
 type RunningInvocation = Pin<Box<dyn Future<Output = (String, ResultEnvelope)> + Send>>;
+
+// Only the read-only status operation gets an out-of-band execution lane.
+// Everything, including status, still goes through AgentRuntime::execute for
+// device targeting, local policy checks, and audit attribution.
+fn execute_work(
+    runtime: Arc<AgentRuntime>,
+    device_id: String,
+    route_id: String,
+    invocation: InvocationEnvelope,
+) -> RunningInvocation {
+    Box::pin(async move {
+        let result = if invocation.device_id.as_deref() == Some(device_id.as_str()) {
+            runtime.execute(invocation).await
+        } else {
+            wrong_device_result(&invocation, &device_id)
+        };
+        (route_id, result)
+    })
+}
+
+#[derive(Default)]
+struct InvocationSchedule {
+    regular_active: Option<RunningInvocation>,
+    regular_waiting: VecDeque<WorkItem>,
+    status_active: FuturesUnordered<RunningInvocation>,
+    status_waiting: VecDeque<WorkItem>,
+}
+
+impl InvocationSchedule {
+    fn enqueue(
+        &mut self,
+        route_id: String,
+        invocation: InvocationEnvelope,
+    ) -> Result<(), RelayFailure> {
+        if invocation.capability == "device.status" {
+            if self.status_active.len() + self.status_waiting.len()
+                >= MAX_STATUS_IN_FLIGHT + MAX_STATUS_QUEUED
+            {
+                return Err(RelayFailure::Retryable(
+                    "status control lane is saturated".to_owned(),
+                ));
+            }
+            self.status_waiting.push_back((route_id, invocation));
+        } else {
+            if self.regular_waiting.len() >= MAX_QUEUED_INVOCATIONS {
+                return Err(RelayFailure::Retryable(
+                    "relay invocation queue is full".to_owned(),
+                ));
+            }
+            self.regular_waiting.push_back((route_id, invocation));
+        }
+        Ok(())
+    }
+
+    fn schedule(&mut self, runtime: &Arc<AgentRuntime>, device_id: &str) {
+        while self.status_active.len() < MAX_STATUS_IN_FLIGHT {
+            let Some((route_id, invocation)) = self.status_waiting.pop_front() else {
+                break;
+            };
+            self.status_active.push(execute_work(
+                Arc::clone(runtime),
+                device_id.to_owned(),
+                route_id,
+                invocation,
+            ));
+        }
+
+        if self.regular_active.is_none()
+            && let Some((route_id, invocation)) = self.regular_waiting.pop_front()
+        {
+            self.regular_active = Some(execute_work(
+                Arc::clone(runtime),
+                device_id.to_owned(),
+                route_id,
+                invocation,
+            ));
+        }
+    }
+}
 
 #[derive(Default)]
 struct RecoveryMetrics {
@@ -244,36 +327,33 @@ async fn connect_and_run(
     interval.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Delay);
     interval.tick().await; // The first tick is immediate; start after one full interval.
 
-    // Execute invocations sequentially as before, but poll the active future
-    // alongside socket traffic. Long-running device work must not prevent pong
-    // processing or heartbeat deadlines from being enforced.
-    let mut active: Option<RunningInvocation> = None;
-    let mut waiting = VecDeque::<(String, InvocationEnvelope)>::new();
+    // Ordinary work stays serial; status can be served concurrently with one
+    // long-running operation without granting elevated capabilities.
+    let mut scheduler = InvocationSchedule::default();
 
     loop {
-        if active.is_none()
-            && let Some((route_id, invocation)) = waiting.pop_front()
-        {
-            let runtime = Arc::clone(&runtime);
-            let local_device_id = config.device_id.clone();
-            active = Some(Box::pin(async move {
-                let result = if invocation.device_id.as_deref() == Some(local_device_id.as_str()) {
-                    runtime.execute(invocation).await
-                } else {
-                    wrong_device_result(&invocation, &local_device_id)
-                };
-                (route_id, result)
-            }));
-        }
+        scheduler.schedule(&runtime, &config.device_id);
 
         tokio::select! {
+            status_result = scheduler.status_active.next(), if !scheduler.status_active.is_empty() => {
+                let Some((route_id, result)) = status_result else {
+                    continue;
+                };
+                send_bounded(
+                    &mut socket,
+                    result_message(&route_id, &result)?,
+                    SEND_TIMEOUT,
+                    "status result send",
+                )
+                .await?;
+            }
             result = async {
-                match active.as_mut() {
+                match scheduler.regular_active.as_mut() {
                     Some(future) => future.await,
                     None => pending::<(String, ResultEnvelope)>().await,
                 }
             } => {
-                active = None;
+                scheduler.regular_active = None;
                 let (route_id, result) = result;
                 send_bounded(
                     &mut socket,
@@ -304,12 +384,7 @@ async fn connect_and_run(
                                 route_id,
                                 invocation,
                             } => {
-                                if waiting.len() >= MAX_QUEUED_INVOCATIONS {
-                                    return Err(RelayFailure::Retryable(
-                                        "relay invocation queue is full".to_owned(),
-                                    ));
-                                }
-                                waiting.push_back((route_id, invocation));
+                                scheduler.enqueue(route_id, invocation)?;
                             }
                         }
                     }
