@@ -51,8 +51,24 @@ The minimum external fact packet should contain:
 | Directory | Date | Action | Evidence | Status |
 | --- | --- | --- | --- | --- |
 | Official MCP Registry | 2026-11-15 | Requirements reviewed; submission intentionally not performed | This checklist | Not submitted |
-| Glama | 2026-11-15 | Intake considered; no verified record or acceptance | This checklist | Unverified / not submitted |
+| Glama | 2026-11-15 | Owner approved source-only listing; verified expected Glama path returns HTTP 404; staged `glama.json` on draft PR #146 | [PR #146](https://github.com/muhamedsohaib/Tetherplane/pull/146); [Glama submission FAQ](https://glama.ai/mcp/faq) | **Not submitted — authenticated GitHub sign-in/Glama submission required** |
 | Smithery | 2026-11-15 | Current intake and terms require reconfirmation | This checklist | Unverified / not submitted |
 | Show HN | 2026-11-15 | Official rules checked; no posting performed | [Official guidelines](https://news.ycombinator.com/showhn.html) | Not posted |
 
 Preserve precise states. A URL in a directory, GitHub star or request to index a page is not an activated user.
+
+### Approved submission handoff — source only (2026-11-15)
+
+The owner approved a **free source-repository listing only**, not installing the unsigned beta, provisioning a remote connector, adding external test credentials, granting machine access, merging a protected branch or using paid credits. The Glama listing form requires **GitHub OAuth sign-in** and verifies write/admin rights. Connected Glama-authenticated browser access was unavailable in this run; the submission API was not called and no account authorization was bypassed.
+
+**Staged metadata:** [root glama.json in draft PR #146](https://github.com/muhamedsohaib/Tetherplane/blob/docs/acquisition-funnel-20261115/glama.json). Onboarding status is explicitly stated as not release-ready; metadata remains unmerged and not available from `main`.
+
+**Copy-ready fields for the authenticated Glama \"Add MCP Server\" form:**
+
+- **Tab:** Runs from source / Open-source MCP server (NOT hosted endpoint)
+- **GitHub repository:** `https://github.com/muhamedsohaib/Tetherplane`
+- **Display name:** `Tetherplane`
+- **Short description:** `Open-source MCP computer-use control plane for owner-authorized Windows devices. Local policy and background-first operations; latest Windows beta is not release-ready.`
+- **Do not supply:** Production relay URL, access token, OAuth credentials, local hostnames, private device IDs, private workspace paths or paid test account.
+
+**After actual submission:** record Glama's on-screen acknowledgment or submission ID, final indexed URL, automated health/build outcomes and date. Do not claim visible distribution until the listing is discoverable.
