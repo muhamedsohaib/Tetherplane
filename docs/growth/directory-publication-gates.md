@@ -12,13 +12,15 @@ Do **not** submit a fake npm package, a marketing website as an MCP endpoint, pr
 | --- | --- | --- | --- |
 | [GitHub](https://github.com/muhamedsohaib/Tetherplane) | Real source, provenance, docs and issues | Public repository, honest description and safe first-use instructions | Live; enhance evaluation, don't inflate adoption |
 | [MCP Registry](https://modelcontextprotocol.io/registry/quickstart) | Canonical `server.json` metadata syndication | Verified GitHub namespace + verifiable **public** install package or qualifying reachable remote MCP endpoint; correct version and ownership | **Hold** pending validated install/endpoint |
-| [Glama directory](https://glama.ai/mcp/servers) | Discoverability and reviews, with curation | Accurate source/connector details and working independent test | **Hold** until canonical metadata and health are verified |
+| [Glama directory](https://glama.ai/mcp/servers) | GitHub-source MCP listing and optional independent quality checks | Public real source repository, candid release status, correct metadata; distinguish listing from deployability | **Potentially eligible for source listing now**; owner must approve submission and any quality-test access |
 | [Smithery](https://smithery.ai/) | Discovery where current supported listing exists | Recheck live intake, service scope and actual install path; historic service behavior may differ | **Research only** |
 | Community MCP catalogs | Human discovery | Check each maintainer's current guidelines, categories and anti-spam policy | **Hold** pending meaningful first-use evidence |
 | [Show HN](https://news.ycombinator.com/showhn.html) | Developer scrutiny and potential trials | A non-trivial **runnable**, demonstrable release, owner present to answer; author writes their own submission | **Not launch-ready** |
 | ChatGPT/Claude/Cursor plugin marketplaces | Application-specific acquisition | Exact current host/plugin packaging, OAuth, server reachability and review requirements | **No eligibility claim** |
 
 An agent **Skill** or listing is not a working authenticated MCP installation. Avoid duplicating the already-published Agent C Skill.
+
+**Verified 2026-11-15:** [Glama's own FAQ](https://glama.ai/mcp/faq) says open-source MCP servers can be submitted using a GitHub repository URL, display name and short description. It may run license/security/health checks. This **does not require claiming the newest Windows binary is signed or accepted**; it also does not guarantee Glama will accept or successfully run Tetherplane's Windows-dependent providers. Check for an existing automatic listing before creating a duplicate. Source listing is a distinct approval from hosting, runtime access, or registry publication.
 
 ## Official Registry prerequisites to verify
 
