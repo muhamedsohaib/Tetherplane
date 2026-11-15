@@ -18,6 +18,8 @@
 
 The only verified site pages at this cut are the homepage and privacy page. Google Search Console and GitHub metrics have different grains and cannot be added together.
 
+**Existing organic external mentions (independently discovered on 2026-11-15):** a publicly indexed [Agensi Skill page](https://www.agensi.io/skills/tetherplane) and [NicheDB's GitHub-topic listing](https://nichedb.dev/c/mcp?tag=mcp-security) already reference Tetherplane. These prove pages exist, not referrals, installations or paid conversion. Confirm whether Glama has a listing before submitting.
+
 **Attribution caution:** Two form test records do not represent a failed conversion campaign, and the HTTP-traffic sample is contaminated by crawler/tool probes (including our own verification). We did not inspect unrelated private contact channels. Treat this as a small, incomplete baseline.
 
 ## Focus: a small, qualified evaluation cohort before broad launch
@@ -51,7 +53,7 @@ The only verified site pages at this cut are the homepage and privacy page. Goog
 1. **GitHub repository and organic search (now):** improve exact problem-to-docs route; keep honest README, source, acceptance, and security links. No star/fork solicitation.
 2. **Technical review from consenting peers (now, owner-approved contact only):** one security-conscious MCP/Windows automation developer at a time; invite criticism of one reproducible test, not generic praise. Use the [no-install independent reviewer packet](first-independent-reviewer-packet.md) after owner approval for outreach.
 3. **Official MCP Registry and aggregators (conditional):** verify a supported publicly available install package or actual accessible remote MCP endpoint and package ownership. Prepare metadata but **do not publish** while release eligibility is unresolved. See [directory gates](directory-publication-gates.md).
-4. **Glama and other maintained directories (conditional):** use primary listing rules; avoid duplicate spam, false certification and treating catalog presence as working auth.
+4. **Glama GitHub-source listing (eligible for consideration now):** [Glama's official FAQ](https://glama.ai/mcp/faq) accepts source GitHub repositories for submission, subject to quality checks; first check whether the repository is already indexed. Owner approval required for submission; accurately disclose the unsigned beta and do not equate catalog visibility with authenticated installation. Other directories remain conditional.
 5. **Show HN or similarly technical launch (after a usable independent demo):** follow [official Show HN guidelines](https://news.ycombinator.com/showhn.html); waitlist/marketing-only pages do not qualify. Author writes the post personally; do not auto-post or manufacture votes.
 6. **Community technical case studies:** publish exact tests, limitations and failure/repair evidence when the owner explicitly approves; no mass DMs or automated comment promotion.
 
