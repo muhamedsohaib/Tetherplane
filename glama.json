@@ -1,0 +1,17 @@
+{
+  "$schema": "https://glama.ai/mcp/schemas/server.json",
+  "maintainers": [
+    "muhamedsohaib"
+  ],
+  "name": "Tetherplane",
+  "description": "Open-source MCP computer-use control plane for owner-authorized Windows devices. Local policy and background-first operations; latest Windows beta is not release-ready.",
+  "keywords": [
+    "model-context-protocol",
+    "mcp",
+    "computer-use",
+    "windows",
+    "remote-automation",
+    "self-hosted",
+    "device-security"
+  ]
+}
