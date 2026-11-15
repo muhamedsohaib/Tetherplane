@@ -49,7 +49,7 @@ The only verified site pages at this cut are the homepage and privacy page. Goog
 ### Channels — ranked by fit and readiness, not alleged total users
 
 1. **GitHub repository and organic search (now):** improve exact problem-to-docs route; keep honest README, source, acceptance, and security links. No star/fork solicitation.
-2. **Technical review from consenting peers (now, owner-approved contact only):** one security-conscious MCP/Windows automation developer at a time; invite criticism of one reproducible test, not generic praise.
+2. **Technical review from consenting peers (now, owner-approved contact only):** one security-conscious MCP/Windows automation developer at a time; invite criticism of one reproducible test, not generic praise. Use the [no-install independent reviewer packet](first-independent-reviewer-packet.md) after owner approval for outreach.
 3. **Official MCP Registry and aggregators (conditional):** verify a supported publicly available install package or actual accessible remote MCP endpoint and package ownership. Prepare metadata but **do not publish** while release eligibility is unresolved. See [directory gates](directory-publication-gates.md).
 4. **Glama and other maintained directories (conditional):** use primary listing rules; avoid duplicate spam, false certification and treating catalog presence as working auth.
 5. **Show HN or similarly technical launch (after a usable independent demo):** follow [official Show HN guidelines](https://news.ycombinator.com/showhn.html); waitlist/marketing-only pages do not qualify. Author writes the post personally; do not auto-post or manufacture votes.
