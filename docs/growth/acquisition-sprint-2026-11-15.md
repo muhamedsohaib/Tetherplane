@@ -12,9 +12,13 @@
 | Google sitemap | 200 OK; exactly `/` and `/privacy` | [Live sitemap](https://tetherplane.netlify.app/sitemap.xml) | 2 discovered URLs, not 2 indexed URLs |
 | Privacy page | Discovered, not indexed; live test said eligible; manual request temporarily quota-limited | Owner-supplied inspection | No evidence of a technical block |
 | Windows onboarding | [PR #135](https://github.com/muhamedsohaib/Tetherplane/pull/135) is draft; unsigned clean-host acceptance pending | [README](../../README.md), [acceptance](../live-acceptance.md) | **No broad Windows install promotion** |
-| Independent external activation, leads, retained users, Google clicks | **Unknown** | No attributable dataset supplied | Never convert unknown into zero or claim traction |
+| Netlify form inquiry submissions | **2** (2026-11-12/13 UTC), both self-described synthetic QA acceptance tests | Connected Netlify Forms intake readback on 2026-11-15 | **0 qualified customer requests among these two**; do not count as prospects |
+| Edge HTTP requests (sampled 2026-11-14 19:00 UTC to 2026-11-15 18:40 UTC) | **21** requests, including **3** homepage requests; user-agent categories: 6 tooling, 5 browser, 5 other, 3 crawler, 2 AI-agent | Connected Netlify observability counts and top URLs | **Not 21 visitors**, and not 3 human visitors |
+| Independent external activation, leads from other channels, retained users, Google clicks | **Unknown** | No attributable cross-channel dataset supplied | Do not convert unknown to zero or claim traction |
 
 The only verified site pages at this cut are the homepage and privacy page. Google Search Console and GitHub metrics have different grains and cannot be added together.
+
+**Attribution caution:** Two form test records do not represent a failed conversion campaign, and the HTTP-traffic sample is contaminated by crawler/tool probes (including our own verification). We did not inspect unrelated private contact channels. Treat this as a small, incomplete baseline.
 
 ## Focus: a small, qualified evaluation cohort before broad launch
 
