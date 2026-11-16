@@ -43,7 +43,9 @@ $start=Join-Path $repo 'packaging\developer-beta\START HERE.cmd'
 $preflight=Join-Path $repo 'packaging\developer-beta\preflight.mjs'
 $readme=Join-Path $repo 'packaging\developer-beta\README-FIRST.md'
 $quickStart=Join-Path $repo 'packaging\developer-beta\READ ME FIRST.txt'
-foreach($file in @($stage,$start,$preflight,$readme,$quickStart)){if(-not(Test-Path -LiteralPath $file -PathType Leaf)){throw 'BETA_BUILDER_SOURCE_MISSING'}}
+$browserCheck=Join-Path $repo 'packaging\developer-beta\CHECK BROWSER READINESS.cmd'
+$browserReadiness=Join-Path $repo 'packaging\developer-beta\browser-readiness.mjs'
+foreach($file in @($stage,$start,$preflight,$readme,$quickStart,$browserCheck,$browserReadiness)){if(-not(Test-Path -LiteralPath $file -PathType Leaf)){throw 'BETA_BUILDER_SOURCE_MISSING'}}
 New-Item -ItemType Directory -Path $dest -ErrorAction Stop|Out-Null
 foreach($sub in @('bin','runtime','app','app\assets')){
  New-Item -ItemType Directory -Path (Join-Path $dest $sub) -Force -ErrorAction Stop|Out-Null
@@ -61,6 +63,8 @@ Copy-Item -LiteralPath $preflight -Destination (Join-Path $dest 'app\preflight.m
 Copy-Item -LiteralPath $start -Destination (Join-Path $dest 'START HERE.cmd') -ErrorAction Stop
 Copy-Item -LiteralPath $readme -Destination (Join-Path $dest 'README-FIRST.md') -ErrorAction Stop
 Copy-Item -LiteralPath $quickStart -Destination (Join-Path $dest 'READ ME FIRST.txt') -ErrorAction Stop
+Copy-Item -LiteralPath $browserCheck -Destination (Join-Path $dest 'CHECK BROWSER READINESS.cmd') -ErrorAction Stop
+Copy-Item -LiteralPath $browserReadiness -Destination (Join-Path $dest 'app\browser-readiness.mjs') -ErrorAction Stop
 & $node $stage --stage (Join-Path $dest 'app') $relay
 if($LASTEXITCODE -ne 0){throw 'BETA_WIZARD_STAGE_FAILED'}
 # Stage only the existing reviewed browser host and unpacked extension.
@@ -120,15 +124,15 @@ try {
  Remove-Item -LiteralPath $deployScratch -Recurse -Force -ErrorAction SilentlyContinue
 }
 
-foreach($js in @('app\runtime-app.mjs','app\setup-client.js','app\preflight.mjs')){
+foreach($js in @('app\runtime-app.mjs','app\setup-client.js','app\preflight.mjs','app\browser-readiness.mjs')){
  & $node --check (Join-Path $dest $js)
  if($LASTEXITCODE -ne 0){throw ('BETA_JS_SYNTAX_FAILED_'+$js)}
 }
 $hashFiles=@('bin/tetherd-agentw.exe','bin/tetherplane-setupw.exe','bin/tetherplane-browserw.exe',
  'runtime/node.exe','runtime/LICENSE.node.txt','app/preflight.mjs',
- 'app/runtime-app.mjs','app/state-security.mjs','app/setup.html',
+ 'app/runtime-app.mjs','app/state-security.mjs','app/setup.html','app/browser-readiness.mjs',
  'app/setup-client.js','app/setup.css','app/assets/brand-32.png',
- 'app/assets/brand-128.png','START HERE.cmd','README-FIRST.md','READ ME FIRST.txt')
+ 'app/assets/brand-128.png','START HERE.cmd','CHECK BROWSER READINESS.cmd','README-FIRST.md','READ ME FIRST.txt')
 $browserFiles=Get-ChildItem -LiteralPath (Join-Path $dest 'browser') -Recurse -Force -ErrorAction Stop
 foreach($entry in $browserFiles){
  if(($entry.Attributes -band [IO.FileAttributes]::ReparsePoint) -ne 0){
