@@ -56,6 +56,8 @@ test("beta source contract separates state, limits agent to one owner, and gives
  assert.match(runtime,/tetherd-agentw\.exe/);
  assert.doesNotMatch(html,/Store-certified\. Do not use it to replace|TETHERPLANE · DEVELOPMENT PREVIEW/);
  assert.match(html,/Device Authority/);
+ assert.match(html,/Approved device identity is preserved/);
+ assert.doesNotMatch(html,/Existing Store-preview credentials will be preserved/);
  assert.match(html,/value="wss:\/\/relay\.example\.test\/device"/);
  assert.match(client,/setInterval\(tryOwnerApprovedStart,2500\)/);
  assert.match(html,/Stop ends this session/);
@@ -114,6 +116,14 @@ test("local approval wizard creates only the explicitly proposed shared folder; 
  assert.equal(connected.status,200);
  assert.equal((await connected.json()).connected,"not_verified");
  assert.equal(starts.length,1);
+ // A repeat start remains denied server-side even if a stale client retries.
+ const duplicate=await request(wizard,"/api/start","POST",{confirmation:"I APPROVED THIS DEVICE"});
+ assert.equal(duplicate.status,400);
+ assert.match((await duplicate.json()).error,/already owns a running agent/);
+ assert.equal(starts.length,1);
+ const status=await (await request(wizard,"/api/status")).json();
+ assert.equal(status.state,"agent_started_not_verified");
+ assert.equal(status.connected,"not_verified");
  assert.ok(starts[0].exe.endsWith("tetherd-agentw.exe"));
  assert.ok(starts[0].args.includes("--owner-instance-lock"));
  assert.ok(starts[0].args.includes("--allow"));

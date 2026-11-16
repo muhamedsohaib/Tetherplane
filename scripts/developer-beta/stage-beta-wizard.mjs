@@ -67,6 +67,10 @@ export function stage(name,original,relay=""){
     '<p class="foot"><strong>Approval ≠ connected.</strong> Independently verify device.status from your authenticated owner account. Stop ends this session; revoke the device in Device Authority to remove access.</p>',"truth"]
   ];
   for(const [a,b,k] of replacements)s=change(s,a,b,k);
+  s=change(s,
+    "<p>Existing Store-preview credentials will be preserved. Confirm you authorized this device before starting.</p>",
+    "<p>Approved device identity is preserved. Start only if the local agent is stopped; ask the owner to verify remote device.status.</p>",
+    "saved_identity_explanation");
   const publicUrl=validatePublicRelay(relay).replaceAll("&","&amp;").replaceAll('"',"&quot;");
   s=change(s,'Relay endpoint <input name="relayUrl" required placeholder="wss://your-authorized-relay.example/device" autocomplete="off">',
    'Connection address <input name="relayUrl" required placeholder="wss://your-authorized-relay.example/device" value="'+publicUrl+'" autocomplete="off">',"relay");
@@ -81,6 +85,7 @@ export function stage(name,original,relay=""){
  if(name==="setup-client.js"){
   s=change(s,'const token = location.hash.slice(1);',
     'const token = location.hash.slice(1);\nlet waitingForOwner=false;\nlet approvalProbeBusy=false;',"poll_state");
+  s=change(s, "const headers = { \"content-type\": \"application/json\", \"x-tetherplane-setup\": token };", "const headers = { \"content-type\": \"application/json\", \"x-tetherplane-setup\": token };\nfunction renderLocalAgentState(state) {\n  const running = state === \"agent_started_not_verified\";\n  status.textContent = running\n    ? \"Agent running on this computer — ask the owner to verify remote device.status.\"\n    : state + \" — remote connectivity is not checked by this setup page\";\n  document.getElementById(\"start\").disabled = running;\n  document.getElementById(\"resumeStart\").disabled = running;\n  if (running) {\n    document.getElementById(\"challenge\").hidden = true;\n    document.getElementById(\"resume\").hidden = true;\n  }\n  return running;\n}", "local_agent_status_ui");
   s=change(s,'    code.textContent = result.userCode;',
     '    code.textContent = result.userCode;\n    waitingForOwner=true;\n    status.textContent="Waiting for owner approval — agent not started";',"request");
   s=change(s,'    status.textContent = result.state + " — relay authentication not yet independently verified.";',
@@ -108,6 +113,12 @@ export function stage(name,original,relay=""){
    ' try{await navigator.clipboard.writeText(code.textContent);feedback.textContent="Code copied."}\n'+
    ' catch{feedback.textContent="Select and copy the code manually."}\n'+
    '});\n';
+  s=change(s, "    status.textContent=result.state+\" — verify device.status on owner computer\";", "    renderLocalAgentState(result.state);", "manual_start_status");
+  s=change(s, "    status.textContent=r.state+\" — remote device.status not verified\";", "    const running=renderLocalAgentState(r.state);", "poll_status");
+  s=change(s, "if (r.hasSavedIdentity) { form.hidden = true; document.getElementById(\"resume\").hidden = false; }", "if (r.hasSavedIdentity) { form.hidden = true; document.getElementById(\"resume\").hidden = running; }", "hide_duplicate_start");
+  s=change(s, "  status.textContent=r.state+\" — verify authenticated device.status\";", "  renderLocalAgentState(r.state);", "auto_start_status");
+  const uiEol=s.includes("  } catch(error) { showError(error); }\r\n}\r\ndocument.getElementById")?"\r\n":"\n";
+  s=change(s, "  } catch(error) { showError(error); }\n}\ndocument.getElementById(\"start\").addEventListener".replaceAll("\n",uiEol), "  } catch(error) {\n    if (/already owns a running agent/i.test(String(error?.message || \"\"))) {\n      renderLocalAgentState(\"agent_started_not_verified\");\n      feedback.textContent = \"Agent is already running locally; have the owner verify device.status.\";\n    } else showError(error);\n  }\n}\ndocument.getElementById(\"start\").addEventListener".replaceAll("\n",uiEol), "duplicate_start_feedback");
   return s;
  }
  if(name==="setup.css")return s+'\nsmall{display:block;margin-top:7px;color:#9fb1c3;line-height:1.5}#waiting{color:#b7e5d3;font-weight:500}button:focus-visible,input:focus-visible{outline:2px solid #8ed3d3;outline-offset:2px}\n';
