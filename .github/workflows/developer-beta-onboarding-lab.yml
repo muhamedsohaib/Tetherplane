@@ -11,12 +11,14 @@ on:
       - 'packaging/developer-beta/**'
       - 'scripts/developer-beta/**'
       - 'tests/release/developer-beta-add-device.test.mjs'
+      - 'tests/release/developer-beta-browser-readiness.test.mjs'
   pull_request:
     paths:
       - '.github/workflows/developer-beta-onboarding-lab.yml'
       - 'packaging/developer-beta/**'
       - 'scripts/developer-beta/**'
       - 'tests/release/developer-beta-add-device.test.mjs'
+      - 'tests/release/developer-beta-browser-readiness.test.mjs'
   workflow_dispatch:
     inputs:
       public_relay_url:
