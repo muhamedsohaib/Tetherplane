@@ -29,6 +29,8 @@ Tell the owner what Windows displayed.
 Browser access is SEPARATE: device pairing does not grant any browser
 tabs. Each human-owned tab needs its own explicit, expiring owner grant.
 The included browser files are not automatically activated.
+For a read-only prerequisite report after extraction, double-click
+"CHECK BROWSER READINESS.cmd". It does not activate browser access.
 
 To stop: Use "Stop this session's agent" in the setup page.
 To revoke: The owner uses Control Center > Device Authority and confirms
