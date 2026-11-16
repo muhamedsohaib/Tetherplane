@@ -9,9 +9,9 @@ const root=path.resolve(path.dirname(fileURLToPath(import.meta.url)),"..");
 const files=[
  "bin/tetherd-agentw.exe","bin/tetherplane-setupw.exe","bin/tetherplane-browserw.exe",
  "runtime/node.exe","runtime/LICENSE.node.txt","app/preflight.mjs",
- "app/runtime-app.mjs","app/state-security.mjs","app/setup.html",
+ "app/runtime-app.mjs","app/state-security.mjs","app/setup.html","app/browser-readiness.mjs",
  "app/setup-client.js","app/setup.css","app/assets/brand-32.png",
- "app/assets/brand-128.png","START HERE.cmd","README-FIRST.md","READ ME FIRST.txt",
+ "app/assets/brand-128.png","START HERE.cmd","CHECK BROWSER READINESS.cmd","README-FIRST.md","READ ME FIRST.txt",
  "browser/package.json","browser/dist/index.js","browser/host.mjs",
  "browser/extension/manifest.json","browser/extension/pair.html",
  "browser/extension/dist/background.js","browser/extension/dist/pair.js",

@@ -8,6 +8,8 @@ Open **READ ME FIRST.txt** in Notepad. The entire first-user workflow is: **extr
 
 The optional secure relay preset is not an authorization grant. If the connection address is blank, obtain only the owner's existing public `wss://.../device` address and enter it in the setup page. The owner must verify the relay is reachable from this new computer, not merely from an existing Tailscale-connected device.
 
+For a safe prerequisite report after extraction, double-click **CHECK BROWSER READINESS.cmd**. It first verifies the entire package hash manifest, then checks only the presence of staged browser files and owner-controlled prerequisite files. It does **not** read token contents, launch a browser host, load an extension, or grant a tab. Even if every file exists, it cannot establish an authenticated browser connection; that requires separate, owner-approved setup and live acceptance.
+
 The included extension and browser-host files are intentionally **not automatically activated**. Browser-first testing requires separate verified consent. Never bypass Windows security warnings to run this unsigned beta.
 
 ## On the new computer
