@@ -67,6 +67,10 @@ export function stage(name,original,relay=""){
     '<p class="foot"><strong>Approval ≠ connected.</strong> Independently verify device.status from your authenticated owner account. Stop ends this session; revoke the device in Device Authority to remove access.</p>',"truth"]
   ];
   for(const [a,b,k] of replacements)s=change(s,a,b,k);
+  s=change(s,
+    "<p>Existing Store-preview credentials will be preserved. Confirm you authorized this device before starting.</p>",
+    "<p>Approved device identity is preserved. Start only if the local agent is stopped; ask the owner to verify remote device.status.</p>",
+    "saved_identity_explanation");
   const publicUrl=validatePublicRelay(relay).replaceAll("&","&amp;").replaceAll('"',"&quot;");
   s=change(s,'Relay endpoint <input name="relayUrl" required placeholder="wss://your-authorized-relay.example/device" autocomplete="off">',
    'Connection address <input name="relayUrl" required placeholder="wss://your-authorized-relay.example/device" value="'+publicUrl+'" autocomplete="off">',"relay");
