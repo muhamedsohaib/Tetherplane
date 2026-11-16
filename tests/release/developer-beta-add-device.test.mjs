@@ -56,6 +56,8 @@ test("beta source contract separates state, limits agent to one owner, and gives
  assert.match(runtime,/tetherd-agentw\.exe/);
  assert.doesNotMatch(html,/Store-certified\. Do not use it to replace|TETHERPLANE · DEVELOPMENT PREVIEW/);
  assert.match(html,/Device Authority/);
+ assert.match(html,/Approved device identity is preserved/);
+ assert.doesNotMatch(html,/Existing Store-preview credentials will be preserved/);
  assert.match(html,/value="wss:\/\/relay\.example\.test\/device"/);
  assert.match(client,/setInterval\(tryOwnerApprovedStart,2500\)/);
  assert.match(html,/Stop ends this session/);
