@@ -28,6 +28,13 @@ function fakeFiles({root,local,packagePresent=assets,ownerPresent=[]}) {
   return {exists,observed};
 }
 
+test("launcher verifies the package before running the read-only inspector",async()=>{
+  const cmd=await readFile(join(import.meta.dirname,"../../packaging/developer-beta/CHECK BROWSER READINESS.cmd"),"utf8");
+  assert.match(cmd,/preflight\.mjs" --check/);
+  assert.match(cmd,/browser-readiness\.mjs" --inspect/);
+  assert.doesNotMatch(cmd,/--start|--install|--grant|--browser-host|--pair\/);
+});
+
 test("all browser payload files but no owner prerequisites means staged, NOT connected",async()=>{
   const root=join(tmpdir(),"tp-beta-package");
   const local=join(tmpdir(),"tp-beta-local");
