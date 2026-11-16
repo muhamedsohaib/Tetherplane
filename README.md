@@ -8,6 +8,14 @@
 
 **Start here:** [What is Tetherplane?](docs/what-is-tetherplane.md) · [Developer setup](#local-quick-start) · [Security policy](SECURITY.md) · [Self-hosted remote mode](docs/remote/self-host.md) · [Acceptance requirements](docs/live-acceptance.md)
 
+## Safe developer evaluation — start here
+
+**Want to test whether Tetherplane fits your MCP workflow?** Start with the [developer evaluation path](docs/evaluate-tetherplane.md): inspect the authorization model, run source tests and examine one explicitly scoped, harmless Windows workflow. It documents what a meaningful permitted **and denied** operation proves, and how to report useful first-run friction.
+
+**Looking for a ready-to-install Windows app?** The current three-step onboarding work is still an unsigned review candidate requiring independent clean-device acceptance. **Do not bypass Windows security protections or treat it as a supported public installer.** You can still [review the source and offer precise feedback](docs/evaluate-tetherplane.md#how-to-help-without-installing-a-beta).
+
+**Maintainers / directory reviewers:** [Publishing and readiness gates](docs/growth/directory-publication-gates.md). A public Skill entry or website is not proof of an authenticated, working MCP server.
+
 ## Default AI-facing surface
 
 Compact MCP exposes exactly six tools:
