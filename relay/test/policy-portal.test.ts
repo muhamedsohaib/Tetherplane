@@ -1105,3 +1105,228 @@ test("monotonic policy revisions, rejected ACKs, operator ACK error reset, and r
     await rm(dir, { recursive: true, force: true });
   }
 });
+
+test("reconciles real tetherd provider availability and object-map tool_families without phantom active ops", async () => {
+  const dir = await mkdtemp(path.join(os.tmpdir(), "tether-portal-telemetry-"));
+  const relay = await RelayServer.create({
+    authenticator: createTestAuthenticator(),
+    stateFile: path.join(dir, "devices.json"),
+    allowInsecureLocalhost: true,
+  });
+  const address = await relay.listen({ host: "127.0.0.1", port: 0 });
+  const secret = "device-secret-leno-telemetry-test";
+
+  try {
+    await pairDevice(address.httpUrl, "Leno", secret);
+
+    const ws = new WebSocket(address.deviceWsUrl, {
+      headers: {
+        authorization: `Device ${secret}`,
+        "x-tetherplane-device-id": "Leno",
+      },
+    });
+    await new Promise<void>((resolve, reject) => {
+      ws.once("open", resolve);
+      ws.once("error", reject);
+    });
+
+    // Exact payload shape emitted by Rust tetherd AgentRuntime (note: no `status` or `name` on providers, object map `tool_families`)
+    const rustLikeCapabilities = {
+      effective_permissions: {
+        emergency_lockdown: false,
+        policy_revision: 1,
+        policy_source: "synchronized",
+        principal_id: "human:account-a",
+        profile_id: "universal",
+        role: "owner",
+        universal_default: true,
+      },
+      providers: [
+        {
+          namespace: "device",
+          tool_family: "device",
+          available: true,
+          unavailable_reason: null,
+          available_operations: ["status", "capabilities"],
+          granted_operations: ["status", "capabilities"],
+          denied_operations: [],
+          operations: ["status", "capabilities"],
+        },
+        {
+          namespace: "filesystem",
+          tool_family: "files",
+          available: true,
+          unavailable_reason: null,
+          available_operations: ["read", "write"],
+          granted_operations: ["read", "write"],
+          denied_operations: [],
+          operations: ["read", "write"],
+        },
+        {
+          namespace: "browser",
+          tool_family: "browser",
+          available: false,
+          unavailable_reason: "browser bridge extension is in standby",
+          available_operations: [],
+          granted_operations: [],
+          denied_operations: [],
+          operations: [],
+        },
+        {
+          namespace: "desktop",
+          tool_family: "desktop",
+          available: false,
+          unavailable_reason: "Windows UIA desktop provider requires a Windows host",
+          available_operations: [],
+          granted_operations: [],
+          denied_operations: [],
+          operations: [],
+        },
+      ],
+      tool_families: {
+        batch: {
+          family: "batch",
+          available: true,
+          unavailable_reason: null,
+          granted: true,
+          available_operations: ["batch.execute"],
+          granted_operations: ["batch.execute"],
+          denied_operations: [],
+        },
+        browser: {
+          family: "browser",
+          available: false,
+          unavailable_reason: "browser bridge extension is in standby",
+          granted: true,
+          available_operations: [],
+          granted_operations: [],
+          denied_operations: [],
+        },
+        desktop: {
+          family: "desktop",
+          available: false,
+          unavailable_reason: "Windows UIA desktop provider requires a Windows host",
+          granted: true,
+          available_operations: [],
+          granted_operations: [],
+          denied_operations: [],
+        },
+        device: {
+          family: "device",
+          available: true,
+          unavailable_reason: null,
+          granted: true,
+          available_operations: ["device.status", "device.capabilities"],
+          granted_operations: ["device.status", "device.capabilities"],
+          denied_operations: [],
+        },
+        files: {
+          family: "files",
+          available: true,
+          unavailable_reason: null,
+          granted: true,
+          available_operations: ["filesystem.read", "filesystem.write"],
+          granted_operations: ["filesystem.read", "filesystem.write"],
+          denied_operations: [],
+        },
+        process: {
+          family: "process",
+          available: true,
+          unavailable_reason: null,
+          granted: true,
+          available_operations: ["process.run"],
+          granted_operations: ["process.run"],
+          denied_operations: [],
+        },
+      },
+    };
+
+    const acked = new Promise<void>((resolve) => {
+      ws.on("message", (raw) => {
+        const msg = JSON.parse(String(raw)) as Record<string, any>;
+        if (msg.type === "policy_sync") {
+          ws.send(
+            JSON.stringify({
+              type: "policy_ack",
+              deviceId: "Leno",
+              revision: msg.policy.revision,
+              applied: true,
+              appliedAtMs: Date.now(),
+              status: {
+                os: "linux",
+                arch: "x86_64",
+                agent_version: "0.1.0",
+                policy_mode: "background_only",
+              },
+              capabilities: rustLikeCapabilities,
+            }),
+          );
+          resolve();
+        }
+      });
+    });
+
+    ws.send(
+      JSON.stringify({
+        type: "device_hello",
+        deviceId: "Leno",
+        appliedPolicyRevision: null,
+        status: {
+          os: "linux",
+          arch: "x86_64",
+          agent_version: "0.1.0",
+          policy_mode: "background_only",
+        },
+        capabilities: rustLikeCapabilities,
+      }),
+    );
+
+    await acked;
+    await new Promise((r) => setTimeout(r, 40));
+
+    const overview = await jsonRequest(address.httpUrl, "/portal/api/overview", {
+      method: "GET",
+      token: "owner-token-a",
+    });
+    assert.equal(overview.status, 200);
+    const leno = overview.body.devices[0];
+    assert.equal(leno.agentHealth, "degraded");
+    assert.deepEqual(
+      leno.unavailableCapabilities.map((u: Record<string, any>) => u.name),
+      ["browser", "desktop"],
+    );
+    assert.match(leno.unavailableCapabilities[0].reason, /standby/i);
+
+    const byFamily = Object.fromEntries(
+      leno.familySummaries.map((f: Record<string, any>) => [f.family, f]),
+    );
+    assert.equal(byFamily.files.providerAvailable, true);
+    assert.equal(byFamily.files.granted, true);
+    assert.deepEqual(byFamily.files.availableOperations, [
+      "filesystem.read",
+      "filesystem.write",
+    ]);
+    assert.equal(byFamily.device.providerAvailable, true);
+    assert.deepEqual(byFamily.device.availableOperations, [
+      "device.status",
+      "device.capabilities",
+    ]);
+
+    assert.equal(byFamily.browser.providerAvailable, false);
+    assert.equal(byFamily.browser.granted, true);
+    assert.deepEqual(byFamily.browser.availableOperations, []);
+    assert.deepEqual(byFamily.browser.grantedOperations, []);
+    assert.equal(byFamily.browser.policyGrantedOperations.length, 12);
+
+    assert.equal(byFamily.desktop.providerAvailable, false);
+    assert.equal(byFamily.desktop.granted, true);
+    assert.deepEqual(byFamily.desktop.availableOperations, []);
+    assert.deepEqual(byFamily.desktop.grantedOperations, []);
+    assert.equal(byFamily.desktop.policyGrantedOperations.length, 8);
+
+    ws.close();
+  } finally {
+    await relay.close();
+    await rm(dir, { recursive: true, force: true });
+  }
+});

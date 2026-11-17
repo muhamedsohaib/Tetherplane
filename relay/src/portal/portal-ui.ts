@@ -831,6 +831,15 @@ const PORTAL_SCRIPT = `
           card.appendChild(header);
           card.appendChild(metaRow);
 
+          if (dev.lastAckError) {
+            card.appendChild(
+              createEl("div", { className: "unavailable-banner" }, [
+                createEl("strong", { text: "Sync error: " }),
+                String(dev.lastAckError),
+              ]),
+            );
+          }
+
           if (Array.isArray(dev.unavailableCapabilities) && dev.unavailableCapabilities.length > 0) {
             const unavailBanner = createEl("div", { className: "unavailable-banner" });
             dev.unavailableCapabilities.forEach(function (u) {
@@ -847,11 +856,21 @@ const PORTAL_SCRIPT = `
           const familyGrid = createEl("div", { className: "family-grid" });
           (dev.familySummaries || []).forEach(function (fam) {
             const isOn = Boolean(fam.granted);
+            const policyCount = Array.isArray(fam.policyGrantedOperations)
+              ? fam.policyGrantedOperations.length
+              : fam.grantedOperations.length;
             const subText =
-              fam.grantedOperations.length + "/" + fam.availableOperations.length + " ops active";
+              !dev.online
+                ? "Offline (" + policyCount + " policy-granted)"
+                : !fam.providerAvailable
+                  ? "Unavailable (" + policyCount + " policy-granted)"
+                  : fam.grantedOperations.length + "/" + fam.availableOperations.length + " ops active";
             const row = createEl(
               "div",
-              { className: "family-toggle" + (isOn ? " granted" : "") },
+              {
+                className: "family-toggle" + (isOn ? " granted" : ""),
+                ...(fam.unavailableReason ? { attrs: { title: fam.unavailableReason } } : {}),
+              },
               [
                 createEl("div", null, [
                   createEl("span", { className: "family-name", text: fam.family }),

@@ -1206,30 +1206,101 @@ export class PolicyStore {
       : [];
 
     const unavailableCapabilities = rawProviders
-      .filter((p) => p.status && p.status !== "ready")
+      .filter(
+        (p) =>
+          p.available === false ||
+          (typeof p.status === "string" && p.status !== "ready"),
+      )
       .map((p) => ({
-        name: String(p.name ?? "unknown"),
-        toolFamily: String(p.tool_family ?? "device"),
-        status: String(p.status ?? "unavailable"),
+        name: String(p.namespace ?? p.name ?? p.tool_family ?? "unknown"),
+        toolFamily: String(p.tool_family ?? p.namespace ?? "device"),
+        status:
+          typeof p.status === "string"
+            ? p.status
+            : p.available === false
+              ? "unavailable"
+              : "ready",
         reason:
           typeof p.unavailable_reason === "string"
             ? p.unavailable_reason
             : "Provider reported unavailable",
       }));
 
+    const rawToolFamilies = record.capabilities?.tool_families;
     const familySummaries = ALL_TOOL_FAMILIES.map((family) => {
       const canonicalOps = CANONICAL_OPERATIONS_BY_FAMILY[family] ?? [];
-      const reportedFamily = Array.isArray(record.capabilities?.tool_families)
-        ? (
-            record.capabilities.tool_families as Array<Record<string, unknown>>
-          ).find((f) => f.family === family)
-        : undefined;
+      let reportedFamily: Record<string, unknown> | undefined;
+      if (Array.isArray(rawToolFamilies)) {
+        reportedFamily = (
+          rawToolFamilies as Array<Record<string, unknown>>
+        ).find((f) => f.family === family);
+      } else if (rawToolFamilies && typeof rawToolFamilies === "object") {
+        const candidate = (rawToolFamilies as Record<string, unknown>)[family];
+        if (candidate && typeof candidate === "object") {
+          reportedFamily = candidate as Record<string, unknown>;
+        }
+      }
 
-      const availableOperations = Array.isArray(
-        reportedFamily?.available_operations,
-      )
-        ? (reportedFamily.available_operations as string[])
-        : canonicalOps;
+      const matchingProviders = rawProviders.filter(
+        (p) => p.tool_family === family,
+      );
+      let providerAvailable: boolean;
+      if (reportedFamily) {
+        if (typeof reportedFamily.available === "boolean") {
+          providerAvailable = reportedFamily.available;
+        } else if (typeof reportedFamily.provider_available === "boolean") {
+          providerAvailable = reportedFamily.provider_available;
+        } else if (matchingProviders.length > 0) {
+          providerAvailable = matchingProviders.some(
+            (p) => p.available === true || p.status === "ready",
+          );
+        } else {
+          providerAvailable = false;
+        }
+      } else if (matchingProviders.length > 0) {
+        providerAvailable = matchingProviders.some(
+          (p) => p.available === true || p.status === "ready",
+        );
+      } else {
+        providerAvailable = online;
+      }
+
+      let availableOperations: string[];
+      if (!providerAvailable) {
+        availableOperations = [];
+      } else if (reportedFamily && Array.isArray(reportedFamily.available_operations)) {
+        availableOperations = reportedFamily.available_operations.filter(
+          (op): op is string => typeof op === "string",
+        );
+      } else if (matchingProviders.length > 0) {
+        const derivedOps: string[] = [];
+        for (const provider of matchingProviders) {
+          if (provider.available !== true && provider.status !== "ready") continue;
+          const ns =
+            typeof provider.namespace === "string"
+              ? provider.namespace
+              : typeof provider.name === "string"
+                ? provider.name
+                : "";
+          if (Array.isArray(provider.available_operations)) {
+            for (const op of provider.available_operations) {
+              if (typeof op === "string") {
+                derivedOps.push(ns ? `${ns}.${op}` : op);
+              }
+            }
+          }
+        }
+        availableOperations = providerAvailable ? derivedOps : [];
+      } else {
+        availableOperations = providerAvailable ? canonicalOps : [];
+      }
+
+      const unavailableReason = !providerAvailable
+        ? typeof reportedFamily?.unavailable_reason === "string"
+          ? reportedFamily.unavailable_reason
+          : (unavailableCapabilities.find((u) => u.toolFamily === family)
+              ?.reason ?? null)
+        : null;
 
       const policyGrantedOperations = canonicalOps.filter(
         (op) =>
@@ -1258,9 +1329,8 @@ export class PolicyStore {
       return {
         family,
         granted: familyGranted,
-        providerAvailable: reportedFamily
-          ? Boolean(reportedFamily.provider_available)
-          : online,
+        providerAvailable,
+        unavailableReason,
         availableOperations,
         policyGrantedOperations,
         grantedOperations,
