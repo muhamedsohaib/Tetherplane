@@ -1,3 +1,4 @@
+import { randomBytes, timingSafeEqual } from "node:crypto";
 import type {
   IncomingMessage,
   Server,
@@ -15,14 +16,27 @@ import {
   type PolicyStore,
   type ToolFamily,
 } from "../policy/policy-store.ts";
-import { renderControlPortalHtml } from "../portal/portal-ui.ts";
+import { renderControlPortalPage } from "../portal/portal-ui.ts";
 import type { DeviceRegistry } from "./registry.ts";
+
+const PORTAL_SESSION_COOKIE = "tetherplane_portal_session";
+const PORTAL_SESSION_TTL_SECONDS = 8 * 60 * 60;
+const MAX_PORTAL_SESSIONS = 256;
+
+type PortalSession = {
+  id: string;
+  identity: ClientIdentity;
+  csrfToken: string;
+  expiresAtMs: number;
+};
 
 export class RelayControlHttpGateway {
   readonly #registry: DeviceRegistry;
   readonly #authenticator: ClientAuthenticator;
   readonly #disconnectDevice: (deviceId: string) => void;
   readonly #policyStore: PolicyStore | null;
+  readonly #secureCookies: boolean;
+  readonly #portalSessions = new Map<string, PortalSession>();
   #attachedServer: Server | null = null;
   #requestHandler:
     | ((request: IncomingMessage, response: ServerResponse) => void)
@@ -33,11 +47,13 @@ export class RelayControlHttpGateway {
     authenticator: ClientAuthenticator;
     disconnectDevice(deviceId: string): void;
     policyStore?: PolicyStore;
+    secureCookies?: boolean;
   }) {
     this.#registry = options.registry;
     this.#authenticator = options.authenticator;
     this.#disconnectDevice = options.disconnectDevice;
     this.#policyStore = options.policyStore ?? null;
+    this.#secureCookies = options.secureCookies ?? false;
   }
 
   attach(server: Server): void {
@@ -57,6 +73,7 @@ export class RelayControlHttpGateway {
     }
     this.#attachedServer = null;
     this.#requestHandler = null;
+    this.#portalSessions.clear();
   }
 
   async #handleRequest(
@@ -70,13 +87,37 @@ export class RelayControlHttpGateway {
 
     try {
       if (
+        (url.pathname === "/portal" || url.pathname.startsWith("/portal/")) &&
+        hasQueryTokenParameter(url)
+      ) {
+        response.setHeader("cache-control", "no-store");
+        response.setHeader("x-content-type-options", "nosniff");
+        response.setHeader("referrer-policy", "no-referrer");
+        writeJson(response, 400, {
+          error: {
+            code: "invalid_arguments",
+            message:
+              "bearer tokens are not accepted in URL query parameters; submit owner credentials via POST /portal/api/session",
+          },
+        });
+        return;
+      }
+
+      if (
         request.method === "GET" &&
         url.pathname === "/portal"
       ) {
+        const page = renderControlPortalPage();
         response.statusCode = 200;
         response.setHeader("content-type", "text/html; charset=utf-8");
         response.setHeader("cache-control", "no-store");
-        response.end(renderControlPortalHtml());
+        response.setHeader("content-security-policy", page.contentSecurityPolicy);
+        response.setHeader("x-content-type-options", "nosniff");
+        response.setHeader("x-frame-options", "DENY");
+        response.setHeader("referrer-policy", "no-referrer");
+        response.setHeader("cross-origin-opener-policy", "same-origin");
+        response.setHeader("cross-origin-resource-policy", "same-origin");
+        response.end(page.html);
         return;
       }
 
@@ -134,6 +175,8 @@ export class RelayControlHttpGateway {
       }
 
       if (url.pathname.startsWith("/portal/api/")) {
+        response.setHeader("cache-control", "no-store");
+        response.setHeader("x-content-type-options", "nosniff");
         await this.#handlePortalApi(request, response, url.pathname);
         return;
       }
@@ -166,6 +209,69 @@ export class RelayControlHttpGateway {
           message: "policy store is not enabled on this gateway",
         },
       });
+      return;
+    }
+
+    if (request.method === "GET" && pathname === "/portal/api/session") {
+      const session = this.#resolveCookieSession(request);
+      if (!session || isNonOwnerPrincipal(session.identity.principalId)) {
+        writeJson(response, 200, { authenticated: false });
+        return;
+      }
+      writeJson(response, 200, {
+        authenticated: true,
+        accountId: session.identity.accountId,
+        ownerPrincipalId: session.identity.principalId,
+        csrfToken: session.csrfToken,
+      });
+      return;
+    }
+
+    if (request.method === "POST" && pathname === "/portal/api/session") {
+      if (!this.#verifySameOriginHeaders(request, false)) {
+        writeJson(response, 403, {
+          error: {
+            code: "permission_denied",
+            message: "cross-origin session creation is denied",
+          },
+        });
+        return;
+      }
+      const identity = await this.#requireOwnerBearerIdentity(request, response);
+      if (!identity) return;
+      const session = this.#createPortalSession(identity);
+      response.setHeader(
+        "set-cookie",
+        formatSessionCookieHeader(
+          session.id,
+          PORTAL_SESSION_TTL_SECONDS,
+          this.#secureCookies,
+        ),
+      );
+      writeJson(response, 200, {
+        authenticated: true,
+        accountId: identity.accountId,
+        ownerPrincipalId: identity.principalId,
+        csrfToken: session.csrfToken,
+      });
+      return;
+    }
+
+    if (
+      request.method === "POST" &&
+      pathname === "/portal/api/session/logout"
+    ) {
+      const existingCookie = parseSessionCookieValue(request.headers.cookie);
+      if (existingCookie && this.#portalSessions.has(existingCookie)) {
+        const identity = await this.#requireOwnerIdentity(request, response);
+        if (!identity) return;
+        this.#portalSessions.delete(existingCookie);
+      }
+      response.setHeader(
+        "set-cookie",
+        formatSessionCookieHeader("", 0, this.#secureCookies),
+      );
+      writeJson(response, 200, { authenticated: false });
       return;
     }
 
@@ -454,18 +560,13 @@ export class RelayControlHttpGateway {
     return null;
   }
 
-  async #requireOwnerIdentity(
+  async #requireOwnerBearerIdentity(
     request: IncomingMessage,
     response: ServerResponse,
   ): Promise<ClientIdentity | null> {
     const identity = await this.#requireIdentity(request, response);
     if (!identity) return null;
-    if (
-      identity.principalId.startsWith("operator:") ||
-      identity.principalId.startsWith("external:") ||
-      identity.principalId.startsWith("guest:") ||
-      identity.principalId.startsWith("unpaired:")
-    ) {
+    if (isNonOwnerPrincipal(identity.principalId)) {
       writeJson(response, 403, {
         error: {
           code: "permission_denied",
@@ -477,6 +578,219 @@ export class RelayControlHttpGateway {
     }
     return identity;
   }
+
+  async #requireOwnerIdentity(
+    request: IncomingMessage,
+    response: ServerResponse,
+  ): Promise<ClientIdentity | null> {
+    const bearer = bearerToken(request.headers.authorization);
+    if (bearer) {
+      return await this.#requireOwnerBearerIdentity(request, response);
+    }
+
+    const session = this.#resolveCookieSession(request);
+    if (!session) {
+      response.setHeader("www-authenticate", "Bearer");
+      writeJson(response, 401, {
+        error: {
+          code: "unauthorized",
+          message: "portal authentication required",
+        },
+      });
+      return null;
+    }
+
+    const isMutation =
+      request.method !== "GET" && request.method !== "HEAD";
+    if (!this.#verifySameOriginHeaders(request, isMutation)) {
+      writeJson(response, 403, {
+        error: {
+          code: "permission_denied",
+          message: "cross-origin portal request is denied",
+        },
+      });
+      return null;
+    }
+
+    if (isMutation) {
+      const csrfHeader = singleStringHeader(request.headers["x-tetherplane-csrf"]);
+      if (!csrfHeader || !constantTimeEqual(csrfHeader, session.csrfToken)) {
+        writeJson(response, 403, {
+          error: {
+            code: "permission_denied",
+            message: "missing or invalid portal CSRF token",
+          },
+        });
+        return null;
+      }
+    }
+
+    if (isNonOwnerPrincipal(session.identity.principalId)) {
+      writeJson(response, 403, {
+        error: {
+          code: "permission_denied",
+          message:
+            "only the device owner identity can manage portal permissions",
+        },
+      });
+      return null;
+    }
+
+    return session.identity;
+  }
+
+  #createPortalSession(identity: ClientIdentity): PortalSession {
+    const now = Date.now();
+    for (const [key, existing] of this.#portalSessions) {
+      if (existing.expiresAtMs <= now) {
+        this.#portalSessions.delete(key);
+      }
+    }
+    while (this.#portalSessions.size >= MAX_PORTAL_SESSIONS) {
+      const oldestKey = this.#portalSessions.keys().next().value;
+      if (!oldestKey) break;
+      this.#portalSessions.delete(oldestKey);
+    }
+    const id = randomBytes(32).toString("base64url");
+    const csrfToken = randomBytes(24).toString("base64url");
+    const session: PortalSession = {
+      id,
+      identity: { ...identity },
+      csrfToken,
+      expiresAtMs: now + PORTAL_SESSION_TTL_SECONDS * 1000,
+    };
+    this.#portalSessions.set(id, session);
+    return session;
+  }
+
+  #resolveCookieSession(request: IncomingMessage): PortalSession | null {
+    const sessionId = parseSessionCookieValue(request.headers.cookie);
+    if (!sessionId) return null;
+    const session = this.#portalSessions.get(sessionId);
+    if (!session) return null;
+    if (session.expiresAtMs <= Date.now()) {
+      this.#portalSessions.delete(sessionId);
+      return null;
+    }
+    return session;
+  }
+
+  #verifySameOriginHeaders(
+    request: IncomingMessage,
+    requireSafeRefererIfNoOrigin: boolean,
+  ): boolean {
+    const fetchSite = singleStringHeader(request.headers["sec-fetch-site"]);
+    if (fetchSite && fetchSite.toLowerCase() === "cross-site") {
+      return false;
+    }
+    const hostHeader = singleStringHeader(request.headers.host);
+    if (!hostHeader) return false;
+    const expectedProtocol = this.#secureCookies ? "https:" : "http:";
+
+    const originHeader = singleStringHeader(request.headers.origin);
+    if (originHeader) {
+      if (originHeader.toLowerCase() === "null") return false;
+      try {
+        const parsed = new URL(originHeader);
+        return (
+          parsed.host === hostHeader &&
+          parsed.protocol === expectedProtocol
+        );
+      } catch {
+        return false;
+      }
+    }
+
+    if (requireSafeRefererIfNoOrigin) {
+      const refererHeader = singleStringHeader(request.headers.referer);
+      if (refererHeader) {
+        try {
+          const parsed = new URL(refererHeader);
+          return (
+            parsed.host === hostHeader &&
+            parsed.protocol === expectedProtocol
+          );
+        } catch {
+          return false;
+        }
+      }
+    }
+
+    return true;
+  }
+}
+
+function isNonOwnerPrincipal(principalId: string): boolean {
+  return (
+    principalId.startsWith("operator:") ||
+    principalId.startsWith("external:") ||
+    principalId.startsWith("guest:") ||
+    principalId.startsWith("unpaired:")
+  );
+}
+
+function hasQueryTokenParameter(url: URL): boolean {
+  for (const key of url.searchParams.keys()) {
+    const lower = key.toLowerCase();
+    if (
+      lower === "token" ||
+      lower === "access_token" ||
+      lower === "bearer" ||
+      lower === "auth" ||
+      lower === "authorization"
+    ) {
+      return true;
+    }
+  }
+  return false;
+}
+
+function parseSessionCookieValue(cookieHeader: string | undefined): string | null {
+  if (!cookieHeader) return null;
+  const parts = cookieHeader.split(";");
+  for (const part of parts) {
+    const idx = part.indexOf("=");
+    if (idx <= 0) continue;
+    const name = part.slice(0, idx).trim();
+    if (name === PORTAL_SESSION_COOKIE) {
+      const val = part.slice(idx + 1).trim();
+      return val || null;
+    }
+  }
+  return null;
+}
+
+function formatSessionCookieHeader(
+  value: string,
+  maxAgeSeconds: number,
+  secure: boolean,
+): string {
+  const attrs = [
+    `${PORTAL_SESSION_COOKIE}=${value}`,
+    "HttpOnly",
+    "SameSite=Strict",
+    "Path=/portal",
+    `Max-Age=${maxAgeSeconds}`,
+  ];
+  if (secure) {
+    attrs.push("Secure");
+  }
+  return attrs.join("; ");
+}
+
+function singleStringHeader(value: string | string[] | undefined): string | null {
+  if (typeof value === "string") {
+    const trimmed = value.trim();
+    return trimmed || null;
+  }
+  return null;
+}
+
+function constantTimeEqual(a: string, b: string): boolean {
+  const aBuf = Buffer.from(a, "utf8");
+  const bBuf = Buffer.from(b, "utf8");
+  if (aBuf.length !== bBuf.length) return false;
+  return timingSafeEqual(aBuf, bBuf);
 }
 
 function parsePolicyMutation(

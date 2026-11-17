@@ -124,10 +124,12 @@ export class RelayServer {
       ...(options.oauth ? { oauth: options.oauth } : {}),
     });
     const healthGateway = new RelayHealthHttpGateway();
+    const secure = options.tls !== undefined;
     const controlGateway = new RelayControlHttpGateway({
       registry,
       policyStore,
       authenticator: options.authenticator,
+      secureCookies: secure,
       disconnectDevice: (deviceId) =>
         deviceGateway.disconnectDevice(deviceId),
     });
@@ -139,8 +141,6 @@ export class RelayServer {
             proofs: new AuthLoginProofRegistry(),
             bridgeToken: options.authLoginBridgeToken,
           });
-
-    const secure = options.tls !== undefined;
     const server: NodeRelayServer =
       options.tls === undefined
         ? createHttpServer()

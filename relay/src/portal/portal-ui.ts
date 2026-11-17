@@ -1,11 +1,6 @@
-export function renderControlPortalHtml(): string {
-  return `<!DOCTYPE html>
-<html lang="en">
-<head>
-  <meta charset="utf-8" />
-  <meta name="viewport" content="width=device-width, initial-scale=1" />
-  <title>Tetherplane Control Portal</title>
-  <style>
+import { createHash } from "node:crypto";
+
+const PORTAL_STYLE = `
     :root {
       --bg: #0b0f17;
       --surface: #131b2e;
@@ -98,6 +93,10 @@ export function renderControlPortalHtml(): string {
       gap: 8px;
     }
 
+    .hidden {
+      display: none !important;
+    }
+
     input[type="password"],
     input[type="text"],
     select {
@@ -174,6 +173,22 @@ export function renderControlPortalHtml(): string {
       margin-top: 4px;
     }
 
+    .stat-value-compact {
+      font-size: 1.05rem;
+    }
+
+    .stat-value-primary {
+      color: var(--primary);
+    }
+
+    .security-active {
+      color: var(--success);
+    }
+
+    .security-lockdown {
+      color: var(--danger);
+    }
+
     .global-panel {
       background: var(--surface);
       border: 1px solid var(--border);
@@ -185,6 +200,11 @@ export function renderControlPortalHtml(): string {
       align-items: center;
       justify-content: space-between;
       gap: 12px;
+    }
+
+    .global-subtitle {
+      font-size: 0.82rem;
+      color: var(--text-muted);
     }
 
     .global-actions {
@@ -223,11 +243,28 @@ export function renderControlPortalHtml(): string {
       display: flex;
       align-items: center;
       gap: 10px;
+      min-width: 0;
     }
 
     .device-title h3 {
       margin: 0;
       font-size: 1.1rem;
+      overflow-wrap: anywhere;
+    }
+
+    .card-meta-row {
+      font-size: 0.8rem;
+      color: var(--text-muted);
+      display: flex;
+      justify-content: space-between;
+      flex-wrap: wrap;
+      gap: 8px;
+    }
+
+    .device-actions-row {
+      display: flex;
+      flex-wrap: wrap;
+      gap: 8px;
     }
 
     .pill {
@@ -326,9 +363,21 @@ export function renderControlPortalHtml(): string {
       color: #fde68a;
     }
 
+    .unavailable-item + .unavailable-item {
+      margin-top: 4px;
+    }
+
+    .status-banner-outer {
+      margin-bottom: 14px;
+    }
+
     details.advanced-box {
       border-top: 1px solid var(--border);
       padding-top: 10px;
+    }
+
+    details.advanced-box-spaced {
+      margin-top: 12px;
     }
 
     details.advanced-box summary {
@@ -337,6 +386,29 @@ export function renderControlPortalHtml(): string {
       color: var(--primary);
       font-weight: 600;
       user-select: none;
+    }
+
+    .op-rules-wrap {
+      margin-top: 10px;
+      display: flex;
+      flex-direction: column;
+      gap: 8px;
+    }
+
+    .op-rules-note {
+      font-size: 0.78rem;
+      color: var(--text-muted);
+      overflow-wrap: anywhere;
+    }
+
+    .op-rule-input-row {
+      display: flex;
+      gap: 6px;
+      flex-wrap: wrap;
+    }
+
+    .op-rule-input {
+      flex: 1;
     }
 
     .section-grid {
@@ -358,14 +430,56 @@ export function renderControlPortalHtml(): string {
       font-size: 1rem;
     }
 
+    .identities-list {
+      margin-bottom: 12px;
+      font-size: 0.84rem;
+      color: var(--text-muted);
+    }
+
+    .op-form-stack {
+      display: flex;
+      flex-direction: column;
+      gap: 8px;
+      margin-top: 10px;
+    }
+
+    .audit-scroll {
+      max-height: 280px;
+      overflow-y: auto;
+    }
+
+    .snapshots-scroll {
+      margin-top: 10px;
+      max-height: 220px;
+      overflow-y: auto;
+    }
+
+    .muted-note {
+      font-size: 0.82rem;
+      color: var(--text-muted);
+    }
+
     .list-item {
       border-bottom: 1px solid var(--border);
       padding: 10px 0;
       font-size: 0.83rem;
+      overflow-wrap: anywhere;
     }
 
     .list-item:last-child {
       border-bottom: none;
+    }
+
+    .snapshot-row {
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+      gap: 8px;
+    }
+
+    .audit-meta {
+      color: var(--text-muted);
+      font-size: 0.78rem;
     }
 
     .modal-backdrop {
@@ -396,11 +510,24 @@ export function renderControlPortalHtml(): string {
       margin: 0 0 8px;
     }
 
+    .modal-desc {
+      font-size: 0.88rem;
+      color: var(--text-muted);
+    }
+
+    .modal-reason-input {
+      width: 100%;
+    }
+
     .modal-actions {
       display: flex;
       justify-content: flex-end;
       gap: 10px;
       margin-top: 16px;
+    }
+
+    code {
+      font-family: var(--mono);
     }
 
     @media (max-width: 600px) {
@@ -416,143 +543,112 @@ export function renderControlPortalHtml(): string {
         align-items: stretch;
       }
     }
-  </style>
-</head>
-<body>
-  <div class="portal-shell">
-    <header class="topbar">
-      <div class="brand">
-        <div class="brand-badge">T</div>
-        <div>
-          <h1>Tetherplane Control Portal</h1>
-          <p>Universal Permissions &amp; Centralized Device Authorization</p>
-        </div>
-      </div>
-      <div class="auth-bar">
-        <input id="token-input" type="password" placeholder="Owner Bearer Token" aria-label="Owner Bearer Token" />
-        <button id="connect-btn" class="primary" type="button">Connect</button>
-        <button id="refresh-btn" type="button">Refresh</button>
-      </div>
-    </header>
+`;
 
-    <section class="summary-strip" aria-label="System Summary">
-      <div class="stat-card">
-        <div class="stat-label">Paired Devices</div>
-        <div class="stat-value" id="stat-devices">0</div>
-      </div>
-      <div class="stat-card">
-        <div class="stat-label">Online &amp; Confirmed</div>
-        <div class="stat-value" id="stat-confirmed">0</div>
-      </div>
-      <div class="stat-card">
-        <div class="stat-label">Default Policy</div>
-        <div class="stat-value" style="font-size:1.05rem;color:var(--primary)">Universal (6 Families)</div>
-      </div>
-      <div class="stat-card">
-        <div class="stat-label">Security Status</div>
-        <div class="stat-value" id="stat-security" style="font-size:1.05rem;color:var(--success)">Active</div>
-      </div>
-    </section>
-
-    <section class="global-panel" aria-label="Global Permission Controls">
-      <div>
-        <strong>Global Controls</strong>
-        <div style="font-size:0.82rem;color:var(--text-muted)">
-          Apply a permission profile across selected devices or trigger emergency access revocation.
-        </div>
-      </div>
-      <div class="global-actions">
-        <button id="global-universal-btn" type="button">Grant Universal (All)</button>
-        <button id="global-readonly-btn" type="button">Set Read-Only (All)</button>
-        <button id="global-revoke-btn" type="button">Revoke All Families</button>
-        <button id="emergency-revoke-btn" class="danger" type="button">Emergency Access Revocation</button>
-      </div>
-    </section>
-
-    <main>
-      <div id="status-banner" style="display:none;margin-bottom:14px;" class="unavailable-banner"></div>
-      <section class="devices-grid" id="devices-container" aria-label="Connected Devices">
-        <div class="panel-card">Enter your owner token above to load paired Tetherplane devices.</div>
-      </section>
-
-      <div class="section-grid">
-        <section class="panel-card" aria-label="Owner and Operator Identities">
-          <h2>Owner &amp; Operator Identities</h2>
-          <div id="identities-container" style="margin-bottom:12px;font-size:0.84rem;color:var(--text-muted)">
-            No active identity telemetry yet.
-          </div>
-          <details class="advanced-box">
-            <summary>Authorize / Update Scoped Operator Identity</summary>
-            <div style="display:flex;flex-direction:column;gap:8px;margin-top:10px;">
-              <input id="op-principal-id" type="text" placeholder="operator:assistant-id" />
-              <input id="op-display-name" type="text" placeholder="Display Name (e.g. Build Agent)" />
-              <select id="op-profile-id">
-                <option value="read_only">Read &amp; Inspect Only</option>
-                <option value="files_and_process">Files &amp; Process Only</option>
-                <option value="standard">Standard Automation</option>
-                <option value="universal">Universal Access</option>
-                <option value="lockdown">Zero Access (Revoked)</option>
-              </select>
-              <button id="save-operator-btn" class="primary" type="button">Save Operator Policy</button>
-            </div>
-          </details>
-        </section>
-
-        <section class="panel-card" aria-label="Security Audit and Rollback">
-          <h2>Security Audit &amp; Safe Rollback</h2>
-          <div id="audit-container" style="max-height:280px;overflow-y:auto;">
-            <div style="font-size:0.84rem;color:var(--text-muted)">No audit events loaded.</div>
-          </div>
-          <details class="advanced-box" style="margin-top:12px;">
-            <summary>Recoverable Snapshots &amp; Rollback</summary>
-            <div id="snapshots-container" style="margin-top:10px;max-height:200px;overflow-y:auto;"></div>
-          </details>
-        </section>
-      </div>
-    </main>
-  </div>
-
-  <div class="modal-backdrop" id="confirm-modal" role="dialog" aria-modal="true">
-    <div class="modal">
-      <h3 id="modal-title">Confirm Global Security Change</h3>
-      <p id="modal-desc" style="font-size:0.88rem;color:var(--text-muted)"></p>
-      <input id="modal-reason" type="text" placeholder="Reason for audit history" style="width:100%" />
-      <div class="modal-actions">
-        <button id="modal-cancel-btn" type="button">Cancel</button>
-        <button id="modal-confirm-btn" class="danger" type="button">Confirm Change</button>
-      </div>
-    </div>
-  </div>
-
-  <script>
+const PORTAL_SCRIPT = `
     (function () {
-      const params = new URLSearchParams(window.location.search);
       const tokenInput = document.getElementById("token-input");
-      const savedToken = params.get("token") || sessionStorage.getItem("tetherplane_portal_token") || "";
-      tokenInput.value = savedToken;
+      const connectBtn = document.getElementById("connect-btn");
+      const refreshBtn = document.getElementById("refresh-btn");
+      const logoutBtn = document.getElementById("logout-btn");
+      const authStateBadge = document.getElementById("auth-state-badge");
+      const statusBanner = document.getElementById("status-banner");
 
+      let csrfToken = null;
+      let authenticatedOwner = null;
       let currentOverview = null;
       let pendingModalAction = null;
 
-      function getToken() {
-        return tokenInput.value.trim();
+      function createEl(tag, options, children) {
+        const node = document.createElement(tag);
+        if (options) {
+          if (options.className) node.className = options.className;
+          if (options.text !== undefined) node.textContent = String(options.text);
+          if (options.type) node.type = options.type;
+          if (options.attrs) {
+            Object.keys(options.attrs).forEach(function (k) {
+              node.setAttribute(k, String(options.attrs[k]));
+            });
+          }
+          if (options.dataset) {
+            Object.keys(options.dataset).forEach(function (k) {
+              node.dataset[k] = String(options.dataset[k]);
+            });
+          }
+        }
+        if (Array.isArray(children)) {
+          children.forEach(function (child) {
+            if (child === null || child === undefined) return;
+            if (typeof child === "string") {
+              node.appendChild(document.createTextNode(child));
+            } else {
+              node.appendChild(child);
+            }
+          });
+        }
+        return node;
+      }
+
+      function setSignedOutUi(notice) {
+        csrfToken = null;
+        authenticatedOwner = null;
+        currentOverview = null;
+        authStateBadge.textContent = "Not Signed In";
+        authStateBadge.className = "pill offline";
+        logoutBtn.classList.add("hidden");
+        tokenInput.classList.remove("hidden");
+        connectBtn.classList.remove("hidden");
+
+        const container = document.getElementById("devices-container");
+        container.replaceChildren(
+          createEl("div", {
+            className: "panel-card",
+            text: "Enter your owner token above to start an authenticated portal session.",
+          }),
+        );
+        document.getElementById("stat-devices").textContent = "0";
+        document.getElementById("stat-confirmed").textContent = "0";
+        const secEl = document.getElementById("stat-security");
+        secEl.textContent = "Active";
+        secEl.className = "stat-value stat-value-compact security-active";
+        document.getElementById("identities-container").replaceChildren(
+          createEl("div", { className: "muted-note", text: "No active identity telemetry yet." }),
+        );
+        document.getElementById("audit-container").replaceChildren(
+          createEl("div", { className: "muted-note", text: "No audit events loaded." }),
+        );
+        document.getElementById("snapshots-container").replaceChildren();
+        if (notice) showBanner(notice);
+      }
+
+      function setSignedInUi(ownerPrincipalId) {
+        authenticatedOwner = ownerPrincipalId;
+        authStateBadge.textContent = "Owner: " + ownerPrincipalId;
+        authStateBadge.className = "pill online";
+        logoutBtn.classList.remove("hidden");
       }
 
       async function apiCall(path, method, body) {
-        const token = getToken();
-        if (token) {
-          sessionStorage.setItem("tetherplane_portal_token", token);
-        }
+        const effectiveMethod = method || "GET";
         const headers = { Accept: "application/json" };
-        if (token) headers.Authorization = "Bearer " + token;
-        if (body) headers["Content-Type"] = "application/json";
+        if (body !== undefined) {
+          headers["Content-Type"] = "application/json";
+        }
+        if (effectiveMethod !== "GET" && effectiveMethod !== "HEAD" && csrfToken) {
+          headers["X-Tetherplane-Csrf"] = csrfToken;
+        }
         const res = await fetch(path, {
-          method: method || "GET",
-          headers,
-          body: body ? JSON.stringify(body) : undefined,
+          method: effectiveMethod,
+          credentials: "same-origin",
+          headers: headers,
+          body: body !== undefined ? JSON.stringify(body) : undefined,
         });
         const text = await res.text();
         const data = text ? JSON.parse(text) : {};
+        if (res.status === 401) {
+          setSignedOutUi("Portal session is missing or expired. Submit your owner token to connect.");
+          throw new Error((data.error && data.error.message) || "HTTP 401");
+        }
         if (!res.ok) {
           throw new Error((data.error && data.error.message) || ("HTTP " + res.status));
         }
@@ -560,25 +656,97 @@ export function renderControlPortalHtml(): string {
       }
 
       function showBanner(msg) {
-        const banner = document.getElementById("status-banner");
         if (!msg) {
-          banner.style.display = "none";
+          statusBanner.textContent = "";
+          statusBanner.classList.add("hidden");
           return;
         }
-        banner.textContent = msg;
-        banner.style.display = "block";
+        statusBanner.textContent = msg;
+        statusBanner.classList.remove("hidden");
+      }
+
+      async function connectSession() {
+        const raw = tokenInput.value.trim();
+        if (!raw) {
+          showBanner("Enter an owner bearer token to connect.");
+          return;
+        }
+        tokenInput.value = "";
+        try {
+          showBanner("");
+          const res = await fetch("/portal/api/session", {
+            method: "POST",
+            credentials: "same-origin",
+            headers: {
+              Accept: "application/json",
+              Authorization: "Bearer " + raw,
+            },
+          });
+          const text = await res.text();
+          const data = text ? JSON.parse(text) : {};
+          if (!res.ok || !data.authenticated) {
+            throw new Error((data.error && data.error.message) || ("HTTP " + res.status));
+          }
+          csrfToken = data.csrfToken || null;
+          setSignedInUi(data.ownerPrincipalId || "owner");
+          await loadOverview();
+        } catch (err) {
+          showBanner("Authentication failed: " + err.message);
+        }
+      }
+
+      async function restoreSession() {
+        try {
+          const res = await fetch("/portal/api/session", {
+            method: "GET",
+            credentials: "same-origin",
+            headers: { Accept: "application/json" },
+          });
+          if (!res.ok) return;
+          const data = await res.json();
+          if (data && data.authenticated) {
+            csrfToken = data.csrfToken || null;
+            setSignedInUi(data.ownerPrincipalId || "owner");
+            await loadOverview();
+          }
+        } catch (err) {
+          showBanner("Portal notice: " + err.message);
+        }
+      }
+
+      async function signOut() {
+        try {
+          await apiCall("/portal/api/session/logout", "POST", {});
+        } catch {
+          // Always transition UI cleanly to signed-out even if session already expired
+        }
+        setSignedOutUi("");
       }
 
       async function loadOverview() {
-        if (!getToken()) return;
+        if (!authenticatedOwner) return;
         try {
           showBanner("");
           const data = await apiCall("/portal/api/overview", "GET");
           currentOverview = data;
           renderOverview(data);
         } catch (err) {
-          showBanner("Portal notice: " + err.message);
+          if (authenticatedOwner) {
+            showBanner("Portal notice: " + err.message);
+          }
         }
+      }
+
+      function formatTelemetryInfo(status) {
+        if (!status) return "Awaiting telemetry";
+        const platform = status.os
+          ? status.arch
+            ? status.os + "/" + status.arch
+            : status.os
+          : status.platform || "unknown";
+        const version = status.agent_version || status.version || "0.1.0";
+        const mode = status.policy_mode ? " • " + status.policy_mode : "";
+        return platform + " • v" + version + mode;
       }
 
       function renderOverview(data) {
@@ -589,104 +757,181 @@ export function renderControlPortalHtml(): string {
         }).length;
         document.getElementById("stat-confirmed").textContent = String(confirmedCount);
 
-        const anyLockdown = devices.some(function (d) { return d.emergencyLockdown; });
+        const anyLockdown = devices.some(function (d) { return Boolean(d.emergencyLockdown); });
         const secEl = document.getElementById("stat-security");
         secEl.textContent = anyLockdown ? "LOCKDOWN" : "Active";
-        secEl.style.color = anyLockdown ? "var(--danger)" : "var(--success)";
+        secEl.className =
+          "stat-value stat-value-compact " +
+          (anyLockdown ? "security-lockdown" : "security-active");
 
         const container = document.getElementById("devices-container");
-        container.innerHTML = "";
         if (devices.length === 0) {
-          container.innerHTML = '<div class="panel-card">No paired devices found for this owner account.</div>';
+          container.replaceChildren(
+            createEl("div", {
+              className: "panel-card",
+              text: "No paired devices found for this owner account.",
+            }),
+          );
+          renderIdentities(data);
+          renderAuditAndSnapshots(data);
+          return;
         }
 
-        devices.forEach(function (dev) {
-          const card = document.createElement("article");
-          card.className = "device-card";
-          card.setAttribute("data-device-id", dev.deviceId);
+        const cards = devices.map(function (dev) {
+          const card = createEl("article", {
+            className: "device-card",
+            dataset: { deviceId: dev.deviceId },
+          });
 
           const syncLabel = dev.emergencyLockdown
             ? "Emergency Lockdown"
-            : dev.syncStatus === "applied"
-              ? "Confirmed Active (v" + dev.appliedRevision + ")"
-              : "Pending Device Ack (v" + dev.desiredRevision + ")";
+            : dev.syncStatus === "failed"
+              ? "Sync Rejected"
+              : dev.syncStatus === "applied"
+                ? "Confirmed Active (v" + dev.appliedRevision + ")"
+                : "Pending Device Ack (v" + dev.desiredRevision + ")";
           const syncClass = dev.emergencyLockdown
             ? "lockdown"
-            : dev.syncStatus === "applied"
-              ? "applied"
-              : "pending";
+            : dev.syncStatus === "failed"
+              ? "failed"
+              : dev.syncStatus === "applied"
+                ? "applied"
+                : "pending";
 
-          const platformInfo = dev.status && dev.status.platform
-            ? dev.status.platform + " • v" + (dev.status.version || "0.1.0")
-            : "Awaiting telemetry";
+          const header = createEl("div", { className: "device-header" }, [
+            createEl("div", { className: "device-title" }, [
+              createEl("h3", { text: dev.deviceId }),
+              createEl("span", {
+                className: "pill " + (dev.online ? "online" : "offline"),
+                text: dev.online ? "Online" : "Offline",
+              }),
+            ]),
+            createEl("span", {
+              className: "pill " + syncClass,
+              dataset: { syncBadge: dev.deviceId },
+              text: syncLabel,
+            }),
+          ]);
 
-          let unavailableHtml = "";
+          const profileId =
+            (dev.policy && dev.policy.owner_policy && dev.policy.owner_policy.profile_id) ||
+            "universal";
+          const metaRow = createEl("div", { className: "card-meta-row" }, [
+            createEl("span", null, [
+              "Health: ",
+              createEl("strong", { text: dev.agentHealth }),
+              " (" + formatTelemetryInfo(dev.status) + ")",
+            ]),
+            createEl("span", null, [
+              "Profile: ",
+              createEl("strong", { text: profileId }),
+            ]),
+          ]);
+
+          card.appendChild(header);
+          card.appendChild(metaRow);
+
           if (Array.isArray(dev.unavailableCapabilities) && dev.unavailableCapabilities.length > 0) {
-            unavailableHtml = '<div class="unavailable-banner">' +
-              dev.unavailableCapabilities.map(function (u) {
-                return "<strong>" + u.name + " unavailable:</strong> " + u.reason;
-              }).join("<br/>") +
-              "</div>";
+            const unavailBanner = createEl("div", { className: "unavailable-banner" });
+            dev.unavailableCapabilities.forEach(function (u) {
+              unavailBanner.appendChild(
+                createEl("div", { className: "unavailable-item" }, [
+                  createEl("strong", { text: u.name + " unavailable: " }),
+                  String(u.reason || "Provider unavailable"),
+                ]),
+              );
+            });
+            card.appendChild(unavailBanner);
           }
 
-          const familiesHtml = (dev.familySummaries || []).map(function (fam) {
+          const familyGrid = createEl("div", { className: "family-grid" });
+          (dev.familySummaries || []).forEach(function (fam) {
             const isOn = Boolean(fam.granted);
-            const subText = fam.grantedOperations.length + "/" + fam.availableOperations.length + " ops active";
-            return (
-              '<div class="family-toggle ' + (isOn ? "granted" : "") + '">' +
-                '<div>' +
-                  '<span class="family-name">' + fam.family + '</span>' +
-                  '<span class="family-sub">' + subText + '</span>' +
-                '</div>' +
-                '<button type="button" class="switch-btn ' + (isOn ? "on" : "off") + '" ' +
-                  'data-action="toggle-family" data-device="' + dev.deviceId + '" ' +
-                  'data-family="' + fam.family + '" data-currently-on="' + (isOn ? "1" : "0") + '">' +
-                  (isOn ? "ON" : "OFF") +
-                '</button>' +
-              '</div>'
+            const subText =
+              fam.grantedOperations.length + "/" + fam.availableOperations.length + " ops active";
+            const row = createEl(
+              "div",
+              { className: "family-toggle" + (isOn ? " granted" : "") },
+              [
+                createEl("div", null, [
+                  createEl("span", { className: "family-name", text: fam.family }),
+                  createEl("span", { className: "family-sub", text: subText }),
+                ]),
+                createEl("button", {
+                  type: "button",
+                  className: "switch-btn " + (isOn ? "on" : "off"),
+                  text: isOn ? "ON" : "OFF",
+                  dataset: {
+                    action: "toggle-family",
+                    device: dev.deviceId,
+                    family: fam.family,
+                    currentlyOn: isOn ? "1" : "0",
+                  },
+                }),
+              ],
             );
-          }).join("");
+            familyGrid.appendChild(row);
+          });
+          card.appendChild(familyGrid);
 
-          const deniedCaps = (dev.policy && dev.policy.owner_policy && dev.policy.owner_policy.denied_capabilities) || [];
+          const actionsRow = createEl("div", { className: "device-actions-row" }, [
+            createEl("button", {
+              type: "button",
+              text: "Grant All (Universal)",
+              dataset: { action: "device-profile", device: dev.deviceId, profile: "universal" },
+            }),
+            createEl("button", {
+              type: "button",
+              text: "Read-Only",
+              dataset: { action: "device-profile", device: dev.deviceId, profile: "read_only" },
+            }),
+            createEl("button", {
+              type: "button",
+              text: "Revoke All",
+              dataset: { action: "device-profile", device: dev.deviceId, profile: "lockdown" },
+            }),
+          ]);
+          card.appendChild(actionsRow);
 
-          card.innerHTML =
-            '<div class="device-header">' +
-              '<div class="device-title">' +
-                '<h3>' + dev.deviceId + '</h3>' +
-                '<span class="pill ' + (dev.online ? "online" : "offline") + '">' +
-                  (dev.online ? "Online" : "Offline") +
-                '</span>' +
-              '</div>' +
-              '<span class="pill ' + syncClass + '" data-sync-badge="' + dev.deviceId + '">' + syncLabel + '</span>' +
-            '</div>' +
-            '<div style="font-size:0.8rem;color:var(--text-muted);display:flex;justify-content:space-between;flex-wrap:wrap;gap:8px;">' +
-              '<span>Health: <strong>' + dev.agentHealth + '</strong> (' + platformInfo + ')</span>' +
-              '<span>Profile: <strong>' + ((dev.policy && dev.policy.owner_policy && dev.policy.owner_policy.profile_id) || "universal") + '</strong></span>' +
-            '</div>' +
-            unavailableHtml +
-            '<div class="family-grid">' + familiesHtml + '</div>' +
-            '<div style="display:flex;flex-wrap:wrap;gap:8px;">' +
-              '<button type="button" data-action="device-profile" data-device="' + dev.deviceId + '" data-profile="universal">Grant All (Universal)</button>' +
-              '<button type="button" data-action="device-profile" data-device="' + dev.deviceId + '" data-profile="read_only">Read-Only</button>' +
-              '<button type="button" data-action="device-profile" data-device="' + dev.deviceId + '" data-profile="lockdown">Revoke All</button>' +
-            '</div>' +
-            '<details class="advanced-box">' +
-              '<summary>Advanced Operation Rules &amp; Explicit Denies (' + deniedCaps.length + ')</summary>' +
-              '<div style="margin-top:10px;display:flex;flex-direction:column;gap:8px;">' +
-                '<div style="font-size:0.78rem;color:var(--text-muted);">Explicitly denied operations override inherited universal grants: ' +
-                  (deniedCaps.length ? deniedCaps.join(", ") : "None") +
-                '</div>' +
-                '<div style="display:flex;gap:6px;flex-wrap:wrap;">' +
-                  '<input type="text" placeholder="e.g. filesystem.delete" id="deny-input-' + dev.deviceId + '" style="flex:1;" />' +
-                  '<button type="button" data-action="deny-op" data-device="' + dev.deviceId + '">Deny Op</button>' +
-                  '<button type="button" data-action="allow-op" data-device="' + dev.deviceId + '">Allow Op</button>' +
-                '</div>' +
-              '</div>' +
-            '</details>';
-
-          container.appendChild(card);
+          const deniedCaps =
+            (dev.policy && dev.policy.owner_policy && dev.policy.owner_policy.denied_capabilities) ||
+            [];
+          const detailsBox = createEl("details", { className: "advanced-box" }, [
+            createEl("summary", {
+              text: "Advanced Operation Rules & Explicit Denies (" + deniedCaps.length + ")",
+            }),
+            createEl("div", { className: "op-rules-wrap" }, [
+              createEl("div", {
+                className: "op-rules-note",
+                text:
+                  "Explicitly denied operations override inherited universal grants: " +
+                  (deniedCaps.length ? deniedCaps.join(", ") : "None"),
+              }),
+              createEl("div", { className: "op-rule-input-row" }, [
+                createEl("input", {
+                  type: "text",
+                  className: "op-rule-input",
+                  attrs: { placeholder: "e.g. filesystem.write" },
+                  dataset: { role: "op-rule-input" },
+                }),
+                createEl("button", {
+                  type: "button",
+                  text: "Deny Op",
+                  dataset: { action: "deny-op", device: dev.deviceId },
+                }),
+                createEl("button", {
+                  type: "button",
+                  text: "Allow Op",
+                  dataset: { action: "allow-op", device: dev.deviceId },
+                }),
+              ]),
+            ]),
+          ]);
+          card.appendChild(detailsBox);
+          return card;
         });
 
+        container.replaceChildren.apply(container, cards);
         renderIdentities(data);
         renderAuditAndSnapshots(data);
       }
@@ -695,57 +940,102 @@ export function renderControlPortalHtml(): string {
         const container = document.getElementById("identities-container");
         const usage = data.identityUsage || [];
         const operators = data.operators || [];
-        let html = '<div class="list-item"><strong>Owner:</strong> ' + data.ownerPrincipalId + ' <span class="pill applied">Universal Default</span></div>';
+        const nodes = [];
+
+        nodes.push(
+          createEl("div", { className: "list-item" }, [
+            createEl("strong", { text: "Owner: " }),
+            String(data.ownerPrincipalId || ""),
+            " ",
+            createEl("span", { className: "pill applied", text: "Universal Default" }),
+          ]),
+        );
+
         operators.forEach(function (op) {
-          html += '<div class="list-item"><strong>Operator:</strong> ' + op.principalId + ' (' + op.displayName + ')</div>';
+          nodes.push(
+            createEl("div", { className: "list-item" }, [
+              createEl("strong", { text: "Operator: " }),
+              String(op.principalId || "") + " (" + String(op.displayName || "") + ")",
+            ]),
+          );
         });
+
         usage.forEach(function (u) {
-          html += '<div class="list-item">' +
-            '<strong>' + u.principalId + '</strong> (' + u.role + ') on <code>' + u.deviceId + '</code>: ' +
-            u.authorizedCount + ' allowed, ' + u.deniedCount + ' denied • ops: ' + u.capabilitiesUsed.join(", ") +
-          '</div>';
+          nodes.push(
+            createEl("div", { className: "list-item" }, [
+              createEl("strong", { text: u.principalId }),
+              " (" + String(u.role) + ") on ",
+              createEl("code", { text: u.deviceId }),
+              ": " +
+                String(u.authorizedCount) +
+                " allowed, " +
+                String(u.deniedCount) +
+                " denied • ops: " +
+                (Array.isArray(u.capabilitiesUsed) ? u.capabilitiesUsed.join(", ") : ""),
+            ]),
+          );
         });
-        container.innerHTML = html;
+
+        container.replaceChildren.apply(container, nodes);
       }
 
       function renderAuditAndSnapshots(data) {
         const auditEl = document.getElementById("audit-container");
         const events = data.auditHistory || [];
         if (events.length === 0) {
-          auditEl.innerHTML = '<div style="font-size:0.82rem;color:var(--text-muted)">No audit events recorded yet.</div>';
+          auditEl.replaceChildren(
+            createEl("div", { className: "muted-note", text: "No audit events recorded yet." }),
+          );
         } else {
-          auditEl.innerHTML = events.slice(0, 15).map(function (ev) {
-            return (
-              '<div class="list-item">' +
-                '<div><strong>' + ev.action + '</strong> ' + (ev.deviceId ? 'on <code>' + ev.deviceId + '</code>' : '') +
-                ' <span class="pill ' + (ev.deliveryStatus === "confirmed_by_device" ? "applied" : "pending") + '">' + ev.deliveryStatus + '</span></div>' +
-                '<div style="color:var(--text-muted);font-size:0.78rem;">' + ev.reason + ' • by ' + ev.actorPrincipalId + '</div>' +
-              '</div>'
-            );
-          }).join("");
+          const eventNodes = events.slice(0, 15).map(function (ev) {
+            const topRow = createEl("div", null, [
+              createEl("strong", { text: ev.action }),
+              ev.deviceId ? " on " : "",
+              ev.deviceId ? createEl("code", { text: ev.deviceId }) : null,
+              " ",
+              createEl("span", {
+                className:
+                  "pill " +
+                  (ev.deliveryStatus === "confirmed_by_device" ? "applied" : "pending"),
+                text: ev.deliveryStatus,
+              }),
+            ]);
+            const metaRow = createEl("div", {
+              className: "audit-meta",
+              text: String(ev.reason || "") + " • by " + String(ev.actorPrincipalId || ""),
+            });
+            return createEl("div", { className: "list-item" }, [topRow, metaRow]);
+          });
+          auditEl.replaceChildren.apply(auditEl, eventNodes);
         }
 
         const snapEl = document.getElementById("snapshots-container");
         const snaps = data.snapshots || [];
-        snapEl.innerHTML = snaps.slice(0, 10).map(function (s) {
-          return (
-            '<div class="list-item" style="display:flex;justify-content:space-between;align-items:center;gap:8px;">' +
-              '<span><code>' + s.deviceId + '</code> rev ' + s.revision + ': ' + s.reason + '</span>' +
-              '<button type="button" data-action="rollback" data-device="' + s.deviceId + '" data-rev="' + s.revision + '">Rollback</button>' +
-            '</div>'
-          );
-        }).join("");
+        const snapNodes = snaps.slice(0, 10).map(function (s) {
+          return createEl("div", { className: "list-item snapshot-row" }, [
+            createEl("span", null, [
+              createEl("code", { text: s.deviceId }),
+              " rev " + String(s.revision) + ": " + String(s.reason || ""),
+            ]),
+            createEl("button", {
+              type: "button",
+              text: "Rollback",
+              dataset: { action: "rollback", device: s.deviceId, rev: String(s.revision) },
+            }),
+          ]);
+        });
+        snapEl.replaceChildren.apply(snapEl, snapNodes);
       }
 
       document.addEventListener("click", async function (e) {
         const btn = e.target.closest("button[data-action]");
         if (!btn) return;
-        const action = btn.getAttribute("data-action");
-        const deviceId = btn.getAttribute("data-device");
+        const action = btn.dataset.action;
+        const deviceId = btn.dataset.device;
         try {
           if (action === "toggle-family") {
-            const family = btn.getAttribute("data-family");
-            const currentlyOn = btn.getAttribute("data-currently-on") === "1";
+            const family = btn.dataset.family;
+            const currentlyOn = btn.dataset.currentlyOn === "1";
             await apiCall("/portal/api/devices/" + encodeURIComponent(deviceId) + "/policy", "POST", {
               grantFamilies: currentlyOn ? [] : [family],
               revokeFamilies: currentlyOn ? [family] : [],
@@ -753,7 +1043,7 @@ export function renderControlPortalHtml(): string {
             });
             await loadOverview();
           } else if (action === "device-profile") {
-            const profileId = btn.getAttribute("data-profile");
+            const profileId = btn.dataset.profile;
             await apiCall("/portal/api/devices/" + encodeURIComponent(deviceId) + "/policy", "POST", {
               profileId: profileId,
               emergencyLockdown: false,
@@ -761,7 +1051,8 @@ export function renderControlPortalHtml(): string {
             });
             await loadOverview();
           } else if (action === "deny-op" || action === "allow-op") {
-            const input = document.getElementById("deny-input-" + deviceId);
+            const card = btn.closest(".device-card");
+            const input = card ? card.querySelector("[data-role='op-rule-input']") : null;
             const cap = input ? input.value.trim() : "";
             if (!cap) return;
             await apiCall("/portal/api/devices/" + encodeURIComponent(deviceId) + "/policy", "POST", {
@@ -771,7 +1062,7 @@ export function renderControlPortalHtml(): string {
             });
             await loadOverview();
           } else if (action === "rollback") {
-            const rev = Number(btn.getAttribute("data-rev"));
+            const rev = Number(btn.dataset.rev);
             await apiCall("/portal/api/rollback", "POST", {
               deviceId: deviceId,
               targetRevision: rev,
@@ -822,7 +1113,7 @@ export function renderControlPortalHtml(): string {
               emergencyLockdown: false,
               reason: reason || "Global grant universal access",
             });
-          }
+          },
         );
       });
 
@@ -836,7 +1127,7 @@ export function renderControlPortalHtml(): string {
               profileId: "read_only",
               reason: reason || "Global read-only profile",
             });
-          }
+          },
         );
       });
 
@@ -850,7 +1141,7 @@ export function renderControlPortalHtml(): string {
               profileId: "lockdown",
               reason: reason || "Global revoke all tool families",
             });
-          }
+          },
         );
       });
 
@@ -863,7 +1154,7 @@ export function renderControlPortalHtml(): string {
               confirm: true,
               reason: reason || "Emergency access revocation triggered from Portal",
             });
-          }
+          },
         );
       });
 
@@ -885,14 +1176,167 @@ export function renderControlPortalHtml(): string {
         }
       });
 
-      document.getElementById("connect-btn").addEventListener("click", loadOverview);
-      document.getElementById("refresh-btn").addEventListener("click", loadOverview);
+      connectBtn.addEventListener("click", connectSession);
+      refreshBtn.addEventListener("click", loadOverview);
+      logoutBtn.addEventListener("click", signOut);
+      tokenInput.addEventListener("keydown", function (e) {
+        if (e.key === "Enter") {
+          e.preventDefault();
+          void connectSession();
+        }
+      });
 
-      if (savedToken) {
-        loadOverview();
-      }
+      void restoreSession();
     })();
-  </script>
+`;
+
+const STYLE_SHA256 = createHash("sha256")
+  .update(PORTAL_STYLE, "utf8")
+  .digest("base64");
+const SCRIPT_SHA256 = createHash("sha256")
+  .update(PORTAL_SCRIPT, "utf8")
+  .digest("base64");
+
+export const PORTAL_CONTENT_SECURITY_POLICY = [
+  "default-src 'none'",
+  `script-src 'sha256-${SCRIPT_SHA256}'`,
+  `style-src 'sha256-${STYLE_SHA256}'`,
+  "connect-src 'self'",
+  "img-src 'self' data:",
+  "form-action 'self'",
+  "frame-ancestors 'none'",
+  "base-uri 'none'",
+  "object-src 'none'",
+].join("; ");
+
+export function renderControlPortalPage(): {
+  html: string;
+  contentSecurityPolicy: string;
+} {
+  return {
+    html: renderControlPortalHtml(),
+    contentSecurityPolicy: PORTAL_CONTENT_SECURITY_POLICY,
+  };
+}
+
+export function renderControlPortalHtml(): string {
+  return `<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>Tetherplane Control Portal</title>
+  <style>${PORTAL_STYLE}</style>
+</head>
+<body>
+  <div class="portal-shell">
+    <header class="topbar">
+      <div class="brand">
+        <div class="brand-badge">T</div>
+        <div>
+          <h1>Tetherplane Control Portal</h1>
+          <p>Universal Permissions &amp; Centralized Device Authorization</p>
+        </div>
+      </div>
+      <div class="auth-bar">
+        <span id="auth-state-badge" class="pill offline">Not Signed In</span>
+        <input id="token-input" type="password" placeholder="Owner Bearer Token" aria-label="Owner Bearer Token" autocomplete="off" />
+        <button id="connect-btn" class="primary" type="button">Connect</button>
+        <button id="refresh-btn" type="button">Refresh</button>
+        <button id="logout-btn" class="hidden" type="button">Sign Out</button>
+      </div>
+    </header>
+
+    <section class="summary-strip" aria-label="System Summary">
+      <div class="stat-card">
+        <div class="stat-label">Paired Devices</div>
+        <div class="stat-value" id="stat-devices">0</div>
+      </div>
+      <div class="stat-card">
+        <div class="stat-label">Online &amp; Confirmed</div>
+        <div class="stat-value" id="stat-confirmed">0</div>
+      </div>
+      <div class="stat-card">
+        <div class="stat-label">Default Policy</div>
+        <div class="stat-value stat-value-compact stat-value-primary">Universal (6 Families)</div>
+      </div>
+      <div class="stat-card">
+        <div class="stat-label">Security Status</div>
+        <div class="stat-value stat-value-compact security-active" id="stat-security">Active</div>
+      </div>
+    </section>
+
+    <section class="global-panel" aria-label="Global Permission Controls">
+      <div>
+        <strong>Global Controls</strong>
+        <div class="global-subtitle">
+          Apply a permission profile across selected devices or trigger emergency access revocation.
+        </div>
+      </div>
+      <div class="global-actions">
+        <button id="global-universal-btn" type="button">Grant Universal (All)</button>
+        <button id="global-readonly-btn" type="button">Set Read-Only (All)</button>
+        <button id="global-revoke-btn" type="button">Revoke All Families</button>
+        <button id="emergency-revoke-btn" class="danger" type="button">Emergency Access Revocation</button>
+      </div>
+    </section>
+
+    <main>
+      <div id="status-banner" class="unavailable-banner status-banner-outer hidden"></div>
+      <section class="devices-grid" id="devices-container" aria-label="Connected Devices">
+        <div class="panel-card">Enter your owner token above to load paired Tetherplane devices.</div>
+      </section>
+
+      <div class="section-grid">
+        <section class="panel-card" aria-label="Owner and Operator Identities">
+          <h2>Owner &amp; Operator Identities</h2>
+          <div id="identities-container" class="identities-list">
+            No active identity telemetry yet.
+          </div>
+          <details class="advanced-box">
+            <summary>Authorize / Update Scoped Operator Identity</summary>
+            <div class="op-form-stack">
+              <input id="op-principal-id" type="text" placeholder="operator:assistant-id" />
+              <input id="op-display-name" type="text" placeholder="Display Name (e.g. Build Agent)" />
+              <select id="op-profile-id">
+                <option value="read_only">Read &amp; Inspect Only</option>
+                <option value="files_and_process">Files &amp; Process Only</option>
+                <option value="standard">Standard Automation</option>
+                <option value="universal">Universal Access</option>
+                <option value="lockdown">Zero Access (Revoked)</option>
+              </select>
+              <button id="save-operator-btn" class="primary" type="button">Save Operator Policy</button>
+            </div>
+          </details>
+        </section>
+
+        <section class="panel-card" aria-label="Security Audit and Rollback">
+          <h2>Security Audit &amp; Safe Rollback</h2>
+          <div id="audit-container" class="audit-scroll">
+            <div class="muted-note">No audit events loaded.</div>
+          </div>
+          <details class="advanced-box advanced-box-spaced">
+            <summary>Recoverable Snapshots &amp; Rollback</summary>
+            <div id="snapshots-container" class="snapshots-scroll"></div>
+          </details>
+        </section>
+      </div>
+    </main>
+  </div>
+
+  <div class="modal-backdrop" id="confirm-modal" role="dialog" aria-modal="true">
+    <div class="modal">
+      <h3 id="modal-title">Confirm Global Security Change</h3>
+      <p id="modal-desc" class="modal-desc"></p>
+      <input id="modal-reason" class="modal-reason-input" type="text" placeholder="Reason for audit history" />
+      <div class="modal-actions">
+        <button id="modal-cancel-btn" type="button">Cancel</button>
+        <button id="modal-confirm-btn" class="danger" type="button">Confirm Change</button>
+      </div>
+    </div>
+  </div>
+
+  <script>${PORTAL_SCRIPT}</script>
 </body>
 </html>`;
 }
