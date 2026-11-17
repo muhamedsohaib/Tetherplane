@@ -938,9 +938,11 @@ export class PolicyStore {
       .listDevices(input.accountId)
       .filter((d) => d.revokedAt === null);
 
+    let modifiedAnyDevice = false;
     for (const binding of paired) {
       const record = await this.ensureDevicePolicy(binding);
       if (!(operatorId in record.policy.operator_policies)) continue;
+      modifiedAnyDevice = true;
       const nextOperators = structuredClone(record.policy.operator_policies);
       delete nextOperators[operatorId];
       const nextRevision =
@@ -973,6 +975,18 @@ export class PolicyStore {
         details: { operatorPrincipalId: operatorId },
       });
       await this.#pushToDeviceIfOnline(binding.deviceId, nextPolicy);
+    }
+    if (!modifiedAnyDevice) {
+      this.#appendAudit({
+        accountId: input.accountId,
+        actorPrincipalId: input.actorPrincipalId,
+        deviceId: null,
+        action: "operator_removed",
+        reason: input.reason?.trim() || `Removed operator ${operatorId}`,
+        revision: null,
+        deliveryStatus: "not_applicable",
+        details: { operatorPrincipalId: operatorId },
+      });
     }
     await this.#persist();
     this.notifyChange(input.accountId);
@@ -1205,7 +1219,6 @@ export class PolicyStore {
       .reverse();
     const snapshots = this.#snapshots
       .filter((s) => s.accountId === accountId)
-      .slice(-50)
       .reverse();
 
     return {
@@ -1473,6 +1486,10 @@ export class PolicyStore {
     } else {
       this.#snapshots.push(snapshot);
     }
+    const retained = retainSnapshotsForPersistence(this.#snapshots);
+    if (retained.length !== this.#snapshots.length) {
+      this.#snapshots.splice(0, this.#snapshots.length, ...retained);
+    }
   }
 
   #appendAudit(input: {
@@ -1611,7 +1628,7 @@ export class PolicyStore {
       const state: PersistedPolicyState = {
         version: 1,
         records: [...this.#records.values()],
-        snapshots: this.#snapshots.slice(-200),
+        snapshots: retainSnapshotsForPersistence(this.#snapshots),
         auditHistory: this.#auditHistory.slice(-500),
         identityUsage: [...this.#identityUsage.values()],
         operators: [...this.#operators.values()],
@@ -1634,6 +1651,33 @@ export class PolicyStore {
       throw error;
     }
   }
+}
+
+const MAX_RECENT_SNAPSHOTS_PER_DEVICE = 120;
+
+function retainSnapshotsForPersistence(
+  snapshots: readonly PolicySnapshot[],
+): PolicySnapshot[] {
+  const byDevice = new Map<string, PolicySnapshot[]>();
+  const baselineByDevice = new Map<string, PolicySnapshot>();
+  for (const snap of snapshots) {
+    if (snap.revision === 1 && !baselineByDevice.has(snap.deviceId)) {
+      baselineByDevice.set(snap.deviceId, snap);
+    }
+    let list = byDevice.get(snap.deviceId);
+    if (!list) {
+      list = [];
+      byDevice.set(snap.deviceId, list);
+    }
+    list.push(snap);
+  }
+  const keep = new Set<PolicySnapshot>(baselineByDevice.values());
+  for (const list of byDevice.values()) {
+    for (const recent of list.slice(-MAX_RECENT_SNAPSHOTS_PER_DEVICE)) {
+      keep.add(recent);
+    }
+  }
+  return snapshots.filter((snap) => keep.has(snap));
 }
 
 function applyMutationToPermissionSet(

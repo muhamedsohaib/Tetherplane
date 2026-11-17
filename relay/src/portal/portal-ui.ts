@@ -158,6 +158,7 @@ const PORTAL_STYLE = `
       border: 1px solid var(--border);
       border-radius: var(--radius);
       padding: 14px 16px;
+      min-width: 0;
     }
 
     .stat-label {
@@ -200,6 +201,7 @@ const PORTAL_STYLE = `
       align-items: center;
       justify-content: space-between;
       gap: 12px;
+      min-width: 0;
     }
 
     .global-subtitle {
@@ -207,11 +209,20 @@ const PORTAL_STYLE = `
       color: var(--text-muted);
     }
 
+    .global-scope-row {
+      display: flex;
+      flex-wrap: wrap;
+      align-items: center;
+      gap: 8px;
+      margin-top: 8px;
+    }
+
     .global-actions {
       display: flex;
       flex-wrap: wrap;
       gap: 8px;
       align-items: center;
+      min-width: 0;
     }
 
     .devices-grid {
@@ -229,6 +240,8 @@ const PORTAL_STYLE = `
       display: flex;
       flex-direction: column;
       gap: 14px;
+      min-width: 0;
+      max-width: 100%;
     }
 
     .device-header {
@@ -244,6 +257,15 @@ const PORTAL_STYLE = `
       align-items: center;
       gap: 10px;
       min-width: 0;
+      flex-wrap: wrap;
+    }
+
+    .device-select-cb {
+      width: 16px;
+      height: 16px;
+      accent-color: var(--primary);
+      cursor: pointer;
+      flex-shrink: 0;
     }
 
     .device-title h3 {
@@ -275,6 +297,8 @@ const PORTAL_STYLE = `
       border-radius: 999px;
       font-size: 0.75rem;
       font-weight: 600;
+      max-width: 100%;
+      overflow-wrap: anywhere;
     }
 
     .pill.online {
@@ -318,6 +342,11 @@ const PORTAL_STYLE = `
       border-radius: 8px;
       padding: 9px 11px;
       gap: 8px;
+      min-width: 0;
+    }
+
+    .family-toggle > div {
+      min-width: 0;
     }
 
     .family-toggle.granted {
@@ -334,6 +363,7 @@ const PORTAL_STYLE = `
       font-size: 0.72rem;
       color: var(--text-muted);
       display: block;
+      overflow-wrap: anywhere;
     }
 
     .switch-btn {
@@ -341,6 +371,7 @@ const PORTAL_STYLE = `
       padding: 5px 10px;
       font-size: 0.76rem;
       border-radius: 999px;
+      flex-shrink: 0;
     }
 
     .switch-btn.on {
@@ -361,6 +392,7 @@ const PORTAL_STYLE = `
       padding: 8px 12px;
       font-size: 0.8rem;
       color: #fde68a;
+      overflow-wrap: anywhere;
     }
 
     .unavailable-item + .unavailable-item {
@@ -393,6 +425,7 @@ const PORTAL_STYLE = `
       display: flex;
       flex-direction: column;
       gap: 8px;
+      min-width: 0;
     }
 
     .op-rules-note {
@@ -408,7 +441,8 @@ const PORTAL_STYLE = `
     }
 
     .op-rule-input {
-      flex: 1;
+      flex: 1 1 160px;
+      min-width: 0;
     }
 
     .section-grid {
@@ -423,6 +457,8 @@ const PORTAL_STYLE = `
       border: 1px solid var(--border);
       border-radius: var(--radius);
       padding: 16px;
+      min-width: 0;
+      max-width: 100%;
     }
 
     .panel-card h2 {
@@ -436,16 +472,57 @@ const PORTAL_STYLE = `
       color: var(--text-muted);
     }
 
+    .identity-row {
+      display: flex;
+      justify-content: space-between;
+      align-items: flex-start;
+      gap: 8px;
+      flex-wrap: wrap;
+    }
+
+    .identity-main {
+      min-width: 0;
+      flex: 1 1 200px;
+    }
+
+    .identity-actions {
+      display: flex;
+      flex-wrap: wrap;
+      gap: 6px;
+    }
+
     .op-form-stack {
       display: flex;
       flex-direction: column;
       gap: 8px;
       margin-top: 10px;
+      min-width: 0;
+    }
+
+    .op-form-stack input,
+    .op-form-stack select {
+      width: 100%;
+      max-width: 100%;
     }
 
     .audit-scroll {
       max-height: 280px;
       overflow-y: auto;
+    }
+
+    .snapshot-controls {
+      display: flex;
+      flex-wrap: wrap;
+      align-items: center;
+      gap: 8px;
+      margin-top: 10px;
+    }
+
+    .snapshot-more-wrap {
+      margin-top: 8px;
+      display: flex;
+      flex-wrap: wrap;
+      gap: 8px;
     }
 
     .snapshots-scroll {
@@ -475,11 +552,13 @@ const PORTAL_STYLE = `
       justify-content: space-between;
       align-items: center;
       gap: 8px;
+      flex-wrap: wrap;
     }
 
     .audit-meta {
       color: var(--text-muted);
       font-size: 0.78rem;
+      overflow-wrap: anywhere;
     }
 
     .modal-backdrop {
@@ -542,11 +621,15 @@ const PORTAL_STYLE = `
         flex-direction: column;
         align-items: stretch;
       }
+      .auth-bar > input {
+        width: 100%;
+      }
     }
 `;
 
 const PORTAL_SCRIPT = `
     (function () {
+      const SNAPSHOT_PAGE_SIZE = 10;
       const tokenInput = document.getElementById("token-input");
       const connectBtn = document.getElementById("connect-btn");
       const refreshBtn = document.getElementById("refresh-btn");
@@ -563,7 +646,10 @@ const PORTAL_SCRIPT = `
       let pendingFallbackAttempts = 0;
       let overviewInFlight = false;
       let overviewQueued = false;
+      let snapshotFilterDevice = "";
+      let snapshotLimit = SNAPSHOT_PAGE_SIZE;
       const openAdvancedDevices = new Set();
+      const selectedDeviceIds = new Set();
 
       function createEl(tag, options, children) {
         const node = document.createElement(tag);
@@ -571,6 +657,7 @@ const PORTAL_SCRIPT = `
           if (options.className) node.className = options.className;
           if (options.text !== undefined) node.textContent = String(options.text);
           if (options.type) node.type = options.type;
+          if (typeof options.checked === "boolean") node.checked = options.checked;
           if (options.attrs) {
             Object.keys(options.attrs).forEach(function (k) {
               node.setAttribute(k, String(options.attrs[k]));
@@ -593,6 +680,38 @@ const PORTAL_SCRIPT = `
           });
         }
         return node;
+      }
+
+      function updateSelectionIndicators() {
+        const devices = (currentOverview && currentOverview.devices) || [];
+        const knownIds = new Set(devices.map(function (d) { return d.deviceId; }));
+        if (currentOverview) {
+          Array.from(selectedDeviceIds).forEach(function (id) {
+            if (!knownIds.has(id)) selectedDeviceIds.delete(id);
+          });
+        }
+        document.querySelectorAll('input[data-action="select-device"]').forEach(function (cb) {
+          cb.checked = selectedDeviceIds.has(cb.dataset.device || "");
+        });
+        const selected = Array.from(selectedDeviceIds);
+        const badge = document.getElementById("global-target-badge");
+        if (badge) {
+          if (selected.length === 0) {
+            badge.textContent = "Target: All paired devices";
+            badge.className = "pill offline";
+          } else {
+            badge.textContent =
+              "Target: " + selected.length + " selected (" + selected.join(", ") + ")";
+            badge.className = "pill applied";
+          }
+        }
+        const opNote = document.getElementById("op-target-scope-note");
+        if (opNote) {
+          opNote.textContent =
+            selected.length === 0
+              ? "Applies to: All paired devices (select checkboxes above to scope)"
+              : "Applies to selected devices only: " + selected.join(", ");
+        }
       }
 
       function stopLiveUpdates() {
@@ -659,9 +778,15 @@ const PORTAL_SCRIPT = `
         authenticatedOwner = null;
         currentOverview = null;
         openAdvancedDevices.clear();
+        selectedDeviceIds.clear();
+        snapshotFilterDevice = "";
+        snapshotLimit = SNAPSHOT_PAGE_SIZE;
+        updateSelectionIndicators();
+
         authStateBadge.textContent = "Not Signed In";
         authStateBadge.className = "pill offline";
         logoutBtn.classList.add("hidden");
+        document.getElementById("global-lift-lockdown-btn").classList.add("hidden");
         tokenInput.classList.remove("hidden");
         connectBtn.classList.remove("hidden");
 
@@ -683,7 +808,11 @@ const PORTAL_SCRIPT = `
         document.getElementById("audit-container").replaceChildren(
           createEl("div", { className: "muted-note", text: "No audit events loaded." }),
         );
+        document.getElementById("snapshot-device-filter").replaceChildren(
+          createEl("option", { attrs: { value: "" }, text: "All devices" }),
+        );
         document.getElementById("snapshots-container").replaceChildren();
+        document.getElementById("snapshots-pagination").replaceChildren();
         if (notice) showBanner(notice);
       }
 
@@ -857,6 +986,13 @@ const PORTAL_SCRIPT = `
           "stat-value stat-value-compact " +
           (anyLockdown ? "security-lockdown" : "security-active");
 
+        const globalLiftBtn = document.getElementById("global-lift-lockdown-btn");
+        if (anyLockdown) {
+          globalLiftBtn.classList.remove("hidden");
+        } else {
+          globalLiftBtn.classList.add("hidden");
+        }
+
         const container = document.getElementById("devices-container");
         if (devices.length === 0) {
           container.replaceChildren(
@@ -865,6 +1001,7 @@ const PORTAL_SCRIPT = `
               text: "No paired devices found for this owner account.",
             }),
           );
+          updateSelectionIndicators();
           renderIdentities(data);
           renderAuditAndSnapshots(data);
           return;
@@ -893,6 +1030,13 @@ const PORTAL_SCRIPT = `
 
           const header = createEl("div", { className: "device-header" }, [
             createEl("div", { className: "device-title" }, [
+              createEl("input", {
+                type: "checkbox",
+                className: "device-select-cb",
+                checked: selectedDeviceIds.has(dev.deviceId),
+                attrs: { "aria-label": "Select device " + dev.deviceId },
+                dataset: { action: "select-device", device: dev.deviceId },
+              }),
               createEl("h3", { text: dev.deviceId }),
               createEl("span", {
                 className: "pill " + (dev.online ? "online" : "offline"),
@@ -986,7 +1130,18 @@ const PORTAL_SCRIPT = `
           });
           card.appendChild(familyGrid);
 
-          const actionsRow = createEl("div", { className: "device-actions-row" }, [
+          const actionButtons = [];
+          if (dev.emergencyLockdown) {
+            actionButtons.push(
+              createEl("button", {
+                type: "button",
+                className: "primary",
+                text: "Lift Lockdown",
+                dataset: { action: "lift-lockdown", device: dev.deviceId },
+              }),
+            );
+          }
+          actionButtons.push(
             createEl("button", {
               type: "button",
               text: "Grant All (Universal)",
@@ -1002,8 +1157,8 @@ const PORTAL_SCRIPT = `
               text: "Revoke All",
               dataset: { action: "device-profile", device: dev.deviceId, profile: "lockdown" },
             }),
-          ]);
-          card.appendChild(actionsRow);
+          );
+          card.appendChild(createEl("div", { className: "device-actions-row" }, actionButtons));
 
           const deniedCaps =
             (dev.policy && dev.policy.owner_policy && dev.policy.owner_policy.denied_capabilities) ||
@@ -1051,6 +1206,7 @@ const PORTAL_SCRIPT = `
         });
 
         container.replaceChildren.apply(container, cards);
+        updateSelectionIndicators();
         renderIdentities(data);
         renderAuditAndSnapshots(data);
       }
@@ -1059,6 +1215,7 @@ const PORTAL_SCRIPT = `
         const container = document.getElementById("identities-container");
         const usage = data.identityUsage || [];
         const operators = data.operators || [];
+        const devices = data.devices || [];
         const nodes = [];
 
         nodes.push(
@@ -1071,10 +1228,40 @@ const PORTAL_SCRIPT = `
         );
 
         operators.forEach(function (op) {
+          const grants = devices.reduce(function (acc, dev) {
+            const opPol =
+              dev.policy &&
+              dev.policy.operator_policies &&
+              dev.policy.operator_policies[op.principalId];
+            if (opPol) {
+              acc.push(dev.deviceId + " (" + String(opPol.profile_id || "custom") + ")");
+            }
+            return acc;
+          }, []);
           nodes.push(
-            createEl("div", { className: "list-item" }, [
-              createEl("strong", { text: "Operator: " }),
-              String(op.principalId || "") + " (" + String(op.displayName || "") + ")",
+            createEl("div", { className: "list-item identity-row" }, [
+              createEl("div", { className: "identity-main" }, [
+                createEl("strong", { text: "Operator: " }),
+                String(op.principalId || "") + " (" + String(op.displayName || "") + ")",
+                createEl("div", {
+                  className: "audit-meta",
+                  text:
+                    "Device grants: " + (grants.length ? grants.join(", ") : "None active"),
+                }),
+              ]),
+              createEl("div", { className: "identity-actions" }, [
+                createEl("button", {
+                  type: "button",
+                  text: "Edit",
+                  dataset: { action: "edit-operator", principal: op.principalId },
+                }),
+                createEl("button", {
+                  type: "button",
+                  className: "danger",
+                  text: "Revoke",
+                  dataset: { action: "remove-operator", principal: op.principalId },
+                }),
+              ]),
             ]),
           );
         });
@@ -1128,23 +1315,113 @@ const PORTAL_SCRIPT = `
           auditEl.replaceChildren.apply(auditEl, eventNodes);
         }
 
-        const snapEl = document.getElementById("snapshots-container");
         const snaps = data.snapshots || [];
-        const snapNodes = snaps.slice(0, 10).map(function (s) {
-          return createEl("div", { className: "list-item snapshot-row" }, [
-            createEl("span", null, [
-              createEl("code", { text: s.deviceId }),
-              " rev " + String(s.revision) + ": " + String(s.reason || ""),
-            ]),
+        const filterSelect = document.getElementById("snapshot-device-filter");
+        const deviceOptions = [];
+        const seenFilterIds = new Set();
+        (data.devices || []).forEach(function (d) {
+          if (d.deviceId && !seenFilterIds.has(d.deviceId)) {
+            seenFilterIds.add(d.deviceId);
+            deviceOptions.push(d.deviceId);
+          }
+        });
+        snaps.forEach(function (s) {
+          if (s.deviceId && !seenFilterIds.has(s.deviceId)) {
+            seenFilterIds.add(s.deviceId);
+            deviceOptions.push(s.deviceId);
+          }
+        });
+        if (snapshotFilterDevice && !seenFilterIds.has(snapshotFilterDevice) && deviceOptions.length > 0) {
+          snapshotFilterDevice = "";
+          snapshotLimit = SNAPSHOT_PAGE_SIZE;
+        }
+        const optNodes = [
+          createEl("option", { attrs: { value: "" }, text: "All devices" }),
+        ].concat(
+          deviceOptions.map(function (id) {
+            return createEl("option", { attrs: { value: id }, text: id });
+          }),
+        );
+        filterSelect.replaceChildren.apply(filterSelect, optNodes);
+        filterSelect.value = snapshotFilterDevice;
+
+        const filteredSnaps = snapshotFilterDevice
+          ? snaps.filter(function (s) { return s.deviceId === snapshotFilterDevice; })
+          : snaps;
+        const visibleSnaps = filteredSnaps.slice(0, snapshotLimit);
+
+        const snapEl = document.getElementById("snapshots-container");
+        if (visibleSnaps.length === 0) {
+          snapEl.replaceChildren(
+            createEl("div", { className: "muted-note", text: "No recoverable snapshots found." }),
+          );
+        } else {
+          const snapNodes = visibleSnaps.map(function (s) {
+            return createEl("div", { className: "list-item snapshot-row" }, [
+              createEl("span", null, [
+                createEl("code", { text: s.deviceId }),
+                " rev " + String(s.revision) + ": " + String(s.reason || ""),
+              ]),
+              createEl("button", {
+                type: "button",
+                text: "Rollback",
+                dataset: { action: "rollback", device: s.deviceId, rev: String(s.revision) },
+              }),
+            ]);
+          });
+          snapEl.replaceChildren.apply(snapEl, snapNodes);
+        }
+
+        const pagEl = document.getElementById("snapshots-pagination");
+        if (filteredSnaps.length > visibleSnaps.length) {
+          pagEl.replaceChildren(
             createEl("button", {
               type: "button",
-              text: "Rollback",
-              dataset: { action: "rollback", device: s.deviceId, rev: String(s.revision) },
+              attrs: { id: "snapshots-more-btn" },
+              dataset: { action: "snapshots-more" },
+              text:
+                "Show more snapshots (" +
+                visibleSnaps.length +
+                "/" +
+                filteredSnaps.length +
+                ")",
             }),
-          ]);
-        });
-        snapEl.replaceChildren.apply(snapEl, snapNodes);
+          );
+        } else {
+          pagEl.replaceChildren();
+        }
       }
+
+      document.addEventListener("change", function (e) {
+        const cb = e.target.closest('input[data-action="select-device"]');
+        if (!cb) return;
+        const deviceId = cb.dataset.device;
+        if (!deviceId) return;
+        if (cb.checked) selectedDeviceIds.add(deviceId);
+        else selectedDeviceIds.delete(deviceId);
+        updateSelectionIndicators();
+      });
+
+      document.getElementById("snapshot-device-filter").addEventListener("change", function (e) {
+        snapshotFilterDevice = e.target.value;
+        snapshotLimit = SNAPSHOT_PAGE_SIZE;
+        if (currentOverview) {
+          renderAuditAndSnapshots(currentOverview);
+        }
+      });
+
+      document.getElementById("select-all-devices-btn").addEventListener("click", function () {
+        const devices = (currentOverview && currentOverview.devices) || [];
+        devices.forEach(function (d) {
+          selectedDeviceIds.add(d.deviceId);
+        });
+        updateSelectionIndicators();
+      });
+
+      document.getElementById("clear-selected-devices-btn").addEventListener("click", function () {
+        selectedDeviceIds.clear();
+        updateSelectionIndicators();
+      });
 
       document.addEventListener("click", async function (e) {
         const btn = e.target.closest("button[data-action]");
@@ -1169,6 +1446,13 @@ const PORTAL_SCRIPT = `
               reason: "Apply " + profileId + " profile via Portal",
             });
             await loadOverview();
+          } else if (action === "lift-lockdown") {
+            await apiCall("/portal/api/devices/" + encodeURIComponent(deviceId) + "/policy", "POST", {
+              emergencyLockdown: false,
+              profileId: "universal",
+              reason: "Lift emergency lockdown on " + deviceId + " via Portal",
+            });
+            await loadOverview();
           } else if (action === "deny-op" || action === "allow-op") {
             const card = btn.closest(".device-card");
             const input = card ? card.querySelector("[data-role='op-rule-input']") : null;
@@ -1188,6 +1472,58 @@ const PORTAL_SCRIPT = `
               reason: "Rollback to revision " + rev + " from Portal",
             });
             await loadOverview();
+          } else if (action === "snapshots-more") {
+            snapshotLimit += SNAPSHOT_PAGE_SIZE;
+            if (currentOverview) {
+              renderAuditAndSnapshots(currentOverview);
+            }
+          } else if (action === "edit-operator") {
+            const principalId = btn.dataset.principal || "";
+            if (!principalId || !currentOverview) return;
+            const opMeta = (currentOverview.operators || []).find(function (o) {
+              return o.principalId === principalId;
+            });
+            const detailsBox = document.getElementById("operator-advanced-box");
+            if (detailsBox) detailsBox.open = true;
+            document.getElementById("op-principal-id").value = principalId;
+            document.getElementById("op-display-name").value =
+              (opMeta && opMeta.displayName) || principalId;
+
+            const matchingDeviceIds = [];
+            let matchedProfile = null;
+            (currentOverview.devices || []).forEach(function (dev) {
+              const opPol =
+                dev.policy &&
+                dev.policy.operator_policies &&
+                dev.policy.operator_policies[principalId];
+              if (opPol) {
+                matchingDeviceIds.push(dev.deviceId);
+                if (!matchedProfile && opPol.profile_id) {
+                  matchedProfile = opPol.profile_id;
+                }
+              }
+            });
+            const profileSelect = document.getElementById("op-profile-id");
+            if (
+              matchedProfile &&
+              Array.from(profileSelect.options).some(function (o) {
+                return o.value === matchedProfile;
+              })
+            ) {
+              profileSelect.value = matchedProfile;
+            }
+            if (matchingDeviceIds.length > 0) {
+              selectedDeviceIds.clear();
+              matchingDeviceIds.forEach(function (id) {
+                selectedDeviceIds.add(id);
+              });
+              updateSelectionIndicators();
+            }
+          } else if (action === "remove-operator") {
+            const principalId = btn.dataset.principal || "";
+            if (!principalId) return;
+            await apiCall("/portal/api/operators/" + encodeURIComponent(principalId), "DELETE");
+            await loadOverview();
           }
         } catch (err) {
           showBanner("Action failed: " + err.message);
@@ -1200,6 +1536,13 @@ const PORTAL_SCRIPT = `
         document.getElementById("modal-reason").value = "";
         pendingModalAction = onConfirm;
         document.getElementById("confirm-modal").classList.add("active");
+      }
+
+      function scopeDescriptionText() {
+        const selected = Array.from(selectedDeviceIds);
+        return selected.length > 0
+          ? "the " + selected.length + " selected device(s) (" + selected.join(", ") + ")"
+          : "every paired device";
       }
 
       document.getElementById("modal-cancel-btn").addEventListener("click", function () {
@@ -1222,14 +1565,16 @@ const PORTAL_SCRIPT = `
       });
 
       document.getElementById("global-universal-btn").addEventListener("click", function () {
+        const scopeIds = Array.from(selectedDeviceIds);
         openConfirmModal(
-          "Grant Universal Access Across All Devices",
-          "This will enable all six MCP tool families on every paired device.",
+          "Grant Universal Access",
+          "This will enable all six MCP tool families on " + scopeDescriptionText() + ".",
           function (reason) {
             return apiCall("/portal/api/global/apply", "POST", {
               confirm: true,
               profileId: "universal",
               emergencyLockdown: false,
+              ...(scopeIds.length > 0 ? { deviceIds: scopeIds } : {}),
               reason: reason || "Global grant universal access",
             });
           },
@@ -1237,13 +1582,15 @@ const PORTAL_SCRIPT = `
       });
 
       document.getElementById("global-readonly-btn").addEventListener("click", function () {
+        const scopeIds = Array.from(selectedDeviceIds);
         openConfirmModal(
-          "Apply Read-Only Profile Across All Devices",
-          "This will restrict all paired devices to non-destructive inspection operations.",
+          "Apply Read-Only Profile",
+          "This will restrict " + scopeDescriptionText() + " to non-destructive inspection operations.",
           function (reason) {
             return apiCall("/portal/api/global/apply", "POST", {
               confirm: true,
               profileId: "read_only",
+              ...(scopeIds.length > 0 ? { deviceIds: scopeIds } : {}),
               reason: reason || "Global read-only profile",
             });
           },
@@ -1251,26 +1598,46 @@ const PORTAL_SCRIPT = `
       });
 
       document.getElementById("global-revoke-btn").addEventListener("click", function () {
+        const scopeIds = Array.from(selectedDeviceIds);
         openConfirmModal(
-          "Revoke All Tool Families Across All Devices",
-          "This will disable all six MCP tool families across your paired devices until re-enabled.",
+          "Revoke All Tool Families",
+          "This will disable all six MCP tool families on " + scopeDescriptionText() + " until re-enabled.",
           function (reason) {
             return apiCall("/portal/api/global/apply", "POST", {
               confirm: true,
               profileId: "lockdown",
+              ...(scopeIds.length > 0 ? { deviceIds: scopeIds } : {}),
               reason: reason || "Global revoke all tool families",
             });
           },
         );
       });
 
-      document.getElementById("emergency-revoke-btn").addEventListener("click", function () {
+      document.getElementById("global-lift-lockdown-btn").addEventListener("click", function () {
+        const scopeIds = Array.from(selectedDeviceIds);
         openConfirmModal(
-          "Emergency Access Revocation",
-          "Immediate lockdown across all paired devices. All owner and operator capabilities will be blocked until lifted.",
+          "Lift Emergency Access Lockdown",
+          "This will lift emergency lockdown and restore universal permissions on " + scopeDescriptionText() + ".",
           function (reason) {
             return apiCall("/portal/api/global/emergency-revoke", "POST", {
               confirm: true,
+              restore: true,
+              ...(scopeIds.length > 0 ? { deviceIds: scopeIds } : {}),
+              reason: reason || "Lift emergency access lockdown from Portal",
+            });
+          },
+        );
+      });
+
+      document.getElementById("emergency-revoke-btn").addEventListener("click", function () {
+        const scopeIds = Array.from(selectedDeviceIds);
+        openConfirmModal(
+          "Emergency Access Revocation",
+          "Immediate lockdown on " + scopeDescriptionText() + ". All owner and operator capabilities will be blocked until lifted.",
+          function (reason) {
+            return apiCall("/portal/api/global/emergency-revoke", "POST", {
+              confirm: true,
+              ...(scopeIds.length > 0 ? { deviceIds: scopeIds } : {}),
               reason: reason || "Emergency access revocation triggered from Portal",
             });
           },
@@ -1282,11 +1649,13 @@ const PORTAL_SCRIPT = `
         const displayName = document.getElementById("op-display-name").value.trim();
         const profileId = document.getElementById("op-profile-id").value;
         if (!principalId) return;
+        const scopeIds = Array.from(selectedDeviceIds);
         try {
           await apiCall("/portal/api/operators", "POST", {
             principalId: principalId,
             displayName: displayName || principalId,
             profileId: profileId,
+            ...(scopeIds.length > 0 ? { deviceIds: scopeIds } : {}),
             reason: "Configured operator " + principalId + " (" + profileId + ")",
           });
           await loadOverview();
@@ -1389,13 +1758,19 @@ export function renderControlPortalHtml(): string {
       <div>
         <strong>Global Controls</strong>
         <div class="global-subtitle">
-          Apply a permission profile across selected devices or trigger emergency access revocation.
+          Apply a permission profile across selected devices (or all paired devices when none selected), or trigger emergency access revocation.
+        </div>
+        <div class="global-scope-row">
+          <span id="global-target-badge" class="pill offline">Target: All paired devices</span>
+          <button id="select-all-devices-btn" type="button">Select All</button>
+          <button id="clear-selected-devices-btn" type="button">Clear</button>
         </div>
       </div>
       <div class="global-actions">
-        <button id="global-universal-btn" type="button">Grant Universal (All)</button>
-        <button id="global-readonly-btn" type="button">Set Read-Only (All)</button>
+        <button id="global-universal-btn" type="button">Grant Universal</button>
+        <button id="global-readonly-btn" type="button">Set Read-Only</button>
         <button id="global-revoke-btn" type="button">Revoke All Families</button>
+        <button id="global-lift-lockdown-btn" class="primary hidden" type="button">Lift Emergency Lockdown</button>
         <button id="emergency-revoke-btn" class="danger" type="button">Emergency Access Revocation</button>
       </div>
     </section>
@@ -1412,9 +1787,10 @@ export function renderControlPortalHtml(): string {
           <div id="identities-container" class="identities-list">
             No active identity telemetry yet.
           </div>
-          <details class="advanced-box">
+          <details id="operator-advanced-box" class="advanced-box">
             <summary>Authorize / Update Scoped Operator Identity</summary>
             <div class="op-form-stack">
+              <div id="op-target-scope-note" class="muted-note">Applies to: All paired devices (select checkboxes above to scope)</div>
               <input id="op-principal-id" type="text" placeholder="operator:assistant-id" />
               <input id="op-display-name" type="text" placeholder="Display Name (e.g. Build Agent)" />
               <select id="op-profile-id">
@@ -1434,9 +1810,16 @@ export function renderControlPortalHtml(): string {
           <div id="audit-container" class="audit-scroll">
             <div class="muted-note">No audit events loaded.</div>
           </div>
-          <details class="advanced-box advanced-box-spaced">
+          <details id="snapshots-advanced-box" class="advanced-box advanced-box-spaced">
             <summary>Recoverable Snapshots &amp; Rollback</summary>
+            <div class="snapshot-controls">
+              <label class="muted-note" for="snapshot-device-filter">Filter device:</label>
+              <select id="snapshot-device-filter">
+                <option value="">All devices</option>
+              </select>
+            </div>
             <div id="snapshots-container" class="snapshots-scroll"></div>
+            <div id="snapshots-pagination" class="snapshot-more-wrap"></div>
           </details>
         </section>
       </div>

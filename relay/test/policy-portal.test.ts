@@ -1710,3 +1710,114 @@ test("device_telemetry WebSocket updates transition browser availability and str
     await rm(dir, { recursive: true, force: true });
   }
 });
+
+test("snapshot persistence preserves rev 1 baselines, full overview history, and deviceIds scoped global/operator mutations", async () => {
+  const dir = await mkdtemp(path.join(os.tmpdir(), "tetherplane-snap-scope-"));
+  const stateFile = path.join(dir, "devices.json");
+  let relay = await RelayServer.create({
+    authenticator: createTestAuthenticator(),
+    stateFile,
+    allowInsecureLocalhost: true,
+  });
+  let address = await relay.listen({ host: "127.0.0.1", port: 0 });
+
+  try {
+    await pairDevice(address.httpUrl, "Leno", "leno-secret-snap-123456");
+    await pairDevice(address.httpUrl, "Surface", "surface-secret-snap-123456");
+
+    // Scope operator ONLY to Leno (not Surface)
+    const scopedOp = await jsonRequest(address.httpUrl, "/portal/api/operators", {
+      method: "POST",
+      token: "owner-token-a",
+      body: {
+        principalId: "operator:assistant-a",
+        displayName: "Assistant Scoped",
+        profileId: "read_only",
+        deviceIds: ["Leno"],
+        reason: "Scope operator to Leno only",
+      },
+    });
+    assert.equal(scopedOp.status, 200);
+    assert.deepEqual(scopedOp.body.updatedDevices, ["Leno"]);
+
+    const ovAfterOp = await jsonRequest(address.httpUrl, "/portal/api/overview", {
+      method: "GET",
+      token: "owner-token-a",
+    });
+    const lenoDev = ovAfterOp.body.devices.find((d: any) => d.deviceId === "Leno");
+    const surfaceDev = ovAfterOp.body.devices.find((d: any) => d.deviceId === "Surface");
+    assert.ok(lenoDev.policy.operator_policies["operator:assistant-a"]);
+    assert.equal(surfaceDev.policy.operator_policies["operator:assistant-a"], undefined);
+
+    // Apply global change ONLY to Surface
+    const scopedGlobal = await jsonRequest(address.httpUrl, "/portal/api/global/apply", {
+      method: "POST",
+      token: "owner-token-a",
+      body: {
+        confirm: true,
+        profileId: "read_only",
+        deviceIds: ["Surface"],
+        reason: "Set Surface read-only only",
+      },
+    });
+    assert.equal(scopedGlobal.status, 200);
+    assert.deepEqual(scopedGlobal.body.updatedDevices, ["Surface"]);
+
+    // Exceed both the old 50-overview slice and the old 200-persisted global slice
+    for (let i = 0; i < 65; i += 1) {
+      const res = await jsonRequest(address.httpUrl, "/portal/api/devices/Leno/policy", {
+        method: "POST",
+        token: "owner-token-a",
+        body: {
+          reason: `Leno snap step ${i}`,
+          ...(i % 2 === 0 ? { revokeFamilies: ["process"] } : { grantFamilies: ["process"] }),
+        },
+      });
+      assert.equal(res.status, 200);
+    }
+    for (let i = 0; i < 155; i += 1) {
+      const res = await jsonRequest(address.httpUrl, "/portal/api/devices/Surface/policy", {
+        method: "POST",
+        token: "owner-token-a",
+        body: {
+          reason: `Surface snap step ${i}`,
+          ...(i % 2 === 0 ? { revokeFamilies: ["files"] } : { grantFamilies: ["files"] }),
+        },
+      });
+      assert.equal(res.status, 200);
+    }
+
+    // Restart Relay from persisted state and ensure rev 1 baselines + >50 snapshots per device survived
+    await relay.close();
+    relay = await RelayServer.create({
+      authenticator: createTestAuthenticator(),
+      stateFile,
+      allowInsecureLocalhost: true,
+    });
+    address = await relay.listen({ host: "127.0.0.1", port: 0 });
+
+    const reloaded = await jsonRequest(address.httpUrl, "/portal/api/overview", {
+      method: "GET",
+      token: "owner-token-a",
+    });
+    assert.equal(reloaded.status, 200);
+    const snaps = reloaded.body.snapshots as Array<Record<string, any>>;
+    const lenoSnaps = snaps.filter((s) => s.deviceId === "Leno");
+    const surfaceSnaps = snaps.filter((s) => s.deviceId === "Surface");
+    assert.ok(
+      lenoSnaps.some((s) => s.revision === 1),
+      "Leno rev 1 baseline snapshot must never be evicted past 200 global snapshots",
+    );
+    assert.ok(
+      surfaceSnaps.some((s) => s.revision === 1),
+      "Surface rev 1 baseline snapshot must be preserved",
+    );
+    assert.ok(
+      lenoSnaps.length > 50,
+      `Expected >50 Leno snapshots in overview (got ${lenoSnaps.length})`,
+    );
+  } finally {
+    await relay.close();
+    await rm(dir, { recursive: true, force: true });
+  }
+});
