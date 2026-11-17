@@ -110,52 +110,52 @@ function sampleCapabilities(
         status: "ready",
         unavailable_reason: null,
         operations: [
-          "stat",
+          "read",
+          "read_many",
           "list",
-          "read_text",
-          "write_text",
-          "patch",
+          "info",
+          "write",
+          "append",
           "mkdir",
           "move",
-          "copy",
-          "delete",
+          "patch",
         ],
         available_operations: [
-          "stat",
+          "read",
+          "read_many",
           "list",
-          "read_text",
-          "write_text",
-          "patch",
+          "info",
+          "write",
+          "append",
           "mkdir",
           "move",
-          "copy",
-          "delete",
+          "patch",
         ],
         granted_operations: grantedFamilies.includes("files")
           ? [
-              "stat",
+              "read",
+              "read_many",
               "list",
-              "read_text",
-              "write_text",
-              "patch",
+              "info",
+              "write",
+              "append",
               "mkdir",
               "move",
-              "copy",
-              "delete",
+              "patch",
             ]
           : [],
         denied_operations: grantedFamilies.includes("files")
           ? []
           : [
-              "stat",
+              "read",
+              "read_many",
               "list",
-              "read_text",
-              "write_text",
-              "patch",
+              "info",
+              "write",
+              "append",
               "mkdir",
               "move",
-              "copy",
-              "delete",
+              "patch",
             ],
       },
       {
@@ -334,7 +334,7 @@ test("one-click device policy updates, explicit deny rules, offline pending stat
   try {
     await pairDevice(address.httpUrl, "Leno", secret);
 
-    // Update policy while device is OFFLINE: revoke desktop family and explicitly deny filesystem.delete
+    // Update policy while device is OFFLINE: revoke desktop family and explicitly deny filesystem.write
     const updatedOffline = await jsonRequest(
       address.httpUrl,
       "/portal/api/devices/Leno/policy",
@@ -343,8 +343,8 @@ test("one-click device policy updates, explicit deny rules, offline pending stat
         token: "owner-token-a",
         body: {
           revokeFamilies: ["desktop"],
-          deniedCapabilities: ["filesystem.delete"],
-          reason: "Restrict desktop and file deletion while travelling",
+          deniedCapabilities: ["filesystem.write"],
+          reason: "Restrict desktop and file writes while travelling",
         },
       },
     );
@@ -360,7 +360,7 @@ test("one-click device policy updates, explicit deny rules, offline pending stat
     );
     assert.ok(
       updatedOffline.body.device.policy.owner_policy.denied_capabilities.includes(
-        "filesystem.delete",
+        "filesystem.write",
       ),
     );
 
@@ -541,14 +541,14 @@ test("global controls, emergency access revocation, operator identity scoping, a
           displayName: "Build Assistant",
           deviceIds: ["Leno"],
           allowedFamilies: ["device", "files"],
-          deniedCapabilities: ["filesystem.delete"],
-          reason: "Grant read/write file access to build assistant",
+          deniedCapabilities: ["filesystem.write"],
+          reason: "Grant read-only file access to build assistant",
         },
       },
     );
     assert.equal(opConfig.status, 200);
 
-    // Operator can call filesystem.read_text
+    // Operator can call filesystem.read
     const opRead = await relay.router.call(
       {
         accountId: "account-a",
@@ -561,7 +561,7 @@ test("global controls, emergency access revocation, operator identity scoping, a
         principal_id: null,
         device_id: "Leno",
         job_id: null,
-        capability: "filesystem.read_text",
+        capability: "filesystem.read",
         arguments: { path: "/tmp/readme.txt" },
         actor: { id: "assistant", kind: "ai_client" },
         session_id: null,
@@ -721,5 +721,156 @@ test("global controls, emergency access revocation, operator identity scoping, a
   } finally {
     await relay.close();
     await rm(dir, { recursive: true, force: true });
+  }
+});
+
+test("canonical operations and permission profiles exclude phantom operations and align read_only semantics", async () => {
+  const {
+    CANONICAL_OPERATIONS_BY_FAMILY,
+    createProfilePermissionSet,
+    evaluatePermissionSet,
+  } = await import("../src/index.ts");
+
+  assert.deepEqual(CANONICAL_OPERATIONS_BY_FAMILY, {
+    device: [
+      "device.status",
+      "device.capabilities",
+      "job.create",
+      "job.get",
+      "job.list",
+      "job.checkpoint",
+      "job.acquire_lease",
+      "job.release_lease",
+      "audit.read",
+    ],
+    files: [
+      "filesystem.read",
+      "filesystem.read_many",
+      "filesystem.list",
+      "filesystem.info",
+      "filesystem.write",
+      "filesystem.append",
+      "filesystem.mkdir",
+      "filesystem.move",
+      "filesystem.patch",
+      "search.start",
+      "search.read",
+      "search.stop",
+      "search.list",
+    ],
+    process: [
+      "process.run",
+      "process.read",
+      "process.input",
+      "process.list_sessions",
+      "process.list_system",
+      "process.terminate",
+    ],
+    browser: [
+      "browser.status",
+      "browser.pages",
+      "browser.create_tab",
+      "browser.snapshot",
+      "browser.navigate",
+      "browser.close",
+      "browser.act",
+      "browser.wait",
+      "browser.upload",
+      "browser.downloads",
+      "browser.diagnostics",
+      "browser.checkpoint",
+    ],
+    desktop: [
+      "desktop.snapshot",
+      "desktop.act",
+      "desktop.private_clipboard_get",
+      "desktop.private_clipboard_set",
+      "desktop.foreground_lease_acquire",
+      "desktop.foreground_lease_get",
+      "desktop.foreground_lease_release",
+      "desktop.physical_pointer_move",
+    ],
+    batch: ["batch.execute"],
+  });
+
+  const allCanonical = new Set(Object.values(CANONICAL_OPERATIONS_BY_FAMILY).flat());
+  for (const profileId of [
+    "universal",
+    "standard",
+    "files_and_process",
+    "read_only",
+    "lockdown",
+  ] as const) {
+    const profile = createProfilePermissionSet("human:test", "owner", profileId);
+    for (const op of [...profile.allowed_capabilities, ...profile.denied_capabilities]) {
+      assert.ok(
+        allCanonical.has(op),
+        `profile ${profileId} referenced non-canonical/phantom capability: ${op}`,
+      );
+    }
+  }
+
+  const readOnly = createProfilePermissionSet("operator:ro", "operator", "read_only");
+  for (const op of [
+    "device.status",
+    "device.capabilities",
+    "job.get",
+    "job.list",
+    "audit.read",
+    "filesystem.read",
+    "filesystem.read_many",
+    "filesystem.list",
+    "filesystem.info",
+    "search.start",
+    "search.read",
+    "search.stop",
+    "search.list",
+    "browser.status",
+    "browser.pages",
+    "browser.snapshot",
+    "browser.wait",
+    "browser.downloads",
+    "browser.diagnostics",
+    "browser.checkpoint",
+    "desktop.snapshot",
+    "desktop.private_clipboard_get",
+    "desktop.foreground_lease_get",
+  ]) {
+    assert.equal(
+      evaluatePermissionSet(readOnly, op).allowed,
+      true,
+      `read_only profile should allow ${op}`,
+    );
+  }
+
+  for (const op of [
+    "job.create",
+    "job.checkpoint",
+    "job.acquire_lease",
+    "job.release_lease",
+    "filesystem.write",
+    "filesystem.append",
+    "filesystem.mkdir",
+    "filesystem.move",
+    "filesystem.patch",
+    "process.run",
+    "process.terminate",
+    "browser.create_tab",
+    "browser.navigate",
+    "browser.close",
+    "browser.act",
+    "browser.upload",
+    "desktop.act",
+    "desktop.private_clipboard_set",
+    "desktop.foreground_lease_acquire",
+    "desktop.foreground_lease_release",
+    "desktop.physical_pointer_move",
+    "batch.execute",
+  ]) {
+    assert.equal(
+      evaluatePermissionSet(readOnly, op).allowed,
+      false,
+      `read_only profile must deny mutating capability ${op}`,
+    );
   }
 });

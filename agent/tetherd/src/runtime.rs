@@ -405,7 +405,6 @@ impl DeviceProvider {
             "mkdir",
             "move",
             "patch",
-            "delete",
         ];
         const PROC_OPS: &[&str] = &[
             "run",

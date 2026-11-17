@@ -122,7 +122,10 @@ fn universal_default_policy_grants_all_six_families_to_paired_owner() {
             "filesystem.write",
             json!({ "path": file, "content": "updated" }),
         ),
-        ("filesystem.delete", json!({ "path": file })),
+        (
+            "filesystem.patch",
+            json!({ "path": file, "old": "hello", "new": "world" }),
+        ),
         (
             "filesystem.move",
             json!({ "source": file, "destination": temp.path().join("moved.txt"), "replace": true }),
@@ -230,7 +233,7 @@ async fn explicit_deny_rules_override_universal_owner_and_family_grants() {
     policy
         .owner_policy
         .denied_capabilities
-        .insert("filesystem.delete".into());
+        .insert("filesystem.write".into());
     broker.set_synchronized_policy(Some(policy));
 
     let mut router = CapabilityRouter::with_policy(Arc::clone(&broker) as Arc<dyn PolicyBroker>);
@@ -256,20 +259,20 @@ async fn explicit_deny_rules_override_universal_owner_and_family_grants() {
         .await;
     assert_eq!(read_res.status, ResultStatus::Success);
 
-    // filesystem.delete is explicitly denied
-    let delete_res = router
+    // filesystem.write is explicitly denied
+    let write_res = router
         .execute(invocation(
             Some("human:owner"),
             Some("Leno"),
-            "filesystem.delete",
-            json!({ "path": file }),
+            "filesystem.write",
+            json!({ "path": file, "content": "blocked" }),
         ))
         .await;
-    assert_eq!(delete_res.status, ResultStatus::Error);
-    let delete_err = delete_res.error.unwrap();
-    assert_eq!(delete_err.code, ErrorCode::PermissionDenied);
-    assert_eq!(delete_err.details["denial_kind"], json!("explicit_deny"));
-    assert_eq!(delete_err.details["tool_family"], json!("files"));
+    assert_eq!(write_res.status, ResultStatus::Error);
+    let write_err = write_res.error.unwrap();
+    assert_eq!(write_err.code, ErrorCode::PermissionDenied);
+    assert_eq!(write_err.details["denial_kind"], json!("explicit_deny"));
+    assert_eq!(write_err.details["tool_family"], json!("files"));
 
     // process.run is denied because the process family is in denied_families
     let proc_res = router
@@ -307,7 +310,7 @@ async fn operator_identity_has_separate_scoped_permissions_from_owner() {
             allowed_families: BTreeSet::from([ToolFamily::Device]),
             denied_families: BTreeSet::new(),
             allowed_capabilities: BTreeSet::from(["filesystem.read".to_owned()]),
-            denied_capabilities: BTreeSet::from(["filesystem.delete".to_owned()]),
+            denied_capabilities: BTreeSet::from(["filesystem.write".to_owned()]),
             allowed_roots: vec![],
             allow_destructive: false,
         },

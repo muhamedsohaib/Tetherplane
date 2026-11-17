@@ -555,11 +555,12 @@ fn device_capabilities_distinguishes_available_operations_from_effective_grants_
         .iter()
         .find(|p| p["namespace"] == "filesystem")
         .unwrap();
-    // Available provider operations include read, write, delete, etc., while granted operations only include read
+    // Available provider operations include real implemented operations like read and write, and exclude unimplemented delete
     let available_ops = filesystem["available_operations"].as_array().unwrap();
     assert!(available_ops.contains(&json!("read")));
     assert!(available_ops.contains(&json!("write")));
-    assert!(available_ops.contains(&json!("delete")));
+    assert!(available_ops.contains(&json!("patch")));
+    assert!(!available_ops.contains(&json!("delete")));
     assert_eq!(filesystem["granted_operations"], json!(["read"]));
     assert_eq!(filesystem["operations"], json!(["read"]));
     assert!(

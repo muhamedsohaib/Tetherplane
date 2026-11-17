@@ -264,7 +264,7 @@ test("device capabilities is queried from the agent", async () => {
   }
 });
 
-test("device schema exposes all canonical browser operations and filesystem.delete", async () => {
+test("device schema exposes all canonical operations and rejects phantom operations", async () => {
   const server = createCompactMcpServer({
     agentClient: {
       call: async () => {
@@ -273,7 +273,7 @@ test("device schema exposes all canonical browser operations and filesystem.dele
     },
   });
   const client = new Client(
-    { name: "browser-schema-test", version: "0.1.0" },
+    { name: "canonical-schema-test", version: "0.1.0" },
     { capabilities: {} },
   );
   const [clientTransport, serverTransport] =
@@ -285,49 +285,117 @@ test("device schema exposes all canonical browser operations and filesystem.dele
   ]);
 
   try {
-    const browserOperations = [
-      "status",
-      "pages",
-      "create_tab",
-      "snapshot",
-      "navigate",
-      "close",
-      "act",
-      "wait",
-      "upload",
-      "downloads",
-      "diagnostics",
-      "checkpoint",
+    const expectedByNamespace: Record<string, string[]> = {
+      device: [
+        "status",
+        "capabilities",
+        "job_create",
+        "job_get",
+        "job_list",
+        "job_checkpoint",
+        "job_acquire_lease",
+        "job_release_lease",
+        "audit_read",
+      ],
+      files: [
+        "read",
+        "read_many",
+        "list",
+        "info",
+        "write",
+        "append",
+        "mkdir",
+        "move",
+        "patch",
+        "search",
+        "search_read",
+        "search_stop",
+        "search_list",
+      ],
+      process: [
+        "run",
+        "read",
+        "input",
+        "list_sessions",
+        "list_system",
+        "terminate",
+      ],
+      browser: [
+        "status",
+        "pages",
+        "create_tab",
+        "snapshot",
+        "navigate",
+        "close",
+        "act",
+        "wait",
+        "upload",
+        "downloads",
+        "diagnostics",
+        "checkpoint",
+      ],
+      desktop: [
+        "snapshot",
+        "act",
+        "private_clipboard_get",
+        "private_clipboard_set",
+        "foreground_lease_acquire",
+        "foreground_lease_get",
+        "foreground_lease_release",
+        "physical_pointer_move",
+      ],
+      batch: ["execute"],
+    };
+
+    for (const [namespace, operations] of Object.entries(expectedByNamespace)) {
+      for (const operation of operations) {
+        const result = await client.callTool({
+          name: "device",
+          arguments: {
+            op: "schema",
+            args: { namespace, operation },
+          },
+        });
+        assert.equal(
+          result.isError,
+          undefined,
+          `expected ${namespace}.${operation} schema to be available`,
+        );
+      }
+    }
+
+    const phantomOperations: Array<[string, string]> = [
+      ["files", "delete"],
+      ["filesystem", "delete"],
+      ["files", "stat"],
+      ["files", "read_text"],
+      ["files", "write_text"],
+      ["files", "copy"],
+      ["files", "search_grep"],
+      ["files", "search_glob"],
+      ["process", "list"],
+      ["process", "tail"],
+      ["desktop", "windows"],
+      ["desktop", "screenshot"],
+      ["device", "job_status"],
+      ["device", "job_cancel"],
+      ["device", "audit_tail"],
     ];
-    for (const operation of browserOperations) {
+
+    for (const [namespace, operation] of phantomOperations) {
       const result = await client.callTool({
         name: "device",
         arguments: {
           op: "schema",
-          args: {
-            namespace: "browser",
-            operation,
-          },
+          args: { namespace, operation },
         },
       });
       assert.equal(
         result.isError,
-        undefined,
-        `expected browser.${operation} schema to be available`,
+        true,
+        `expected phantom operation ${namespace}.${operation} to be rejected`,
       );
     }
-
-    const deleteSchema = await client.callTool({
-      name: "device",
-      arguments: {
-        op: "schema",
-        args: {
-          namespace: "files",
-          operation: "delete",
-        },
-      },
-    });
-    assert.equal(deleteSchema.isError, undefined);
   } finally {
     await Promise.all([client.close(), server.close()]);
   }

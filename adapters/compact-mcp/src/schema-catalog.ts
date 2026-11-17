@@ -55,9 +55,6 @@ const CATALOG: Record<string, JsonSchema> = {
     new: string,
     expected_replacements: nonNegativeInteger,
   }),
-  "filesystem.delete": objectSchema(["path"], {
-    path: string,
-  }),
   "browser.status": objectSchema([], {}),
   "browser.pages": objectSchema([], {}),
   "browser.create_tab": objectSchema(["url"], {
