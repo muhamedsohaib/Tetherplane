@@ -874,3 +874,234 @@ test("canonical operations and permission profiles exclude phantom operations an
     );
   }
 });
+
+test("monotonic policy revisions, rejected ACKs, operator ACK error reset, and reconnect sync behave securely", async () => {
+  const dir = await mkdtemp(path.join(os.tmpdir(), "tether-portal-monotonic-"));
+  const relay = await RelayServer.create({
+    authenticator: createTestAuthenticator(),
+    stateFile: path.join(dir, "devices.json"),
+    allowInsecureLocalhost: true,
+  });
+  const address = await relay.listen({ host: "127.0.0.1", port: 0 });
+  const secret = "device-secret-leno-monotonic-test";
+
+  try {
+    await pairDevice(address.httpUrl, "Leno", secret);
+
+    const connectDevice = async (
+      appliedPolicyRevision: number | null,
+      onPolicySync: (
+        ws: WebSocket,
+        policy: Record<string, any>,
+      ) => void,
+    ): Promise<WebSocket> => {
+      const ws = new WebSocket(address.deviceWsUrl, {
+        headers: {
+          authorization: `Device ${secret}`,
+          "x-tetherplane-device-id": "Leno",
+        },
+      });
+      await new Promise<void>((resolve, reject) => {
+        ws.once("open", resolve);
+        ws.once("error", reject);
+      });
+      ws.on("message", (raw) => {
+        const msg = JSON.parse(String(raw)) as Record<string, any>;
+        if (msg.type === "policy_sync") {
+          onPolicySync(ws, msg.policy);
+        }
+      });
+      ws.send(
+        JSON.stringify({
+          type: "device_hello",
+          deviceId: "Leno",
+          appliedPolicyRevision,
+          status: { os: "linux", arch: "x86_64", agent_version: "0.1.0" },
+        }),
+      );
+      return ws;
+    };
+
+    // 1. Connect and confirm rev 1, then update to rev 2 and reject rev 2 while delayed rev 1 ACK arrives
+    const pushedOnFirstConnect: number[] = [];
+    const ws1 = await connectDevice(null, (ws, policy) => {
+      pushedOnFirstConnect.push(policy.revision);
+      if (policy.revision === 1) {
+        ws.send(
+          JSON.stringify({
+            type: "policy_ack",
+            deviceId: "Leno",
+            revision: 1,
+            applied: true,
+            appliedAtMs: Date.now(),
+          }),
+        );
+      } else if (policy.revision === 2) {
+        ws.send(
+          JSON.stringify({
+            type: "policy_ack",
+            deviceId: "Leno",
+            revision: 2,
+            currentRevision: 1,
+            applied: false,
+            error: "simulated persistence failure at rev 2",
+          }),
+        );
+        // Also send a delayed rev 1 ACK after failure — must NOT clear rev 2 error or mark rev 2 applied!
+        ws.send(
+          JSON.stringify({
+            type: "policy_ack",
+            deviceId: "Leno",
+            revision: 1,
+            applied: true,
+            appliedAtMs: Date.now(),
+          }),
+        );
+      } else {
+        ws.send(
+          JSON.stringify({
+            type: "policy_ack",
+            deviceId: "Leno",
+            revision: policy.revision,
+            applied: true,
+            appliedAtMs: Date.now(),
+          }),
+        );
+      }
+    });
+
+    await new Promise((r) => setTimeout(r, 40));
+
+    // Update policy to rev 2 -> device rejects it and sends delayed rev 1 ACK
+    await jsonRequest(address.httpUrl, "/portal/api/devices/Leno/policy", {
+      method: "POST",
+      token: "owner-token-a",
+      body: {
+        revokeFamilies: ["process"],
+        reason: "Revoke process at rev 2",
+      },
+    });
+    await new Promise((r) => setTimeout(r, 50));
+
+    const afterReject = await jsonRequest(
+      address.httpUrl,
+      "/portal/api/overview",
+      { method: "GET", token: "owner-token-a" },
+    );
+    const lenoRejected = afterReject.body.devices[0];
+    assert.equal(lenoRejected.syncStatus, "failed");
+    assert.equal(lenoRejected.confirmedByDevice, false);
+    assert.equal(lenoRejected.desiredRevision, 2);
+    assert.equal(lenoRejected.appliedRevision, 1);
+    assert.match(lenoRejected.lastAckError, /simulated persistence failure/i);
+
+    // 2. Subsequent operator update bumps to rev 3 and MUST clear prior lastAckError
+    await jsonRequest(address.httpUrl, "/portal/api/operators", {
+      method: "POST",
+      token: "owner-token-a",
+      body: {
+        principalId: "operator:assistant-a",
+        profileId: "read_only",
+        deviceIds: ["Leno"],
+        reason: "Add read-only operator at rev 3",
+      },
+    });
+    await new Promise((r) => setTimeout(r, 50));
+    const afterRev3 = await jsonRequest(
+      address.httpUrl,
+      "/portal/api/overview",
+      { method: "GET", token: "owner-token-a" },
+    );
+    assert.equal(afterRev3.body.devices[0].syncStatus, "applied");
+    assert.equal(afterRev3.body.devices[0].confirmedByDevice, true);
+    assert.equal(afterRev3.body.devices[0].appliedRevision, 3);
+    assert.equal(afterRev3.body.devices[0].lastAckError, null);
+
+    ws1.close();
+    await new Promise((r) => setTimeout(r, 30));
+
+    // 3. Reconnect with older revision (e.g. 0): appliedRevision must reset until rev 3 is ACKed
+    let deferAckResolve: (() => void) | null = null;
+    const deferAckGate = new Promise<void>((r) => {
+      deferAckResolve = r;
+    });
+    const pushedOnLagReconnect: number[] = [];
+    const ws2 = await connectDevice(0, async (ws, policy) => {
+      pushedOnLagReconnect.push(policy.revision);
+      await deferAckGate;
+      ws.send(
+        JSON.stringify({
+          type: "policy_ack",
+          deviceId: "Leno",
+          revision: policy.revision,
+          applied: true,
+          appliedAtMs: Date.now(),
+        }),
+      );
+    });
+    await new Promise((r) => setTimeout(r, 40));
+
+    const whileWaitingReconnectAck = await jsonRequest(
+      address.httpUrl,
+      "/portal/api/overview",
+      { method: "GET", token: "owner-token-a" },
+    );
+    assert.deepEqual(pushedOnLagReconnect, [3]);
+    assert.equal(
+      whileWaitingReconnectAck.body.devices[0].confirmedByDevice,
+      false,
+      "confirmedByDevice must reset to false when reconnecting with appliedPolicyRevision < desiredRevision",
+    );
+    assert.equal(whileWaitingReconnectAck.body.devices[0].syncStatus, "pending");
+    assert.equal(whileWaitingReconnectAck.body.devices[0].appliedRevision, null);
+
+    deferAckResolve!();
+    await new Promise((r) => setTimeout(r, 40));
+    ws2.close();
+    await new Promise((r) => setTimeout(r, 30));
+
+    // 4. Reconnect claiming appliedPolicyRevision=7 (> desiredRevision=3):
+    // Relay must NOT push stale rev 3 downward, and next mutation must jump above 7 (to 8)
+    const pushedWhenDeviceAhead: number[] = [];
+    const ws3 = await connectDevice(7, (ws, policy) => {
+      pushedWhenDeviceAhead.push(policy.revision);
+      ws.send(
+        JSON.stringify({
+          type: "policy_ack",
+          deviceId: "Leno",
+          revision: policy.revision,
+          applied: true,
+          appliedAtMs: Date.now(),
+        }),
+      );
+    });
+    await new Promise((r) => setTimeout(r, 40));
+    assert.deepEqual(
+      pushedWhenDeviceAhead,
+      [],
+      "relay must never push older desiredRevision when device already reports higher appliedPolicyRevision",
+    );
+
+    const aheadUpdate = await jsonRequest(
+      address.httpUrl,
+      "/portal/api/devices/Leno/policy",
+      {
+        method: "POST",
+        token: "owner-token-a",
+        body: {
+          grantFamilies: ["process"],
+          reason: "Advance above device-reported rev 7",
+        },
+      },
+    );
+    assert.equal(aheadUpdate.status, 200);
+    assert.equal(aheadUpdate.body.device.desiredRevision, 8);
+    await new Promise((r) => setTimeout(r, 40));
+    assert.deepEqual(pushedWhenDeviceAhead, [8]);
+
+    ws3.close();
+  } finally {
+    await relay.close();
+    await rm(dir, { recursive: true, force: true });
+  }
+});

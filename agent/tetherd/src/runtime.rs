@@ -36,17 +36,30 @@ pub struct AgentRuntime {
     policy: Arc<LocalPolicyBroker>,
     device_provider: Arc<DeviceProvider>,
     bound_principal_id: Option<String>,
+    bound_device_id: Option<String>,
     state_dir: Option<PathBuf>,
     audit_store: Option<Arc<AuditStore>>,
     idempotency_store: Option<Arc<Mutex<IdempotencyStore>>>,
+    policy_update_lock: std::sync::Mutex<()>,
 }
 
 impl AgentRuntime {
+    #[cfg(test)]
     pub fn new(
+        allowed_roots: Vec<PathBuf>,
+        principal: Option<PrincipalProfile>,
+        state_dir: Option<&Path>,
+        browser_provider: Option<Arc<BrowserProvider>>,
+    ) -> Result<Self, CapabilityError> {
+        Self::new_with_device(allowed_roots, principal, state_dir, browser_provider, None)
+    }
+
+    pub fn new_with_device(
         mut allowed_roots: Vec<PathBuf>,
         principal: Option<PrincipalProfile>,
         state_dir: Option<&Path>,
         browser_provider: Option<Arc<BrowserProvider>>,
+        bound_device_id: Option<&str>,
     ) -> Result<Self, CapabilityError> {
         if allowed_roots.is_empty()
             && let Some(profile) = principal.as_ref()
@@ -65,6 +78,7 @@ impl AgentRuntime {
         let bound_principal_id = principal
             .as_ref()
             .map(|profile| profile.principal_id.clone());
+        let bound_device_id = bound_device_id.map(ToOwned::to_owned);
         let job_available = state_dir.is_some();
         let audit_store = if let Some(state_dir) = state_dir.as_ref() {
             Some(Arc::new(AuditStore::new(state_dir)?))
@@ -83,7 +97,7 @@ impl AgentRuntime {
         }
         let policy = Arc::new(LocalPolicyBroker::new(policy_config));
         if let Some(dir) = state_dir
-            && let Some(persisted) = load_persisted_policy(dir)
+            && let Some(persisted) = load_persisted_policy(dir, bound_device_id.as_deref())
         {
             policy.set_synchronized_policy(Some(persisted));
         }
@@ -143,9 +157,11 @@ impl AgentRuntime {
             policy,
             device_provider,
             bound_principal_id,
+            bound_device_id,
             state_dir: state_dir.map(Path::to_path_buf),
             audit_store,
             idempotency_store,
+            policy_update_lock: std::sync::Mutex::new(()),
         })
     }
 
@@ -176,6 +192,20 @@ impl AgentRuntime {
         &self,
         policy: SynchronizedDevicePolicy,
     ) -> Result<Value, CapabilityError> {
+        let _guard = self
+            .policy_update_lock
+            .lock()
+            .map_err(|_| CapabilityError {
+                code: ErrorCode::ProviderFailure,
+                message: "synchronized policy lock was poisoned".to_owned(),
+                recovery_hint: None,
+                details: json!({}),
+            })?;
+
+        if let Some(idempotent_ack) = self.validate_synchronized_policy(&policy)? {
+            return Ok(idempotent_ack);
+        }
+
         let revision = policy.revision;
         let device_id = policy.device_id.clone();
         let owner_principal_id = policy.owner_principal_id.clone();
@@ -190,40 +220,7 @@ impl AgentRuntime {
         }
 
         self.policy.set_synchronized_policy(Some(policy));
-
-        if let Some(audit_store) = &self.audit_store {
-            let synth_invocation = InvocationEnvelope {
-                protocol_version: "1.0".into(),
-                request_id: Uuid::new_v4(),
-                device_id: Some(device_id.clone()),
-                principal_id: Some(updated_by.clone()),
-                job_id: None,
-                capability: "policy.sync".into(),
-                arguments: json!({ "revision": revision }),
-                actor: Actor {
-                    id: updated_by,
-                    kind: ActorKind::Human,
-                },
-                session_id: None,
-                response_mode: ResponseMode::Compact,
-                idempotency_key: None,
-                preconditions: vec![],
-                expectations: vec![],
-            };
-            let synth_result = ResultEnvelope {
-                protocol_version: "1.0".into(),
-                request_id: synth_invocation.request_id,
-                status: ResultStatus::Success,
-                data: Some(json!({ "revision": revision, "applied": true })),
-                delta: None,
-                error: None,
-                verification: VerificationStatus::Verified,
-                continuation: None,
-                policy: None,
-                timing: Timing { duration_ms: 0 },
-            };
-            let _ = audit_store.append(&synth_invocation, &synth_result);
-        }
+        self.record_policy_sync_audit(&device_id, &updated_by, revision);
 
         let now_ms = SystemTime::now()
             .duration_since(UNIX_EPOCH)
@@ -237,6 +234,131 @@ impl AgentRuntime {
             "status": self.device_status(),
             "capabilities": self.device_capabilities(Some(&owner_principal_id), Some(&device_id)),
         }))
+    }
+
+    fn validate_synchronized_policy(
+        &self,
+        policy: &SynchronizedDevicePolicy,
+    ) -> Result<Option<Value>, CapabilityError> {
+        let revision = policy.revision;
+        let current = self.policy.synchronized_policy();
+        let current_revision = current.as_ref().map_or(0, |existing| existing.revision);
+
+        if revision == 0 {
+            return Err(invalid_arguments_with_details(
+                "policy_sync revision must be >= 1",
+                json!({ "rejected_revision": revision, "current_revision": current_revision }),
+            ));
+        }
+
+        if let Some(expected_device_id) = self.bound_device_id.as_deref()
+            && policy.device_id != expected_device_id
+        {
+            return Err(invalid_arguments_with_details(
+                &format!(
+                    "policy_sync target device '{}' does not match bound device '{}'",
+                    policy.device_id, expected_device_id
+                ),
+                json!({
+                    "expected_device_id": expected_device_id,
+                    "policy_device_id": policy.device_id,
+                    "current_revision": current_revision,
+                }),
+            ));
+        }
+
+        let Some(existing) = current.as_ref() else {
+            return Ok(None);
+        };
+        if existing.device_id != policy.device_id {
+            return Err(invalid_arguments_with_details(
+                &format!(
+                    "policy_sync target device '{}' does not match existing policy device '{}'",
+                    policy.device_id, existing.device_id
+                ),
+                json!({
+                    "expected_device_id": existing.device_id,
+                    "policy_device_id": policy.device_id,
+                    "current_revision": existing.revision,
+                }),
+            ));
+        }
+        if revision < existing.revision {
+            return Err(invalid_arguments_with_details(
+                &format!(
+                    "stale policy revision {revision} rejected; current revision is {}",
+                    existing.revision
+                ),
+                json!({
+                    "rejected_revision": revision,
+                    "current_revision": existing.revision,
+                }),
+            ));
+        }
+        if revision == existing.revision {
+            if policies_structurally_equal(existing, policy) {
+                let now_ms = SystemTime::now()
+                    .duration_since(UNIX_EPOCH)
+                    .map_or(0, |d| u64::try_from(d.as_millis()).unwrap_or(u64::MAX));
+                return Ok(Some(json!({
+                    "deviceId": existing.device_id,
+                    "revision": existing.revision,
+                    "applied": true,
+                    "idempotent": true,
+                    "appliedAtMs": now_ms,
+                    "status": self.device_status(),
+                    "capabilities": self.device_capabilities(
+                        Some(&existing.owner_principal_id),
+                        Some(&existing.device_id),
+                    ),
+                })));
+            }
+            return Err(invalid_arguments_with_details(
+                &format!("conflicting policy payload for current revision {revision} rejected"),
+                json!({
+                    "rejected_revision": revision,
+                    "current_revision": existing.revision,
+                }),
+            ));
+        }
+        Ok(None)
+    }
+
+    fn record_policy_sync_audit(&self, device_id: &str, updated_by: &str, revision: u64) {
+        let Some(audit_store) = &self.audit_store else {
+            return;
+        };
+        let synth_invocation = InvocationEnvelope {
+            protocol_version: "1.0".into(),
+            request_id: Uuid::new_v4(),
+            device_id: Some(device_id.to_owned()),
+            principal_id: Some(updated_by.to_owned()),
+            job_id: None,
+            capability: "policy.sync".into(),
+            arguments: json!({ "revision": revision }),
+            actor: Actor {
+                id: updated_by.to_owned(),
+                kind: ActorKind::Human,
+            },
+            session_id: None,
+            response_mode: ResponseMode::Compact,
+            idempotency_key: None,
+            preconditions: vec![],
+            expectations: vec![],
+        };
+        let synth_result = ResultEnvelope {
+            protocol_version: "1.0".into(),
+            request_id: synth_invocation.request_id,
+            status: ResultStatus::Success,
+            data: Some(json!({ "revision": revision, "applied": true })),
+            delta: None,
+            error: None,
+            verification: VerificationStatus::Verified,
+            continuation: None,
+            policy: None,
+            timing: Timing { duration_ms: 0 },
+        };
+        let _ = audit_store.append(&synth_invocation, &synth_result);
     }
 
     pub async fn execute(&self, mut invocation: InvocationEnvelope) -> ResultEnvelope {
@@ -287,16 +409,41 @@ impl AgentRuntime {
     }
 }
 
-fn load_persisted_policy(state_dir: &Path) -> Option<SynchronizedDevicePolicy> {
+fn policies_structurally_equal(
+    left: &SynchronizedDevicePolicy,
+    right: &SynchronizedDevicePolicy,
+) -> bool {
+    left.device_id == right.device_id
+        && left.owner_account_id == right.owner_account_id
+        && left.owner_principal_id == right.owner_principal_id
+        && left.revision == right.revision
+        && left.emergency_lockdown == right.emergency_lockdown
+        && left.owner_policy == right.owner_policy
+        && left.operator_policies == right.operator_policies
+}
+
+fn load_persisted_policy(
+    state_dir: &Path,
+    expected_device_id: Option<&str>,
+) -> Option<SynchronizedDevicePolicy> {
     let path = state_dir.join("policy").join("synchronized-policy.json");
     let raw = fs::read_to_string(path).ok()?;
-    serde_json::from_str::<SynchronizedDevicePolicy>(&raw).ok()
+    let parsed = serde_json::from_str::<SynchronizedDevicePolicy>(&raw).ok()?;
+    if parsed.revision == 0 {
+        return None;
+    }
+    if expected_device_id.is_some_and(|expected| parsed.device_id != expected) {
+        return None;
+    }
+    Some(parsed)
 }
 
 fn persist_synchronized_policy(
     state_dir: &Path,
     policy: &SynchronizedDevicePolicy,
 ) -> Result<(), CapabilityError> {
+    use std::io::Write as _;
+
     let policy_dir = state_dir.join("policy");
     fs::create_dir_all(&policy_dir).map_err(|error| CapabilityError {
         code: ErrorCode::ProviderFailure,
@@ -305,18 +452,42 @@ fn persist_synchronized_policy(
         details: json!({}),
     })?;
     let target = policy_dir.join("synchronized-policy.json");
+    let temp_path = policy_dir.join(format!("synchronized-policy.json.tmp-{}", Uuid::new_v4()));
     let bytes = serde_json::to_vec_pretty(policy).map_err(|error| CapabilityError {
         code: ErrorCode::ProviderFailure,
         message: format!("failed to serialize synchronized policy: {error}"),
         recovery_hint: None,
         details: json!({}),
     })?;
-    fs::write(target, bytes).map_err(|error| CapabilityError {
-        code: ErrorCode::ProviderFailure,
-        message: format!("failed to persist synchronized policy: {error}"),
-        recovery_hint: None,
-        details: json!({}),
-    })?;
+    let mut file = fs::OpenOptions::new()
+        .write(true)
+        .create_new(true)
+        .open(&temp_path)
+        .map_err(|error| CapabilityError {
+            code: ErrorCode::ProviderFailure,
+            message: format!("failed to open temporary policy file: {error}"),
+            recovery_hint: None,
+            details: json!({}),
+        })?;
+    if let Err(error) = file.write_all(&bytes).and_then(|()| file.sync_all()) {
+        let _ = fs::remove_file(&temp_path);
+        return Err(CapabilityError {
+            code: ErrorCode::ProviderFailure,
+            message: format!("failed to flush synchronized policy: {error}"),
+            recovery_hint: None,
+            details: json!({}),
+        });
+    }
+    drop(file);
+    if let Err(error) = fs::rename(&temp_path, &target) {
+        let _ = fs::remove_file(&temp_path);
+        return Err(CapabilityError {
+            code: ErrorCode::ProviderFailure,
+            message: format!("failed to commit synchronized policy: {error}"),
+            recovery_hint: None,
+            details: json!({}),
+        });
+    }
     Ok(())
 }
 
@@ -696,10 +867,144 @@ fn collect_prefixed_ops(list: &Value, namespace: &str, out: &mut Vec<String>) {
 }
 
 fn invalid_arguments(message: &str) -> CapabilityError {
+    invalid_arguments_with_details(message, serde_json::json!({}))
+}
+
+fn invalid_arguments_with_details(message: &str, details: Value) -> CapabilityError {
     CapabilityError {
         code: ErrorCode::InvalidArguments,
         message: message.to_owned(),
         recovery_hint: None,
-        details: serde_json::json!({}),
+        details,
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::AgentRuntime;
+    use serde_json::json;
+    use std::fs;
+    use std::path::PathBuf;
+    use tether_core::{
+        Actor, ActorKind, InvocationEnvelope, ResponseMode, ResultStatus, SynchronizedDevicePolicy,
+        ToolFamily,
+    };
+    use uuid::Uuid;
+
+    struct TempStateDir(PathBuf);
+
+    impl TempStateDir {
+        fn create() -> Self {
+            let dir = std::env::temp_dir().join(format!("tether-runtime-test-{}", Uuid::new_v4()));
+            fs::create_dir_all(&dir).unwrap();
+            Self(dir)
+        }
+    }
+
+    impl Drop for TempStateDir {
+        fn drop(&mut self) {
+            let _ = fs::remove_dir_all(&self.0);
+        }
+    }
+
+    fn owner_device_status_invocation(device_id: &str) -> InvocationEnvelope {
+        InvocationEnvelope {
+            protocol_version: "1.0".into(),
+            request_id: Uuid::new_v4(),
+            device_id: Some(device_id.into()),
+            principal_id: Some("human:account-a".into()),
+            job_id: None,
+            capability: "process.run".into(),
+            arguments: json!({ "program": "/bin/sh", "args": ["-c", "echo ok"] }),
+            actor: Actor {
+                id: "owner".into(),
+                kind: ActorKind::Human,
+            },
+            session_id: None,
+            response_mode: ResponseMode::Compact,
+            idempotency_key: None,
+            preconditions: vec![],
+            expectations: vec![],
+        }
+    }
+
+    #[tokio::test]
+    async fn stale_or_conflicting_policy_revisions_are_rejected_and_cannot_restore_revoked_access()
+    {
+        let state = TempStateDir::create();
+        let runtime = AgentRuntime::new(vec![state.0.clone()], None, Some(&state.0), None).unwrap();
+
+        let rev1_universal =
+            SynchronizedDevicePolicy::universal_for_owner("Leno", "account-a", "human:account-a");
+        runtime
+            .apply_synchronized_policy(rev1_universal.clone())
+            .expect("initial rev 1 policy applies");
+        assert_eq!(runtime.applied_policy_revision(), 1);
+
+        let mut rev2_revoked = rev1_universal.clone();
+        rev2_revoked.revision = 2;
+        rev2_revoked
+            .owner_policy
+            .allowed_families
+            .remove(&ToolFamily::Process);
+        rev2_revoked
+            .owner_policy
+            .denied_families
+            .insert(ToolFamily::Process);
+        rev2_revoked.owner_policy.universal_permissions = false;
+        runtime
+            .apply_synchronized_policy(rev2_revoked.clone())
+            .expect("rev 2 revocation applies");
+        assert_eq!(runtime.applied_policy_revision(), 2);
+
+        // Stale rev 1 universal policy MUST be rejected and must NOT restore process family access
+        let stale_err = runtime
+            .apply_synchronized_policy(rev1_universal.clone())
+            .expect_err("stale revision 1 policy_sync must be rejected");
+        assert!(
+            stale_err.message.to_ascii_lowercase().contains("revision"),
+            "expected revision error, got: {}",
+            stale_err.message
+        );
+        assert_eq!(runtime.applied_policy_revision(), 2);
+
+        // Conflicting same-revision (rev 2 with restored universal permissions) MUST also be rejected
+        let mut conflicting_rev2 = rev1_universal;
+        conflicting_rev2.revision = 2;
+        assert!(
+            runtime.apply_synchronized_policy(conflicting_rev2).is_err(),
+            "conflicting policy at current revision 2 must be rejected"
+        );
+        assert_eq!(runtime.applied_policy_revision(), 2);
+
+        // Identical rev 2 push should be idempotent
+        runtime
+            .apply_synchronized_policy(rev2_revoked)
+            .expect("idempotent identical rev 2 re-delivery should succeed");
+
+        // Invoking revoked process family remains denied
+        let result = runtime
+            .execute(owner_device_status_invocation("Leno"))
+            .await;
+        assert_eq!(result.status, ResultStatus::Error);
+        assert_eq!(
+            result.error.unwrap().code,
+            tether_core::ErrorCode::PermissionDenied
+        );
+
+        // Restarting from state_dir preserves rev 2 and continues rejecting rev 1
+        let restarted =
+            AgentRuntime::new(vec![state.0.clone()], None, Some(&state.0), None).unwrap();
+        assert_eq!(restarted.applied_policy_revision(), 2);
+        let zero_rev = {
+            let mut p = SynchronizedDevicePolicy::universal_for_owner(
+                "Leno",
+                "account-a",
+                "human:account-a",
+            );
+            p.revision = 0;
+            p
+        };
+        assert!(restarted.apply_synchronized_policy(zero_rev).is_err());
     }
 }

@@ -28,6 +28,7 @@ pub(crate) struct RelayConfig {
     pub reconnect_delay: Duration,
 }
 
+#[derive(Debug)]
 enum RelayFailure {
     Fatal(String),
     Retryable(String),
@@ -191,13 +192,15 @@ async fn handle_inbound_text(
             })
         }
         RelayInbound::PolicySync { policy } => {
+            let pushed_revision = policy.revision;
             let ack_payload = if policy.device_id == config.device_id {
                 match runtime.apply_synchronized_policy(policy) {
                     Ok(ack_data) => build_policy_ack(&config.device_id, &ack_data, None),
                     Err(error) => json!({
                         "type": "policy_ack",
                         "deviceId": config.device_id,
-                        "revision": runtime.applied_policy_revision(),
+                        "revision": pushed_revision,
+                        "currentRevision": runtime.applied_policy_revision(),
                         "applied": false,
                         "error": error.message,
                     }),
@@ -206,7 +209,8 @@ async fn handle_inbound_text(
                 json!({
                     "type": "policy_ack",
                     "deviceId": config.device_id,
-                    "revision": runtime.applied_policy_revision(),
+                    "revision": pushed_revision,
+                    "currentRevision": runtime.applied_policy_revision(),
                     "applied": false,
                     "error": "policy_sync target device does not match local device_id",
                 })
@@ -223,6 +227,7 @@ fn build_policy_ack(device_id: &str, ack_data: &Value, error: Option<&str>) -> V
         "type": "policy_ack",
         "deviceId": device_id,
         "revision": ack_data["revision"],
+        "currentRevision": ack_data["revision"],
         "applied": ack_data["applied"],
         "appliedAtMs": ack_data["appliedAtMs"],
         "status": ack_data["status"],
@@ -321,5 +326,48 @@ mod tests {
             }
             RelayInbound::Invoke { .. } => panic!("expected PolicySync"),
         }
+    }
+
+    #[tokio::test]
+    async fn stale_policy_sync_returns_failed_policy_ack_with_current_revision() {
+        use crate::runtime::AgentRuntime;
+        use std::sync::Arc;
+        use std::time::Duration;
+        use tether_core::{SynchronizedDevicePolicy, ToolFamily};
+
+        let runtime =
+            Arc::new(AgentRuntime::new(vec![std::env::temp_dir()], None, None, None).unwrap());
+        let rev1 =
+            SynchronizedDevicePolicy::universal_for_owner("Leno", "account-a", "human:account-a");
+        let mut rev2 = rev1.clone();
+        rev2.revision = 2;
+        rev2.emergency_lockdown = true;
+        rev2.owner_policy
+            .denied_families
+            .insert(ToolFamily::Process);
+        runtime.apply_synchronized_policy(rev2).unwrap();
+
+        let config = super::RelayConfig {
+            url: "ws://127.0.0.1:1/device".into(),
+            device_id: "Leno".into(),
+            credential: "device-secret-token-for-unit-test".into(),
+            allow_insecure_localhost: true,
+            reconnect_delay: Duration::from_secs(1),
+        };
+        let stale_payload = json!({
+            "type": "policy_sync",
+            "policy": rev1,
+        });
+        let raw = serde_json::to_string(&stale_payload).unwrap();
+        let reply_text = super::handle_inbound_text(&runtime, &config, &raw)
+            .await
+            .expect("handle_inbound_text should return policy_ack JSON");
+        let reply: serde_json::Value = serde_json::from_str(&reply_text).unwrap();
+        assert_eq!(reply["type"], "policy_ack");
+        assert_eq!(reply["deviceId"], "Leno");
+        assert_eq!(reply["revision"], 1);
+        assert_eq!(reply["currentRevision"], 2);
+        assert_eq!(reply["applied"], false);
+        assert!(reply["error"].as_str().is_some());
     }
 }

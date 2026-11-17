@@ -251,11 +251,17 @@ async fn main() {
         }
     };
 
-    let runtime = match AgentRuntime::new(
+    let relay_device_id = match &transport {
+        TransportMode::Relay { device_id, .. } => Some(device_id.as_str()),
+        TransportMode::Stdio => None,
+    };
+
+    let runtime = match AgentRuntime::new_with_device(
         options.allowed_roots,
         principal,
         options.state_dir.as_deref(),
         browser_provider,
+        relay_device_id,
     ) {
         Ok(runtime) => Arc::new(runtime),
         Err(error) => {

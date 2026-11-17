@@ -558,14 +558,49 @@ export class PolicyStore {
     if (input.capabilities) {
       record.capabilities = input.capabilities;
     }
-    if (
+
+    const reportedRevision =
       typeof input.appliedPolicyRevision === "number" &&
-      input.appliedPolicyRevision === record.desiredRevision
-    ) {
-      record.appliedRevision = input.appliedPolicyRevision;
+      Number.isFinite(input.appliedPolicyRevision) &&
+      input.appliedPolicyRevision >= 1
+        ? input.appliedPolicyRevision
+        : null;
+
+    if (reportedRevision !== null && reportedRevision > record.desiredRevision) {
+      record.appliedRevision = reportedRevision;
+      record.lastAckAtMs = Date.now();
+      record.lastAckError = `Device reported applied revision ${reportedRevision} ahead of relay desired revision ${record.desiredRevision}`;
+      this.#appendAudit({
+        accountId: input.accountId,
+        actorPrincipalId: `device:${input.deviceId}`,
+        deviceId: input.deviceId,
+        action: "policy_revision_ahead",
+        reason: record.lastAckError,
+        revision: reportedRevision,
+        deliveryStatus: "not_applicable",
+        details: {
+          desiredRevision: record.desiredRevision,
+          reportedRevision,
+        },
+      });
+      await this.#persist();
+      return null;
+    }
+
+    if (reportedRevision !== null && reportedRevision === record.desiredRevision) {
+      record.appliedRevision = reportedRevision;
       record.lastAckAtMs = Date.now();
       record.lastAckError = null;
+      this.#markAuditDelivery(
+        input.deviceId,
+        reportedRevision,
+        "confirmed_by_device",
+      );
+    } else {
+      record.appliedRevision = reportedRevision;
+      record.lastAckError = null;
     }
+
     await this.#persist();
     return structuredClone(record.policy);
   }
@@ -574,6 +609,7 @@ export class PolicyStore {
     deviceId: string;
     accountId: string;
     revision: number;
+    currentRevision?: number | null;
     applied: boolean;
     appliedAtMs?: number;
     status?: Record<string, unknown> | null;
@@ -591,21 +627,46 @@ export class PolicyStore {
       record.capabilities = input.capabilities;
     }
     if (input.applied) {
-      if (
-        record.appliedRevision === null ||
-        input.revision >= record.appliedRevision
-      ) {
-        record.appliedRevision = input.revision;
-        record.lastAckAtMs = input.appliedAtMs ?? Date.now();
-        record.lastAckError = null;
+      if (input.revision > record.desiredRevision) {
+        if (
+          record.appliedRevision === null ||
+          input.revision > record.appliedRevision
+        ) {
+          record.appliedRevision = input.revision;
+        }
+        record.lastAckError = `Device acknowledged unexpected future revision ${input.revision} ahead of desired revision ${record.desiredRevision}`;
+      } else {
+        if (
+          record.appliedRevision === null ||
+          input.revision >= record.appliedRevision
+        ) {
+          record.appliedRevision = input.revision;
+        }
+        if (input.revision === record.desiredRevision) {
+          record.lastAckAtMs = input.appliedAtMs ?? Date.now();
+          record.lastAckError = null;
+        }
+        this.#markAuditDelivery(
+          input.deviceId,
+          input.revision,
+          "confirmed_by_device",
+        );
       }
-      this.#markAuditDelivery(
-        input.deviceId,
-        input.revision,
-        "confirmed_by_device",
-      );
     } else {
-      record.lastAckError = input.error ?? "Device rejected policy update";
+      if (
+        typeof input.currentRevision === "number" &&
+        Number.isFinite(input.currentRevision)
+      ) {
+        record.appliedRevision =
+          input.currentRevision >= 1 ? input.currentRevision : null;
+      }
+      if (
+        input.revision >= record.desiredRevision ||
+        (record.appliedRevision !== record.desiredRevision &&
+          !record.lastAckError)
+      ) {
+        record.lastAckError = input.error ?? "Device rejected policy update";
+      }
       this.#markAuditDelivery(
         input.deviceId,
         input.revision,
@@ -631,7 +692,8 @@ export class PolicyStore {
       throw new Error("device is not authorized for this account");
     }
     const record = await this.ensureDevicePolicy(binding);
-    const nextRevision = record.desiredRevision + 1;
+    const nextRevision =
+      Math.max(record.desiredRevision, record.appliedRevision ?? 0) + 1;
     const now = Date.now();
     const nextOwnerPolicy = applyMutationToPermissionSet(
       record.policy.owner_policy,
@@ -757,7 +819,8 @@ export class PolicyStore {
       nextOp.role = "operator";
       nextOp.principal_id = operatorId;
 
-      const nextRevision = record.desiredRevision + 1;
+      const nextRevision =
+        Math.max(record.desiredRevision, record.appliedRevision ?? 0) + 1;
       const reason =
         input.mutation.reason?.trim() ||
         `Configured operator ${operatorId} on ${binding.deviceId}`;
@@ -775,6 +838,7 @@ export class PolicyStore {
 
       record.policy = nextPolicy;
       record.desiredRevision = nextRevision;
+      record.lastAckError = null;
       this.#saveSnapshot(record, input.actorPrincipalId, reason);
       this.#appendAudit({
         accountId: input.accountId,
@@ -819,7 +883,8 @@ export class PolicyStore {
       if (!(operatorId in record.policy.operator_policies)) continue;
       const nextOperators = structuredClone(record.policy.operator_policies);
       delete nextOperators[operatorId];
-      const nextRevision = record.desiredRevision + 1;
+      const nextRevision =
+        Math.max(record.desiredRevision, record.appliedRevision ?? 0) + 1;
       const reason =
         input.reason?.trim() ||
         `Removed operator ${operatorId} from ${binding.deviceId}`;
@@ -833,6 +898,7 @@ export class PolicyStore {
       };
       record.policy = nextPolicy;
       record.desiredRevision = nextRevision;
+      record.lastAckError = null;
       this.#saveSnapshot(record, input.actorPrincipalId, reason);
       this.#appendAudit({
         accountId: input.accountId,
@@ -875,7 +941,8 @@ export class PolicyStore {
     }
 
     const record = await this.ensureDevicePolicy(binding);
-    const nextRevision = record.desiredRevision + 1;
+    const nextRevision =
+      Math.max(record.desiredRevision, record.appliedRevision ?? 0) + 1;
     const reason =
       input.reason?.trim() ||
       `Rolled back ${input.deviceId} to snapshot revision ${input.targetRevision}`;
@@ -1304,8 +1371,16 @@ export class PolicyStore {
     status: PolicyAuditEvent["deliveryStatus"],
   ): void {
     for (const event of this.#auditHistory) {
-      if (event.deviceId === deviceId && event.revision === revision) {
+      if (event.deviceId !== deviceId || event.revision === null) continue;
+      if (event.revision === revision) {
         event.deliveryStatus = status;
+      } else if (
+        status === "confirmed_by_device" &&
+        event.revision < revision &&
+        (event.deliveryStatus === "pending_device_ack" ||
+          event.deliveryStatus === "device_offline")
+      ) {
+        event.deliveryStatus = "confirmed_by_device";
       }
     }
   }

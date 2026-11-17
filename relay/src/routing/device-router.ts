@@ -40,6 +40,7 @@ export type DeviceToRelayMessage =
       type: "policy_ack";
       deviceId: string;
       revision: number;
+      currentRevision?: number | null;
       applied: boolean;
       appliedAtMs?: number;
       status?: Record<string, unknown> | null;
@@ -274,6 +275,9 @@ export class DeviceRouter {
         deviceId: connection.deviceId,
         accountId: connection.accountId,
         revision: message.revision,
+        ...(typeof message.currentRevision === "number"
+          ? { currentRevision: message.currentRevision }
+          : {}),
         applied: message.applied,
         ...(typeof message.appliedAtMs === "number"
           ? { appliedAtMs: message.appliedAtMs }
