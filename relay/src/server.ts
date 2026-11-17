@@ -30,6 +30,7 @@ import {
   DeviceRouter,
 } from "./routing/device-router.ts";
 import { RelayHealthHttpGateway } from "./health-http.ts";
+import { PolicyStore } from "./policy/policy-store.ts";
 
 type NodeRelayServer =
   | ReturnType<typeof createHttpServer>
@@ -41,10 +42,12 @@ export type RelayListenAddress = {
   httpUrl: string;
   mcpUrl: string;
   deviceWsUrl: string;
+  portalUrl?: string;
 };
 
 export class RelayServer {
   readonly registry: DeviceRegistry;
+  readonly policyStore: PolicyStore;
   readonly router: DeviceRouter;
   readonly deviceGateway: DeviceWebSocketGateway;
   readonly mcpGateway: RemoteMcpHttpGateway;
@@ -62,6 +65,7 @@ export class RelayServer {
     secure: boolean;
     allowInsecureLocalhost: boolean;
     registry: DeviceRegistry;
+    policyStore: PolicyStore;
     router: DeviceRouter;
     deviceGateway: DeviceWebSocketGateway;
     mcpGateway: RemoteMcpHttpGateway;
@@ -74,6 +78,7 @@ export class RelayServer {
     this.#allowInsecureLocalhost =
       options.allowInsecureLocalhost;
     this.registry = options.registry;
+    this.policyStore = options.policyStore;
     this.router = options.router;
     this.deviceGateway = options.deviceGateway;
     this.mcpGateway = options.mcpGateway;
@@ -96,8 +101,15 @@ export class RelayServer {
         ? { stateFile: options.stateFile }
         : {},
     );
+    const policyStore = await PolicyStore.open({
+      registry,
+      ...(options.stateFile
+        ? { stateFile: options.stateFile }
+        : {}),
+    });
     const router = new DeviceRouter({
       registry,
+      policyStore,
       ...(options.routeTimeoutMs === undefined
         ? {}
         : { timeoutMs: options.routeTimeoutMs }),
@@ -114,6 +126,7 @@ export class RelayServer {
     const healthGateway = new RelayHealthHttpGateway();
     const controlGateway = new RelayControlHttpGateway({
       registry,
+      policyStore,
       authenticator: options.authenticator,
       disconnectDevice: (deviceId) =>
         deviceGateway.disconnectDevice(deviceId),
@@ -146,6 +159,7 @@ export class RelayServer {
       allowInsecureLocalhost:
         options.allowInsecureLocalhost ?? false,
       registry,
+      policyStore,
       router,
       deviceGateway,
       mcpGateway,

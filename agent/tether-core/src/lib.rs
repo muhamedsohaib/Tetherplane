@@ -23,7 +23,10 @@ pub use policy::{
     ApprovalScope, LocalPolicyBroker, LocalPolicyConfig, PolicyBroker, PolicyDecision,
     SideEffectClass, authorize_path,
 };
-pub use principal::{PrincipalAuthentication, PrincipalProfile};
+pub use principal::{
+    CapabilityDenialKind, PrincipalAuthentication, PrincipalPermissionSet, PrincipalProfile,
+    PrincipalRole, SynchronizedDevicePolicy, ToolFamily, tool_family_for_capability,
+};
 pub use provider::{CapabilityProvider, ProviderResult};
 pub use router::CapabilityRouter;
 

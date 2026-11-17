@@ -4,10 +4,10 @@ use std::time::Duration;
 
 use futures_util::{SinkExt, StreamExt};
 use serde::{Deserialize, Serialize};
-use serde_json::json;
+use serde_json::{Value, json};
 use tether_core::{
-    CapabilityError, ErrorCode, InvocationEnvelope, ResultEnvelope, ResultStatus, Timing,
-    VerificationStatus,
+    CapabilityError, ErrorCode, InvocationEnvelope, ResultEnvelope, ResultStatus,
+    SynchronizedDevicePolicy, Timing, VerificationStatus,
 };
 use tokio_tungstenite::connect_async;
 use tokio_tungstenite::tungstenite::client::IntoClientRequest;
@@ -32,6 +32,7 @@ enum RelayFailure {
     Fatal(String),
     Retryable(String),
 }
+
 #[derive(Debug, Deserialize)]
 #[serde(tag = "type")]
 enum RelayInbound {
@@ -41,10 +42,12 @@ enum RelayInbound {
         route_id: String,
         invocation: InvocationEnvelope,
     },
+    #[serde(rename = "policy_sync")]
+    PolicySync { policy: SynchronizedDevicePolicy },
 }
 
 #[derive(Serialize)]
-struct RelayOutbound<'a> {
+struct RelayResultOutbound<'a> {
     #[serde(rename = "type")]
     kind: &'static str,
     #[serde(rename = "routeId")]
@@ -68,6 +71,7 @@ pub(crate) fn validate_relay_url(url: &str, allow_insecure_localhost: bool) -> R
 fn is_loopback_host(host: Option<&str>) -> bool {
     matches!(host, Some("localhost" | "127.0.0.1" | "::1"))
 }
+
 pub(crate) fn load_device_credential(path: &Path) -> Result<String, String> {
     let content = std::fs::read_to_string(path)
         .map_err(|error| format!("failed to read device credential file: {error}"))?;
@@ -117,49 +121,35 @@ async fn connect_and_run(
         .await
         .map_err(|error| classify_connect_error(&error))?;
 
+    let hello_payload = json!({
+        "type": "device_hello",
+        "deviceId": config.device_id,
+        "appliedPolicyRevision": runtime.applied_policy_revision(),
+        "status": runtime.device_status(),
+        "capabilities": runtime.device_capabilities(None, Some(&config.device_id)),
+    });
+    if let Ok(hello_text) = serde_json::to_string(&hello_payload) {
+        socket
+            .send(Message::Text(hello_text.into()))
+            .await
+            .map_err(|error| {
+                RelayFailure::Retryable(format!("websocket hello send failed: {error}"))
+            })?;
+    }
+
     while let Some(next) = socket.next().await {
         let message = next.map_err(|error| {
             RelayFailure::Retryable(format!("websocket receive failed: {error}"))
         })?;
         match message {
             Message::Text(text) => {
-                let inbound =
-                    serde_json::from_str::<RelayInbound>(text.as_str()).map_err(|error| {
-                        RelayFailure::Retryable(format!(
-                            "relay sent invalid invocation message: {error}"
-                        ))
+                let outbound = handle_inbound_text(&runtime, config, text.as_str()).await?;
+                socket
+                    .send(Message::Text(outbound.into()))
+                    .await
+                    .map_err(|error| {
+                        RelayFailure::Retryable(format!("websocket send failed: {error}"))
                     })?;
-                match inbound {
-                    RelayInbound::Invoke {
-                        route_id,
-                        invocation,
-                    } => {
-                        let result =
-                            if invocation.device_id.as_deref() == Some(config.device_id.as_str()) {
-                                runtime.execute(invocation).await
-                            } else {
-                                wrong_device_result(&invocation, &config.device_id)
-                            };
-                        let payload = serde_json::to_string(&RelayOutbound {
-                            kind: "result",
-                            route_id: &route_id,
-                            result: &result,
-                        })
-                        .map_err(|error| {
-                            RelayFailure::Fatal(format!(
-                                "failed to serialize relay result: {error}"
-                            ))
-                        })?;
-                        socket
-                            .send(Message::Text(payload.into()))
-                            .await
-                            .map_err(|error| {
-                                RelayFailure::Retryable(format!(
-                                    "websocket result send failed: {error}"
-                                ))
-                            })?;
-                    }
-                }
             }
             Message::Ping(payload) => {
                 socket.send(Message::Pong(payload)).await.map_err(|error| {
@@ -172,6 +162,73 @@ async fn connect_and_run(
     }
 
     Ok(())
+}
+
+async fn handle_inbound_text(
+    runtime: &Arc<AgentRuntime>,
+    config: &RelayConfig,
+    text: &str,
+) -> Result<String, RelayFailure> {
+    let inbound = serde_json::from_str::<RelayInbound>(text)
+        .map_err(|error| RelayFailure::Retryable(format!("relay sent invalid message: {error}")))?;
+    match inbound {
+        RelayInbound::Invoke {
+            route_id,
+            invocation,
+        } => {
+            let result = if invocation.device_id.as_deref() == Some(config.device_id.as_str()) {
+                runtime.execute(invocation).await
+            } else {
+                wrong_device_result(&invocation, &config.device_id)
+            };
+            serde_json::to_string(&RelayResultOutbound {
+                kind: "result",
+                route_id: &route_id,
+                result: &result,
+            })
+            .map_err(|error| {
+                RelayFailure::Fatal(format!("failed to serialize relay result: {error}"))
+            })
+        }
+        RelayInbound::PolicySync { policy } => {
+            let ack_payload = if policy.device_id == config.device_id {
+                match runtime.apply_synchronized_policy(policy) {
+                    Ok(ack_data) => build_policy_ack(&config.device_id, &ack_data, None),
+                    Err(error) => json!({
+                        "type": "policy_ack",
+                        "deviceId": config.device_id,
+                        "revision": runtime.applied_policy_revision(),
+                        "applied": false,
+                        "error": error.message,
+                    }),
+                }
+            } else {
+                json!({
+                    "type": "policy_ack",
+                    "deviceId": config.device_id,
+                    "revision": runtime.applied_policy_revision(),
+                    "applied": false,
+                    "error": "policy_sync target device does not match local device_id",
+                })
+            };
+            serde_json::to_string(&ack_payload).map_err(|error| {
+                RelayFailure::Fatal(format!("failed to serialize policy_ack: {error}"))
+            })
+        }
+    }
+}
+
+fn build_policy_ack(device_id: &str, ack_data: &Value, error: Option<&str>) -> Value {
+    json!({
+        "type": "policy_ack",
+        "deviceId": device_id,
+        "revision": ack_data["revision"],
+        "applied": ack_data["applied"],
+        "appliedAtMs": ack_data["appliedAtMs"],
+        "status": ack_data["status"],
+        "capabilities": ack_data["capabilities"],
+        "error": error,
+    })
 }
 
 fn classify_connect_error(error: &WebSocketError) -> RelayFailure {
@@ -211,9 +268,11 @@ fn wrong_device_result(invocation: &InvocationEnvelope, local_device_id: &str) -
         timing: Timing { duration_ms: 0 },
     }
 }
+
 #[cfg(test)]
 mod tests {
-    use super::validate_relay_url;
+    use super::{RelayInbound, validate_relay_url};
+    use serde_json::json;
 
     #[test]
     fn relay_url_requires_wss_except_explicit_loopback_test_mode() {
@@ -222,5 +281,45 @@ mod tests {
         assert!(validate_relay_url("ws://localhost:8765/device", true).is_ok());
         assert!(validate_relay_url("ws://relay.example.test/device", false).is_err());
         assert!(validate_relay_url("http://relay.example.test/device", true).is_err());
+    }
+
+    #[test]
+    fn policy_sync_inbound_message_deserializes_universal_owner_policy() {
+        let message = json!({
+            "type": "policy_sync",
+            "policy": {
+                "device_id": "Leno",
+                "owner_account_id": "account-a",
+                "owner_principal_id": "human:account-a",
+                "revision": 3,
+                "updated_at_ms": 1_700_000_000_000_u64,
+                "updated_by": "human:account-a",
+                "reason": "Grant universal access",
+                "emergency_lockdown": false,
+                "owner_policy": {
+                    "principal_id": "human:account-a",
+                    "role": "owner",
+                    "profile_id": "universal",
+                    "universal_permissions": true,
+                    "allowed_families": ["device", "files", "process", "browser", "desktop", "batch"],
+                    "denied_families": [],
+                    "allowed_capabilities": [],
+                    "denied_capabilities": [],
+                    "allowed_roots": [],
+                    "allow_destructive": true
+                },
+                "operator_policies": {}
+            }
+        });
+
+        let parsed: RelayInbound = serde_json::from_value(message).unwrap();
+        match parsed {
+            RelayInbound::PolicySync { policy } => {
+                assert_eq!(policy.device_id, "Leno");
+                assert_eq!(policy.revision, 3);
+                assert!(policy.owner_policy.universal_permissions);
+            }
+            RelayInbound::Invoke { .. } => panic!("expected PolicySync"),
+        }
     }
 }

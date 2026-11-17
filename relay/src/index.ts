@@ -17,6 +17,27 @@ export {
   type RelayToDeviceMessage,
 } from "./routing/device-router.ts";
 export {
+  PolicyStore,
+  ALL_TOOL_FAMILIES,
+  CANONICAL_OPERATIONS_BY_FAMILY,
+  createUniversalOwnerPermissionSet,
+  createProfilePermissionSet,
+  evaluatePermissionSet,
+  toolFamilyForCapability,
+  type DevicePolicyRecord,
+  type DeviceSyncStatus,
+  type IdentityUsageRecord,
+  type PermissionProfileId,
+  type PolicyAuditEvent,
+  type PolicyMutationInput,
+  type PolicySnapshot,
+  type PrincipalPermissionSet,
+  type PrincipalRole,
+  type SynchronizedDevicePolicy,
+  type ToolFamily,
+} from "./policy/policy-store.ts";
+export { renderControlPortalHtml } from "./portal/portal-ui.ts";
+export {
   RelayServer,
   type RelayListenAddress,
 } from "./server.ts";

@@ -498,3 +498,97 @@ fn successful_browser_handshake_registers_real_provider_and_capabilities() {
     assert!(child.wait().unwrap().success());
     bridge.join().unwrap();
 }
+
+#[test]
+fn device_capabilities_distinguishes_available_operations_from_effective_grants_and_reports_tool_families()
+ {
+    const CAPS_ID: &str = "00000000-0000-4000-8000-0000000000d1";
+
+    let profile_path = std::env::temp_dir().join(format!(
+        "tetherplane-caps-effective-{}-{}.json",
+        std::process::id(),
+        CAPS_ID
+    ));
+    std::fs::write(
+        &profile_path,
+        serde_json::to_vec_pretty(&json!({
+            "principal_id": "model:scoped-reader",
+            "authentication": "local_process_binding",
+            "allowed_devices": ["Leno"],
+            "allowed_capabilities": [
+                "device.capabilities",
+                "device.status",
+                "filesystem.read"
+            ],
+            "allowed_roots": []
+        }))
+        .unwrap(),
+    )
+    .unwrap();
+
+    let mut child = Command::new(env!("CARGO_BIN_EXE_tetherd"))
+        .arg("--stdio-rpc")
+        .arg("--principal-profile")
+        .arg(&profile_path)
+        .stdin(Stdio::piped())
+        .stdout(Stdio::piped())
+        .stderr(Stdio::piped())
+        .spawn()
+        .unwrap();
+
+    let mut request = device_status_invocation(CAPS_ID);
+    request["capability"] = json!("device.capabilities");
+
+    let mut stdin = child.stdin.take().unwrap();
+    writeln!(stdin, "{}", serde_json::to_string(&request).unwrap()).unwrap();
+    drop(stdin);
+
+    let stdout = child.stdout.take().unwrap();
+    let mut reader = BufReader::new(stdout);
+    let mut line = String::new();
+    assert!(reader.read_line(&mut line).unwrap() > 0);
+    let result: Value = serde_json::from_str(line.trim_end()).unwrap();
+    assert_eq!(result["status"], "success");
+
+    let providers = result["data"]["providers"].as_array().unwrap();
+    let filesystem = providers
+        .iter()
+        .find(|p| p["namespace"] == "filesystem")
+        .unwrap();
+    // Available provider operations include read, write, delete, etc., while granted operations only include read
+    let available_ops = filesystem["available_operations"].as_array().unwrap();
+    assert!(available_ops.contains(&json!("read")));
+    assert!(available_ops.contains(&json!("write")));
+    assert!(available_ops.contains(&json!("delete")));
+    assert_eq!(filesystem["granted_operations"], json!(["read"]));
+    assert_eq!(filesystem["operations"], json!(["read"]));
+    assert!(
+        filesystem["denied_operations"]
+            .as_array()
+            .unwrap()
+            .contains(&json!("write"))
+    );
+
+    let browser = providers
+        .iter()
+        .find(|p| p["namespace"] == "browser")
+        .unwrap();
+    assert_eq!(browser["available"], false);
+    assert!(browser["unavailable_reason"].as_str().is_some());
+
+    let effective = &result["data"]["effective_permissions"];
+    assert_eq!(effective["principal_id"], "model:scoped-reader");
+    assert_eq!(effective["universal_default"], false);
+
+    let families = &result["data"]["tool_families"];
+    assert!(families["device"].is_object());
+    assert!(families["files"].is_object());
+    assert!(families["process"].is_object());
+    assert!(families["browser"].is_object());
+    assert!(families["desktop"].is_object());
+    assert!(families["batch"].is_object());
+
+    let exit = child.wait().unwrap();
+    let _ = std::fs::remove_file(&profile_path);
+    assert!(exit.success());
+}

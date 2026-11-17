@@ -83,6 +83,7 @@ export {
 
 export {
   BrowserBridgeService,
+  HotSwappableBrowserBackend,
   startBrowserRpcServer,
   type BrowserRpcServer,
   type BrowserServiceBackend,

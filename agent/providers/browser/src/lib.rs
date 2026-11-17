@@ -108,6 +108,42 @@ impl BrowserProvider {
         }
     }
 
+    /// Creates a reconnectable browser provider bound to a validated loopback bridge address.
+    ///
+    /// # Errors
+    ///
+    /// Returns an `invalid_arguments` error when `config.address` is empty or not a loopback IP socket.
+    pub fn new_reconnectable(config: BrowserBridgeConfig) -> Result<Self, CapabilityError> {
+        if config.address.trim().is_empty() {
+            return Err(invalid("browser bridge address must be non-empty"));
+        }
+        let address = config
+            .address
+            .parse::<SocketAddr>()
+            .map_err(|_| invalid("browser bridge address must be an IP socket address"))?;
+        if !address.ip().is_loopback() {
+            return Err(invalid("browser bridge address must be loopback-only"));
+        }
+        let operations = [
+            "status",
+            "pages",
+            "create_tab",
+            "snapshot",
+            "navigate",
+            "close",
+            "act",
+            "wait",
+            "upload",
+            "downloads",
+            "diagnostics",
+            "checkpoint",
+        ]
+        .into_iter()
+        .map(ToOwned::to_owned)
+        .collect();
+        Ok(Self { config, operations })
+    }
+
     #[must_use]
     pub fn operations(&self) -> &[String] {
         &self.operations

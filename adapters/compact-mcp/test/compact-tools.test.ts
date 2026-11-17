@@ -263,3 +263,72 @@ test("device capabilities is queried from the agent", async () => {
     await Promise.all([client.close(), server.close()]);
   }
 });
+
+test("device schema exposes all canonical browser operations and filesystem.delete", async () => {
+  const server = createCompactMcpServer({
+    agentClient: {
+      call: async () => {
+        throw new Error("schema lookup should not invoke the agent");
+      },
+    },
+  });
+  const client = new Client(
+    { name: "browser-schema-test", version: "0.1.0" },
+    { capabilities: {} },
+  );
+  const [clientTransport, serverTransport] =
+    InMemoryTransport.createLinkedPair();
+
+  await Promise.all([
+    server.connect(serverTransport),
+    client.connect(clientTransport),
+  ]);
+
+  try {
+    const browserOperations = [
+      "status",
+      "pages",
+      "create_tab",
+      "snapshot",
+      "navigate",
+      "close",
+      "act",
+      "wait",
+      "upload",
+      "downloads",
+      "diagnostics",
+      "checkpoint",
+    ];
+    for (const operation of browserOperations) {
+      const result = await client.callTool({
+        name: "device",
+        arguments: {
+          op: "schema",
+          args: {
+            namespace: "browser",
+            operation,
+          },
+        },
+      });
+      assert.equal(
+        result.isError,
+        undefined,
+        `expected browser.${operation} schema to be available`,
+      );
+    }
+
+    const deleteSchema = await client.callTool({
+      name: "device",
+      arguments: {
+        op: "schema",
+        args: {
+          namespace: "files",
+          operation: "delete",
+        },
+      },
+    });
+    assert.equal(deleteSchema.isError, undefined);
+  } finally {
+    await Promise.all([client.close(), server.close()]);
+  }
+});

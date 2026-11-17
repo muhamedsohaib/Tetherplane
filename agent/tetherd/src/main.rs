@@ -167,6 +167,48 @@ fn load_browser_token(path: Option<&PathBuf>) -> Result<Option<String>, String> 
     Ok(Some(token.to_owned()))
 }
 
+async fn init_browser_provider(
+    address: Option<String>,
+    browser_token: Option<String>,
+    is_relay_mode: bool,
+) -> Result<Option<Arc<BrowserProvider>>, String> {
+    let Some(address) = address else {
+        return Ok(None);
+    };
+    let bridge_config = BrowserBridgeConfig {
+        address,
+        token: browser_token,
+        timeout_ms: 2_000,
+    };
+    match BrowserProvider::connect_with_retry(
+        bridge_config.clone(),
+        5,
+        Duration::from_millis(100),
+    )
+    .await
+    {
+        Ok(provider) => Ok(Some(Arc::new(provider))),
+        Err(error)
+            if is_relay_mode
+                && matches!(
+                    error.code,
+                    tether_core::ErrorCode::Disconnected | tether_core::ErrorCode::Timeout
+                ) =>
+        {
+            BrowserProvider::new_reconnectable(bridge_config)
+                .map(|provider| {
+                    eprintln!(
+                        "browser bridge not yet listening ({}); registered reconnectable browser provider",
+                        error.message
+                    );
+                    Some(Arc::new(provider))
+                })
+                .map_err(|init_err| format!("browser bridge unavailable: {}", init_err.message))
+        }
+        Err(error) => Err(format!("browser bridge unavailable: {}", error.message)),
+    }
+}
+
 #[tokio::main]
 async fn main() {
     let options = match parse_args() {
@@ -195,26 +237,18 @@ async fn main() {
         }
     };
 
-    let browser_provider = if let Some(address) = options.browser_bridge {
-        match BrowserProvider::connect_with_retry(
-            BrowserBridgeConfig {
-                address,
-                token: browser_token,
-                timeout_ms: 2_000,
-            },
-            5,
-            Duration::from_millis(100),
-        )
-        .await
-        {
-            Ok(provider) => Some(Arc::new(provider)),
-            Err(error) => {
-                eprintln!("browser bridge unavailable: {}", error.message);
-                std::process::exit(1);
-            }
+    let browser_provider = match init_browser_provider(
+        options.browser_bridge,
+        browser_token,
+        matches!(transport, TransportMode::Relay { .. }),
+    )
+    .await
+    {
+        Ok(provider) => provider,
+        Err(message) => {
+            eprintln!("{message}");
+            std::process::exit(1);
         }
-    } else {
-        None
     };
 
     let runtime = match AgentRuntime::new(
