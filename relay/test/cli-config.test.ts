@@ -156,6 +156,60 @@ test("CLI requires auth config and either TLS pair or explicit insecure loopback
   assert.equal(tls.allowInsecureLocalhost, false);
 });
 
+test("CLI validates --public-origin and --trust-proxy-headers strictly", () => {
+  const proxied = parseRelayArgs([
+    "--auth-config",
+    "auth.json",
+    "--allow-insecure-localhost",
+    "--public-origin",
+    "https://tether.example/",
+    "--trust-proxy-headers",
+  ]);
+  assert.equal(proxied.publicOrigin, "https://tether.example");
+  assert.equal(proxied.trustProxyHeaders, true);
+
+  assert.throws(
+    () =>
+      parseRelayArgs([
+        "--auth-config",
+        "auth.json",
+        "--allow-insecure-localhost",
+        "--trust-proxy-headers",
+      ]),
+    /public-origin/i,
+  );
+  assert.throws(
+    () =>
+      parseRelayArgs([
+        "--auth-config",
+        "auth.json",
+        "--allow-insecure-localhost",
+        "--public-origin",
+        "http://tether.example",
+      ]),
+    /https|loopback/i,
+  );
+  for (const invalidOrigin of [
+    "https://tether.example/portal",
+    "https://tether.example?x=1",
+    "https://tether.example#frag",
+    "https://user:pass@tether.example",
+    "ws://tether.example",
+  ]) {
+    assert.throws(
+      () =>
+        parseRelayArgs([
+          "--auth-config",
+          "auth.json",
+          "--allow-insecure-localhost",
+          "--public-origin",
+          invalidOrigin,
+        ]),
+      /public-origin/i,
+    );
+  }
+});
+
 
 test("OIDC auth config loads device-login bridge value only through environment reference", async () => {
   const dir = await mkdtemp(

@@ -119,7 +119,7 @@ impl AgentRuntime {
         }
         let policy = Arc::new(LocalPolicyBroker::new(policy_config));
         if let Some(dir) = state_dir
-            && let Some(persisted) = load_persisted_policy(dir, bound_device_id.as_deref())
+            && let Some(persisted) = load_persisted_policy(dir, bound_device_id.as_deref())?
         {
             policy.set_synchronized_policy(Some(persisted));
         }
@@ -265,9 +265,9 @@ impl AgentRuntime {
         let current = self.policy.synchronized_policy();
         let current_revision = current.as_ref().map_or(0, |existing| existing.revision);
 
-        if revision == 0 {
+        if let Err(message) = policy.validate_invariants() {
             return Err(invalid_arguments_with_details(
-                "policy_sync revision must be >= 1",
+                &message,
                 json!({ "rejected_revision": revision, "current_revision": current_revision }),
             ));
         }
@@ -446,17 +446,66 @@ fn policies_structurally_equal(
 fn load_persisted_policy(
     state_dir: &Path,
     expected_device_id: Option<&str>,
-) -> Option<SynchronizedDevicePolicy> {
+) -> Result<Option<SynchronizedDevicePolicy>, CapabilityError> {
     let path = state_dir.join("policy").join("synchronized-policy.json");
-    let raw = fs::read_to_string(path).ok()?;
-    let parsed = serde_json::from_str::<SynchronizedDevicePolicy>(&raw).ok()?;
-    if parsed.revision == 0 {
-        return None;
+    let raw = match fs::read_to_string(&path) {
+        Ok(content) => content,
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => return Ok(None),
+        Err(error) => {
+            return Err(CapabilityError {
+                code: ErrorCode::ProviderFailure,
+                message: format!(
+                    "failed to read persisted synchronized policy {}: {error}",
+                    path.display()
+                ),
+                recovery_hint: Some(
+                    "Repair or remove the unreadable persisted policy file after re-authenticating this device."
+                        .to_owned(),
+                ),
+                details: json!({}),
+            });
+        }
+    };
+    let parsed = serde_json::from_str::<SynchronizedDevicePolicy>(&raw).map_err(|error| {
+        CapabilityError {
+            code: ErrorCode::ProviderFailure,
+            message: format!(
+                "corrupt persisted synchronized policy {}: {error}",
+                path.display()
+            ),
+            recovery_hint: Some(
+                "Remove the corrupt policy state file only after verifying expected permissions in the Control Portal."
+                    .to_owned(),
+            ),
+            details: json!({}),
+        }
+    })?;
+    if let Err(message) = parsed.validate_invariants() {
+        return Err(CapabilityError {
+            code: ErrorCode::ProviderFailure,
+            message: format!(
+                "invalid persisted synchronized policy {}: {message}",
+                path.display()
+            ),
+            recovery_hint: None,
+            details: json!({}),
+        });
     }
-    if expected_device_id.is_some_and(|expected| parsed.device_id != expected) {
-        return None;
+    if let Some(expected) = expected_device_id
+        && parsed.device_id != expected
+    {
+        return Err(CapabilityError {
+            code: ErrorCode::ProviderFailure,
+            message: format!(
+                "persisted synchronized policy {} targets device '{}' instead of bound device '{expected}'",
+                path.display(),
+                parsed.device_id
+            ),
+            recovery_hint: None,
+            details: json!({}),
+        });
     }
-    Some(parsed)
+    Ok(Some(parsed))
 }
 
 fn persist_synchronized_policy(
@@ -1509,5 +1558,114 @@ mod tests {
             desktop_provider["unavailable_reason"],
             serde_json::Value::Null
         );
+    }
+
+    #[test]
+    fn corrupt_or_untrusted_persisted_policy_fails_closed_at_runtime_startup() {
+        let corrupt_state = TempStateDir::create();
+        let policy_dir = corrupt_state.0.join("policy");
+        fs::create_dir_all(&policy_dir).unwrap();
+        fs::write(
+            policy_dir.join("synchronized-policy.json"),
+            "{not-valid-json",
+        )
+        .unwrap();
+
+        let Err(err) = AgentRuntime::new_with_device(
+            vec![corrupt_state.0.clone()],
+            None,
+            Some(&corrupt_state.0),
+            None,
+            Some("Leno"),
+        ) else {
+            panic!("corrupt synchronized-policy.json must fail closed");
+        };
+        assert!(
+            err.message.to_lowercase().contains("corrupt")
+                || err.message.to_lowercase().contains("policy"),
+            "unexpected error: {}",
+            err.message
+        );
+
+        let mismatch_state = TempStateDir::create();
+        let mismatch_dir = mismatch_state.0.join("policy");
+        fs::create_dir_all(&mismatch_dir).unwrap();
+        let wrong_device_policy = SynchronizedDevicePolicy::universal_for_owner(
+            "OtherDevice",
+            "account-a",
+            "human:account-a",
+        );
+        fs::write(
+            mismatch_dir.join("synchronized-policy.json"),
+            serde_json::to_vec(&wrong_device_policy).unwrap(),
+        )
+        .unwrap();
+
+        assert!(
+            AgentRuntime::new_with_device(
+                vec![mismatch_state.0.clone()],
+                None,
+                Some(&mismatch_state.0),
+                None,
+                Some("Leno"),
+            )
+            .is_err(),
+            "persisted policy for a different device must fail closed"
+        );
+    }
+
+    #[test]
+    fn synchronized_policy_rejects_non_owner_prefixes_and_operator_owner_collisions() {
+        let state = TempStateDir::create();
+        let runtime = AgentRuntime::new_with_device(
+            vec![state.0.clone()],
+            None,
+            Some(&state.0),
+            None,
+            Some("Leno"),
+        )
+        .unwrap();
+
+        let non_owner_prefix =
+            SynchronizedDevicePolicy::universal_for_owner("Leno", "account-a", "service:ci");
+        assert!(runtime.apply_synchronized_policy(non_owner_prefix).is_err());
+
+        let mut collision =
+            SynchronizedDevicePolicy::universal_for_owner("Leno", "account-a", "human:account-a");
+        collision.operator_policies.insert(
+            "human:account-a".to_owned(),
+            tether_core::PrincipalPermissionSet {
+                principal_id: "human:account-a".to_owned(),
+                role: tether_core::PrincipalRole::Operator,
+                profile_id: "lockdown".to_owned(),
+                universal_permissions: false,
+                allowed_families: std::collections::BTreeSet::new(),
+                denied_families: ToolFamily::all_set(),
+                allowed_capabilities: std::collections::BTreeSet::new(),
+                denied_capabilities: std::collections::BTreeSet::new(),
+                allowed_roots: vec![],
+                allow_destructive: false,
+            },
+        );
+        assert!(runtime.apply_synchronized_policy(collision).is_err());
+
+        let mut escalated =
+            SynchronizedDevicePolicy::universal_for_owner("Leno", "account-a", "human:account-a");
+        escalated.operator_policies.insert(
+            "operator:evil".to_owned(),
+            tether_core::PrincipalPermissionSet {
+                principal_id: "operator:evil".to_owned(),
+                role: tether_core::PrincipalRole::Owner,
+                profile_id: "universal".to_owned(),
+                universal_permissions: true,
+                allowed_families: ToolFamily::all_set(),
+                denied_families: std::collections::BTreeSet::new(),
+                allowed_capabilities: std::collections::BTreeSet::new(),
+                denied_capabilities: std::collections::BTreeSet::new(),
+                allowed_roots: vec![],
+                allow_destructive: true,
+            },
+        );
+        assert!(runtime.apply_synchronized_policy(escalated).is_err());
     }
 }

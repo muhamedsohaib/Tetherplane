@@ -253,3 +253,243 @@ test("POST /portal/api/session establishes HttpOnly SameSite=Strict cookie with 
     await rm(dir, { recursive: true, force: true });
   }
 });
+
+test("F-3: cookie mutations require Origin/Referer and spoofed X-Forwarded-* headers are ignored without trusted proxy config", async () => {
+  const dir = await mkdtemp(path.join(os.tmpdir(), "tether-sec-f3-spoof-"));
+  const relay = await RelayServer.create({
+    authenticator: createAuth(),
+    stateFile: path.join(dir, "devices.json"),
+    allowInsecureLocalhost: true,
+  });
+  const address = await relay.listen({ host: "127.0.0.1", port: 0 });
+
+  try {
+    const started = await fetch(`${address.httpUrl}/pair/start`, {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({
+        deviceId: "F3SpoofDevice",
+        credentialHash: hashDeviceCredential("device-secret-f3-spoof-test-1234"),
+      }),
+    }).then((r) => r.json() as Promise<{ userCode: string }>);
+    await fetch(`${address.httpUrl}/pair/approve`, {
+      method: "POST",
+      headers: {
+        "content-type": "application/json",
+        authorization: "Bearer owner-secret-token-a",
+      },
+      body: JSON.stringify({ userCode: started.userCode }),
+    });
+
+    // Spoofed X-Forwarded-* headers must not mark cookie Secure or authorize attacker Origin
+    const spoofOriginSession = await fetch(`${address.httpUrl}/portal/api/session`, {
+      method: "POST",
+      headers: {
+        authorization: "Bearer owner-secret-token-a",
+        "x-forwarded-proto": "https",
+        "x-forwarded-host": "evil.example",
+        origin: "https://evil.example",
+      },
+    });
+    assert.equal(spoofOriginSession.status, 403);
+
+    const loginRes = await fetch(`${address.httpUrl}/portal/api/session`, {
+      method: "POST",
+      headers: {
+        authorization: "Bearer owner-secret-token-a",
+        "x-forwarded-proto": "https",
+        "x-forwarded-host": "evil.example",
+      },
+    });
+    assert.equal(loginRes.status, 200);
+    const setCookies = loginRes.headers.getSetCookie?.() ?? [];
+    assert.equal(setCookies.length, 1);
+    assert.doesNotMatch(setCookies[0]!, /;\s*Secure\b/i);
+    const cookie = extractSessionCookie(loginRes.headers);
+    const { csrfToken } = (await loginRes.json()) as { csrfToken: string };
+
+    // Cookie mutation with valid CSRF but NO Origin and NO Referer must be denied (403)
+    const missingOriginAndReferer = await fetch(
+      `${address.httpUrl}/portal/api/devices/F3SpoofDevice/policy`,
+      {
+        method: "POST",
+        headers: {
+          cookie,
+          "x-tetherplane-csrf": csrfToken,
+          "content-type": "application/json",
+        },
+        body: JSON.stringify({ revokeFamilies: ["desktop"], reason: "no origin/referer" }),
+      },
+    );
+    assert.equal(missingOriginAndReferer.status, 403);
+
+    // Same-origin Referer without Origin succeeds
+    const validReferer = await fetch(
+      `${address.httpUrl}/portal/api/devices/F3SpoofDevice/policy`,
+      {
+        method: "POST",
+        headers: {
+          cookie,
+          "x-tetherplane-csrf": csrfToken,
+          referer: `${address.httpUrl}/portal`,
+          "content-type": "application/json",
+        },
+        body: JSON.stringify({ revokeFamilies: ["desktop"], reason: "valid referer" }),
+      },
+    );
+    assert.equal(validReferer.status, 200);
+  } finally {
+    await relay.close();
+    await rm(dir, { recursive: true, force: true });
+  }
+});
+
+test("F-3: configured https publicOrigin behind reverse proxy sets Secure cookies and enforces public Origin", async () => {
+  const dir = await mkdtemp(path.join(os.tmpdir(), "tether-sec-f3-proxy-"));
+
+  // trustProxyHeaders without explicit publicOrigin must fail closed
+  await assert.rejects(
+    RelayServer.create({
+      authenticator: createAuth(),
+      stateFile: path.join(dir, "bad.json"),
+      allowInsecureLocalhost: true,
+      trustProxyHeaders: true,
+    }),
+    /publicOrigin/i,
+  );
+
+  const relay = await RelayServer.create({
+    authenticator: createAuth(),
+    stateFile: path.join(dir, "devices.json"),
+    allowInsecureLocalhost: true,
+    publicOrigin: "https://tether.example",
+    trustProxyHeaders: true,
+  });
+  const address = await relay.listen({ host: "127.0.0.1", port: 0 });
+
+  try {
+    const started = await fetch(`${address.httpUrl}/pair/start`, {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({
+        deviceId: "F3ProxyDevice",
+        credentialHash: hashDeviceCredential("device-secret-f3-proxy-test-1234"),
+      }),
+    }).then((r) => r.json() as Promise<{ userCode: string }>);
+    await fetch(`${address.httpUrl}/pair/approve`, {
+      method: "POST",
+      headers: {
+        "content-type": "application/json",
+        authorization: "Bearer owner-secret-token-a",
+      },
+      body: JSON.stringify({ userCode: started.userCode }),
+    });
+
+    // Forwarded headers conflicting with configured publicOrigin are rejected
+    const downgradedProto = await fetch(`${address.httpUrl}/portal/api/session`, {
+      method: "POST",
+      headers: {
+        authorization: "Bearer owner-secret-token-a",
+        origin: "https://tether.example",
+        "x-forwarded-proto": "http",
+        "x-forwarded-host": "tether.example",
+      },
+    });
+    assert.equal(downgradedProto.status, 403);
+
+    const mismatchedFwdHost = await fetch(`${address.httpUrl}/portal/api/session`, {
+      method: "POST",
+      headers: {
+        authorization: "Bearer owner-secret-token-a",
+        origin: "https://tether.example",
+        "x-forwarded-proto": "https",
+        "x-forwarded-host": "evil.example",
+      },
+    });
+    assert.equal(mismatchedFwdHost.status, 403);
+
+    // Valid proxied login via loopback socket receives Secure + HttpOnly + SameSite=Strict cookie
+    const loginRes = await fetch(`${address.httpUrl}/portal/api/session`, {
+      method: "POST",
+      headers: {
+        authorization: "Bearer owner-secret-token-a",
+        origin: "https://tether.example",
+        "x-forwarded-proto": "https",
+        "x-forwarded-host": "tether.example",
+      },
+    });
+    assert.equal(loginRes.status, 200);
+    const setCookies = loginRes.headers.getSetCookie?.() ?? [];
+    assert.equal(setCookies.length, 1);
+    assert.match(setCookies[0]!, /;\s*Secure\b/i);
+    const cookie = extractSessionCookie(loginRes.headers);
+    const { csrfToken } = (await loginRes.json()) as { csrfToken: string };
+
+    // Cookie mutation with matching https publicOrigin succeeds even over internal HTTP hop
+    const okMutation = await fetch(
+      `${address.httpUrl}/portal/api/devices/F3ProxyDevice/policy`,
+      {
+        method: "POST",
+        headers: {
+          cookie,
+          "x-tetherplane-csrf": csrfToken,
+          origin: "https://tether.example",
+          "x-forwarded-proto": "https",
+          "x-forwarded-host": "tether.example",
+          "content-type": "application/json",
+        },
+        body: JSON.stringify({ revokeFamilies: ["desktop"], reason: "proxied https origin" }),
+      },
+    );
+    assert.equal(okMutation.status, 200);
+
+    // Plaintext loopback Origin or mismatched Origin is rejected
+    const httpOrigin = await fetch(
+      `${address.httpUrl}/portal/api/devices/F3ProxyDevice/policy`,
+      {
+        method: "POST",
+        headers: {
+          cookie,
+          "x-tetherplane-csrf": csrfToken,
+          origin: address.httpUrl,
+          "content-type": "application/json",
+        },
+        body: JSON.stringify({ revokeCapabilities: ["files"], reason: "wrong scheme" }),
+      },
+    );
+    assert.equal(httpOrigin.status, 403);
+  } finally {
+    await relay.close();
+    await rm(dir, { recursive: true, force: true });
+  }
+});
+
+test("F-3: https publicOrigin with default trustProxyHeaders=false sets Secure cookies and ignores X-Forwarded-* headers", async () => {
+  const dir = await mkdtemp(path.join(os.tmpdir(), "tether-sec-f3-origin-only-"));
+  const relay = await RelayServer.create({
+    authenticator: createAuth(),
+    stateFile: path.join(dir, "devices.json"),
+    allowInsecureLocalhost: true,
+    publicOrigin: "https://tether.example",
+  });
+  const address = await relay.listen({ host: "127.0.0.1", port: 0 });
+
+  try {
+    const loginRes = await fetch(`${address.httpUrl}/portal/api/session`, {
+      method: "POST",
+      headers: {
+        authorization: "Bearer owner-secret-token-a",
+        origin: "https://tether.example",
+        "x-forwarded-proto": "http",
+        "x-forwarded-host": "evil.example",
+      },
+    });
+    assert.equal(loginRes.status, 200);
+    const setCookies = loginRes.headers.getSetCookie?.() ?? [];
+    assert.equal(setCookies.length, 1);
+    assert.match(setCookies[0]!, /;\s*Secure\b/i);
+  } finally {
+    await relay.close();
+    await rm(dir, { recursive: true, force: true });
+  }
+});

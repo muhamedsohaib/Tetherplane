@@ -5,23 +5,52 @@ import type {
   ServerResponse,
 } from "node:http";
 
-import type {
-  ClientAuthenticator,
-  ClientIdentity,
+import {
+  isAuthorizedOwnerIdentity,
+  type ClientAuthenticator,
+  type ClientIdentity,
 } from "../auth/static-auth.ts";
+import { validatePublicOrigin } from "../cli-config.ts";
 import {
   ALL_TOOL_FAMILIES,
+  assertCanonicalCapabilities,
   type PermissionProfileId,
   type PolicyMutationInput,
   type PolicyStore,
   type ToolFamily,
 } from "../policy/policy-store.ts";
 import { renderControlPortalPage } from "../portal/portal-ui.ts";
-import type { DeviceRegistry } from "./registry.ts";
+import { PairingCapacityError, type DeviceRegistry } from "./registry.ts";
 
 const PORTAL_SESSION_COOKIE = "tetherplane_portal_session";
 const PORTAL_SESSION_TTL_SECONDS = 8 * 60 * 60;
 const MAX_PORTAL_SESSIONS = 256;
+
+export type EndpointRateLimit = {
+  maxRequests: number;
+  windowMs: number;
+};
+
+export type RelayRateLimitConfig = {
+  pairStart?: EndpointRateLimit;
+  pairApprove?: EndpointRateLimit;
+  portalSession?: EndpointRateLimit;
+};
+
+const DEFAULT_PAIR_START_RATE_LIMIT: EndpointRateLimit = {
+  maxRequests: 30,
+  windowMs: 60_000,
+};
+
+const DEFAULT_PAIR_APPROVE_RATE_LIMIT: EndpointRateLimit = {
+  maxRequests: 30,
+  windowMs: 60_000,
+};
+
+const DEFAULT_PORTAL_SESSION_RATE_LIMIT: EndpointRateLimit = {
+  maxRequests: 60,
+  windowMs: 60_000,
+};
 
 type PortalSession = {
   id: string;
@@ -41,6 +70,12 @@ export class RelayControlHttpGateway {
   readonly #disconnectDevice: (deviceId: string) => void;
   readonly #policyStore: PolicyStore | null;
   readonly #secureCookies: boolean;
+  readonly #publicOriginUrl: URL | null;
+  readonly #trustProxyHeaders: boolean;
+  readonly #pairStartLimiter: SlidingWindowRateLimiter;
+  readonly #pairApproveIpLimiter: SlidingWindowRateLimiter;
+  readonly #pairApproveAccountLimiter: SlidingWindowRateLimiter;
+  readonly #portalSessionLimiter: SlidingWindowRateLimiter;
   readonly #portalSessions = new Map<string, PortalSession>();
   readonly #sseClients = new Set<SseClient>();
   #attachedServer: Server | null = null;
@@ -54,12 +89,44 @@ export class RelayControlHttpGateway {
     disconnectDevice(deviceId: string): void;
     policyStore?: PolicyStore;
     secureCookies?: boolean;
+    publicOrigin?: string;
+    trustProxyHeaders?: boolean;
+    rateLimits?: RelayRateLimitConfig;
   }) {
+    const normalizedPublicOrigin =
+      options.publicOrigin === undefined
+        ? null
+        : validatePublicOrigin(options.publicOrigin);
+    const trustProxyHeaders = options.trustProxyHeaders ?? false;
+    if (trustProxyHeaders && !normalizedPublicOrigin) {
+      throw new Error("trustProxyHeaders requires explicit publicOrigin");
+    }
     this.#registry = options.registry;
     this.#authenticator = options.authenticator;
     this.#disconnectDevice = options.disconnectDevice;
     this.#policyStore = options.policyStore ?? null;
-    this.#secureCookies = options.secureCookies ?? false;
+    this.#publicOriginUrl = normalizedPublicOrigin
+      ? new URL(normalizedPublicOrigin)
+      : null;
+    this.#trustProxyHeaders = trustProxyHeaders;
+    this.#secureCookies =
+      options.secureCookies ??
+      (this.#publicOriginUrl?.protocol === "https:");
+
+    const pairStartRule =
+      options.rateLimits?.pairStart ?? DEFAULT_PAIR_START_RATE_LIMIT;
+    const pairApproveRule =
+      options.rateLimits?.pairApprove ?? DEFAULT_PAIR_APPROVE_RATE_LIMIT;
+    const portalSessionRule =
+      options.rateLimits?.portalSession ?? DEFAULT_PORTAL_SESSION_RATE_LIMIT;
+    this.#pairStartLimiter = new SlidingWindowRateLimiter(pairStartRule);
+    this.#pairApproveIpLimiter = new SlidingWindowRateLimiter(pairApproveRule);
+    this.#pairApproveAccountLimiter = new SlidingWindowRateLimiter(
+      pairApproveRule,
+    );
+    this.#portalSessionLimiter = new SlidingWindowRateLimiter(
+      portalSessionRule,
+    );
   }
 
   attach(server: Server): void {
@@ -135,6 +202,17 @@ export class RelayControlHttpGateway {
         request.method === "POST" &&
         url.pathname === "/pair/start"
       ) {
+        const limit = this.#pairStartLimiter.consume(
+          `ip:${clientIpKey(request)}`,
+        );
+        if (!limit.allowed) {
+          writeRateLimited(
+            response,
+            limit.retryAfterSeconds,
+            "too many pairing start requests; retry later",
+          );
+          return;
+        }
         await this.#startPairing(request, response);
         return;
       }
@@ -143,11 +221,33 @@ export class RelayControlHttpGateway {
         request.method === "POST" &&
         url.pathname === "/pair/approve"
       ) {
-        const identity = await this.#requireIdentity(
+        const ipLimit = this.#pairApproveIpLimiter.consume(
+          `ip:${clientIpKey(request)}`,
+        );
+        if (!ipLimit.allowed) {
+          writeRateLimited(
+            response,
+            ipLimit.retryAfterSeconds,
+            "too many pairing approval attempts; retry later",
+          );
+          return;
+        }
+        const identity = await this.#requireOwnerBearerIdentity(
           request,
           response,
         );
         if (!identity) return;
+        const accountLimit = this.#pairApproveAccountLimiter.consume(
+          `account:${identity.accountId}`,
+        );
+        if (!accountLimit.allowed) {
+          writeRateLimited(
+            response,
+            accountLimit.retryAfterSeconds,
+            "too many pairing approval attempts for account; retry later",
+          );
+          return;
+        }
         await this.#approvePairing(request, response, identity);
         return;
       }
@@ -156,7 +256,7 @@ export class RelayControlHttpGateway {
         request.method === "GET" &&
         url.pathname === "/devices"
       ) {
-        const identity = await this.#requireIdentity(
+        const identity = await this.#requireOwnerBearerIdentity(
           request,
           response,
         );
@@ -171,7 +271,7 @@ export class RelayControlHttpGateway {
         url.pathname,
       );
       if (request.method === "POST" && revoke) {
-        const identity = await this.#requireIdentity(
+        const identity = await this.#requireOwnerBearerIdentity(
           request,
           response,
         );
@@ -224,7 +324,7 @@ export class RelayControlHttpGateway {
 
     if (request.method === "GET" && pathname === "/portal/api/session") {
       const session = this.#resolveCookieSession(request);
-      if (!session || isNonOwnerPrincipal(session.identity.principalId)) {
+      if (!session || !isAuthorizedOwnerIdentity(session.identity)) {
         writeJson(response, 200, { authenticated: false });
         return;
       }
@@ -238,6 +338,17 @@ export class RelayControlHttpGateway {
     }
 
     if (request.method === "POST" && pathname === "/portal/api/session") {
+      const limit = this.#portalSessionLimiter.consume(
+        `ip:${clientIpKey(request)}`,
+      );
+      if (!limit.allowed) {
+        writeRateLimited(
+          response,
+          limit.retryAfterSeconds,
+          "too many portal authentication attempts; retry later",
+        );
+        return;
+      }
       if (!this.#verifySameOriginHeaders(request, false)) {
         writeJson(response, 403, {
           error: {
@@ -301,6 +412,7 @@ export class RelayControlHttpGateway {
     if (request.method === "GET" && pathname === "/portal/api/overview") {
       const overview = await this.#policyStore.buildPortalOverview(
         identity.accountId,
+        identity.principalId,
       );
       writeJson(response, 200, overview);
       return;
@@ -470,7 +582,11 @@ export class RelayControlHttpGateway {
         throw new Error("targetRevision must be a positive integer");
       }
       const binding = this.#registry.getDevice(deviceId);
-      if (!binding || binding.accountId !== identity.accountId) {
+      if (
+        !binding ||
+        binding.accountId !== identity.accountId ||
+        binding.revokedAt !== null
+      ) {
         writeJson(response, 403, {
           error: {
             code: "permission_denied",
@@ -629,11 +745,19 @@ export class RelayControlHttpGateway {
       body,
       "credentialHash",
     );
-    const pending = await this.#registry.startPairing({
-      deviceId,
-      credentialHash,
-    });
-    writeJson(response, 200, pending);
+    try {
+      const pending = await this.#registry.startPairing({
+        deviceId,
+        credentialHash,
+      });
+      writeJson(response, 200, pending);
+    } catch (error) {
+      if (error instanceof PairingCapacityError) {
+        writeRateLimited(response, 30, error.message);
+        return;
+      }
+      throw error;
+    }
   }
 
   async #approvePairing(
@@ -648,10 +772,7 @@ export class RelayControlHttpGateway {
       userCode,
     });
     if (this.#policyStore) {
-      await this.#policyStore.ensureDevicePolicy(
-        binding,
-        identity.principalId,
-      );
+      await this.#policyStore.ensureDevicePolicy(binding, identity);
     }
     writeJson(response, 200, binding);
   }
@@ -706,7 +827,7 @@ export class RelayControlHttpGateway {
   ): Promise<ClientIdentity | null> {
     const identity = await this.#requireIdentity(request, response);
     if (!identity) return null;
-    if (isNonOwnerPrincipal(identity.principalId)) {
+    if (!isAuthorizedOwnerIdentity(identity)) {
       writeJson(response, 403, {
         error: {
           code: "permission_denied",
@@ -765,7 +886,7 @@ export class RelayControlHttpGateway {
       }
     }
 
-    if (isNonOwnerPrincipal(session.identity.principalId)) {
+    if (!isAuthorizedOwnerIdentity(session.identity)) {
       writeJson(response, 403, {
         error: {
           code: "permission_denied",
@@ -817,56 +938,79 @@ export class RelayControlHttpGateway {
 
   #verifySameOriginHeaders(
     request: IncomingMessage,
-    requireSafeRefererIfNoOrigin: boolean,
+    requireExplicitOrigin: boolean,
   ): boolean {
     const fetchSite = singleStringHeader(request.headers["sec-fetch-site"]);
     if (fetchSite && fetchSite.toLowerCase() === "cross-site") {
       return false;
     }
-    const hostHeader = singleStringHeader(request.headers.host);
-    if (!hostHeader) return false;
-    const expectedProtocol = this.#secureCookies ? "https:" : "http:";
+
+    let expectedOrigin: string;
+    if (this.#publicOriginUrl) {
+      if (this.#trustProxyHeaders) {
+        const expectedProto = this.#publicOriginUrl.protocol.slice(0, -1);
+        const forwardedProto = firstForwardedHeaderValue(
+          request.headers["x-forwarded-proto"],
+        )?.toLowerCase();
+        if (forwardedProto !== undefined && forwardedProto !== expectedProto) {
+          return false;
+        }
+        const forwardedHost = firstForwardedHeaderValue(
+          request.headers["x-forwarded-host"],
+        )?.toLowerCase();
+        if (
+          forwardedHost !== undefined &&
+          forwardedHost !== this.#publicOriginUrl.host.toLowerCase()
+        ) {
+          return false;
+        }
+      }
+      expectedOrigin = this.#publicOriginUrl.origin;
+    } else {
+      const hostHeader = singleStringHeader(request.headers.host);
+      if (!hostHeader) return false;
+      const expectedProtocol = this.#secureCookies ? "https:" : "http:";
+      expectedOrigin = `${expectedProtocol}//${hostHeader}`;
+    }
 
     const originHeader = singleStringHeader(request.headers.origin);
     if (originHeader) {
       if (originHeader.toLowerCase() === "null") return false;
       try {
         const parsed = new URL(originHeader);
-        return (
-          parsed.host === hostHeader &&
-          parsed.protocol === expectedProtocol
-        );
+        return parsed.origin === expectedOrigin;
       } catch {
         return false;
       }
     }
 
-    if (requireSafeRefererIfNoOrigin) {
-      const refererHeader = singleStringHeader(request.headers.referer);
-      if (refererHeader) {
-        try {
-          const parsed = new URL(refererHeader);
-          return (
-            parsed.host === hostHeader &&
-            parsed.protocol === expectedProtocol
-          );
-        } catch {
-          return false;
-        }
+    const refererHeader = singleStringHeader(request.headers.referer);
+    if (refererHeader) {
+      try {
+        const parsed = new URL(refererHeader);
+        return parsed.origin === expectedOrigin;
+      } catch {
+        return false;
       }
     }
 
-    return true;
+    return !requireExplicitOrigin;
   }
 }
 
-function isNonOwnerPrincipal(principalId: string): boolean {
-  return (
-    principalId.startsWith("operator:") ||
-    principalId.startsWith("external:") ||
-    principalId.startsWith("guest:") ||
-    principalId.startsWith("unpaired:")
-  );
+function firstForwardedHeaderValue(
+  value: string | string[] | undefined,
+): string | null | undefined {
+  if (value === undefined) return undefined;
+  const raw = Array.isArray(value) ? value.join(",") : value;
+  const parts = raw
+    .split(",")
+    .map((part) => part.trim())
+    .filter(Boolean);
+  if (parts.length !== 1) {
+    return null;
+  }
+  return parts[0]!;
 }
 
 function hasQueryTokenParameter(url: URL): boolean {
@@ -958,6 +1102,18 @@ function parsePolicyMutation(
   const deniedCapabilities = optionalStringArray(body, "deniedCapabilities");
   const grantCapabilities = optionalStringArray(body, "grantCapabilities");
   const revokeCapabilities = optionalStringArray(body, "revokeCapabilities");
+  if (allowedCapabilities) {
+    assertCanonicalCapabilities(allowedCapabilities, "allowedCapabilities");
+  }
+  if (deniedCapabilities) {
+    assertCanonicalCapabilities(deniedCapabilities, "deniedCapabilities");
+  }
+  if (grantCapabilities) {
+    assertCanonicalCapabilities(grantCapabilities, "grantCapabilities");
+  }
+  if (revokeCapabilities) {
+    assertCanonicalCapabilities(revokeCapabilities, "revokeCapabilities");
+  }
   const allowedRoots = optionalStringArray(body, "allowedRoots");
 
   return {
@@ -1057,6 +1213,88 @@ function bearerToken(header: string | undefined): string | null {
   if (!header) return null;
   const match = /^Bearer\s+(.+)$/i.exec(header.trim());
   return match?.[1]?.trim() || null;
+}
+
+const MAX_RATE_LIMIT_KEYS = 2048;
+
+class SlidingWindowRateLimiter {
+  readonly #maxRequests: number;
+  readonly #windowMs: number;
+  readonly #buckets = new Map<string, number[]>();
+
+  constructor(rule: EndpointRateLimit) {
+    if (!Number.isSafeInteger(rule.maxRequests) || rule.maxRequests < 1) {
+      throw new Error("rate limit maxRequests must be a positive integer");
+    }
+    if (!Number.isSafeInteger(rule.windowMs) || rule.windowMs < 1) {
+      throw new Error("rate limit windowMs must be a positive integer");
+    }
+    this.#maxRequests = rule.maxRequests;
+    this.#windowMs = rule.windowMs;
+  }
+
+  consume(
+    key: string,
+    now = Date.now(),
+  ): { allowed: boolean; retryAfterSeconds: number } {
+    const cutoff = now - this.#windowMs;
+    const existing = this.#buckets.get(key);
+    if (existing) {
+      while (existing.length > 0 && existing[0]! <= cutoff) {
+        existing.shift();
+      }
+      if (existing.length >= this.#maxRequests) {
+        const oldest = existing[0]!;
+        const retryAfterSeconds = Math.max(
+          1,
+          Math.ceil((oldest + this.#windowMs - now) / 1000),
+        );
+        return { allowed: false, retryAfterSeconds };
+      }
+      existing.push(now);
+      this.#buckets.delete(key);
+      this.#buckets.set(key, existing);
+      return { allowed: true, retryAfterSeconds: 0 };
+    }
+
+    if (this.#buckets.size >= MAX_RATE_LIMIT_KEYS) {
+      for (const [entryKey, timestamps] of this.#buckets) {
+        while (timestamps.length > 0 && timestamps[0]! <= cutoff) {
+          timestamps.shift();
+        }
+        if (timestamps.length === 0) {
+          this.#buckets.delete(entryKey);
+        }
+      }
+      if (this.#buckets.size >= MAX_RATE_LIMIT_KEYS) {
+        const oldestKey = this.#buckets.keys().next().value;
+        if (oldestKey !== undefined) {
+          this.#buckets.delete(oldestKey);
+        }
+      }
+    }
+
+    this.#buckets.set(key, [now]);
+    return { allowed: true, retryAfterSeconds: 0 };
+  }
+}
+
+function clientIpKey(request: IncomingMessage): string {
+  return request.socket.remoteAddress ?? "unknown";
+}
+
+function writeRateLimited(
+  response: ServerResponse,
+  retryAfterSeconds: number,
+  message: string,
+): void {
+  response.setHeader("retry-after", String(Math.max(1, retryAfterSeconds)));
+  writeJson(response, 429, {
+    error: {
+      code: "rate_limited",
+      message,
+    },
+  });
 }
 
 function writeJson(

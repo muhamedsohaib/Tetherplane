@@ -1137,6 +1137,10 @@ const PORTAL_SCRIPT = `
                 type: "button",
                 className: "primary",
                 text: "Lift Lockdown",
+                attrs: {
+                  title:
+                    "Lifts emergency lockdown and restores baseline Universal Access. Use Recoverable Snapshots & Rollback below to restore prior custom restrictions.",
+                },
                 dataset: { action: "lift-lockdown", device: dev.deviceId },
               }),
             );
@@ -1568,7 +1572,7 @@ const PORTAL_SCRIPT = `
         const scopeIds = Array.from(selectedDeviceIds);
         openConfirmModal(
           "Grant Universal Access",
-          "This will enable all six MCP tool families on " + scopeDescriptionText() + ".",
+          "This will enable all six MCP tool families (auto-allowing destructive file replacements and AI-owned process termination, while human-origin process termination and unshared human tabs/windows remain blocked) on " + scopeDescriptionText() + ".",
           function (reason) {
             return apiCall("/portal/api/global/apply", "POST", {
               confirm: true,
@@ -1617,7 +1621,7 @@ const PORTAL_SCRIPT = `
         const scopeIds = Array.from(selectedDeviceIds);
         openConfirmModal(
           "Lift Emergency Access Lockdown",
-          "This will lift emergency lockdown and restore universal permissions on " + scopeDescriptionText() + ".",
+          "This will lift emergency lockdown and restore baseline Universal Access (all six MCP tool families, auto-allowing destructive operations subject to human-coexistence protections) on " + scopeDescriptionText() + ". To restore prior custom restrictions instead, use Recoverable Snapshots & Rollback below.",
           function (reason) {
             return apiCall("/portal/api/global/emergency-revoke", "POST", {
               confirm: true,
@@ -1758,7 +1762,7 @@ export function renderControlPortalHtml(): string {
       <div>
         <strong>Global Controls</strong>
         <div class="global-subtitle">
-          Apply a permission profile across selected devices (or all paired devices when none selected), or trigger emergency access revocation.
+          Apply a permission profile across selected devices (or all paired devices when none selected), or trigger emergency access revocation. Universal Access auto-approves allowed destructive operations while blocking human-origin process termination and protecting unshared human tabs/windows; Lift Emergency Lockdown restores baseline Universal Access (use Recoverable Snapshots &amp; Rollback below for prior custom restrictions).
         </div>
         <div class="global-scope-row">
           <span id="global-target-badge" class="pill offline">Target: All paired devices</span>

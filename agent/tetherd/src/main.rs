@@ -35,7 +35,15 @@ struct CliOptions {
 }
 
 fn parse_args() -> Result<CliOptions, String> {
-    let mut arguments = std::env::args().skip(1);
+    parse_args_from(std::env::args().skip(1))
+}
+
+fn parse_args_from<I, S>(args: I) -> Result<CliOptions, String>
+where
+    I: IntoIterator<Item = S>,
+    S: Into<String>,
+{
+    let mut arguments = args.into_iter().map(Into::into);
     let mut stdio_rpc = false;
     let mut allowed_roots = Vec::new();
     let mut principal_profile = None;
@@ -105,27 +113,14 @@ fn parse_args() -> Result<CliOptions, String> {
         }
     }
 
-    let transport = match (stdio_rpc, relay_url) {
-        (true, None) => {
-            if device_id.is_some() || device_credential_file.is_some() {
-                return Err("--device-id and --device-credential-file require --relay-url".into());
-            }
-            TransportMode::Stdio
-        }
-        (false, Some(url)) => TransportMode::Relay {
-            url,
-            device_id: device_id.ok_or_else(|| "--relay-url requires --device-id".to_owned())?,
-            credential_file: device_credential_file
-                .ok_or_else(|| "--relay-url requires --device-credential-file".to_owned())?,
-            allow_insecure_localhost: relay_allow_insecure_localhost,
-        },
-        (true, Some(_)) => {
-            return Err("--stdio-rpc and --relay-url are mutually exclusive".into());
-        }
-        (false, None) => {
-            return Err("tetherd requires either --stdio-rpc or --relay-url".into());
-        }
-    };
+    let transport = resolve_transport_mode(
+        stdio_rpc,
+        relay_url,
+        device_id,
+        device_credential_file,
+        relay_allow_insecure_localhost,
+        state_dir.is_some(),
+    )?;
 
     Ok(CliOptions {
         transport,
@@ -135,6 +130,41 @@ fn parse_args() -> Result<CliOptions, String> {
         browser_bridge,
         browser_bridge_token_file,
     })
+}
+
+fn resolve_transport_mode(
+    stdio_rpc: bool,
+    relay_url: Option<String>,
+    device_id: Option<String>,
+    device_credential_file: Option<PathBuf>,
+    allow_insecure_localhost: bool,
+    has_state_dir: bool,
+) -> Result<TransportMode, String> {
+    match (stdio_rpc, relay_url) {
+        (true, None) => {
+            if device_id.is_some() || device_credential_file.is_some() {
+                return Err("--device-id and --device-credential-file require --relay-url".into());
+            }
+            Ok(TransportMode::Stdio)
+        }
+        (false, Some(url)) => {
+            if !has_state_dir {
+                return Err(
+                    "--relay-url requires --state-dir for durable policy persistence".to_owned(),
+                );
+            }
+            Ok(TransportMode::Relay {
+                url,
+                device_id: device_id
+                    .ok_or_else(|| "--relay-url requires --device-id".to_owned())?,
+                credential_file: device_credential_file
+                    .ok_or_else(|| "--relay-url requires --device-credential-file".to_owned())?,
+                allow_insecure_localhost,
+            })
+        }
+        (true, Some(_)) => Err("--stdio-rpc and --relay-url are mutually exclusive".into()),
+        (false, None) => Err("tetherd requires either --stdio-rpc or --relay-url".into()),
+    }
 }
 
 fn load_principal_profile(path: Option<&PathBuf>) -> Result<Option<PrincipalProfile>, String> {
@@ -309,5 +339,46 @@ async fn main() {
     if let Err(message) = result {
         eprintln!("{message}");
         std::process::exit(1);
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn relay_mode_requires_state_dir_while_stdio_keeps_state_dir_optional() {
+        let missing_state_dir = parse_args_from([
+            "--relay-url",
+            "wss://relay.example.com/devices/ws",
+            "--device-id",
+            "Leno",
+            "--device-credential-file",
+            "/tmp/cred",
+        ]);
+        assert!(
+            missing_state_dir.is_err(),
+            "--relay-url without --state-dir must fail closed"
+        );
+        let msg = missing_state_dir.err().unwrap();
+        assert!(
+            msg.contains("--state-dir"),
+            "unexpected error message: {msg}"
+        );
+
+        let with_state_dir = parse_args_from([
+            "--relay-url",
+            "wss://relay.example.com/devices/ws",
+            "--device-id",
+            "Leno",
+            "--device-credential-file",
+            "/tmp/cred",
+            "--state-dir",
+            "/tmp/tether-state",
+        ]);
+        assert!(with_state_dir.is_ok());
+
+        let stdio_without_state = parse_args_from(["--stdio-rpc"]);
+        assert!(stdio_without_state.is_ok());
     }
 }

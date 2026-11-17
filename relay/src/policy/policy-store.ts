@@ -2,7 +2,11 @@ import { randomUUID } from "node:crypto";
 import { mkdir, readFile, rename, writeFile } from "node:fs/promises";
 import path from "node:path";
 
-import type { ClientIdentity } from "../auth/static-auth.ts";
+import {
+  hasNonOwnerPrincipalPrefix,
+  isAuthorizedOwnerIdentity,
+  type ClientIdentity,
+} from "../auth/static-auth.ts";
 import type { DeviceBinding, DeviceRegistry } from "../devices/registry.ts";
 
 export type ToolFamily =
@@ -83,6 +87,29 @@ export const CANONICAL_OPERATIONS_BY_FAMILY: Record<ToolFamily, string[]> = {
   ],
   batch: ["batch.execute"],
 };
+
+export const ALL_CANONICAL_OPERATIONS: readonly string[] = Object.values(
+  CANONICAL_OPERATIONS_BY_FAMILY,
+).flat();
+
+const CANONICAL_OPERATION_SET = new Set<string>(ALL_CANONICAL_OPERATIONS);
+
+export function isCanonicalCapability(capability: string): boolean {
+  return CANONICAL_OPERATION_SET.has(capability);
+}
+
+export function assertCanonicalCapabilities(
+  capabilities: readonly string[],
+  fieldName = "capabilities",
+): void {
+  for (const capability of capabilities) {
+    if (!CANONICAL_OPERATION_SET.has(capability)) {
+      throw new Error(
+        `unknown or unsupported canonical capability '${capability}' in ${fieldName}`,
+      );
+    }
+  }
+}
 
 export type PrincipalRole = "owner" | "operator";
 
@@ -411,9 +438,12 @@ export function evaluatePermissionSet(
   return { allowed: false, denialKind: "operation_not_granted" };
 }
 
+export const DEFAULT_MAX_AUDIT_HISTORY = 500;
+
 export class PolicyStore {
   readonly #stateFile: string | null;
   readonly #registry: DeviceRegistry;
+  readonly #maxAuditHistory: number;
   readonly #records = new Map<string, DevicePolicyRecord>();
   readonly #snapshots: PolicySnapshot[] = [];
   readonly #auditHistory: PolicyAuditEvent[] = [];
@@ -428,16 +458,23 @@ export class PolicyStore {
   private constructor(options: {
     registry: DeviceRegistry;
     stateFile?: string;
+    maxAuditHistory?: number;
   }) {
     this.#registry = options.registry;
     this.#stateFile = options.stateFile
       ? `${options.stateFile}.policy.json`
       : null;
+    const maxAudit = options.maxAuditHistory ?? DEFAULT_MAX_AUDIT_HISTORY;
+    if (!Number.isSafeInteger(maxAudit) || maxAudit < 1) {
+      throw new Error("maxAuditHistory must be a positive integer");
+    }
+    this.#maxAuditHistory = maxAudit;
   }
 
   static async open(options: {
     registry: DeviceRegistry;
     stateFile?: string;
+    maxAuditHistory?: number;
   }): Promise<PolicyStore> {
     const store = new PolicyStore(options);
     await store.#load();
@@ -486,15 +523,40 @@ export class PolicyStore {
 
   async ensureDevicePolicy(
     binding: DeviceBinding,
-    ownerPrincipalId?: string,
+    owner?: string | ClientIdentity,
   ): Promise<DevicePolicyRecord> {
     const existing = this.#records.get(binding.deviceId);
     if (existing && existing.policy.owner_account_id === binding.accountId) {
       return existing;
     }
 
-    const resolvedOwnerPrincipal =
-      ownerPrincipalId ?? `human:${binding.accountId}`;
+    let resolvedOwnerPrincipal: string;
+    const canonicalOwner = `human:${binding.accountId}`;
+    if (owner === undefined) {
+      resolvedOwnerPrincipal = canonicalOwner;
+    } else if (typeof owner === "string") {
+      const candidate = owner.trim();
+      if (
+        !candidate ||
+        hasNonOwnerPrincipalPrefix(candidate) ||
+        candidate !== canonicalOwner
+      ) {
+        throw new Error(
+          `cannot assign non-owner principal '${owner}' as device owner`,
+        );
+      }
+      resolvedOwnerPrincipal = candidate;
+    } else {
+      if (
+        owner.accountId !== binding.accountId ||
+        !isAuthorizedOwnerIdentity(owner)
+      ) {
+        throw new Error(
+          `identity '${owner.principalId}' is not authorized to own devices for account '${binding.accountId}'`,
+        );
+      }
+      resolvedOwnerPrincipal = owner.principalId.trim();
+    }
     const now = Date.now();
     const policy: SynchronizedDevicePolicy = {
       device_id: binding.deviceId,
@@ -841,10 +903,32 @@ export class PolicyStore {
     deviceIds?: string[];
     mutation: PolicyMutationInput;
   }): Promise<DevicePolicyRecord[]> {
-    if (!input.operatorPrincipalId.trim()) {
+    const operatorId = input.operatorPrincipalId.trim();
+    if (!operatorId) {
       throw new Error("principalId is required for operator policy");
     }
-    const operatorId = input.operatorPrincipalId.trim();
+    const canonicalOwner = `human:${input.accountId}`;
+    const paired = this.#registry
+      .listDevices(input.accountId)
+      .filter((d) => d.revokedAt === null);
+
+    if (
+      operatorId === canonicalOwner ||
+      operatorId === input.actorPrincipalId ||
+      paired.some((binding) => {
+        const rec = this.#records.get(binding.deviceId);
+        return (
+          rec !== undefined &&
+          (rec.policy.owner_principal_id === operatorId ||
+            rec.policy.owner_policy.principal_id === operatorId)
+        );
+      })
+    ) {
+      throw new Error(
+        `operator principalId '${operatorId}' cannot collide with an owner identity`,
+      );
+    }
+
     this.#operators.set(`${input.accountId}::${operatorId}`, {
       accountId: input.accountId,
       principalId: operatorId,
@@ -852,9 +936,6 @@ export class PolicyStore {
       updatedAtMs: Date.now(),
     });
 
-    const paired = this.#registry
-      .listDevices(input.accountId)
-      .filter((d) => d.revokedAt === null);
     const targetIds =
       input.deviceIds && input.deviceIds.length > 0
         ? new Set(input.deviceIds)
@@ -1000,7 +1081,11 @@ export class PolicyStore {
     reason?: string;
   }): Promise<DevicePolicyRecord> {
     const binding = this.#registry.getDevice(input.deviceId);
-    if (!binding || binding.accountId !== input.accountId) {
+    if (
+      !binding ||
+      binding.accountId !== input.accountId ||
+      binding.revokedAt !== null
+    ) {
       throw new Error("device is not authorized for this account");
     }
     const snapshot = this.#snapshots.find(
@@ -1073,16 +1158,36 @@ export class PolicyStore {
 
     const policy = record.policy;
     const principalId = input.identity.principalId;
-    const isOperatorIdentity =
-      principalId.startsWith("operator:") ||
-      principalId.startsWith("external:") ||
-      principalId.startsWith("guest:") ||
-      principalId.startsWith("unpaired:") ||
-      principalId in policy.operator_policies;
+    const canonicalOwner = `human:${policy.owner_account_id}`;
+    const hasOperatorEntry = Object.prototype.hasOwnProperty.call(
+      policy.operator_policies,
+      principalId,
+    );
+    const operatorEntry = hasOperatorEntry
+      ? policy.operator_policies[principalId]
+      : undefined;
 
-    const permissionSet: PrincipalPermissionSet | null = isOperatorIdentity
-      ? (policy.operator_policies[principalId] ?? null)
-      : policy.owner_policy;
+    let permissionSet: PrincipalPermissionSet | null = null;
+    if (operatorEntry) {
+      if (
+        operatorEntry.role === "operator" &&
+        operatorEntry.principal_id === principalId &&
+        principalId !== policy.owner_principal_id &&
+        principalId !== canonicalOwner
+      ) {
+        permissionSet = operatorEntry;
+      }
+    } else if (
+      input.identity.accountId === policy.owner_account_id &&
+      isAuthorizedOwnerIdentity(input.identity, policy.owner_principal_id) &&
+      policy.owner_policy.role === "owner" &&
+      !hasNonOwnerPrincipalPrefix(policy.owner_principal_id) &&
+      (principalId === policy.owner_principal_id ||
+        principalId === policy.owner_policy.principal_id ||
+        principalId === canonicalOwner)
+    ) {
+      permissionSet = policy.owner_policy;
+    }
 
     const role: PrincipalRole | "unregistered" = permissionSet
       ? permissionSet.role
@@ -1196,7 +1301,10 @@ export class PolicyStore {
     return { allowed: true };
   }
 
-  async buildPortalOverview(accountId: string): Promise<Record<string, unknown>> {
+  async buildPortalOverview(
+    accountId: string,
+    ownerPrincipalId?: string,
+  ): Promise<Record<string, unknown>> {
     const bindings = this.#registry
       .listDevices(accountId)
       .filter((d) => d.revokedAt === null);
@@ -1223,7 +1331,7 @@ export class PolicyStore {
 
     return {
       accountId,
-      ownerPrincipalId: `human:${accountId}`,
+      ownerPrincipalId: ownerPrincipalId ?? `human:${accountId}`,
       toolFamilies: ALL_TOOL_FAMILIES,
       canonicalOperationsByFamily: CANONICAL_OPERATIONS_BY_FAMILY,
       profiles: [
@@ -1231,7 +1339,7 @@ export class PolicyStore {
           id: "universal",
           name: "Universal Access (Default)",
           description:
-            "Full access across all six MCP tool families (device, files, process, browser, desktop, batch).",
+            "Full access across all six MCP tool families (device, files, process, browser, desktop, batch), auto-approving destructive file replacements and AI-owned process termination while blocking human-origin process termination and protecting unshared human tabs/windows.",
         },
         {
           id: "standard",
@@ -1516,6 +1624,12 @@ export class PolicyStore {
       deliveryStatus: input.deliveryStatus,
       details: input.details,
     });
+    if (this.#auditHistory.length > this.#maxAuditHistory) {
+      this.#auditHistory.splice(
+        0,
+        this.#auditHistory.length - this.#maxAuditHistory,
+      );
+    }
   }
 
   #markAuditDelivery(
@@ -1607,7 +1721,7 @@ export class PolicyStore {
     for (const snap of parsed.snapshots ?? []) {
       this.#snapshots.push(snap);
     }
-    for (const event of parsed.auditHistory ?? []) {
+    for (const event of (parsed.auditHistory ?? []).slice(-this.#maxAuditHistory)) {
       this.#auditHistory.push(event);
     }
     for (const usage of parsed.identityUsage ?? []) {
@@ -1629,7 +1743,7 @@ export class PolicyStore {
         version: 1,
         records: [...this.#records.values()],
         snapshots: retainSnapshotsForPersistence(this.#snapshots),
-        auditHistory: this.#auditHistory.slice(-500),
+        auditHistory: this.#auditHistory.slice(-this.#maxAuditHistory),
         identityUsage: [...this.#identityUsage.values()],
         operators: [...this.#operators.values()],
       };
@@ -1710,6 +1824,19 @@ function applyMutationToPermissionSet(
   for (const fam of mutation.revokeFamilies ?? []) {
     allowedFamilies.delete(fam);
     deniedFamilies.add(fam);
+  }
+
+  if (mutation.allowedCapabilities) {
+    assertCanonicalCapabilities(mutation.allowedCapabilities, "allowedCapabilities");
+  }
+  if (mutation.deniedCapabilities) {
+    assertCanonicalCapabilities(mutation.deniedCapabilities, "deniedCapabilities");
+  }
+  if (mutation.grantCapabilities) {
+    assertCanonicalCapabilities(mutation.grantCapabilities, "grantCapabilities");
+  }
+  if (mutation.revokeCapabilities) {
+    assertCanonicalCapabilities(mutation.revokeCapabilities, "revokeCapabilities");
   }
 
   const allowedCapabilities = new Set<string>(

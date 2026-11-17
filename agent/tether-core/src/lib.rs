@@ -25,7 +25,8 @@ pub use policy::{
 };
 pub use principal::{
     CapabilityDenialKind, PrincipalAuthentication, PrincipalPermissionSet, PrincipalProfile,
-    PrincipalRole, SynchronizedDevicePolicy, ToolFamily, tool_family_for_capability,
+    PrincipalRole, RESERVED_NON_OWNER_PRINCIPAL_PREFIXES, SynchronizedDevicePolicy, ToolFamily,
+    has_non_owner_principal_prefix, tool_family_for_capability,
 };
 pub use provider::{CapabilityProvider, ProviderResult};
 pub use router::CapabilityRouter;

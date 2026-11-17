@@ -401,3 +401,72 @@ async fn emergency_lockdown_blocks_all_principals_including_owner() {
     assert_eq!(err.code, ErrorCode::PermissionDenied);
     assert_eq!(err.details["denial_kind"], json!("emergency_lockdown"));
 }
+
+#[test]
+fn non_owner_prefixes_delegates_and_tampered_owner_roles_cannot_resolve_as_owner() {
+    let temp = TempDir::new().unwrap();
+    let broker = LocalPolicyBroker::new(LocalPolicyConfig::new(vec![temp.path().to_path_buf()]));
+    let policy =
+        SynchronizedDevicePolicy::universal_for_owner("Leno", "account-a", "human:account-a");
+    broker.set_synchronized_policy(Some(policy.clone()));
+
+    for non_owner in [
+        "service:ci",
+        "client:bot",
+        "human:delegate",
+        "custom:account-a",
+        "unknown:alice",
+        "operator:helper",
+        "external:guest",
+        "guest:anon",
+        "unpaired:stranger",
+    ] {
+        assert_eq!(
+            policy.resolve_principal(Some(non_owner)),
+            None,
+            "{non_owner} must not resolve to owner policy"
+        );
+        let decision = broker.evaluate(&invocation(
+            Some(non_owner),
+            Some("Leno"),
+            "device.status",
+            json!({}),
+        ));
+        assert!(
+            matches!(decision, PolicyDecision::Deny { .. }),
+            "{non_owner} must be denied"
+        );
+    }
+
+    // Even if synchronized policy is tampered to place a non-owner prefix into owner_principal_id,
+    // resolve_principal must fail closed rather than granting owner permissions.
+    let mut forged_owner =
+        SynchronizedDevicePolicy::universal_for_owner("Leno", "account-a", "service:ci");
+    assert_eq!(forged_owner.resolve_principal(Some("service:ci")), None);
+    forged_owner =
+        SynchronizedDevicePolicy::universal_for_owner("Leno", "account-a", "human:account-a");
+    forged_owner.owner_policy.role = PrincipalRole::Operator;
+    assert_eq!(
+        forged_owner.resolve_principal(Some("human:account-a")),
+        None
+    );
+
+    // An operator entry tampered with PrincipalRole::Owner must also resolve to None
+    let mut escalated_op = policy;
+    escalated_op.operator_policies.insert(
+        "operator:evil".to_owned(),
+        PrincipalPermissionSet {
+            principal_id: "operator:evil".to_owned(),
+            role: PrincipalRole::Owner,
+            profile_id: "universal".to_owned(),
+            universal_permissions: true,
+            allowed_families: ToolFamily::all_set(),
+            denied_families: BTreeSet::new(),
+            allowed_capabilities: BTreeSet::new(),
+            denied_capabilities: BTreeSet::new(),
+            allowed_roots: vec![],
+            allow_destructive: true,
+        },
+    );
+    assert_eq!(escalated_op.resolve_principal(Some("operator:evil")), None);
+}

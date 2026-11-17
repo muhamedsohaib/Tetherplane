@@ -40,6 +40,10 @@ async function main(): Promise<void> {
     ...(tls ? { tls } : {}),
     allowInsecureLocalhost:
       options.allowInsecureLocalhost,
+    ...(options.publicOrigin
+      ? { publicOrigin: options.publicOrigin }
+      : {}),
+    trustProxyHeaders: options.trustProxyHeaders,
   });
 
   let closing = false;
@@ -66,6 +70,7 @@ async function main(): Promise<void> {
         `tether-relay listening on ${address.httpUrl}`,
         `MCP: ${address.mcpUrl}`,
         `Device: ${address.deviceWsUrl}`,
+        ...(address.portalUrl ? [`Portal: ${address.portalUrl}`] : []),
       ].join("\n") + "\n",
     );
   } catch (error) {
@@ -96,6 +101,8 @@ Options:
   --tls-cert <path>         PEM certificate.
   --tls-key <path>          PEM private key.
   --allow-insecure-localhost
+  --public-origin <origin>  External browser HTTPS origin behind a trusted proxy.
+  --trust-proxy-headers     Verify X-Forwarded-Proto/Host against --public-origin.
   --help
 `;
 }

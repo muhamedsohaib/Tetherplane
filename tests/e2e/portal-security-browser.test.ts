@@ -343,8 +343,8 @@ test("portal blocks adversarial XSS payloads, obeys strict CSP, and stores sessi
     });
     assert.equal(opRes.status, 200);
 
-    // Explicitly add an XSS capability string into deniedCapabilities & audit reason
-    const capRes = await fetch(
+    // F-4(d): non-canonical capability names must be rejected (HTTP 400)
+    const invalidCapRes = await fetch(
       `${address.httpUrl}/portal/api/devices/${xssDeviceId}/policy`,
       {
         method: "POST",
@@ -354,7 +354,24 @@ test("portal blocks adversarial XSS payloads, obeys strict CSP, and stores sessi
         },
         body: JSON.stringify({
           revokeCapabilities: ['"><img src=x onerror="window.__xss=8">'],
-          reason: '<img src=x onerror="window.__xss=9">',
+          reason: "invalid op probe",
+        }),
+      },
+    );
+    assert.equal(invalidCapRes.status, 400);
+
+    // Valid rev-3 policy update carrying XSS payload in audit reason
+    const capRes = await fetch(
+      `${address.httpUrl}/portal/api/devices/${xssDeviceId}/policy`,
+      {
+        method: "POST",
+        headers: {
+          "content-type": "application/json",
+          authorization: `Bearer ${ownerToken}`,
+        },
+        body: JSON.stringify({
+          revokeCapabilities: ["filesystem.write"],
+          reason: '"><img src=x onerror="window.__xss=8"><img src=x onerror="window.__xss=9">',
         }),
       },
     );

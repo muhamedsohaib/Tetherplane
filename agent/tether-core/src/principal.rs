@@ -203,6 +203,23 @@ impl PrincipalPermissionSet {
     }
 }
 
+pub const RESERVED_NON_OWNER_PRINCIPAL_PREFIXES: [&str; 6] = [
+    "operator:",
+    "external:",
+    "guest:",
+    "unpaired:",
+    "service:",
+    "client:",
+];
+
+#[must_use]
+pub fn has_non_owner_principal_prefix(principal_id: &str) -> bool {
+    let lower = principal_id.trim().to_ascii_lowercase();
+    RESERVED_NON_OWNER_PRINCIPAL_PREFIXES
+        .iter()
+        .any(|prefix| lower.starts_with(prefix))
+}
+
 #[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
 pub struct SynchronizedDevicePolicy {
     pub device_id: String,
@@ -247,17 +264,90 @@ impl SynchronizedDevicePolicy {
         }
     }
 
+    /// Validates structural and principal-role invariants for synchronized policies.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error description if revision is 0, owner identity fields use a
+    /// reserved non-owner prefix or mismatch, or operator entries collide with owner
+    /// identities or attempt role escalation.
+    pub fn validate_invariants(&self) -> Result<(), String> {
+        if self.revision == 0 {
+            return Err("synchronized policy revision must be >= 1".to_owned());
+        }
+        if self.device_id.trim().is_empty() {
+            return Err("synchronized policy device_id must not be empty".to_owned());
+        }
+        if self.owner_account_id.trim().is_empty() || self.owner_principal_id.trim().is_empty() {
+            return Err(
+                "synchronized policy owner_account_id and owner_principal_id must not be empty"
+                    .to_owned(),
+            );
+        }
+        if has_non_owner_principal_prefix(&self.owner_principal_id) {
+            return Err(format!(
+                "owner_principal_id '{}' uses a reserved non-owner prefix",
+                self.owner_principal_id
+            ));
+        }
+        if self.owner_policy.role != PrincipalRole::Owner {
+            return Err("owner_policy role must be 'owner'".to_owned());
+        }
+        if self.owner_policy.principal_id != self.owner_principal_id {
+            return Err(format!(
+                "owner_policy.principal_id '{}' must match owner_principal_id '{}'",
+                self.owner_policy.principal_id, self.owner_principal_id
+            ));
+        }
+
+        let canonical_owner = format!("human:{}", self.owner_account_id);
+        for (key, op_policy) in &self.operator_policies {
+            if key == &self.owner_principal_id || key == &canonical_owner {
+                return Err(format!(
+                    "operator policy principal '{key}' cannot collide with owner identity"
+                ));
+            }
+            if op_policy.role != PrincipalRole::Operator {
+                return Err(format!("operator policy '{key}' must have role 'operator'"));
+            }
+            if &op_policy.principal_id != key {
+                return Err(format!(
+                    "operator policy key '{key}' does not match principal_id '{}'",
+                    op_policy.principal_id
+                ));
+            }
+        }
+        Ok(())
+    }
+
     #[must_use]
     pub fn resolve_principal(&self, principal_id: Option<&str>) -> Option<&PrincipalPermissionSet> {
         let principal_id = principal_id?;
         let canonical_owner = format!("human:{}", self.owner_account_id);
-        if principal_id == self.owner_principal_id
-            || principal_id == self.owner_policy.principal_id
-            || principal_id == canonical_owner
+        if let Some(op_policy) = self.operator_policies.get(principal_id) {
+            if principal_id == self.owner_principal_id
+                || principal_id == canonical_owner
+                || op_policy.role != PrincipalRole::Operator
+                || op_policy.principal_id != principal_id
+            {
+                return None;
+            }
+            return Some(op_policy);
+        }
+
+        if has_non_owner_principal_prefix(principal_id)
+            || has_non_owner_principal_prefix(&self.owner_principal_id)
+            || has_non_owner_principal_prefix(&self.owner_policy.principal_id)
+            || self.owner_policy.role != PrincipalRole::Owner
+            || self.owner_policy.principal_id != self.owner_principal_id
         {
+            return None;
+        }
+
+        if principal_id == self.owner_principal_id || principal_id == canonical_owner {
             return Some(&self.owner_policy);
         }
 
-        self.operator_policies.get(principal_id)
+        None
     }
 }
