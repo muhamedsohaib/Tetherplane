@@ -34,3 +34,39 @@ fn semantic_windows_backend_contains_no_physical_input_or_global_clipboard_calls
         );
     }
 }
+
+#[test]
+fn windows_uia_concurrent_worker_initializations_and_reinit_succeed() {
+    use std::sync::{Arc, Barrier};
+    use std::thread;
+
+    const THREAD_COUNT: usize = 4;
+    let barrier = Arc::new(Barrier::new(THREAD_COUNT));
+    let mut handles = Vec::with_capacity(THREAD_COUNT);
+
+    for _ in 0..THREAD_COUNT {
+        let gate = Arc::clone(&barrier);
+        handles.push(thread::spawn(move || {
+            gate.wait();
+            let backend = WindowsUiaBackend::new()
+                .expect("concurrent Windows UI Automation worker should initialize");
+            let nodes = backend
+                .snapshot()
+                .expect("concurrent Windows UI Automation snapshot should succeed");
+            assert!(nodes.len() <= 1_001);
+        }));
+    }
+
+    for handle in handles {
+        handle
+            .join()
+            .expect("concurrent UIA initialization worker thread must not panic");
+    }
+
+    let reinitialized =
+        WindowsUiaBackend::new().expect("sequential UIA reinitialization after drop should work");
+    let nodes = reinitialized
+        .snapshot()
+        .expect("reinitialized UIA snapshot should succeed");
+    assert!(nodes.len() <= 1_001);
+}

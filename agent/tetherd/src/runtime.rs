@@ -56,12 +56,33 @@ impl AgentRuntime {
     }
 
     pub fn new_with_device(
-        mut allowed_roots: Vec<PathBuf>,
+        allowed_roots: Vec<PathBuf>,
         principal: Option<PrincipalProfile>,
         state_dir: Option<&Path>,
         browser_provider: Option<Arc<BrowserProvider>>,
         bound_device_id: Option<&str>,
     ) -> Result<Self, CapabilityError> {
+        Self::new_with_desktop_init(
+            allowed_roots,
+            principal,
+            state_dir,
+            browser_provider,
+            bound_device_id,
+            default_desktop_initializer,
+        )
+    }
+
+    fn new_with_desktop_init<F>(
+        mut allowed_roots: Vec<PathBuf>,
+        principal: Option<PrincipalProfile>,
+        state_dir: Option<&Path>,
+        browser_provider: Option<Arc<BrowserProvider>>,
+        bound_device_id: Option<&str>,
+        build_desktop: F,
+    ) -> Result<Self, CapabilityError>
+    where
+        F: FnOnce(&Arc<TrustedOwnershipRegistry>) -> Result<Arc<DesktopProvider>, CapabilityError>,
+    {
         if allowed_roots.is_empty()
             && let Some(profile) = principal.as_ref()
             && !profile.allowed_directories.is_empty()
@@ -105,23 +126,14 @@ impl AgentRuntime {
 
         let mut router = CapabilityRouter::with_policy(Arc::clone(&policy) as Arc<_>);
         let ownership = Arc::new(TrustedOwnershipRegistry::new());
-        #[cfg(windows)]
-        let desktop_provider = create_desktop_provider(Arc::clone(&ownership))?;
-        #[cfg(not(windows))]
-        let desktop_provider = create_desktop_provider(&ownership);
-        let desktop_operations: Option<Vec<String>> = desktop_provider.as_ref().map(|_| {
-            DesktopProvider::operations()
-                .iter()
-                .map(ToString::to_string)
-                .collect()
-        });
+        let desktop = build_desktop_components(&ownership, build_desktop);
 
         let device_provider = Arc::new(DeviceProvider::new(
             Arc::clone(&policy),
             job_available,
             audit_available,
             browser_provider.clone(),
-            desktop_operations,
+            desktop.capability,
         ));
         router.register(Arc::clone(&device_provider) as Arc<_>)?;
         router.register(Arc::new(FilesystemProvider::new()))?;
@@ -144,11 +156,7 @@ impl AgentRuntime {
         } else {
             router.register(Arc::new(UnavailableProvider::new("browser")))?;
         }
-        if let Some(desktop_provider) = desktop_provider {
-            router.register(desktop_provider)?;
-        } else {
-            router.register(Arc::new(UnavailableProvider::new("desktop")))?;
-        }
+        router.register(desktop.provider)?;
 
         Ok(Self {
             router,
@@ -505,25 +513,85 @@ fn persist_synchronized_policy(
 }
 
 #[cfg(windows)]
-fn create_desktop_provider(
-    ownership: Arc<TrustedOwnershipRegistry>,
-) -> Result<Option<Arc<DesktopProvider>>, CapabilityError> {
+fn default_desktop_initializer(
+    ownership: &Arc<TrustedOwnershipRegistry>,
+) -> Result<Arc<DesktopProvider>, CapabilityError> {
     let provider = DesktopProvider::with_services(
         Arc::new(WindowsUiaBackend::new()?),
-        ownership,
+        Arc::clone(ownership),
         Arc::new(PrivateClipboard::new()),
         Arc::new(WindowsHumanActivityMonitor),
         Arc::new(ForegroundLeaseStore::new()),
         Arc::new(WindowsPhysicalDesktopExecutor),
     );
-    Ok(Some(Arc::new(provider)))
+    Ok(Arc::new(provider))
 }
 
 #[cfg(not(windows))]
-fn create_desktop_provider(
+fn default_desktop_initializer(
     _ownership: &Arc<TrustedOwnershipRegistry>,
-) -> Option<Arc<DesktopProvider>> {
-    None
+) -> Result<Arc<DesktopProvider>, CapabilityError> {
+    Err(CapabilityError {
+        code: ErrorCode::CapabilityUnavailable,
+        message: "Windows UIA desktop provider requires a Windows host".into(),
+        recovery_hint: Some(
+            "Desktop UIA operations require a Windows host with the desktop provider active."
+                .into(),
+        ),
+        details: serde_json::json!({}),
+    })
+}
+
+struct DesktopCapabilityState {
+    operations: Option<Vec<String>>,
+    unavailable_reason: Option<String>,
+}
+
+struct DesktopComponents {
+    provider: Arc<dyn CapabilityProvider>,
+    capability: DesktopCapabilityState,
+}
+
+fn build_desktop_components<F>(
+    ownership: &Arc<TrustedOwnershipRegistry>,
+    build_desktop: F,
+) -> DesktopComponents
+where
+    F: FnOnce(&Arc<TrustedOwnershipRegistry>) -> Result<Arc<DesktopProvider>, CapabilityError>,
+{
+    match build_desktop(ownership) {
+        Ok(provider) => DesktopComponents {
+            provider,
+            capability: DesktopCapabilityState {
+                operations: Some(
+                    DesktopProvider::operations()
+                        .iter()
+                        .map(ToString::to_string)
+                        .collect(),
+                ),
+                unavailable_reason: None,
+            },
+        },
+        Err(error) => {
+            #[cfg(windows)]
+            eprintln!(
+                "desktop UI Automation unavailable ({}); continuing without desktop provider",
+                error.message
+            );
+            let reason = error.message;
+            DesktopComponents {
+                provider: Arc::new(UnavailableProvider::with_reason(
+                    "desktop",
+                    Some(reason.clone()),
+                    error.recovery_hint,
+                )),
+                capability: DesktopCapabilityState {
+                    operations: None,
+                    unavailable_reason: Some(reason),
+                },
+            }
+        }
+    }
 }
 
 struct DeviceProvider {
@@ -532,7 +600,7 @@ struct DeviceProvider {
     job_available: bool,
     audit_available: bool,
     browser_provider: Option<Arc<BrowserProvider>>,
-    desktop_operations: Option<Vec<String>>,
+    desktop: DesktopCapabilityState,
 }
 
 impl DeviceProvider {
@@ -541,7 +609,7 @@ impl DeviceProvider {
         job_available: bool,
         audit_available: bool,
         browser_provider: Option<Arc<BrowserProvider>>,
-        desktop_operations: Option<Vec<String>>,
+        desktop: DesktopCapabilityState,
     ) -> Self {
         Self {
             started: Instant::now(),
@@ -549,7 +617,7 @@ impl DeviceProvider {
             job_available,
             audit_available,
             browser_provider,
-            desktop_operations,
+            desktop,
         }
     }
 
@@ -664,17 +732,26 @@ impl DeviceProvider {
                 principal_id,
                 device_id,
             ),
-            self.dynamic_provider_entry(
-                "desktop",
-                self.desktop_operations.is_some(),
-                self.desktop_operations
-                    .is_none()
-                    .then_some("Windows UIA desktop provider requires a Windows host"),
-                self.desktop_operations.as_deref().unwrap_or(&[]),
-                principal_id,
-                device_id,
-            ),
+            self.desktop_provider_entry(principal_id, device_id),
         ]
+    }
+
+    fn desktop_provider_entry(&self, principal_id: Option<&str>, device_id: Option<&str>) -> Value {
+        let available = self.desktop.operations.is_some();
+        let unavailable_reason = (!available).then(|| {
+            self.desktop
+                .unavailable_reason
+                .as_deref()
+                .unwrap_or("desktop provider is unavailable")
+        });
+        self.dynamic_provider_entry(
+            "desktop",
+            available,
+            unavailable_reason,
+            self.desktop.operations.as_deref().unwrap_or(&[]),
+            principal_id,
+            device_id,
+        )
     }
 
     fn tool_families_summary(
@@ -841,11 +918,29 @@ impl CapabilityProvider for DeviceProvider {
 
 struct UnavailableProvider {
     namespace: &'static str,
+    reason: Option<String>,
+    recovery_hint: Option<String>,
 }
 
 impl UnavailableProvider {
     const fn new(namespace: &'static str) -> Self {
-        Self { namespace }
+        Self {
+            namespace,
+            reason: None,
+            recovery_hint: None,
+        }
+    }
+
+    const fn with_reason(
+        namespace: &'static str,
+        reason: Option<String>,
+        recovery_hint: Option<String>,
+    ) -> Self {
+        Self {
+            namespace,
+            reason,
+            recovery_hint,
+        }
     }
 }
 
@@ -859,25 +954,30 @@ impl CapabilityProvider for UnavailableProvider {
         &self,
         invocation: &InvocationEnvelope,
     ) -> Result<ProviderResult, CapabilityError> {
-        let recovery_hint = match self.namespace {
+        let recovery_hint = self.recovery_hint.clone().or_else(|| match self.namespace {
             "browser" => Some(
                 "Ensure the Tetherplane browser bridge or extension host is running on this device."
                     .to_owned(),
             ),
             "desktop" => Some(
-                "Desktop UIA operations require a Windows host with the desktop provider active."
+                "Desktop UIA operations require an active interactive desktop session with the desktop provider active."
                     .to_owned(),
             ),
             _ => None,
-        };
+        });
+        let message = self.reason.as_deref().map_or_else(
+            || format!("{} provider is not installed", self.namespace),
+            |reason| format!("{} provider is unavailable: {reason}", self.namespace),
+        );
         Err(CapabilityError {
             code: ErrorCode::CapabilityUnavailable,
-            message: format!("{} provider is not installed", self.namespace),
+            message,
             recovery_hint,
             details: json!({
                 "namespace": self.namespace,
                 "capability": invocation.capability,
                 "available": false,
+                "unavailable_reason": self.reason,
             }),
         })
     }
@@ -933,24 +1033,7 @@ mod tests {
     }
 
     fn owner_device_status_invocation(device_id: &str) -> InvocationEnvelope {
-        InvocationEnvelope {
-            protocol_version: "1.0".into(),
-            request_id: Uuid::new_v4(),
-            device_id: Some(device_id.into()),
-            principal_id: Some("human:account-a".into()),
-            job_id: None,
-            capability: "process.run".into(),
-            arguments: json!({ "program": "/bin/sh", "args": ["-c", "echo ok"] }),
-            actor: Actor {
-                id: "owner".into(),
-                kind: ActorKind::Human,
-            },
-            session_id: None,
-            response_mode: ResponseMode::Compact,
-            idempotency_key: None,
-            preconditions: vec![],
-            expectations: vec![],
-        }
+        platform_echo_invocation(device_id)
     }
 
     #[tokio::test]
@@ -1102,5 +1185,329 @@ mod tests {
             .expect("available_operations array");
         assert!(ops.contains(&json!("browser.status")));
         assert!(ops.contains(&json!("browser.pages")));
+    }
+
+    fn platform_echo_invocation(device_id: &str) -> InvocationEnvelope {
+        #[cfg(windows)]
+        let arguments = json!({ "program": "cmd.exe", "args": ["/C", "echo ok"] });
+        #[cfg(not(windows))]
+        let arguments = json!({ "program": "/bin/sh", "args": ["-c", "echo ok"] });
+
+        InvocationEnvelope {
+            protocol_version: "1.0".into(),
+            request_id: Uuid::new_v4(),
+            device_id: Some(device_id.into()),
+            principal_id: Some("human:account-a".into()),
+            job_id: None,
+            capability: "process.run".into(),
+            arguments,
+            actor: Actor {
+                id: "owner".into(),
+                kind: ActorKind::Human,
+            },
+            session_id: None,
+            response_mode: ResponseMode::Compact,
+            idempotency_key: None,
+            preconditions: vec![],
+            expectations: vec![],
+        }
+    }
+
+    #[tokio::test]
+    async fn unavailable_desktop_provider_does_not_block_runtime_capabilities_or_policy_sync() {
+        use std::sync::Arc;
+        use std::time::Duration;
+        use tether_browser_provider::{BrowserBridgeConfig, BrowserProvider};
+        use tether_core::{CapabilityError, ErrorCode};
+        use tokio::net::TcpListener;
+
+        let reservation = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
+        let address = reservation.local_addr().unwrap();
+        drop(reservation);
+
+        let browser = Arc::new(
+            BrowserProvider::new_reconnectable(BrowserBridgeConfig {
+                address: address.to_string(),
+                token: None,
+                timeout_ms: 250,
+            })
+            .unwrap(),
+        );
+        let state = TempStateDir::create();
+
+        // Simulate headless / unavailable Windows UI Automation failure without aborting runtime startup.
+        let runtime = AgentRuntime::new_with_desktop_init(
+            vec![state.0.clone()],
+            None,
+            Some(&state.0),
+            Some(browser),
+            Some("Leno"),
+            |_ownership| {
+                Err(CapabilityError {
+                    code: ErrorCode::ProviderFailure,
+                    message: "Windows UI Automation provider error: Unspecified error".into(),
+                    recovery_hint: None,
+                    details: json!({}),
+                })
+            },
+        )
+        .expect("runtime must still initialize when desktop UI Automation is unavailable");
+
+        // 1. Device status still works
+        let status = runtime.device_status();
+        assert_eq!(status["policy_mode"], "background_only");
+
+        // 2. Desktop provider & tool_family report exact unavailable state with empty ops and preserved reason
+        let expected_reason = "Windows UI Automation provider error: Unspecified error";
+        assert_desktop_unavailable_telemetry(
+            &runtime.device_capabilities(Some("human:account-a"), Some("Leno")),
+            expected_reason,
+        );
+
+        // 3. Policy sync applies universal policy (rev 1) and enforces monotonic revisions
+        let rev1_universal =
+            SynchronizedDevicePolicy::universal_for_owner("Leno", "account-a", "human:account-a");
+        runtime
+            .apply_synchronized_policy(rev1_universal.clone())
+            .expect("rev 1 universal policy should apply without desktop");
+        assert_eq!(runtime.applied_policy_revision(), 1);
+
+        // 4. Process execution works under universal permissions
+        let proc_ok = runtime.execute(platform_echo_invocation("Leno")).await;
+        assert_eq!(proc_ok.status, ResultStatus::Success);
+
+        // 5. Invoking desktop when allowed by policy returns capability_unavailable preserving the UIA failure
+        let mut desktop_invoke = platform_echo_invocation("Leno");
+        desktop_invoke.capability = "desktop.snapshot".into();
+        desktop_invoke.arguments = json!({});
+        let desktop_unavail = runtime.execute(desktop_invoke.clone()).await;
+        assert_eq!(desktop_unavail.status, ResultStatus::Error);
+        let unavail_err = desktop_unavail.error.unwrap();
+        assert_eq!(unavail_err.code, ErrorCode::CapabilityUnavailable);
+        assert!(
+            unavail_err.message.contains(expected_reason),
+            "unexpected unavailable message: {}",
+            unavail_err.message
+        );
+
+        // 6. Browser standby -> live availability recovery still operates without desktop
+        let server = spawn_browser_ready_probe_server(TcpListener::bind(address).await.unwrap());
+        let changed = tokio::time::timeout(
+            Duration::from_secs(2),
+            runtime.refresh_browser_availability(),
+        )
+        .await
+        .unwrap();
+        assert!(changed);
+        server.await.unwrap();
+        let live_caps = runtime.device_capabilities(Some("human:account-a"), Some("Leno"));
+        assert_eq!(live_caps["tool_families"]["browser"]["available"], true);
+        assert_eq!(live_caps["tool_families"]["desktop"]["available"], false);
+
+        // 7. Revoking desktop & process via rev 2 enforces permission_denied even on unavailable desktop
+        let rev2_revoked = revoked_policy_revision(
+            &rev1_universal,
+            2,
+            &[ToolFamily::Process, ToolFamily::Desktop],
+        );
+        runtime
+            .apply_synchronized_policy(rev2_revoked)
+            .expect("rev 2 should apply");
+        assert!(runtime.apply_synchronized_policy(rev1_universal).is_err());
+
+        let denied_desktop = runtime.execute(desktop_invoke).await;
+        assert_eq!(denied_desktop.status, ResultStatus::Error);
+        assert_eq!(
+            denied_desktop.error.unwrap().code,
+            ErrorCode::PermissionDenied
+        );
+
+        let denied_proc = runtime.execute(platform_echo_invocation("Leno")).await;
+        assert_eq!(denied_proc.status, ResultStatus::Error);
+        assert_eq!(denied_proc.error.unwrap().code, ErrorCode::PermissionDenied);
+    }
+
+    fn revoked_policy_revision(
+        base: &SynchronizedDevicePolicy,
+        revision: u64,
+        revoked: &[ToolFamily],
+    ) -> SynchronizedDevicePolicy {
+        let mut next = base.clone();
+        next.revision = revision;
+        next.owner_policy.universal_permissions = false;
+        for family in revoked {
+            next.owner_policy.allowed_families.remove(family);
+            next.owner_policy.denied_families.insert(*family);
+        }
+        next
+    }
+
+    fn assert_desktop_unavailable_telemetry(caps: &serde_json::Value, expected_reason: &str) {
+        let desktop_provider = caps["providers"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .find(|p| p["namespace"] == "desktop")
+            .expect("desktop provider entry");
+        assert_eq!(desktop_provider["available"], false);
+        assert_eq!(desktop_provider["unavailable_reason"], expected_reason);
+        assert_eq!(desktop_provider["available_operations"], json!([]));
+        assert_eq!(desktop_provider["granted_operations"], json!([]));
+        assert_eq!(desktop_provider["denied_operations"], json!([]));
+        assert_eq!(desktop_provider["operations"], json!([]));
+
+        let desktop_family = &caps["tool_families"]["desktop"];
+        assert_eq!(desktop_family["available"], false);
+        assert_eq!(desktop_family["unavailable_reason"], expected_reason);
+        assert_eq!(desktop_family["available_operations"], json!([]));
+        assert_eq!(desktop_family["granted_operations"], json!([]));
+    }
+
+    fn spawn_browser_ready_probe_server(
+        listener: tokio::net::TcpListener,
+    ) -> tokio::task::JoinHandle<()> {
+        use tokio::io::{AsyncBufReadExt, AsyncWriteExt, BufReader};
+
+        tokio::spawn(async move {
+            let (stream, _) = listener.accept().await.unwrap();
+            let (read, mut write) = stream.into_split();
+            let mut lines = BufReader::new(read).lines();
+            let req: serde_json::Value =
+                serde_json::from_str(&lines.next_line().await.unwrap().unwrap()).unwrap();
+            let resp = json!({
+                "request_id": req["request_id"],
+                "status": "success",
+                "data": {
+                    "available": true,
+                    "mode": "background_only",
+                    "capabilities": { "backend": "extension", "connected": true, "status": "ready" }
+                },
+                "verification": "not_applicable"
+            });
+            write
+                .write_all(format!("{resp}\n").as_bytes())
+                .await
+                .unwrap();
+        })
+    }
+
+    #[tokio::test]
+    async fn available_desktop_provider_reports_canonical_desktop_operations() {
+        use std::sync::Arc;
+        use tether_core::CapabilityError;
+        use tether_desktop_provider::{
+            DesktopAction, DesktopActionOutcome, DesktopBackend, DesktopNode, DesktopProvider,
+        };
+
+        struct StubDesktopBackend;
+
+        impl DesktopBackend for StubDesktopBackend {
+            fn snapshot(&self) -> Result<Vec<DesktopNode>, CapabilityError> {
+                Ok(Vec::new())
+            }
+
+            fn target(&self, reference: &str) -> Result<DesktopNode, CapabilityError> {
+                Err(CapabilityError {
+                    code: tether_core::ErrorCode::StaleReference,
+                    message: format!("missing stub desktop target: {reference}"),
+                    recovery_hint: None,
+                    details: json!({}),
+                })
+            }
+
+            fn perform(
+                &self,
+                _action: DesktopAction,
+            ) -> Result<DesktopActionOutcome, CapabilityError> {
+                Err(CapabilityError {
+                    code: tether_core::ErrorCode::CapabilityUnavailable,
+                    message: "stub desktop backend action unsupported".into(),
+                    recovery_hint: None,
+                    details: json!({}),
+                })
+            }
+        }
+
+        let state = TempStateDir::create();
+        let runtime = AgentRuntime::new_with_desktop_init(
+            vec![state.0.clone()],
+            None,
+            Some(&state.0),
+            None,
+            Some("Leno"),
+            |ownership| {
+                Ok(Arc::new(DesktopProvider::new(
+                    Arc::new(StubDesktopBackend),
+                    Arc::clone(ownership),
+                )))
+            },
+        )
+        .expect("runtime with available desktop backend initializes cleanly");
+
+        let caps = runtime.device_capabilities(Some("human:account-a"), Some("Leno"));
+        let desktop_provider = caps["providers"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .find(|p| p["namespace"] == "desktop")
+            .unwrap();
+        assert_eq!(desktop_provider["available"], true);
+        assert_eq!(
+            desktop_provider["unavailable_reason"],
+            serde_json::Value::Null
+        );
+        let ops = desktop_provider["available_operations"].as_array().unwrap();
+        assert!(ops.contains(&json!("snapshot")));
+        assert!(ops.contains(&json!("act")));
+
+        let desktop_family = &caps["tool_families"]["desktop"];
+        assert_eq!(desktop_family["available"], true);
+        assert_eq!(
+            desktop_family["unavailable_reason"],
+            serde_json::Value::Null
+        );
+        assert!(
+            desktop_family["available_operations"]
+                .as_array()
+                .unwrap()
+                .contains(&json!("desktop.snapshot"))
+        );
+
+        let mut desktop_invoke = platform_echo_invocation("Leno");
+        desktop_invoke.capability = "desktop.snapshot".into();
+        desktop_invoke.arguments = json!({});
+        let snap = runtime.execute(desktop_invoke).await;
+        assert_eq!(snap.status, ResultStatus::Success);
+    }
+
+    #[cfg(windows)]
+    #[tokio::test]
+    async fn real_windows_uia_default_runtime_reports_available_desktop_in_interactive_session() {
+        let state = TempStateDir::create();
+        let runtime = AgentRuntime::new_with_device(
+            vec![state.0.clone()],
+            None,
+            Some(&state.0),
+            None,
+            Some("Leno"),
+        )
+        .expect("default Windows AgentRuntime initializes cleanly");
+
+        let caps = runtime.device_capabilities(Some("human:account-a"), Some("Leno"));
+        let desktop_provider = caps["providers"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .find(|p| p["namespace"] == "desktop")
+            .unwrap();
+        assert_eq!(
+            desktop_provider["available"], true,
+            "interactive Windows host should expose real UIA desktop provider; reason={:?}",
+            desktop_provider["unavailable_reason"]
+        );
+        assert_eq!(
+            desktop_provider["unavailable_reason"],
+            serde_json::Value::Null
+        );
     }
 }

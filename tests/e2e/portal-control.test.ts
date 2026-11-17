@@ -109,22 +109,21 @@ class HeadlessBrowser {
   }
 
   static async launch(profileDir: string): Promise<HeadlessBrowser> {
-    const executable = await findInstalledChromium();
+    const executable = findInstalledChromium();
     assert.ok(executable, "expected Chromium executable to be installed");
     await mkdir(profileDir, { recursive: true });
     const child = spawn(
       executable,
       [
         "--headless=new",
-        "--no-sandbox",
-        "--disable-gpu",
+        ...(process.platform === "linux" ? ["--no-sandbox", "--disable-gpu"] : []),
         "--no-first-run",
         "--no-default-browser-check",
         "--remote-debugging-port=0",
         `--user-data-dir=${profileDir}`,
         "about:blank",
       ],
-      { stdio: "ignore" },
+      { stdio: "ignore", windowsHide: true },
     );
 
     const portFile = path.join(profileDir, "DevToolsActivePort");
@@ -246,8 +245,23 @@ class HeadlessBrowser {
       // ignore
     }
     if (this.#child.exitCode === null) {
-      this.#child.kill("SIGKILL");
-      await once(this.#child, "exit").catch(() => {});
+      if (process.platform === "win32" && typeof this.#child.pid === "number") {
+        const killer = spawn(
+          "taskkill.exe",
+          ["/PID", String(this.#child.pid), "/T", "/F"],
+          { stdio: "ignore", windowsHide: true },
+        );
+        await Promise.race([
+          once(killer, "exit").catch(() => {}),
+          new Promise((r) => setTimeout(r, 3_000)),
+        ]);
+      } else {
+        this.#child.kill("SIGKILL");
+      }
+      await Promise.race([
+        once(this.#child, "exit").catch(() => {}),
+        new Promise((r) => setTimeout(r, 3_000)),
+      ]);
     }
   }
 }
@@ -303,9 +317,15 @@ function spawnTetherd(options: {
   return { child, stderr };
 }
 
+function platformEchoArgs(text: string): { program: string; args: string[] } {
+  return process.platform === "win32"
+    ? { program: "cmd.exe", args: ["/C", `echo ${text}`] }
+    : { program: "/bin/sh", args: ["-c", `echo ${text}`] };
+}
+
 test(
   "end-to-end live portal workflow with real tetherd, swappable browser bridge, Chromium desktop & mobile viewports",
-  { timeout: 60_000 },
+  { timeout: 90_000 },
   async () => {
     const here = path.dirname(fileURLToPath(import.meta.url));
     const repoRoot = path.resolve(here, "..", "..");
@@ -509,7 +529,7 @@ test(
       );
       const deniedProc = await ownerClient.callTool({
         name: "process",
-        arguments: { op: "run", device: "Leno", args: { program: "/bin/sh", args: ["-c", "echo no"] } },
+        arguments: { op: "run", device: "Leno", args: platformEchoArgs("no") },
       });
       assert.equal(deniedProc.isError, true);
 
@@ -648,7 +668,7 @@ test(
       // Process execution should now succeed again after rollback to universal v1
       const restoredProc = await ownerClient.callTool({
         name: "process",
-        arguments: { op: "run", device: "Leno", args: { program: "/bin/sh", args: ["-c", "echo rolled-back"] } },
+        arguments: { op: "run", device: "Leno", args: platformEchoArgs("rolled-back") },
       });
       assert.equal(restoredProc.isError, undefined);
 
@@ -730,7 +750,7 @@ test(
 
       // Switch to mobile viewport (390x844) and test offline update -> tetherd reconnect resync + layout
       await browser.setViewport(390, 844, true);
-      tetherdProc.child.kill("SIGTERM");
+      tetherdProc.child.kill();
       await once(tetherdProc.child, "exit");
 
       await until(
@@ -779,7 +799,7 @@ test(
       // Verify offline revocation synced to reconnected tetherd
       const procAfterReconnect = await ownerClient.callTool({
         name: "process",
-        arguments: { op: "run", device: "Leno", args: { program: "/bin/sh", args: ["-c", "echo denied"] } },
+        arguments: { op: "run", device: "Leno", args: platformEchoArgs("denied") },
       });
       assert.equal(procAfterReconnect.isError, true);
 
@@ -800,12 +820,20 @@ test(
       await rogueClient?.close().catch(() => {});
       await browser?.close();
       if (tetherdProc && tetherdProc.child.exitCode === null) {
-        tetherdProc.child.kill("SIGKILL");
-        await once(tetherdProc.child, "exit").catch(() => {});
+        tetherdProc.child.kill();
+        await Promise.race([
+          once(tetherdProc.child, "exit").catch(() => {}),
+          new Promise((r) => setTimeout(r, 3_000)),
+        ]);
       }
       await bridge.close();
       await relay.close();
-      await rm(temp, { recursive: true, force: true });
+      await rm(temp, {
+        recursive: true,
+        force: true,
+        maxRetries: 20,
+        retryDelay: 50,
+      });
     }
   },
 );

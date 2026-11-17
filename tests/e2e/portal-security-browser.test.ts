@@ -115,22 +115,21 @@ class HeadlessBrowser {
   }
 
   static async launch(profileDir: string): Promise<HeadlessBrowser> {
-    const executable = await findInstalledChromium();
+    const executable = findInstalledChromium();
     assert.ok(executable, "expected Chromium executable to be installed");
     await mkdir(profileDir, { recursive: true });
     const child = spawn(
       executable,
       [
         "--headless=new",
-        "--no-sandbox",
-        "--disable-gpu",
+        ...(process.platform === "linux" ? ["--no-sandbox", "--disable-gpu"] : []),
         "--no-first-run",
         "--no-default-browser-check",
         "--remote-debugging-port=0",
         `--user-data-dir=${profileDir}`,
         "about:blank",
       ],
-      { stdio: "ignore" },
+      { stdio: "ignore", windowsHide: true },
     );
 
     const portFile = path.join(profileDir, "DevToolsActivePort");
@@ -266,8 +265,23 @@ class HeadlessBrowser {
       // ignore
     }
     if (this.#child.exitCode === null) {
-      this.#child.kill("SIGKILL");
-      await once(this.#child, "exit").catch(() => {});
+      if (process.platform === "win32" && typeof this.#child.pid === "number") {
+        const killer = spawn(
+          "taskkill.exe",
+          ["/PID", String(this.#child.pid), "/T", "/F"],
+          { stdio: "ignore", windowsHide: true },
+        );
+        await Promise.race([
+          once(killer, "exit").catch(() => {}),
+          new Promise((r) => setTimeout(r, 3_000)),
+        ]);
+      } else {
+        this.#child.kill("SIGKILL");
+      }
+      await Promise.race([
+        once(this.#child, "exit").catch(() => {}),
+        new Promise((r) => setTimeout(r, 3_000)),
+      ]);
     }
   }
 }
@@ -513,6 +527,11 @@ test("portal blocks adversarial XSS payloads, obeys strict CSP, and stores sessi
     await browser?.close();
     socket?.close();
     await relay.close();
-    await rm(dir, { recursive: true, force: true });
+    await rm(dir, {
+      recursive: true,
+      force: true,
+      maxRetries: 20,
+      retryDelay: 50,
+    });
   }
 });

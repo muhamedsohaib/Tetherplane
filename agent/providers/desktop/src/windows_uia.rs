@@ -2,6 +2,7 @@ use std::collections::{BTreeMap, HashMap};
 use std::sync::Mutex;
 use std::sync::mpsc::{Receiver, Sender, channel};
 use std::thread;
+use std::time::Duration;
 
 use serde_json::json;
 use tether_core::{CapabilityError, ErrorCode};
@@ -19,6 +20,8 @@ use crate::{
 
 const MAX_WINDOWS_SNAPSHOT_NODES: usize = 1_001;
 const MAX_WINDOWS_SNAPSHOT_DEPTH: usize = 8;
+
+static UIA_INIT_LOCK: Mutex<()> = Mutex::new(());
 
 enum WorkerRequest {
     Snapshot(Sender<Result<Vec<DesktopNode>, CapabilityError>>),
@@ -57,6 +60,22 @@ struct WorkerState {
 }
 
 impl WorkerState {
+    fn new_with_transient_retry() -> Result<Self, CapabilityError> {
+        const RETRY_DELAYS_MS: [u64; 2] = [25, 50];
+        match Self::new() {
+            Ok(state) => Ok(state),
+            Err(first_error) => {
+                for delay_ms in RETRY_DELAYS_MS {
+                    thread::sleep(Duration::from_millis(delay_ms));
+                    if let Ok(state) = Self::new() {
+                        return Ok(state);
+                    }
+                }
+                Err(first_error)
+            }
+        }
+    }
+
     fn new() -> Result<Self, CapabilityError> {
         let automation = UIAutomation::new().map_err(|error| uia_provider_error(&error))?;
         let walker = automation
@@ -599,6 +618,7 @@ fn execute_collapse(element: &UIElement) -> Result<(bool, serde_json::Value), Ca
 
 pub struct WindowsUiaBackend {
     requests: Mutex<Sender<WorkerRequest>>,
+    worker: Option<thread::JoinHandle<()>>,
 }
 
 impl WindowsUiaBackend {
@@ -611,15 +631,27 @@ impl WindowsUiaBackend {
         let (request_tx, request_rx) = channel::<WorkerRequest>();
         let (init_tx, init_rx) = channel::<Result<(), CapabilityError>>();
 
-        thread::Builder::new()
+        let worker = thread::Builder::new()
             .name("tetherplane-windows-uia".into())
-            .spawn(move || match WorkerState::new() {
-                Ok(mut state) => {
-                    let _ = init_tx.send(Ok(()));
-                    state.run(&request_rx);
-                }
-                Err(error) => {
-                    let _ = init_tx.send(Err(error));
+            .spawn(move || {
+                let init_result = {
+                    let _guard = UIA_INIT_LOCK
+                        .lock()
+                        .unwrap_or_else(std::sync::PoisonError::into_inner);
+                    WorkerState::new_with_transient_retry()
+                };
+                match init_result {
+                    Ok(mut state) => {
+                        let _ = init_tx.send(Ok(()));
+                        state.run(&request_rx);
+                        let _guard = UIA_INIT_LOCK
+                            .lock()
+                            .unwrap_or_else(std::sync::PoisonError::into_inner);
+                        drop(state);
+                    }
+                    Err(error) => {
+                        let _ = init_tx.send(Err(error));
+                    }
                 }
             })
             .map_err(|error| {
@@ -628,13 +660,22 @@ impl WindowsUiaBackend {
                 ))
             })?;
 
-        init_rx.recv().map_err(|_| {
-            provider_failure("Windows UI Automation worker exited during startup")
-        })??;
-
-        Ok(Self {
-            requests: Mutex::new(request_tx),
-        })
+        match init_rx.recv() {
+            Ok(Ok(())) => Ok(Self {
+                requests: Mutex::new(request_tx),
+                worker: Some(worker),
+            }),
+            Ok(Err(error)) => {
+                let _ = worker.join();
+                Err(error)
+            }
+            Err(_) => {
+                let _ = worker.join();
+                Err(provider_failure(
+                    "Windows UI Automation worker exited during startup",
+                ))
+            }
+        }
     }
 
     fn sender(&self) -> std::sync::MutexGuard<'_, Sender<WorkerRequest>> {
@@ -678,8 +719,15 @@ impl DesktopBackend for WindowsUiaBackend {
 
 impl Drop for WindowsUiaBackend {
     fn drop(&mut self) {
-        if let Ok(sender) = self.requests.lock() {
+        {
+            let sender = self
+                .requests
+                .lock()
+                .unwrap_or_else(std::sync::PoisonError::into_inner);
             let _ = sender.send(WorkerRequest::Shutdown);
+        }
+        if let Some(worker) = self.worker.take() {
+            let _ = worker.join();
         }
     }
 }
