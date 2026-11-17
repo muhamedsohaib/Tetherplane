@@ -1,3 +1,4 @@
+import { createHash, timingSafeEqual } from "node:crypto";
 import net from "node:net";
 
 import {
@@ -417,7 +418,8 @@ async function handleLine(
 
   if (
     options.token !== undefined &&
-    request.token !== options.token
+    (typeof request.token !== "string" ||
+      !constantTimeTokenEqual(request.token, options.token))
   ) {
     return errorResponse(
       requestId,
@@ -639,4 +641,10 @@ export class HotSwappableBrowserBackend implements BrowserServiceBackend {
   async diagnostics(pageId: string, limit: number) {
     return await this.#requireActive().diagnostics(pageId, limit);
   }
+}
+
+function constantTimeTokenEqual(actual: string, expected: string): boolean {
+  const actualDigest = createHash("sha256").update(actual, "utf8").digest();
+  const expectedDigest = createHash("sha256").update(expected, "utf8").digest();
+  return timingSafeEqual(actualDigest, expectedDigest);
 }

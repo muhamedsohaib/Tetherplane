@@ -70,8 +70,15 @@ test("RPC handshake authenticates and reports actual operations", async () => {
     service: new BrowserBridgeService({ backend, ownership: new BrowserOwnershipRegistry() }),
   });
   try {
-    const denied = await rpc(server.address, { type: "handshake", request_id: "handshake", token: "wrong" });
-    assert.equal(denied.status, "error");
+    for (const bad of ["wrong", "launch-tokem", "launch-token-longer", "", 12345]) {
+      const denied = await rpc(server.address, { type: "handshake", request_id: "handshake", token: bad });
+      assert.equal(denied.status, "error");
+      assert.equal((denied.error as Record<string, unknown>).code, "permission_denied");
+    }
+    const missingToken = await rpc(server.address, { type: "handshake", request_id: "handshake" });
+    assert.equal(missingToken.status, "error");
+    assert.equal((missingToken.error as Record<string, unknown>).code, "permission_denied");
+
     const accepted = await rpc(server.address, { type: "handshake", request_id: "handshake", token: "launch-token" });
     assert.equal(accepted.status, "success");
     assert.ok(Array.isArray((accepted.data as Record<string, unknown>).operations));

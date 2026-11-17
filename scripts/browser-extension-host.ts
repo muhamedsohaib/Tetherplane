@@ -62,6 +62,8 @@ const extensionServer =
   await startExtensionBridgeServer({
     launchToken: extensionToken,
     port: extensionPort,
+    expectedExtensionId: () =>
+      readPinnedExtensionId(pinnedExtensionIdFile),
   });
 
 const swappableBackend = new HotSwappableBrowserBackend();

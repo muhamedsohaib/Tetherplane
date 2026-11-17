@@ -43,6 +43,7 @@ export {
   type AuthenticatedExtensionClient,
   type ExtensionBridgeMessage,
   type ExtensionBridgeServer,
+  type ExtensionIdResolver,
 } from "./extension-session.ts";
 
 export {
