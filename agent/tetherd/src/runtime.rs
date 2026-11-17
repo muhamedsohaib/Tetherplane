@@ -35,6 +35,7 @@ pub struct AgentRuntime {
     router: CapabilityRouter,
     policy: Arc<LocalPolicyBroker>,
     device_provider: Arc<DeviceProvider>,
+    browser_provider: Option<Arc<BrowserProvider>>,
     bound_principal_id: Option<String>,
     bound_device_id: Option<String>,
     state_dir: Option<PathBuf>,
@@ -115,14 +116,11 @@ impl AgentRuntime {
                 .collect()
         });
 
-        let browser_operations = browser_provider
-            .as_ref()
-            .map(|provider| provider.operations().to_vec());
         let device_provider = Arc::new(DeviceProvider::new(
             Arc::clone(&policy),
             job_available,
             audit_available,
-            browser_operations,
+            browser_provider.clone(),
             desktop_operations,
         ));
         router.register(Arc::clone(&device_provider) as Arc<_>)?;
@@ -141,8 +139,8 @@ impl AgentRuntime {
         } else {
             router.register(Arc::new(UnavailableProvider::new("audit")))?;
         }
-        if let Some(browser_provider) = browser_provider {
-            router.register(browser_provider)?;
+        if let Some(browser) = &browser_provider {
+            router.register(Arc::clone(browser) as Arc<_>)?;
         } else {
             router.register(Arc::new(UnavailableProvider::new("browser")))?;
         }
@@ -156,6 +154,7 @@ impl AgentRuntime {
             router,
             policy,
             device_provider,
+            browser_provider,
             bound_principal_id,
             bound_device_id,
             state_dir: state_dir.map(Path::to_path_buf),
@@ -163,6 +162,20 @@ impl AgentRuntime {
             idempotency_store,
             policy_update_lock: std::sync::Mutex::new(()),
         })
+    }
+
+    #[must_use]
+    pub fn has_browser_provider(&self) -> bool {
+        self.browser_provider.is_some()
+    }
+
+    pub async fn refresh_browser_availability(&self) -> bool {
+        let Some(browser) = &self.browser_provider else {
+            return false;
+        };
+        let previous = browser.current_availability();
+        let next = browser.probe_status().await;
+        previous != next
     }
 
     #[must_use]
@@ -518,7 +531,7 @@ struct DeviceProvider {
     policy: Arc<LocalPolicyBroker>,
     job_available: bool,
     audit_available: bool,
-    browser_operations: Option<Vec<String>>,
+    browser_provider: Option<Arc<BrowserProvider>>,
     desktop_operations: Option<Vec<String>>,
 }
 
@@ -527,7 +540,7 @@ impl DeviceProvider {
         policy: Arc<LocalPolicyBroker>,
         job_available: bool,
         audit_available: bool,
-        browser_operations: Option<Vec<String>>,
+        browser_provider: Option<Arc<BrowserProvider>>,
         desktop_operations: Option<Vec<String>>,
     ) -> Self {
         Self {
@@ -535,7 +548,7 @@ impl DeviceProvider {
             policy,
             job_available,
             audit_available,
-            browser_operations,
+            browser_provider,
             desktop_operations,
         }
     }
@@ -593,6 +606,20 @@ impl DeviceProvider {
             "acquire_lease",
             "release_lease",
         ];
+        let (browser_available, browser_unavailable_reason, browser_ops): (
+            bool,
+            Option<String>,
+            &[String],
+        ) = if let Some(browser) = &self.browser_provider {
+            let (available, reason) = browser.current_availability();
+            (available, reason, browser.operations())
+        } else {
+            (
+                false,
+                Some("browser bridge is not configured or connected".to_owned()),
+                &[],
+            )
+        };
         vec![
             self.provider_entry(
                 "device",
@@ -631,11 +658,9 @@ impl DeviceProvider {
             ),
             self.dynamic_provider_entry(
                 "browser",
-                self.browser_operations.is_some(),
-                self.browser_operations
-                    .is_none()
-                    .then_some("browser bridge is not configured or connected"),
-                self.browser_operations.as_deref().unwrap_or(&[]),
+                browser_available,
+                browser_unavailable_reason.as_deref(),
+                browser_ops,
                 principal_id,
                 device_id,
             ),
@@ -1006,5 +1031,76 @@ mod tests {
             p
         };
         assert!(restarted.apply_synchronized_policy(zero_rev).is_err());
+    }
+
+    #[tokio::test]
+    async fn device_capabilities_reflect_live_browser_standby_and_recovery() {
+        use std::sync::Arc;
+        use std::time::Duration;
+        use tether_browser_provider::{BrowserBridgeConfig, BrowserProvider};
+        use tokio::io::{AsyncBufReadExt, AsyncWriteExt, BufReader};
+        use tokio::net::TcpListener;
+
+        let reservation = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
+        let address = reservation.local_addr().unwrap();
+        drop(reservation);
+
+        let browser = Arc::new(
+            BrowserProvider::new_reconnectable(BrowserBridgeConfig {
+                address: address.to_string(),
+                token: None,
+                timeout_ms: 250,
+            })
+            .unwrap(),
+        );
+        let state = TempStateDir::create();
+        let runtime =
+            AgentRuntime::new(vec![state.0.clone()], None, Some(&state.0), Some(browser)).unwrap();
+
+        let standby_caps = runtime.device_capabilities(None, Some("Leno"));
+        let standby_browser_family = &standby_caps["tool_families"]["browser"];
+        assert_eq!(standby_browser_family["available"], false);
+        assert_eq!(standby_browser_family["available_operations"], json!([]));
+
+        let listener = TcpListener::bind(address).await.unwrap();
+        let server = tokio::spawn(async move {
+            let (stream, _) = listener.accept().await.unwrap();
+            let (read, mut write) = stream.into_split();
+            let mut lines = BufReader::new(read).lines();
+            let req: serde_json::Value =
+                serde_json::from_str(&lines.next_line().await.unwrap().unwrap()).unwrap();
+            let resp = json!({
+                "request_id": req["request_id"],
+                "status": "success",
+                "data": {
+                    "available": true,
+                    "mode": "background_only",
+                    "capabilities": { "backend": "extension", "connected": true, "status": "ready" }
+                },
+                "verification": "not_applicable"
+            });
+            write
+                .write_all(format!("{resp}\n").as_bytes())
+                .await
+                .unwrap();
+        });
+
+        let changed = tokio::time::timeout(
+            Duration::from_secs(2),
+            runtime.refresh_browser_availability(),
+        )
+        .await
+        .unwrap();
+        assert!(changed);
+        server.await.unwrap();
+
+        let live_caps = runtime.device_capabilities(None, Some("Leno"));
+        let live_browser_family = &live_caps["tool_families"]["browser"];
+        assert_eq!(live_browser_family["available"], true);
+        let ops = live_browser_family["available_operations"]
+            .as_array()
+            .expect("available_operations array");
+        assert!(ops.contains(&json!("browser.status")));
+        assert!(ops.contains(&json!("browser.pages")));
     }
 }

@@ -304,3 +304,86 @@ async fn startup_retry_attaches_when_loopback_bridge_becomes_ready_shortly_after
     assert!(provider.operations().contains(&"pages".to_owned()));
     delayed.await.unwrap();
 }
+
+#[tokio::test]
+async fn probe_status_tracks_standby_disconnect_and_reconnect() {
+    let reservation = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
+    let address = reservation.local_addr().unwrap();
+    drop(reservation);
+
+    let provider = BrowserProvider::new_reconnectable(BrowserBridgeConfig {
+        address: address.to_string(),
+        token: Some("bridge-token".into()),
+        timeout_ms: 250,
+    })
+    .unwrap();
+
+    let (initial_avail, initial_reason) = provider.current_availability();
+    assert!(!initial_avail);
+    assert!(initial_reason.is_some());
+
+    let (unreachable_avail, unreachable_reason) = provider.probe_status().await;
+    assert!(!unreachable_avail);
+    assert!(unreachable_reason.is_some());
+
+    let listener = TcpListener::bind(address).await.unwrap();
+    let mock = tokio::spawn(async move {
+        for attached in [false, true] {
+            let (stream, _) = listener.accept().await.unwrap();
+            let (read, mut write) = stream.into_split();
+            let mut lines = BufReader::new(read).lines();
+            let request: serde_json::Value =
+                serde_json::from_str(&lines.next_line().await.unwrap().unwrap()).unwrap();
+            assert_eq!(request["type"], "invoke");
+            assert_eq!(request["capability"], "browser.status");
+            let response = if attached {
+                json!({
+                    "request_id": request["request_id"],
+                    "status": "success",
+                    "data": {
+                        "available": true,
+                        "mode": "background_only",
+                        "capabilities": { "backend": "extension", "connected": true, "status": "ready" }
+                    },
+                    "verification": "not_applicable"
+                })
+            } else {
+                json!({
+                    "request_id": request["request_id"],
+                    "status": "success",
+                    "data": {
+                        "available": false,
+                        "unavailable_reason": "Chrome extension is in standby / waiting for extension reconnect",
+                        "mode": "background_only",
+                        "capabilities": { "backend": "extension", "connected": false, "status": "waiting_for_extension" }
+                    },
+                    "verification": "not_applicable"
+                })
+            };
+            write
+                .write_all(format!("{response}\n").as_bytes())
+                .await
+                .unwrap();
+        }
+    });
+
+    let (standby_avail, standby_reason) = provider.probe_status().await;
+    assert!(!standby_avail);
+    assert!(
+        standby_reason
+            .as_deref()
+            .is_some_and(|r| r.contains("standby"))
+    );
+    assert_eq!(provider.current_availability(), (false, standby_reason));
+
+    let (live_avail, live_reason) = provider.probe_status().await;
+    assert!(live_avail);
+    assert_eq!(live_reason, None);
+    assert_eq!(provider.current_availability(), (true, None));
+    mock.await.unwrap();
+
+    // After listener stops, next probe transitions back to unavailable
+    let (lost_avail, lost_reason) = provider.probe_status().await;
+    assert!(!lost_avail);
+    assert!(lost_reason.is_some());
+}

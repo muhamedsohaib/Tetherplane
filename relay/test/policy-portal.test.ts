@@ -1529,3 +1529,184 @@ test("portal SSE /portal/api/events enforces owner auth boundaries, streams poli
     await rm(dir, { recursive: true, force: true });
   }
 });
+
+test("device_telemetry WebSocket updates transition browser availability and stream SSE overview events", async () => {
+  const dir = await mkdtemp(path.join(os.tmpdir(), "tetherplane-telemetry-"));
+  const relay = await RelayServer.create({
+    authenticator: createTestAuthenticator(),
+    stateFile: path.join(dir, "devices.json"),
+    allowInsecureLocalhost: true,
+  });
+  const address = await relay.listen({ host: "127.0.0.1", port: 0 });
+  const secret = "leno-secret-telemetry-0001";
+
+  try {
+    await pairDevice(address.httpUrl, "Leno", secret);
+    const ws = new WebSocket(address.deviceWsUrl, {
+      headers: {
+        authorization: `Device ${secret}`,
+        "x-tetherplane-device-id": "Leno",
+      },
+    });
+    await new Promise<void>((resolve, reject) => {
+      ws.once("open", resolve);
+      ws.once("error", reject);
+    });
+
+    const standbyCaps = {
+      providers: [
+        {
+          namespace: "device",
+          tool_family: "device",
+          available: true,
+          unavailable_reason: null,
+          available_operations: ["status", "capabilities"],
+        },
+        {
+          namespace: "browser",
+          tool_family: "browser",
+          available: false,
+          unavailable_reason: "Chrome extension is in standby / waiting for extension reconnect",
+          available_operations: [],
+        },
+      ],
+      tool_families: {
+        device: {
+          family: "device",
+          available: true,
+          unavailable_reason: null,
+          granted: true,
+          available_operations: ["device.status", "device.capabilities"],
+        },
+        browser: {
+          family: "browser",
+          available: false,
+          unavailable_reason: "Chrome extension is in standby / waiting for extension reconnect",
+          granted: true,
+          available_operations: [],
+        },
+      },
+    };
+
+    ws.send(
+      JSON.stringify({
+        type: "device_hello",
+        deviceId: "Leno",
+        appliedPolicyRevision: 1,
+        status: { os: "linux", arch: "x86_64", agent_version: "0.1.0" },
+        capabilities: standbyCaps,
+      }),
+    );
+
+    const standbyOverview = await until(async () => {
+      const ov = await jsonRequest(address.httpUrl, "/portal/api/overview", {
+        method: "GET",
+        token: "owner-token-a",
+      });
+      const dev = ov.body.devices[0];
+      return dev?.capabilities ? dev : null;
+    });
+    assert.equal(standbyOverview.agentHealth, "degraded");
+    const standbyBrowser = standbyOverview.familySummaries.find((f: any) => f.family === "browser");
+    assert.equal(standbyBrowser.providerAvailable, false);
+    assert.deepEqual(standbyBrowser.availableOperations, []);
+
+    const sessionRes = await fetch(`${address.httpUrl}/portal/api/session`, {
+      method: "POST",
+      headers: { authorization: "Bearer owner-token-a" },
+    });
+    assert.equal(sessionRes.status, 200);
+    const cookie = sessionRes.headers.getSetCookie()[0]!.split(";")[0]!;
+
+    const sseController = new AbortController();
+    const sseRes = await fetch(`${address.httpUrl}/portal/api/events`, {
+      method: "GET",
+      headers: { Cookie: cookie },
+      signal: sseController.signal,
+    });
+    assert.equal(sseRes.status, 200);
+    const reader = sseRes.body!.getReader();
+    const decoder = new TextDecoder();
+    let sseBuffer = "";
+    const readLoop = (async () => {
+      while (true) {
+        const { done, value } = await reader.read();
+        if (done) break;
+        sseBuffer += decoder.decode(value, { stream: true });
+      }
+    })();
+
+    const liveCaps = {
+      providers: [
+        {
+          namespace: "device",
+          tool_family: "device",
+          available: true,
+          unavailable_reason: null,
+          available_operations: ["status", "capabilities"],
+        },
+        {
+          namespace: "browser",
+          tool_family: "browser",
+          available: true,
+          unavailable_reason: null,
+          available_operations: ["status", "pages", "snapshot"],
+        },
+      ],
+      tool_families: {
+        device: {
+          family: "device",
+          available: true,
+          unavailable_reason: null,
+          granted: true,
+          available_operations: ["device.status", "device.capabilities"],
+        },
+        browser: {
+          family: "browser",
+          available: true,
+          unavailable_reason: null,
+          granted: true,
+          available_operations: ["browser.status", "browser.pages", "browser.snapshot"],
+        },
+      },
+    };
+
+    await until(() => (sseBuffer.includes("event: overview") ? true : null), 2_000, "initial SSE overview");
+
+    ws.send(
+      JSON.stringify({
+        type: "device_telemetry",
+        deviceId: "Leno",
+        status: { os: "linux", arch: "x86_64", agent_version: "0.1.0" },
+        capabilities: liveCaps,
+      }),
+    );
+
+    await until(
+      () => ((sseBuffer.match(/event: overview/g) ?? []).length >= 2 ? true : null),
+      2_000,
+      "SSE overview on device_telemetry",
+    );
+
+    const recoveredOverview = await jsonRequest(address.httpUrl, "/portal/api/overview", {
+      method: "GET",
+      token: "owner-token-a",
+    });
+    const recoveredDev = recoveredOverview.body.devices[0];
+    assert.equal(recoveredDev.agentHealth, "healthy");
+    const liveBrowser = recoveredDev.familySummaries.find((f: any) => f.family === "browser");
+    assert.equal(liveBrowser.providerAvailable, true);
+    assert.deepEqual(liveBrowser.availableOperations, [
+      "browser.status",
+      "browser.pages",
+      "browser.snapshot",
+    ]);
+
+    sseController.abort();
+    ws.close();
+    await readLoop.catch(() => {});
+  } finally {
+    await relay.close();
+    await rm(dir, { recursive: true, force: true });
+  }
+});

@@ -1,6 +1,8 @@
 #![forbid(unsafe_code)]
 
 use std::net::SocketAddr;
+use std::sync::RwLock;
+use std::sync::atomic::{AtomicU64, Ordering};
 use std::time::Duration;
 
 use async_trait::async_trait;
@@ -13,6 +15,8 @@ use tokio::io::{AsyncBufReadExt, AsyncWriteExt, BufReader};
 use tokio::net::TcpStream;
 use tokio::time::{sleep, timeout};
 
+static PROBE_SEQ: AtomicU64 = AtomicU64::new(1);
+
 #[derive(Clone, Debug)]
 pub struct BrowserBridgeConfig {
     pub address: String,
@@ -23,6 +27,7 @@ pub struct BrowserBridgeConfig {
 pub struct BrowserProvider {
     config: BrowserBridgeConfig,
     operations: Vec<String>,
+    availability: RwLock<(bool, Option<String>)>,
 }
 
 impl BrowserProvider {
@@ -63,7 +68,11 @@ impl BrowserProvider {
             .filter_map(Value::as_str)
             .map(ToOwned::to_owned)
             .collect::<Vec<_>>();
-        Ok(Self { config, operations })
+        Ok(Self {
+            config,
+            operations,
+            availability: RwLock::new((true, None)),
+        })
     }
 
     /// Retries transient loopback connection failures during startup.
@@ -141,12 +150,63 @@ impl BrowserProvider {
         .into_iter()
         .map(ToOwned::to_owned)
         .collect();
-        Ok(Self { config, operations })
+        Ok(Self {
+            config,
+            operations,
+            availability: RwLock::new((
+                false,
+                Some("browser bridge is in standby / not yet connected".to_owned()),
+            )),
+        })
     }
 
     #[must_use]
     pub fn operations(&self) -> &[String] {
         &self.operations
+    }
+
+    #[must_use]
+    pub fn current_availability(&self) -> (bool, Option<String>) {
+        self.availability.read().map_or_else(
+            |_| {
+                (
+                    false,
+                    Some("browser provider availability lock poisoned".to_owned()),
+                )
+            },
+            |guard| guard.clone(),
+        )
+    }
+
+    /// Probes the loopback browser bridge using `browser.status` and updates cached availability.
+    pub async fn probe_status(&self) -> (bool, Option<String>) {
+        let seq = PROBE_SEQ.fetch_add(1, Ordering::Relaxed);
+        let next = match rpc_call(
+            &self.config,
+            json!({
+                "type": "invoke",
+                "request_id": format!("probe-{seq}"),
+                "token": self.config.token,
+                "capability": "browser.status",
+                "arguments": {},
+            }),
+        )
+        .await
+        {
+            Ok(response) if response["status"] == "success" => {
+                availability_from_status_data(&response["data"])
+            }
+            Ok(response) => (false, Some(response_error(&response).message)),
+            Err(error) => (false, Some(error.message)),
+        };
+        self.set_availability(next.0, next.1.clone());
+        next
+    }
+
+    fn set_availability(&self, available: bool, reason: Option<String>) {
+        if let Ok(mut guard) = self.availability.write() {
+            *guard = (available, reason);
+        }
     }
 }
 
@@ -164,7 +224,7 @@ impl CapabilityProvider for BrowserProvider {
         if let Some(object) = arguments.as_object_mut() {
             object.remove("ownership");
         }
-        let response = rpc_call(
+        let response = match rpc_call(
             &self.config,
             json!({
                 "type": "invoke",
@@ -180,18 +240,76 @@ impl CapabilityProvider for BrowserProvider {
                 "expectations": invocation.expectations,
             }),
         )
-        .await?;
+        .await
+        {
+            Ok(response) => response,
+            Err(error) => {
+                if matches!(
+                    error.code,
+                    ErrorCode::Disconnected | ErrorCode::Timeout | ErrorCode::CapabilityUnavailable
+                ) {
+                    self.set_availability(false, Some(error.message.clone()));
+                }
+                return Err(error);
+            }
+        };
 
         if response["status"] != "success" {
-            return Err(response_error(&response));
+            let error = response_error(&response);
+            if matches!(
+                error.code,
+                ErrorCode::CapabilityUnavailable | ErrorCode::Disconnected | ErrorCode::Timeout
+            ) {
+                self.set_availability(false, Some(error.message.clone()));
+            }
+            return Err(error);
+        }
+
+        let data = response.get("data").cloned().unwrap_or(Value::Null);
+        if invocation.capability == "browser.status" {
+            let (available, reason) = availability_from_status_data(&data);
+            self.set_availability(available, reason);
+        } else {
+            self.set_availability(true, None);
         }
 
         Ok(ProviderResult {
-            data: response.get("data").cloned().unwrap_or(Value::Null),
+            data,
             delta: response.get("delta").cloned(),
             verification: parse_verification(response.get("verification")),
         })
     }
+}
+
+fn availability_from_status_data(data: &Value) -> (bool, Option<String>) {
+    if data.get("available").and_then(Value::as_bool) == Some(false) {
+        let reason = data
+            .get("unavailable_reason")
+            .and_then(Value::as_str)
+            .map(ToOwned::to_owned)
+            .or_else(|| {
+                data.pointer("/capabilities/status")
+                    .and_then(Value::as_str)
+                    .map(|status| format!("Chrome extension is in standby ({status})"))
+            })
+            .unwrap_or_else(|| "browser bridge reported standby / unavailable".to_owned());
+        return (false, Some(reason));
+    }
+    if data
+        .pointer("/capabilities/connected")
+        .and_then(Value::as_bool)
+        == Some(false)
+    {
+        let status = data
+            .pointer("/capabilities/status")
+            .and_then(Value::as_str)
+            .unwrap_or("waiting_for_extension");
+        return (
+            false,
+            Some(format!("Chrome extension is in standby ({status})")),
+        );
+    }
+    (true, None)
 }
 
 async fn rpc_call(config: &BrowserBridgeConfig, request: Value) -> Result<Value, CapabilityError> {

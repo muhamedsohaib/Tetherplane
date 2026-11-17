@@ -128,9 +128,10 @@ test("HotSwappableBrowserBackend keeps RPC server listening across extension sta
       capability: "browser.status",
       arguments: {},
     });
-    assert.equal(standbyStatus.status, "success");
+    const standbyData = standbyStatus.data as Record<string, unknown>;
+    assert.equal(standbyData.available, false);
     assert.equal(
-      ((standbyStatus.data as Record<string, unknown>).capabilities as Record<string, unknown>).connected,
+      (standbyData.capabilities as Record<string, unknown>).connected,
       false,
     );
 
@@ -147,8 +148,17 @@ test("HotSwappableBrowserBackend keeps RPC server listening across extension sta
       "capability_unavailable",
     );
 
-    // 3. Attach live backend -> operations succeed immediately on same RPC server
+    // 3. Attach live backend -> browser.status and operations reflect attached availability
     swappable.attach(new FakeBackend());
+    const liveStatus = await rpc(server.address, {
+      type: "invoke",
+      request_id: "status-2",
+      token: "launch-token",
+      capability: "browser.status",
+      arguments: {},
+    });
+    assert.equal(liveStatus.status, "success");
+    assert.equal((liveStatus.data as Record<string, unknown>).available, true);
     const livePages = await rpc(server.address, {
       type: "invoke",
       request_id: "pages-2",
@@ -162,9 +172,17 @@ test("HotSwappableBrowserBackend keeps RPC server listening across extension sta
       1,
     );
 
-    // 4. Detach and reattach -> RPC server stays alive
+    // 4. Detach and reattach -> RPC server stays alive and status drops back to standby when detached
     swappable.detach();
     assert.equal(swappable.isConnected(), false);
+    const detachedStatus = await rpc(server.address, {
+      type: "invoke",
+      request_id: "status-3",
+      token: "launch-token",
+      capability: "browser.status",
+      arguments: {},
+    });
+    assert.equal((detachedStatus.data as Record<string, unknown>).available, false);
     swappable.attach(new FakeBackend());
     assert.equal(swappable.isConnected(), true);
   } finally {

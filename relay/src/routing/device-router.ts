@@ -46,6 +46,12 @@ export type DeviceToRelayMessage =
       status?: Record<string, unknown> | null;
       capabilities?: Record<string, unknown> | null;
       error?: string | null;
+    }
+  | {
+      type: "device_telemetry";
+      deviceId: string;
+      status?: Record<string, unknown> | null;
+      capabilities?: Record<string, unknown> | null;
     };
 
 export type DeviceConnectionHandle = {
@@ -286,6 +292,19 @@ export class DeviceRouter {
         status: message.status ?? null,
         capabilities: message.capabilities ?? null,
         error: message.error ?? null,
+      });
+      return;
+    }
+
+    if (message.type === "device_telemetry") {
+      if (!this.#policyStore || message.deviceId !== connection.deviceId) {
+        return;
+      }
+      void this.#policyStore.handleDeviceTelemetry({
+        deviceId: connection.deviceId,
+        accountId: connection.accountId,
+        status: message.status ?? null,
+        capabilities: message.capabilities ?? null,
       });
       return;
     }

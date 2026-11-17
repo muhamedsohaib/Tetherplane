@@ -710,6 +710,30 @@ export class PolicyStore {
     this.notifyChange(input.accountId);
   }
 
+  async handleDeviceTelemetry(input: {
+    deviceId: string;
+    accountId: string;
+    status?: Record<string, unknown> | null;
+    capabilities?: Record<string, unknown> | null;
+  }): Promise<void> {
+    const record = this.getRecord(input.deviceId);
+    if (!record || record.policy.owner_account_id !== input.accountId) {
+      return;
+    }
+    let changed = false;
+    if (input.status) {
+      record.status = input.status;
+      changed = true;
+    }
+    if (input.capabilities) {
+      record.capabilities = input.capabilities;
+      changed = true;
+    }
+    if (!changed) return;
+    await this.#persist();
+    this.notifyChange(input.accountId);
+  }
+
   async updateDevicePolicy(input: {
     accountId: string;
     actorPrincipalId: string;

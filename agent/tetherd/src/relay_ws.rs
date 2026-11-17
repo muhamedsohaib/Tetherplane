@@ -26,6 +26,7 @@ pub(crate) struct RelayConfig {
     pub credential: String,
     pub allow_insecure_localhost: bool,
     pub reconnect_delay: Duration,
+    pub probe_interval: Duration,
 }
 
 #[derive(Debug)]
@@ -122,6 +123,7 @@ async fn connect_and_run(
         .await
         .map_err(|error| classify_connect_error(&error))?;
 
+    let _ = runtime.refresh_browser_availability().await;
     let hello_payload = json!({
         "type": "device_hello",
         "deviceId": config.device_id,
@@ -138,30 +140,84 @@ async fn connect_and_run(
             })?;
     }
 
-    while let Some(next) = socket.next().await {
-        let message = next.map_err(|error| {
-            RelayFailure::Retryable(format!("websocket receive failed: {error}"))
-        })?;
-        match message {
-            Message::Text(text) => {
-                let outbound = handle_inbound_text(&runtime, config, text.as_str()).await?;
-                socket
-                    .send(Message::Text(outbound.into()))
-                    .await
-                    .map_err(|error| {
-                        RelayFailure::Retryable(format!("websocket send failed: {error}"))
-                    })?;
-            }
-            Message::Ping(payload) => {
-                socket.send(Message::Pong(payload)).await.map_err(|error| {
-                    RelayFailure::Retryable(format!("websocket pong failed: {error}"))
+    let mut probe_tick = tokio::time::interval(config.probe_interval);
+    probe_tick.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Skip);
+    let _ = probe_tick.tick().await;
+
+    loop {
+        tokio::select! {
+            next = socket.next() => {
+                let Some(next) = next else {
+                    return Ok(());
+                };
+                let message = next.map_err(|error| {
+                    RelayFailure::Retryable(format!("websocket receive failed: {error}"))
                 })?;
+                if handle_ws_frame(&mut socket, &runtime, config, message).await? {
+                    return Ok(());
+                }
             }
-            Message::Close(_) => return Ok(()),
-            Message::Binary(_) | Message::Pong(_) | Message::Frame(_) => {}
+            _ = probe_tick.tick(), if runtime.has_browser_provider() => {
+                if runtime.refresh_browser_availability().await {
+                    send_device_telemetry(&mut socket, &runtime, &config.device_id).await?;
+                }
+            }
         }
     }
+}
 
+async fn handle_ws_frame<S>(
+    socket: &mut S,
+    runtime: &Arc<AgentRuntime>,
+    config: &RelayConfig,
+    message: Message,
+) -> Result<bool, RelayFailure>
+where
+    S: futures_util::Sink<Message, Error = WebSocketError> + Unpin,
+{
+    match message {
+        Message::Text(text) => {
+            let outbound = handle_inbound_text(runtime, config, text.as_str()).await?;
+            socket
+                .send(Message::Text(outbound.into()))
+                .await
+                .map_err(|error| {
+                    RelayFailure::Retryable(format!("websocket send failed: {error}"))
+                })?;
+        }
+        Message::Ping(payload) => {
+            socket.send(Message::Pong(payload)).await.map_err(|error| {
+                RelayFailure::Retryable(format!("websocket pong failed: {error}"))
+            })?;
+        }
+        Message::Close(_) => return Ok(true),
+        Message::Binary(_) | Message::Pong(_) | Message::Frame(_) => {}
+    }
+    Ok(false)
+}
+
+async fn send_device_telemetry<S>(
+    socket: &mut S,
+    runtime: &AgentRuntime,
+    device_id: &str,
+) -> Result<(), RelayFailure>
+where
+    S: futures_util::Sink<Message, Error = WebSocketError> + Unpin,
+{
+    let payload = json!({
+        "type": "device_telemetry",
+        "deviceId": device_id,
+        "status": runtime.device_status(),
+        "capabilities": runtime.device_capabilities(None, Some(device_id)),
+    });
+    if let Ok(text) = serde_json::to_string(&payload) {
+        socket
+            .send(Message::Text(text.into()))
+            .await
+            .map_err(|error| {
+                RelayFailure::Retryable(format!("websocket telemetry send failed: {error}"))
+            })?;
+    }
     Ok(())
 }
 
@@ -353,6 +409,7 @@ mod tests {
             credential: "device-secret-token-for-unit-test".into(),
             allow_insecure_localhost: true,
             reconnect_delay: Duration::from_secs(1),
+            probe_interval: Duration::from_secs(1),
         };
         let stale_payload = json!({
             "type": "policy_sync",

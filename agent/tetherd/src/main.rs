@@ -298,6 +298,7 @@ async fn main() {
                     credential,
                     allow_insecure_localhost,
                     reconnect_delay: Duration::from_secs(2),
+                    probe_interval: Duration::from_millis(500),
                 },
             )
             .await

@@ -205,6 +205,12 @@ function parseDeviceMessage(
   ) {
     return value as DeviceToRelayMessage;
   }
+  if (
+    record.type === "device_telemetry" &&
+    typeof record.deviceId === "string"
+  ) {
+    return value as DeviceToRelayMessage;
+  }
   return null;
 }
 

@@ -127,11 +127,19 @@ export class BrowserBridgeService {
     }
 
     if (operation === "status") {
+      const capabilities = this.#backend.capabilities();
+      const standby = capabilities.connected === false;
       return {
         data: {
-          available: true,
+          available: !standby,
+          ...(standby
+            ? {
+                unavailable_reason:
+                  "Chrome extension is in standby / waiting for extension reconnect",
+              }
+            : {}),
           mode: "background_only",
-          capabilities: this.#backend.capabilities(),
+          capabilities,
         },
         verification: "not_applicable",
       };
