@@ -25,7 +25,7 @@ All staging state, binaries, certificates, profiles, and logs live exclusively i
 | Machine | `Leno`, `CUCK`, `Surface`, `RTX`, `VAULTER` | Dedicated Windows staging VM | Preflight aborts if hostname matches any production device |
 | Workspace | Existing checkouts / `main` | Clean clone on `feat/universal-permissions-control-portal` | Verify HEAD matches PR `#150` |
 | State / Tokens | `%LOCALAPPDATA%\Tetherplane` | `$StagingRoot\state`, `$StagingRoot\secrets` | Ephemeral per-run secrets generated cleanly |
-| Relay Endpoint | Production domain / port `8788` | `https://127.0.0.1:18788` (or staging LAN IP for Stage 6 mobile) | Direct relay TLS (`--tls-cert`/`--tls-key`) required per [Finding F-3](../security/control-portal-security-review.md#31-verified-code-level-findings) so `Secure` cookies and `https:` Origin checks work |
+| Relay Endpoint | Production domain / port `8788` | `https://127.0.0.1:18788` (or staging LAN IP for Stage 6 mobile) | Direct relay TLS (`--tls-cert`/`--tls-key`) keeps `Secure` cookies and direct HTTPS/WSS end-to-end; behind a trusted HTTPS reverse proxy use `--allow-insecure-localhost --public-origin https://...` (and `--trust-proxy-headers` if validating forwarded headers) per [Finding F-3](../security/control-portal-security-review.md#31-f-1-through-f-7-remediation--verification-matrix) |
 | Paired Staging Devices | Real owner device IDs | `staging-win-01` (online), `staging-win-02` (kept offline) | Ephemeral `staging-acct` owner account + `operator:staging-ci` |
 | Extension Host | Production persistence on `17656-17658` | Foreground `browser-extension-host.ts` (`TETHERPLANE_*_TOKEN_FILE` in `$StagingRoot`) | Default popup **Pair with local Tetherplane** targets `127.0.0.1:17656` ([`local-pairing.ts:14`](../../extension/browser/src/local-pairing.ts#L14)); confirm `17656–17658` are unbound on the clean VM, or use `18656–18658` via popup **Advanced manual pairing** |
 | Browser Profile | Default user Chrome profile | `$StagingRoot\chrome-profile` (`--user-data-dir`) | Unpacked extension loaded from `<staging-repo>\extension\browser` |
@@ -200,12 +200,18 @@ const q1 = await fetch(`${base}/portal?token=leak-test`);
 const q2 = await fetch(`${base}/portal/api/overview?access_token=leak-test`);
 if (q1.status !== 400 || q2.status !== 400) throw new Error(`Expected 400 on query token, got ${q1.status}/${q2.status}`);
 
-// 2. Non-owner operator token MUST be rejected from Portal session creation (403)
+// 2. Non-owner operator token MUST be rejected from Portal session creation & device management (403)
 const badSess = await fetch(`${base}/portal/api/session`, {
   method: "POST",
   headers: { authorization: `Bearer ${op}`, origin: base },
 });
-if (badSess.status !== 403) throw new Error(`Expected 403 for operator token, got ${badSess.status}`);
+if (badSess.status !== 403) throw new Error(`Expected 403 for operator portal session, got ${badSess.status}`);
+
+const badDevList = await fetch(`${base}/devices`, {
+  method: "GET",
+  headers: { authorization: `Bearer ${op}` },
+});
+if (badDevList.status !== 403) throw new Error(`Expected 403 for operator /devices list, got ${badDevList.status}`);
 
 // 3. Owner token creates HttpOnly; SameSite=Strict; Secure session cookie
 const okSess = await fetch(`${base}/portal/api/session`, {
@@ -520,7 +526,7 @@ Perform every step in the Portal UI (`https://127.0.0.1:18788/portal`) and verif
    - Expand `Recoverable Snapshots & Rollback`. If >10 snapshots exist (or after performing several toggles), verify **Show more snapshots (10/N)** increments visibly; filter dropdown by `staging-win-01` vs `All devices`.
    - Click **Rollback** on **`staging-win-01 rev 1`** (`Universal default permissions assigned to owner-paired device`).
    - Confirm: revision jumps monotonically above pre-rollback revision (`newRevision > lockdownRevision`), `Emergency Lockdown` clears, `filesystem.write` deny and `process` revocation clear, `operator:staging-ci` grant is removed (if not present in rev 1), and both `process` (`op: "run"`) and `files` (`op: "write"`) succeed again for owner (`staging-win-01`) while `operator:staging-ci` is denied (`unpaired_or_unauthorized_identity`).
-   - Also validate **Edit** & **Revoke** buttons under `Owner & Operator Identities` after re-adding an operator, and test **Lift Emergency Lockdown** if triggering lockdown a second time.
+   - Also validate **Edit** & **Revoke** buttons under `Owner & Operator Identities` after re-adding an operator, and test **Lift Emergency Lockdown** if triggering lockdown a second time (noting per F-7 that **Lift Emergency Lockdown** restores baseline `Universal Access` with `allow_destructive: true`, whereas prior custom restrictions are restored via Snapshot Rollback; human-origin `process.terminate` and unshared human tabs/windows remain blocked in all profiles).
 
 ---
 
@@ -528,7 +534,7 @@ Perform every step in the Portal UI (`https://127.0.0.1:18788/portal`) and verif
 
 Validate the Control Portal at mobile dimensions using **both** (A) Chromium/Edge responsive device emulation (`390x844` and `360x800`) and (B) a real mobile browser (iOS Safari or Android Chrome):
 
-- For **Part (B) real-phone testing** over a private LAN or Tailscale IP (`$LanIp`), temporarily re-mint the staging cert with `subjectAltName=IP:127.0.0.1,IP:<LanIp>,DNS:localhost`, re-launch **PowerShell 2** (`tether-relay`) with `--host <LanIp> --port 18788`, point **PowerShell 4** (`tetherd`) at `--relay-url wss://<LanIp>:18788/device`, optionally add a temporary scoped firewall rule `New-NetFirewallRule -DisplayName "Tetherplane-Staging-18788" -Direction Inbound -Protocol TCP -LocalPort 18788 -Profile Private -Action Allow`, and open `https://<LanIp>:18788/portal` on the phone (accepting/installing the disposable staging cert only during the test session). *(Do **not** route staging through a plain-HTTP reverse proxy; see [Finding F-3](../security/control-portal-security-review.md#31-verified-code-level-findings).)*
+- For **Part (B) real-phone testing** over a private LAN or Tailscale IP (`$LanIp`), temporarily re-mint the staging cert with `subjectAltName=IP:127.0.0.1,IP:<LanIp>,DNS:localhost`, re-launch **PowerShell 2** (`tether-relay`) with `--host <LanIp> --port 18788`, point **PowerShell 4** (`tetherd`) at `--relay-url wss://<LanIp>:18788/device`, optionally add a temporary scoped firewall rule `New-NetFirewallRule -DisplayName "Tetherplane-Staging-18788" -Direction Inbound -Protocol TCP -LocalPort 18788 -Profile Private -Action Allow`, and open `https://<LanIp>:18788/portal` on the phone (accepting/installing the disposable staging cert only during the test session). If using an explicit trusted HTTPS reverse proxy instead of direct `--tls-cert`/`--tls-key`, launch `tether-relay` with `--allow-insecure-localhost --public-origin https://<proxy-host> --trust-proxy-headers` rather than plain unconfigured HTTP. *(See [Finding F-3](../security/control-portal-security-review.md#31-f-1-through-f-7-remediation--verification-matrix).)*
 
 | # | Mobile Check | Expected Pass Condition | Result |
 | --- | --- | --- | --- |
@@ -552,7 +558,7 @@ Validate the Control Portal at mobile dimensions using **both** (A) Chromium/Edg
 | Gate | Requirement | Criterion |
 | --- | --- | --- |
 | **G1** | Production Device Isolation | Zero commands executed against `Leno`, `CUCK`, `Surface`, `RTX`, or `VAULTER`; zero writes to `%LOCALAPPDATA%\Tetherplane`, `HKCU\...\Run`, or Scheduled Tasks. |
-| **G2** | Auth, Cookies, CSRF, No XSS | `?token=` returns `400`; non-owner portal login returns `403`; session cookie has `HttpOnly; SameSite=Strict; Secure`; `localStorage`/`sessionStorage` empty; CSRF/cross-origin mutations return `403`; logout returns session to `401`. |
+| **G2** | Auth, Cookies, CSRF, No XSS | `?token=` returns `400`; non-owner portal login and operator `/pair/approve`, `/devices`, `/devices/*/revoke` return `403`; session cookie has `HttpOnly; SameSite=Strict; Secure`; `localStorage`/`sessionStorage` empty; CSRF/cross-origin mutations return `403`; logout returns session to `401`. |
 | **G3** | Real Chrome Extension Pairing & Reconnect | Extension pairs only to staging host, transitions Portal `browser` `Unavailable` -> `12/12 ops active` live via SSE, respects background tab ownership and timed tab-share expiry/detach, transitions to `Unavailable` on Chrome close, and auto-recovers upon Chrome relaunch + re-pair. |
 | **G4** | Interactive Windows UIA & Coexistence | Remote `desktop.snapshot` + `desktop.act` succeed on Tetherplane-owned window while physical cursor, clipboard canary, and human fixture focus/text remain completely unchanged and human window mutations are denied. |
 | **G5** | Grants, Explicit Denies, Isolation, Offline Recovery, Rollback & Lockdown | Family toggles, explicit denies (`explicit_deny`), scoped operator least privilege, cross-account denial, offline policy convergence via `device_hello`, emergency lockdown persistence across `tetherd` restart, and forward-revision rollback to `rev 1` all enforce on both relay and `tetherd`. |
@@ -618,7 +624,7 @@ Verify that:
 
 ### A. Staging Runtime Policy Rollback (In-Session)
 
-1. Use the Control Portal's **Recoverable Snapshots & Rollback** panel to roll back any modified device to its baseline **`rev 1` (Universal)** snapshot, OR click **Lift Emergency Lockdown** if reversing global lockdown.
+1. Use the Control Portal's **Recoverable Snapshots & Rollback** panel to roll back any modified device to its baseline **`rev 1` (Universal)** snapshot, OR click **Lift Emergency Lockdown** if reversing global lockdown (which restores baseline Universal Access).
 2. Confirm the device's `<StateDir>\policy\synchronized-policy.json` advances to the new monotonic revision (`> previous`). *(Never manually edit `revision` downward on disk unless purging and re-pairing an entire staging environment; deleting `$StagingRoot` completely resets staging state.)*
 
 ### B. Repository / Pull Request Code Rollback (`PR #150` Safety)
@@ -627,7 +633,7 @@ Because PR `#150` remains in **Draft** and `main` (`9c93be6`) is untouched:
 
 1. **Before merge (discard or isolate PR changes)**:
    - Close Draft PR `#150` on GitHub without merging (`main` remains completely clean at `9c93be6`).
-   - Optionally revert specific sub-commits on `feat/universal-permissions-control-portal` using `git revert <sha>` if addressing review findings (such as **F-1 / F-2** in [`control-portal-security-review.md`](../security/control-portal-security-review.md)) iteratively.
+   - Optionally revert specific sub-commits on `feat/universal-permissions-control-portal` using `git revert <sha>` if needed.
 2. **Post-merge rollback (if ever merged and needing reversal)**:
    - Create a dedicated revert branch off `main` (`git revert -m 1 <merge-commit-sha>` if merge commit, or revert commit range), run full `cargo test --workspace` + `pnpm -r test` + Windows package smoke CI gates, and open an expedited PR restoring prior relay/agent baseline.
    - Because agents persist `synchronized-policy.json` across upgrades, devices upgraded then downgraded from `PolicySync` must have their state file purged (`<state_dir>\policy\synchronized-policy.json`) or remain locked to their last monotonic revision if relay policy semantics change.
