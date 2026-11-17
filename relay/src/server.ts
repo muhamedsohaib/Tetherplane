@@ -222,6 +222,7 @@ export class RelayServer {
     await this.deviceGateway.close();
 
     if (!this.#server.listening) return;
+    this.#server.closeIdleConnections?.();
     await new Promise<void>((resolve, reject) => {
       this.#server.close((error) => {
         if (error) reject(error);

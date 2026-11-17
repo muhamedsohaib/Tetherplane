@@ -116,6 +116,7 @@ export class DeviceRouter {
       send: input.send,
     };
     this.#connections.set(input.deviceId, connection);
+    this.#policyStore?.notifyChange(input.accountId);
 
     return {
       receive: (message) => {
@@ -315,7 +316,8 @@ export class DeviceRouter {
   }
 
   #disconnect(connection: ActiveConnection): void {
-    if (this.#isCurrent(connection)) {
+    const wasCurrent = this.#isCurrent(connection);
+    if (wasCurrent) {
       this.#connections.delete(connection.deviceId);
     }
     for (const [routeId, pending] of this.#pending) {
@@ -334,6 +336,9 @@ export class DeviceRouter {
           "device disconnected while request was in flight",
         ),
       );
+    }
+    if (wasCurrent) {
+      this.#policyStore?.notifyChange(connection.accountId);
     }
   }
 

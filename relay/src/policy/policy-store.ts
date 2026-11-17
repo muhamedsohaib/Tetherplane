@@ -419,6 +419,7 @@ export class PolicyStore {
   readonly #auditHistory: PolicyAuditEvent[] = [];
   readonly #identityUsage = new Map<string, IdentityUsageRecord>();
   readonly #operators = new Map<string, OperatorIdentityMetadata>();
+  readonly #changeListeners = new Map<string, Set<() => void>>();
   #pushPolicyCallback:
     | ((deviceId: string, policy: SynchronizedDevicePolicy) => Promise<boolean>)
     | null = null;
@@ -441,6 +442,35 @@ export class PolicyStore {
     const store = new PolicyStore(options);
     await store.#load();
     return store;
+  }
+
+  subscribe(accountId: string, listener: () => void): () => void {
+    let listeners = this.#changeListeners.get(accountId);
+    if (!listeners) {
+      listeners = new Set();
+      this.#changeListeners.set(accountId, listeners);
+    }
+    listeners.add(listener);
+    return () => {
+      const current = this.#changeListeners.get(accountId);
+      if (!current) return;
+      current.delete(listener);
+      if (current.size === 0) {
+        this.#changeListeners.delete(accountId);
+      }
+    };
+  }
+
+  notifyChange(accountId: string): void {
+    const listeners = this.#changeListeners.get(accountId);
+    if (!listeners) return;
+    for (const listener of [...listeners]) {
+      try {
+        listener();
+      } catch {
+        // Listener failures must never disrupt policy persistence or delivery
+      }
+    }
   }
 
   setSyncHooks(hooks: {
@@ -507,6 +537,7 @@ export class PolicyStore {
       },
     });
     await this.#persist();
+    this.notifyChange(binding.accountId);
     return record;
   }
 
@@ -584,6 +615,7 @@ export class PolicyStore {
         },
       });
       await this.#persist();
+      this.notifyChange(input.accountId);
       return null;
     }
 
@@ -602,6 +634,7 @@ export class PolicyStore {
     }
 
     await this.#persist();
+    this.notifyChange(input.accountId);
     return structuredClone(record.policy);
   }
 
@@ -674,6 +707,7 @@ export class PolicyStore {
       );
     }
     await this.#persist();
+    this.notifyChange(input.accountId);
   }
 
   async updateDevicePolicy(input: {
@@ -740,6 +774,7 @@ export class PolicyStore {
     });
 
     await this.#persist();
+    this.notifyChange(input.accountId);
     await this.#pushToDeviceIfOnline(input.deviceId, nextPolicy);
     return record;
   }
@@ -863,6 +898,7 @@ export class PolicyStore {
     }
 
     await this.#persist();
+    this.notifyChange(input.accountId);
     return updated;
   }
 
@@ -915,6 +951,7 @@ export class PolicyStore {
       await this.#pushToDeviceIfOnline(binding.deviceId, nextPolicy);
     }
     await this.#persist();
+    this.notifyChange(input.accountId);
   }
 
   async rollbackDevicePolicy(input: {
@@ -976,6 +1013,7 @@ export class PolicyStore {
       },
     });
     await this.#persist();
+    this.notifyChange(input.accountId);
     await this.#pushToDeviceIfOnline(input.deviceId, restoredPolicy);
     return record;
   }
@@ -1033,6 +1071,7 @@ export class PolicyStore {
           denial_kind: "emergency_lockdown",
         },
       });
+      this.notifyChange(input.identity.accountId);
       return {
         allowed: false,
         denialKind: "emergency_lockdown",
@@ -1063,6 +1102,7 @@ export class PolicyStore {
           denial_kind: "unpaired_or_unauthorized_identity",
         },
       });
+      this.notifyChange(input.identity.accountId);
       return {
         allowed: false,
         denialKind: "unpaired_or_unauthorized_identity",
@@ -1096,6 +1136,7 @@ export class PolicyStore {
           denial_kind: evaluation.denialKind,
         },
       });
+      this.notifyChange(input.identity.accountId);
       return {
         allowed: false,
         denialKind: evaluation.denialKind ?? "operation_not_granted",
@@ -1113,6 +1154,7 @@ export class PolicyStore {
       input.capability,
       "allowed",
     );
+    this.notifyChange(input.identity.accountId);
     return { allowed: true };
   }
 

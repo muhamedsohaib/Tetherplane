@@ -558,6 +558,12 @@ const PORTAL_SCRIPT = `
       let authenticatedOwner = null;
       let currentOverview = null;
       let pendingModalAction = null;
+      let eventSource = null;
+      let pendingFallbackTimer = null;
+      let pendingFallbackAttempts = 0;
+      let overviewInFlight = false;
+      let overviewQueued = false;
+      const openAdvancedDevices = new Set();
 
       function createEl(tag, options, children) {
         const node = document.createElement(tag);
@@ -589,10 +595,70 @@ const PORTAL_SCRIPT = `
         return node;
       }
 
+      function stopLiveUpdates() {
+        if (eventSource) {
+          try {
+            eventSource.close();
+          } catch {
+            // ignore close error
+          }
+          eventSource = null;
+        }
+        if (pendingFallbackTimer) {
+          clearInterval(pendingFallbackTimer);
+          pendingFallbackTimer = null;
+        }
+        pendingFallbackAttempts = 0;
+      }
+
+      function startLiveUpdates() {
+        if (!authenticatedOwner || typeof EventSource !== "function") return;
+        if (eventSource) return;
+        const es = new EventSource("/portal/api/events", {
+          withCredentials: true,
+        });
+        es.addEventListener("overview", function () {
+          void loadOverview();
+        });
+        es.addEventListener("session_expired", function () {
+          setSignedOutUi("Portal session expired. Submit your owner token to connect.");
+        });
+        eventSource = es;
+      }
+
+      function syncPendingFallback(devices) {
+        const hasPendingOnline =
+          Boolean(authenticatedOwner) &&
+          devices.some(function (d) {
+            return Boolean(d.online) && d.syncStatus === "pending";
+          });
+        if (!hasPendingOnline) {
+          if (pendingFallbackTimer) {
+            clearInterval(pendingFallbackTimer);
+            pendingFallbackTimer = null;
+          }
+          pendingFallbackAttempts = 0;
+          return;
+        }
+        if (pendingFallbackTimer) return;
+        pendingFallbackAttempts = 0;
+        pendingFallbackTimer = setInterval(function () {
+          pendingFallbackAttempts += 1;
+          if (!authenticatedOwner || pendingFallbackAttempts > 15) {
+            clearInterval(pendingFallbackTimer);
+            pendingFallbackTimer = null;
+            return;
+          }
+          void loadOverview();
+        }, 1000);
+      }
+
       function setSignedOutUi(notice) {
+        stopLiveUpdates();
         csrfToken = null;
         authenticatedOwner = null;
         currentOverview = null;
+        openAdvancedDevices.clear();
         authStateBadge.textContent = "Not Signed In";
         authStateBadge.className = "pill offline";
         logoutBtn.classList.add("hidden");
@@ -626,6 +692,7 @@ const PORTAL_SCRIPT = `
         authStateBadge.textContent = "Owner: " + ownerPrincipalId;
         authStateBadge.className = "pill online";
         logoutBtn.classList.remove("hidden");
+        startLiveUpdates();
       }
 
       async function apiCall(path, method, body) {
@@ -725,15 +792,27 @@ const PORTAL_SCRIPT = `
 
       async function loadOverview() {
         if (!authenticatedOwner) return;
+        if (overviewInFlight) {
+          overviewQueued = true;
+          return;
+        }
+        overviewInFlight = true;
         try {
-          showBanner("");
-          const data = await apiCall("/portal/api/overview", "GET");
-          currentOverview = data;
-          renderOverview(data);
+          do {
+            overviewQueued = false;
+            showBanner("");
+            const data = await apiCall("/portal/api/overview", "GET");
+            if (!authenticatedOwner) return;
+            currentOverview = data;
+            renderOverview(data);
+            syncPendingFallback(data.devices || []);
+          } while (overviewQueued && authenticatedOwner);
         } catch (err) {
           if (authenticatedOwner) {
             showBanner("Portal notice: " + err.message);
           }
+        } finally {
+          overviewInFlight = false;
         }
       }
 
@@ -750,6 +829,20 @@ const PORTAL_SCRIPT = `
       }
 
       function renderOverview(data) {
+        const draftOpRules = {};
+        document.querySelectorAll(".device-card[data-device-id]").forEach(function (cardEl) {
+          const id = cardEl.dataset.deviceId;
+          const detailsEl = cardEl.querySelector("details.advanced-box");
+          if (id && detailsEl) {
+            if (detailsEl.open) openAdvancedDevices.add(id);
+            else openAdvancedDevices.delete(id);
+          }
+          const inputEl = cardEl.querySelector("[data-role='op-rule-input']");
+          if (id && inputEl && inputEl.value) {
+            draftOpRules[id] = inputEl.value;
+          }
+        });
+
         const devices = data.devices || [];
         document.getElementById("stat-devices").textContent = String(devices.length);
         const confirmedCount = devices.filter(function (d) {
@@ -915,6 +1008,15 @@ const PORTAL_SCRIPT = `
           const deniedCaps =
             (dev.policy && dev.policy.owner_policy && dev.policy.owner_policy.denied_capabilities) ||
             [];
+          const ruleInput = createEl("input", {
+            type: "text",
+            className: "op-rule-input",
+            attrs: { placeholder: "e.g. filesystem.write" },
+            dataset: { role: "op-rule-input" },
+          });
+          if (draftOpRules[dev.deviceId]) {
+            ruleInput.value = draftOpRules[dev.deviceId];
+          }
           const detailsBox = createEl("details", { className: "advanced-box" }, [
             createEl("summary", {
               text: "Advanced Operation Rules & Explicit Denies (" + deniedCaps.length + ")",
@@ -927,12 +1029,7 @@ const PORTAL_SCRIPT = `
                   (deniedCaps.length ? deniedCaps.join(", ") : "None"),
               }),
               createEl("div", { className: "op-rule-input-row" }, [
-                createEl("input", {
-                  type: "text",
-                  className: "op-rule-input",
-                  attrs: { placeholder: "e.g. filesystem.write" },
-                  dataset: { role: "op-rule-input" },
-                }),
+                ruleInput,
                 createEl("button", {
                   type: "button",
                   text: "Deny Op",
@@ -946,6 +1043,9 @@ const PORTAL_SCRIPT = `
               ]),
             ]),
           ]);
+          if (openAdvancedDevices.has(dev.deviceId)) {
+            detailsBox.open = true;
+          }
           card.appendChild(detailsBox);
           return card;
         });

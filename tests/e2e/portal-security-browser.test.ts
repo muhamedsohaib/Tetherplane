@@ -449,6 +449,33 @@ test("portal blocks adversarial XSS payloads, obeys strict CSP, and stores sessi
       "deny op reflected after cookie mutation",
     );
 
+    // Initially pending rev 4 before device sends policy_ack
+    assert.match(
+      await browser.eval<string>(
+        `document.querySelector('[data-sync-badge="XssTestDevice"]').textContent`,
+      ),
+      /Pending Device Ack \(v4\)/,
+    );
+
+    // Send policy_ack from device WITHOUT clicking Refresh; SSE MUST update UI live
+    socket.sendJson({
+      type: "policy_ack",
+      deviceId: xssDeviceId,
+      revision: 4,
+      currentRevision: 4,
+      applied: true,
+      appliedAtMs: Date.now(),
+    });
+
+    await until(
+      () =>
+        browser!.eval<boolean>(
+          `document.querySelector('[data-sync-badge="XssTestDevice"]')?.textContent === "Confirmed Active (v4)"`,
+        ),
+      3_000,
+      "live SSE transition to Confirmed Active without refresh",
+    );
+
     // Reload page: HttpOnly cookie restores session cleanly with zero client storage
     await browser.reload();
     await until(

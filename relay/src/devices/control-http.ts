@@ -30,6 +30,11 @@ type PortalSession = {
   expiresAtMs: number;
 };
 
+type SseClient = {
+  sessionId: string | null;
+  cleanup(): void;
+};
+
 export class RelayControlHttpGateway {
   readonly #registry: DeviceRegistry;
   readonly #authenticator: ClientAuthenticator;
@@ -37,6 +42,7 @@ export class RelayControlHttpGateway {
   readonly #policyStore: PolicyStore | null;
   readonly #secureCookies: boolean;
   readonly #portalSessions = new Map<string, PortalSession>();
+  readonly #sseClients = new Set<SseClient>();
   #attachedServer: Server | null = null;
   #requestHandler:
     | ((request: IncomingMessage, response: ServerResponse) => void)
@@ -68,6 +74,10 @@ export class RelayControlHttpGateway {
   }
 
   close(): void {
+    for (const client of [...this.#sseClients]) {
+      client.cleanup();
+    }
+    this.#sseClients.clear();
     if (this.#attachedServer && this.#requestHandler) {
       this.#attachedServer.off("request", this.#requestHandler);
     }
@@ -266,6 +276,11 @@ export class RelayControlHttpGateway {
         const identity = await this.#requireOwnerIdentity(request, response);
         if (!identity) return;
         this.#portalSessions.delete(existingCookie);
+        for (const client of [...this.#sseClients]) {
+          if (client.sessionId === existingCookie) {
+            client.cleanup();
+          }
+        }
       }
       response.setHeader(
         "set-cookie",
@@ -277,6 +292,11 @@ export class RelayControlHttpGateway {
 
     const identity = await this.#requireOwnerIdentity(request, response);
     if (!identity) return;
+
+    if (request.method === "GET" && pathname === "/portal/api/events") {
+      this.#handleSseSubscription(request, response, identity.accountId);
+      return;
+    }
 
     if (request.method === "GET" && pathname === "/portal/api/overview") {
       const overview = await this.#policyStore.buildPortalOverview(
@@ -480,6 +500,125 @@ export class RelayControlHttpGateway {
     });
   }
 
+  #handleSseSubscription(
+    request: IncomingMessage,
+    response: ServerResponse,
+    accountId: string,
+  ): void {
+    if (!this.#policyStore) {
+      writeJson(response, 503, {
+        error: {
+          code: "capability_unavailable",
+          message: "policy store is not enabled on this gateway",
+        },
+      });
+      return;
+    }
+
+    const sessionId = bearerToken(request.headers.authorization)
+      ? null
+      : parseSessionCookieValue(request.headers.cookie);
+
+    response.statusCode = 200;
+    response.setHeader("content-type", "text/event-stream; charset=utf-8");
+    response.setHeader("cache-control", "no-store");
+    response.setHeader("connection", "keep-alive");
+    response.setHeader("x-content-type-options", "nosniff");
+    response.setHeader("x-accel-buffering", "no");
+    response.flushHeaders();
+
+    let closed = false;
+    let coalesceTimer: NodeJS.Timeout | null = null;
+    let keepaliveTimer: NodeJS.Timeout | null = null;
+    let unsubscribe = () => {};
+
+    const clientEntry: SseClient = {
+      sessionId,
+      cleanup: () => {
+        if (closed) return;
+        closed = true;
+        if (coalesceTimer) {
+          clearTimeout(coalesceTimer);
+          coalesceTimer = null;
+        }
+        if (keepaliveTimer) {
+          clearInterval(keepaliveTimer);
+          keepaliveTimer = null;
+        }
+        unsubscribe();
+        this.#sseClients.delete(clientEntry);
+        try {
+          if (!response.writableEnded) response.end();
+          if (response.socket && !response.socket.destroyed) {
+            response.socket.destroy();
+          }
+        } catch {
+          // Ignore teardown errors
+        }
+      },
+    };
+
+    const sessionStillValid = (): boolean => {
+      if (!sessionId) return true;
+      const existing = this.#portalSessions.get(sessionId);
+      if (!existing || existing.expiresAtMs <= Date.now()) {
+        if (existing) this.#portalSessions.delete(sessionId);
+        return false;
+      }
+      return true;
+    };
+
+    const scheduleOverviewPush = () => {
+      if (closed || coalesceTimer) return;
+      coalesceTimer = setTimeout(() => {
+        coalesceTimer = null;
+        if (closed || response.writableEnded) return;
+        if (!sessionStillValid()) {
+          try {
+            response.write("event: session_expired\ndata: {}\n\n");
+          } catch {
+            // ignore
+          }
+          clientEntry.cleanup();
+          return;
+        }
+        try {
+          response.write(
+            `event: overview\ndata: ${JSON.stringify({ updatedAtMs: Date.now() })}\n\n`,
+          );
+        } catch {
+          clientEntry.cleanup();
+        }
+      }, 20);
+      coalesceTimer.unref?.();
+    };
+
+    unsubscribe = this.#policyStore.subscribe(accountId, scheduleOverviewPush);
+    keepaliveTimer = setInterval(() => {
+      if (closed || response.writableEnded) return;
+      if (!sessionStillValid()) {
+        clientEntry.cleanup();
+        return;
+      }
+      try {
+        response.write(": keepalive\n\n");
+      } catch {
+        clientEntry.cleanup();
+      }
+    }, 25_000);
+    keepaliveTimer.unref?.();
+
+    this.#sseClients.add(clientEntry);
+    request.once("close", clientEntry.cleanup);
+    response.once("close", clientEntry.cleanup);
+
+    try {
+      response.write(`event: ready\ndata: ${JSON.stringify({ type: "ready" })}\n\n`);
+    } catch {
+      clientEntry.cleanup();
+    }
+  }
+
   async #startPairing(
     request: IncomingMessage,
     response: ServerResponse,
@@ -541,6 +680,7 @@ export class RelayControlHttpGateway {
       deviceId,
     });
     this.#disconnectDevice(deviceId);
+    this.#policyStore?.notifyChange(identity.accountId);
     writeJson(response, 200, revoked);
   }
 

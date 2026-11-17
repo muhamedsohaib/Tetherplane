@@ -41,6 +41,20 @@ function createTestAuthenticator(): StaticClientAuthenticator {
   ]);
 }
 
+async function until<T>(
+  predicate: () => Promise<T | null | undefined | false> | T | null | undefined | false,
+  timeoutMs = 5_000,
+  label = "condition",
+): Promise<T> {
+  const deadline = Date.now() + timeoutMs;
+  while (Date.now() < deadline) {
+    const value = await predicate();
+    if (value) return value;
+    await new Promise((resolve) => setTimeout(resolve, 20));
+  }
+  throw new Error(`Timed out waiting for ${label}`);
+}
+
 async function jsonRequest(
   baseUrl: string,
   pathname: string,
@@ -1325,6 +1339,191 @@ test("reconciles real tetherd provider availability and object-map tool_families
     assert.equal(byFamily.desktop.policyGrantedOperations.length, 8);
 
     ws.close();
+  } finally {
+    await relay.close();
+    await rm(dir, { recursive: true, force: true });
+  }
+});
+
+test("portal SSE /portal/api/events enforces owner auth boundaries, streams policy_ack transitions live, and closes cleanly", async () => {
+  const dir = await mkdtemp(path.join(os.tmpdir(), "tether-portal-sse-"));
+  const relay = await RelayServer.create({
+    authenticator: createTestAuthenticator(),
+    stateFile: path.join(dir, "devices.json"),
+    allowInsecureLocalhost: true,
+  });
+  const address = await relay.listen({ host: "127.0.0.1", port: 0 });
+  const secret = "device-secret-leno-sse-test-1234";
+
+  try {
+    await pairDevice(address.httpUrl, "Leno", secret);
+
+    // 1. Security boundaries on /portal/api/events
+    const anonRes = await fetch(`${address.httpUrl}/portal/api/events`);
+    assert.equal(anonRes.status, 401);
+
+    const queryTokenRes = await fetch(
+      `${address.httpUrl}/portal/api/events?token=owner-token-a`,
+    );
+    assert.equal(queryTokenRes.status, 400);
+
+    const opRes = await fetch(`${address.httpUrl}/portal/api/events`, {
+      headers: { authorization: "Bearer operator-token-a" },
+    });
+    assert.equal(opRes.status, 403);
+
+    // Create owner cookie session
+    const sessionRes = await fetch(`${address.httpUrl}/portal/api/session`, {
+      method: "POST",
+      headers: { authorization: "Bearer owner-token-a" },
+    });
+    assert.equal(sessionRes.status, 200);
+    const cookie = sessionRes.headers
+      .getSetCookie()[0]!
+      .split(";")[0]!;
+    const { csrfToken } = (await sessionRes.json()) as { csrfToken: string };
+
+    const crossSiteSse = await fetch(`${address.httpUrl}/portal/api/events`, {
+      headers: {
+        cookie,
+        "sec-fetch-site": "cross-site",
+      },
+    });
+    assert.equal(crossSiteSse.status, 403);
+
+    // Connect device WS cleanly
+    const ws = new WebSocket(address.deviceWsUrl, {
+      headers: {
+        authorization: `Device ${secret}`,
+        "x-tetherplane-device-id": "Leno",
+      },
+    });
+    await new Promise<void>((resolve, reject) => {
+      ws.once("open", resolve);
+      ws.once("error", reject);
+    });
+
+    const pendingSyncs: Array<Record<string, any>> = [];
+    ws.on("message", (raw) => {
+      const msg = JSON.parse(String(raw)) as Record<string, any>;
+      if (msg.type === "policy_sync") {
+        pendingSyncs.push(msg.policy);
+      }
+    });
+
+    ws.send(
+      JSON.stringify({
+        type: "device_hello",
+        deviceId: "Leno",
+        appliedPolicyRevision: null,
+        status: { os: "linux", arch: "x86_64", agent_version: "0.1.0" },
+        capabilities: sampleCapabilities("Leno"),
+      }),
+    );
+
+    // Wait for initial rev 1 policy_sync, ACK it so rev 1 is settled
+    await until(() => pendingSyncs.some((p) => p.revision === 1));
+    ws.send(
+      JSON.stringify({
+        type: "policy_ack",
+        deviceId: "Leno",
+        revision: 1,
+        applied: true,
+        appliedAtMs: Date.now(),
+      }),
+    );
+
+    // Open authenticated SSE stream using cookie
+    const sseRes = await fetch(`${address.httpUrl}/portal/api/events`, {
+      headers: {
+        cookie,
+        origin: address.httpUrl,
+      },
+    });
+    assert.equal(sseRes.status, 200);
+    assert.match(sseRes.headers.get("content-type") ?? "", /^text\/event-stream/i);
+
+    const reader = sseRes.body!.getReader();
+    const decoder = new TextDecoder();
+    let buffer = "";
+    const events: Array<{ event: string; data: string }> = [];
+
+    const readLoop = (async () => {
+      while (true) {
+        const { done, value } = await reader.read();
+        if (done) break;
+        buffer += decoder.decode(value, { stream: true });
+        let sep: number;
+        while ((sep = buffer.indexOf("\n\n")) >= 0) {
+          const chunk = buffer.slice(0, sep);
+          buffer = buffer.slice(sep + 2);
+          let eventName = "message";
+          let data = "";
+          for (const line of chunk.split(/\r?\n/)) {
+            if (line.startsWith("event:")) eventName = line.slice(6).trim();
+            else if (line.startsWith("data:")) data += line.slice(5).trim();
+          }
+          if (data) events.push({ event: eventName, data });
+        }
+      }
+    })();
+
+    // Trigger policy update rev 2 while withholding ACK briefly
+    const updateRes = await fetch(
+      `${address.httpUrl}/portal/api/devices/Leno/policy`,
+      {
+        method: "POST",
+        headers: {
+          cookie,
+          origin: address.httpUrl,
+          "x-tetherplane-csrf": csrfToken,
+          "content-type": "application/json",
+        },
+        body: JSON.stringify({
+          revokeFamilies: ["desktop"],
+          reason: "SSE live update verification",
+        }),
+      },
+    );
+    assert.equal(updateRes.status, 200);
+
+    await until(() => pendingSyncs.some((p) => p.revision === 2));
+    const countBeforeAck = events.filter((e) => e.event === "overview").length;
+
+    // Now device sends delayed policy_ack for rev 2
+    ws.send(
+      JSON.stringify({
+        type: "policy_ack",
+        deviceId: "Leno",
+        revision: 2,
+        applied: true,
+        appliedAtMs: Date.now(),
+      }),
+    );
+
+    await until(
+      () =>
+        events.filter((e) => e.event === "overview").length > countBeforeAck,
+      3_000,
+      "SSE overview event after policy_ack",
+    );
+
+    const finalOverview = await jsonRequest(address.httpUrl, "/portal/api/overview", {
+      method: "GET",
+      token: "owner-token-a",
+    });
+    assert.equal(finalOverview.body.devices[0].syncStatus, "applied");
+    assert.equal(finalOverview.body.devices[0].appliedRevision, 2);
+
+    ws.close();
+    // relay.close() MUST resolve promptly even with SSE still open
+    await Promise.race([
+      relay.close(),
+      new Promise<never>((_res, rej) =>
+        setTimeout(() => rej(new Error("relay.close hung with open SSE")), 3_000),
+      ),
+    ]);
+    await readLoop.catch(() => {});
   } finally {
     await relay.close();
     await rm(dir, { recursive: true, force: true });
