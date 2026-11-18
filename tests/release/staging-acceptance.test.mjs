@@ -73,6 +73,27 @@ test("staging harness rejects invalid CLI flags and unsafe mode combinations", (
 
   const badPause = runHarness(["--mode", "auto", "--pause-for-mobile"]);
   assert.equal(badPause.status, 2);
+
+  const certWithoutKey = runHarness(["--tls-cert", "/tmp/cert.pem"]);
+  assert.equal(certWithoutKey.status, 2);
+
+  const keyWithoutCert = runHarness(["--tls-key", "/tmp/key.pem"]);
+  assert.equal(keyWithoutCert.status, 2);
+
+  const badPublicOriginHttp = runHarness(["--public-origin", "http://staging.example.com"]);
+  assert.equal(badPublicOriginHttp.status, 2);
+
+  const badPublicOriginPath = runHarness(["--public-origin", "https://staging.example.com/portal"]);
+  assert.equal(badPublicOriginPath.status, 2);
+
+  const certWithWinTrust = runHarness([
+    "--tls-cert",
+    "/tmp/cert.pem",
+    "--tls-key",
+    "/tmp/key.pem",
+    "--trust-win-cert",
+  ]);
+  assert.equal(certWithWinTrust.status, 2);
 });
 
 test("staging harness helper enforces partial vs full gate outcome rules", async () => {
@@ -150,6 +171,105 @@ test("staging harness helper enforces partial vs full gate outcome rules", async
     mod.evaluateOverallOutcome({ allowPartial: false, gates: allPass }).ok,
     true,
   );
+});
+
+test("staging harness supports trusted HTTPS modes for G6 without requiring disposable root CA on phones", async () => {
+  const mod = await import(pathToFileURL(scriptPath).href);
+  assert.equal(typeof mod.buildStagingSanEntries, "function");
+  assert.equal(typeof mod.resolveRelayTlsTopology, "function");
+  assert.equal(typeof mod.formatMobileCheckpointNote, "function");
+
+  assert.deepEqual(mod.buildStagingSanEntries("100.64.0.12"), [
+    "IP:127.0.0.1",
+    "DNS:localhost",
+    "IP:100.64.0.12",
+  ]);
+  assert.deepEqual(mod.buildStagingSanEntries("win-staging.tailnet.ts.net"), [
+    "IP:127.0.0.1",
+    "DNS:localhost",
+    "DNS:win-staging.tailnet.ts.net",
+  ]);
+
+  const directTrusted = mod.resolveRelayTlsTopology(
+    {
+      tlsCert: "/tls/staging.crt",
+      tlsKey: "/tls/staging.key",
+      lanHost: "win-staging.tailnet.ts.net",
+      publicOrigin: null,
+      trustProxyHeaders: false,
+    },
+    18788,
+  );
+  assert.equal(directTrusted.mode, "direct-trusted-tls");
+  assert.equal(directTrusted.bindHost, "0.0.0.0");
+  assert.equal(directTrusted.publicHttpBase, "https://win-staging.tailnet.ts.net:18788");
+  assert.equal(directTrusted.relayWsBase, "wss://win-staging.tailnet.ts.net:18788");
+  assert.equal(directTrusted.tetherdNeedsCaCert, false);
+  assert.equal(directTrusted.browserNeedsSpkiPin, false);
+  assert.equal(directTrusted.requiresOpenssl, false);
+
+  const directTrustedIp = mod.resolveRelayTlsTopology(
+    {
+      tlsCert: "/tls/staging.crt",
+      tlsKey: "/tls/staging.key",
+      lanHost: "100.64.0.12",
+      publicOrigin: null,
+      trustProxyHeaders: false,
+    },
+    18788,
+  );
+  assert.equal(directTrustedIp.bindHost, "100.64.0.12");
+  assert.equal(directTrustedIp.publicHttpBase, "https://100.64.0.12:18788");
+
+  const reverseProxy = mod.resolveRelayTlsTopology(
+    {
+      tlsCert: null,
+      tlsKey: null,
+      lanHost: null,
+      publicOrigin: "https://win-staging.tailnet.ts.net",
+      trustProxyHeaders: true,
+    },
+    18788,
+  );
+  assert.equal(reverseProxy.mode, "trusted-reverse-proxy");
+  assert.equal(reverseProxy.bindHost, "127.0.0.1");
+  assert.equal(reverseProxy.publicHttpBase, "https://win-staging.tailnet.ts.net");
+  assert.equal(reverseProxy.localHealthBase, "http://127.0.0.1:18788");
+  assert.equal(reverseProxy.relayWsBase, "ws://127.0.0.1:18788");
+  assert.equal(reverseProxy.tetherdAllowInsecureLocalhost, true);
+  assert.equal(reverseProxy.tetherdNeedsCaCert, false);
+  assert.equal(reverseProxy.browserNeedsSpkiPin, false);
+  assert.equal(reverseProxy.requireExactRelayPort, true);
+  assert.equal(reverseProxy.requiresOpenssl, false);
+
+  const proxyNote = mod.formatMobileCheckpointNote({
+    topology: reverseProxy,
+    ownerTokenFile: "/tmp/secrets/owner.token",
+    ephemeralCaCrt: null,
+  });
+  assert.match(proxyNote, /Portal URL: https:\/\/win-staging\.tailnet\.ts\.net\/portal/);
+  assert.doesNotMatch(proxyNote, /CA file:/);
+  assert.match(proxyNote, /No disposable root CA installation required/i);
+
+  const ephemeral = mod.resolveRelayTlsTopology(
+    {
+      tlsCert: null,
+      tlsKey: null,
+      lanHost: null,
+      publicOrigin: null,
+      trustProxyHeaders: false,
+    },
+    18788,
+  );
+  assert.equal(ephemeral.mode, "ephemeral-ca");
+  assert.equal(ephemeral.requiresOpenssl, true);
+  assert.equal(ephemeral.tetherdNeedsCaCert, true);
+  const ephemeralNote = mod.formatMobileCheckpointNote({
+    topology: ephemeral,
+    ownerTokenFile: "/tmp/secrets/owner.token",
+    ephemeralCaCrt: "/tmp/tls/relay-ca.crt",
+  });
+  assert.match(ephemeralNote, /CA file: \/tmp\/tls\/relay-ca\.crt/);
 });
 
 test("staging harness --preflight-only rejects strict exit on non-interactive Linux unless --allow-partial is set", () => {

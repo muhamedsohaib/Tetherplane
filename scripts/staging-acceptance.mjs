@@ -323,6 +323,130 @@ export function buildStagingPlan(options = {}) {
   };
 }
 
+function validatePublicOriginInput(rawValue) {
+  let parsed;
+  try {
+    parsed = new URL(rawValue.trim());
+  } catch {
+    throw new CliUsageError("--public-origin must be a valid absolute URL");
+  }
+  if (
+    parsed.username ||
+    parsed.password ||
+    parsed.search ||
+    parsed.hash ||
+    parsed.pathname !== "/"
+  ) {
+    throw new CliUsageError(
+      "--public-origin must not contain credentials, path, query, or fragment",
+    );
+  }
+  if (parsed.protocol !== "https:") {
+    throw new CliUsageError(
+      "--public-origin must use https:// so portal cookies keep the Secure attribute",
+    );
+  }
+  return parsed.origin;
+}
+
+function formatHostForUrl(host) {
+  return host.includes(":") && !host.startsWith("[") ? `[${host}]` : host;
+}
+
+export function buildStagingSanEntries(lanHost) {
+  const entries = ["IP:127.0.0.1", "DNS:localhost"];
+  if (lanHost) {
+    entries.push(net.isIP(lanHost) ? `IP:${lanHost}` : `DNS:${lanHost}`);
+  }
+  return entries;
+}
+
+export function resolveRelayTlsTopology(opts, relayPort) {
+  if (opts.tlsCert && opts.tlsKey) {
+    const publicOrigin = opts.publicOrigin
+      ? opts.publicOrigin.replace(/\/$/, "")
+      : null;
+    const originUrl = publicOrigin ? new URL(publicOrigin) : null;
+    const hostLabel = originUrl?.hostname ?? opts.lanHost ?? "localhost";
+    const bindHost =
+      opts.lanHost && net.isIP(opts.lanHost)
+        ? opts.lanHost
+        : opts.lanHost || originUrl
+          ? "0.0.0.0"
+          : "127.0.0.1";
+    const publicHttpBase = publicOrigin ?? `https://${formatHostForUrl(hostLabel)}:${relayPort}`;
+    const wsAuthority = originUrl
+      ? `${originUrl.hostname}:${relayPort}`
+      : `${formatHostForUrl(hostLabel)}:${relayPort}`;
+    return {
+      mode: "direct-trusted-tls",
+      bindHost,
+      localHealthBase: publicHttpBase,
+      publicHttpBase,
+      relayWsBase: `wss://${wsAuthority}`,
+      tetherdAllowInsecureLocalhost: false,
+      tetherdNeedsCaCert: false,
+      browserNeedsSpkiPin: false,
+      requiresOpenssl: false,
+      requireExactRelayPort: Boolean(publicOrigin),
+      opensExternalPort: Boolean(opts.lanHost || originUrl),
+    };
+  }
+
+  if (opts.publicOrigin) {
+    const publicHttpBase = opts.publicOrigin.replace(/\/$/, "");
+    return {
+      mode: "trusted-reverse-proxy",
+      bindHost: "127.0.0.1",
+      localHealthBase: `http://127.0.0.1:${relayPort}`,
+      publicHttpBase,
+      relayWsBase: `ws://127.0.0.1:${relayPort}`,
+      tetherdAllowInsecureLocalhost: true,
+      tetherdNeedsCaCert: false,
+      browserNeedsSpkiPin: false,
+      requiresOpenssl: false,
+      requireExactRelayPort: true,
+      opensExternalPort: false,
+    };
+  }
+
+  const bindHost = opts.lanHost ?? "127.0.0.1";
+  const authority = `${formatHostForUrl(bindHost)}:${relayPort}`;
+  return {
+    mode: "ephemeral-ca",
+    bindHost,
+    localHealthBase: `https://${authority}`,
+    publicHttpBase: `https://${authority}`,
+    relayWsBase: `wss://${authority}`,
+    tetherdAllowInsecureLocalhost: false,
+    tetherdNeedsCaCert: true,
+    browserNeedsSpkiPin: true,
+    requiresOpenssl: true,
+    requireExactRelayPort: false,
+    opensExternalPort: Boolean(opts.lanHost),
+  };
+}
+
+export function formatMobileCheckpointNote({
+  topology,
+  ownerTokenFile,
+  ephemeralCaCrt,
+}) {
+  const lines = [`Portal URL: ${topology.publicHttpBase}/portal`];
+  if (topology.mode === "ephemeral-ca" && ephemeralCaCrt) {
+    lines.push(
+      `CA file: ${ephemeralCaCrt}`,
+      "TLS Trust Mode: Ephemeral staging CA (use only on a disposable test phone and delete immediately after testing)",
+    );
+  } else {
+    lines.push(
+      `TLS Trust Mode: Trusted HTTPS (${topology.mode}) — No disposable root CA installation required on your phone`,
+    );
+  }
+  lines.push(`Owner token file: ${ownerTokenFile}`);
+  return lines.join("\n") + "\n";
+}
+
 function parseCliArgs(argv) {
   const opts = {
     describe: false,
@@ -331,6 +455,8 @@ function parseCliArgs(argv) {
     allowPartial: false,
     lanHost: null,
     relayPort: 18788,
+    tlsCert: null,
+    tlsKey: null,
     publicOrigin: null,
     trustProxyHeaders: false,
     pauseForMobile: false,
@@ -381,8 +507,16 @@ function parseCliArgs(argv) {
         opts.relayPort = val;
         break;
       }
+      case "--tls-cert":
+        opts.tlsCert = path.resolve(requiredArgValue(argv, ++i, "--tls-cert"));
+        break;
+      case "--tls-key":
+        opts.tlsKey = path.resolve(requiredArgValue(argv, ++i, "--tls-key"));
+        break;
       case "--public-origin":
-        opts.publicOrigin = requiredArgValue(argv, ++i, "--public-origin");
+        opts.publicOrigin = validatePublicOriginInput(
+          requiredArgValue(argv, ++i, "--public-origin"),
+        );
         break;
       case "--hostname":
         opts.hostname = requiredArgValue(argv, ++i, "--hostname");
@@ -405,6 +539,14 @@ function parseCliArgs(argv) {
     }
   }
 
+  if (Boolean(opts.tlsCert) !== Boolean(opts.tlsKey)) {
+    throw new CliUsageError("--tls-cert and --tls-key must be provided together");
+  }
+  if (opts.trustWinCert && (opts.tlsCert || opts.publicOrigin)) {
+    throw new CliUsageError(
+      "--trust-win-cert applies only to ephemeral staging PKI (not trusted certs or reverse proxies)",
+    );
+  }
   if (opts.pauseForMobile && argv.includes("--mode") && opts.mode !== "interactive") {
     throw new CliUsageError("--pause-for-mobile requires --mode interactive");
   }
@@ -528,7 +670,7 @@ function createStagingPki(opensslPath, tlsDir, lanHost) {
     "/CN=127.0.0.1",
   ], { stdio: "pipe" });
 
-  const san = ["IP:127.0.0.1", "DNS:localhost", ...(lanHost ? [`IP:${lanHost}`] : [])].join(",");
+  const san = buildStagingSanEntries(lanHost).join(",");
   writeFileSync(
     srvExt,
     [
@@ -568,8 +710,8 @@ function createStagingPki(opensslPath, tlsDir, lanHost) {
   return { caKey, caCrt, srvKey, srvCrt, caPem, spkiPin };
 }
 
-function createCaFetch(caPem) {
-  const ca = [...tls.rootCertificates, caPem];
+function createCaFetch(caPem = null) {
+  const ca = caPem ? [...tls.rootCertificates, caPem] : tls.rootCertificates;
   return async function caFetch(input, init = {}) {
     const url = typeof input === "string" || input instanceof URL
       ? new URL(input.toString())
@@ -1195,12 +1337,36 @@ async function runStagingAcceptance(opts) {
       `Missing built staging artifacts (tetherd=${envInfo.tetherdPath}, relay=${envInfo.relayEntryPath}, extension=${envInfo.extensionPath}). Build first.`,
     );
   }
-  if (!envInfo.opensslPath) {
+  const provisionalTopology = resolveRelayTlsTopology(opts, opts.relayPort);
+  if (provisionalTopology.requiresOpenssl && !envInfo.opensslPath) {
     throw new Error("OpenSSL is required to mint staging 2-tier PKI.");
+  }
+  if (opts.tlsCert && !existsSync(opts.tlsCert)) {
+    throw new Error(`Trusted TLS certificate file not found: ${opts.tlsCert}`);
+  }
+  if (opts.tlsKey && !existsSync(opts.tlsKey)) {
+    throw new Error(`Trusted TLS key file not found: ${opts.tlsKey}`);
   }
   if (!envInfo.chromiumPath) {
     throw new Error("Chromium / Chrome / Edge executable is required for G2/G3/G6.");
   }
+
+  let relayPort = opts.relayPort;
+  const relayPortCheckHost =
+    provisionalTopology.bindHost === "0.0.0.0"
+      ? "127.0.0.1"
+      : provisionalTopology.bindHost;
+  if (!(await isPortFree(relayPortCheckHost, relayPort))) {
+    if (provisionalTopology.requireExactRelayPort) {
+      throw new Error(
+        `Configured --relay-port ${relayPort} is already in use; free that port so the upstream HTTPS reverse proxy matches.`,
+      );
+    }
+    relayPort = await findFreePort(relayPortCheckHost);
+  }
+  const topology = resolveRelayTlsTopology(opts, relayPort);
+  const relayHttpBase = topology.publicHttpBase;
+  const relayWsBase = topology.relayWsBase;
 
   const gitBefore = getRepoGitPorcelain();
   const runId = new Date().toISOString().replace(/[:.]/g, "-");
@@ -1262,61 +1428,13 @@ async function runStagingAcceptance(opts) {
   const authConfigPath = path.join(stagingRoot, "relay-auth.json");
   writeFileSync(authConfigPath, JSON.stringify(buildRelayAuthConfig(), null, 2), "utf8");
 
-  const pki = createStagingPki(envInfo.opensslPath, tlsDir, opts.lanHost);
-  const caFetch = createCaFetch(pki.caPem);
-
   let trustCertThumbprint = null;
   let firewallRuleAdded = false;
-  if (opts.trustWinCert && process.platform === "win32") {
-    trustCertThumbprint = execFileSync(
-      "powershell.exe",
-      [
-        "-NoProfile",
-        "-NonInteractive",
-        "-Command",
-        `(Import-Certificate -FilePath '${pki.caCrt.replace(/'/g, "''")}' -CertStoreLocation Cert:\\CurrentUser\\Root).Thumbprint`,
-      ],
-      { encoding: "utf8" },
-    ).trim();
-  }
-  if (opts.lanHost && process.platform === "win32") {
-    execFileSync(
-      "powershell.exe",
-      [
-        "-NoProfile",
-        "-NonInteractive",
-        "-Command",
-        `New-NetFirewallRule -DisplayName 'Tetherplane-Staging-${opts.relayPort}' -Direction Inbound -Protocol TCP -LocalPort ${opts.relayPort} -Profile Private -Action Allow | Out-Null`,
-      ],
-      { stdio: "ignore" },
-    );
-    firewallRuleAdded = true;
-  }
-
-  gates.G1 = {
-    status: "PASS",
-    details: [
-      `Isolated hostname=${opts.hostname}, stagingRoot=${stagingRoot}`,
-      `Production LOCALAPPDATA isolated via LOCALAPPDATA=${localAppData}`,
-    ],
-  };
-
-  let relayPort = opts.relayPort;
-  if (!(await isPortFree("127.0.0.1", relayPort))) {
-    relayPort = await findFreePort("127.0.0.1");
-  }
-  const bindHost = opts.lanHost ?? "127.0.0.1";
-  const relayHttpBase = `https://${bindHost}:${relayPort}`;
-  const relayWsBase = `wss://${bindHost}:${relayPort}`;
-
-  // Use default 17656-17658 if all three are free so "Pair with local Tetherplane" works cleanly.
-  const defaultExtPortsFree =
-    (await isPortFree("127.0.0.1", 17656)) &&
-    (await isPortFree("127.0.0.1", 17657)) &&
-    (await isPortFree("127.0.0.1", 17658));
-  const extPairingPort = defaultExtPortsFree ? 17656 : await findFreePort("127.0.0.1");
-  const extRpcPort = defaultExtPortsFree ? 17657 : await findFreePort("127.0.0.1");
-  const extWsPort = defaultExtPortsFree ? 17658 : await findFreePort("127.0.0.1");
+  let pki = null;
+  let caFetch = createCaFetch(null);
+  let extPairingPort = 17656;
+  let extRpcPort = 17657;
+  let extWsPort = 17658;
 
   const spawnedChildren = [];
   let relayChild = null;
@@ -1336,41 +1454,97 @@ async function runStagingAcceptance(opts) {
   const tetherdLogs = [];
 
   try {
+    pki =
+      topology.mode === "ephemeral-ca"
+        ? createStagingPki(envInfo.opensslPath, tlsDir, opts.lanHost)
+        : null;
+    caFetch = createCaFetch(pki?.caPem ?? null);
+
+    if (opts.trustWinCert && pki && process.platform === "win32") {
+      trustCertThumbprint = execFileSync(
+        "powershell.exe",
+        [
+          "-NoProfile",
+          "-NonInteractive",
+          "-Command",
+          `(Import-Certificate -FilePath '${pki.caCrt.replace(/'/g, "''")}' -CertStoreLocation Cert:\\CurrentUser\\Root).Thumbprint`,
+        ],
+        { encoding: "utf8" },
+      ).trim();
+    }
+    if (topology.opensExternalPort && process.platform === "win32") {
+      try {
+        execFileSync(
+          "powershell.exe",
+          [
+            "-NoProfile",
+            "-NonInteractive",
+            "-Command",
+            `New-NetFirewallRule -DisplayName 'Tetherplane-Staging-${relayPort}' -Direction Inbound -Protocol TCP -LocalPort ${relayPort} -Profile Private -Action Allow | Out-Null`,
+          ],
+          { stdio: "ignore" },
+        );
+        firewallRuleAdded = true;
+      } catch {
+        process.stderr.write(
+          `[staging warning] Could not auto-create Windows Firewall rule 'Tetherplane-Staging-${relayPort}' (Administrator elevation required). If your phone cannot reach the portal, either prefer '--public-origin' via 'tailscale serve' or run elevated: New-NetFirewallRule -DisplayName 'Tetherplane-Staging-${relayPort}' -Direction Inbound -Protocol TCP -LocalPort ${relayPort} -Profile Private -Action Allow\n`,
+        );
+      }
+    }
+
+    gates.G1 = {
+      status: "PASS",
+      details: [
+        `Isolated hostname=${opts.hostname}, stagingRoot=${stagingRoot}, tlsMode=${topology.mode}`,
+        `Production LOCALAPPDATA isolated via LOCALAPPDATA=${localAppData}`,
+      ],
+    };
+
+    // Use default 17656-17658 if all three are free so "Pair with local Tetherplane" works cleanly.
+    const defaultExtPortsFree =
+      (await isPortFree("127.0.0.1", 17656)) &&
+      (await isPortFree("127.0.0.1", 17657)) &&
+      (await isPortFree("127.0.0.1", 17658));
+    extPairingPort = defaultExtPortsFree ? 17656 : await findFreePort("127.0.0.1");
+    extRpcPort = defaultExtPortsFree ? 17657 : await findFreePort("127.0.0.1");
+    extWsPort = defaultExtPortsFree ? 17658 : await findFreePort("127.0.0.1");
+
     fixtures = await startLocalFixturesServer();
 
-    // --- Launch Relay with Direct TLS ---
+    // --- Launch Relay (Direct TLS or Trusted Same-Host Reverse Proxy) ---
     const relayStateFile = path.join(relayStateDir, "relay-devices.json");
-    relayChild = spawn(
-      process.execPath,
-      [
-        envInfo.relayEntryPath,
-        "--host",
-        bindHost,
-        "--port",
-        String(relayPort),
-        "--state-file",
-        relayStateFile,
-        "--auth-config",
-        authConfigPath,
-        "--tls-cert",
-        pki.srvCrt,
-        "--tls-key",
-        pki.srvKey,
-        ...(opts.publicOrigin ? ["--public-origin", opts.publicOrigin] : []),
-        ...(opts.trustProxyHeaders ? ["--trust-proxy-headers"] : []),
-      ],
-      {
-        cwd: repoRoot,
-        env: {
-          ...process.env,
-          STAGING_OWNER_TOKEN: ownerToken,
-          STAGING_OPERATOR_TOKEN: operatorToken,
-          STAGING_UNPAIRED_TOKEN: unpairedToken,
-        },
-        stdio: ["ignore", "pipe", "pipe"],
-        windowsHide: true,
+    const relayArgs = [
+      envInfo.relayEntryPath,
+      "--host",
+      topology.bindHost,
+      "--port",
+      String(relayPort),
+      "--state-file",
+      relayStateFile,
+      "--auth-config",
+      authConfigPath,
+      ...(topology.mode === "trusted-reverse-proxy"
+        ? ["--allow-insecure-localhost"]
+        : [
+            "--tls-cert",
+            topology.mode === "direct-trusted-tls" ? opts.tlsCert : pki.srvCrt,
+            "--tls-key",
+            topology.mode === "direct-trusted-tls" ? opts.tlsKey : pki.srvKey,
+          ]),
+      ...(opts.publicOrigin ? ["--public-origin", opts.publicOrigin] : []),
+      ...(opts.trustProxyHeaders ? ["--trust-proxy-headers"] : []),
+    ];
+    relayChild = spawn(process.execPath, relayArgs, {
+      cwd: repoRoot,
+      env: {
+        ...process.env,
+        STAGING_OWNER_TOKEN: ownerToken,
+        STAGING_OPERATOR_TOKEN: operatorToken,
+        STAGING_UNPAIRED_TOKEN: unpairedToken,
       },
-    );
+      stdio: ["ignore", "pipe", "pipe"],
+      windowsHide: true,
+    });
     spawnedChildren.push(relayChild);
     relayChild.stdout?.setEncoding("utf8");
     relayChild.stderr?.setEncoding("utf8");
@@ -1381,9 +1555,22 @@ async function runStagingAcceptance(opts) {
       if (relayChild.exitCode !== null) {
         throw new Error(`relay exited early (${relayChild.exitCode}): ${relayLogs.join("")}`);
       }
-      const res = await caFetch(`${relayHttpBase}/readyz`);
+      const res = await caFetch(`${topology.localHealthBase}/readyz`);
       return res.status === 200;
-    }, 15_000, "relay HTTPS readyz");
+    }, 15_000, `relay readyz (${topology.localHealthBase})`);
+
+    if (topology.mode === "trusted-reverse-proxy") {
+      try {
+        await until(async () => {
+          const res = await caFetch(`${relayHttpBase}/readyz`);
+          return res.status === 200;
+        }, 10_000, `trusted HTTPS reverse proxy readyz (${relayHttpBase}/readyz)`);
+      } catch (err) {
+        throw new Error(
+          `Trusted HTTPS reverse proxy readiness failed at ${relayHttpBase}/readyz (local relay healthy on ${topology.localHealthBase}): ${err instanceof Error ? err.message : String(err)}`,
+        );
+      }
+    }
 
     // --- GATE G2: Auth, Cookies, CSRF, URL token block, Non-owner isolation, DOM XSS ---
     try {
@@ -1505,7 +1692,7 @@ async function runStagingAcceptance(opts) {
       portalBrowser = await StagingBrowser.launch({
         executablePath: envInfo.chromiumPath,
         profileDir: portalProfileDir,
-        spkiPin: pki.spkiPin,
+        spkiPin: topology.browserNeedsSpkiPin ? pki?.spkiPin : undefined,
         headless: opts.mode === "auto",
       });
       await portalBrowser.setViewport(1280, 900, false);
@@ -1594,8 +1781,12 @@ async function runStagingAcceptance(opts) {
         [
           "--relay-url",
           `${relayWsBase}/device`,
-          "--relay-ca-cert",
-          pki.caCrt,
+          ...(topology.tetherdNeedsCaCert && pki
+            ? ["--relay-ca-cert", pki.caCrt]
+            : []),
+          ...(topology.tetherdAllowInsecureLocalhost
+            ? ["--relay-allow-insecure-localhost"]
+            : []),
           "--device-id",
           "staging-win-01",
           "--device-credential-file",
@@ -1703,7 +1894,7 @@ async function runStagingAcceptance(opts) {
           executablePath: envInfo.chromiumPath,
           profileDir: extProfileDir,
           extensionPath: envInfo.extensionPath,
-          spkiPin: pki.spkiPin,
+          spkiPin: topology.browserNeedsSpkiPin ? pki?.spkiPin : undefined,
           headless: opts.mode === "auto",
           initialUrl: `${fixtures.baseUrl}/human.html`,
         });
@@ -2866,14 +3057,15 @@ async function runStagingAcceptance(opts) {
 
       if (opts.pauseForMobile) {
         const notePath = path.join(stagingRoot, "MOBILE_SIGNIN_INFO.txt");
-        writeFileSync(
-          notePath,
-          `Portal URL: ${relayHttpBase}/portal\nCA file: ${pki.caCrt}\nOwner token file: ${ownerTokenFile}\n`,
-          { encoding: "utf8", mode: 0o600 },
-        );
+        const mobileNote = formatMobileCheckpointNote({
+          topology,
+          ownerTokenFile,
+          ephemeralCaCrt: pki?.caCrt ?? null,
+        });
+        writeFileSync(notePath, mobileNote, { encoding: "utf8", mode: 0o600 });
         const rl = createInterface({ input: process.stdin, output: process.stdout });
         process.stdout.write(
-          `\n[Interactive Mobile Checkpoint]\nOpen ${relayHttpBase}/portal on iPhone Safari / Android Chrome.\n` +
+          `\n[Interactive Mobile Checkpoint]\n${mobileNote}` +
             `Connection files saved inside ${stagingRoot}.\n`,
         );
         const answer = (await rl.question("Did real physical mobile M1-M10 PASS? [yes/no]: "))
@@ -2946,7 +3138,7 @@ async function runStagingAcceptance(opts) {
             "-NoProfile",
             "-NonInteractive",
             "-Command",
-            `Remove-NetFirewallRule -DisplayName 'Tetherplane-Staging-${opts.relayPort}' -ErrorAction SilentlyContinue`,
+            `Remove-NetFirewallRule -DisplayName 'Tetherplane-Staging-${relayPort}' -ErrorAction SilentlyContinue`,
           ],
           { stdio: "ignore" },
         );
@@ -2958,9 +3150,17 @@ async function runStagingAcceptance(opts) {
     // Preserve external screenshotDir if user specified --screenshot-dir outside stagingRoot
     rmSync(stagingRoot, { recursive: true, force: true });
 
-    const portsToVerify = [relayPort, extPairingPort, extRpcPort, extWsPort];
+    const portsToVerify = [
+      { host: relayPortCheckHost, port: relayPort },
+      { host: "127.0.0.1", port: extPairingPort },
+      { host: "127.0.0.1", port: extRpcPort },
+      { host: "127.0.0.1", port: extWsPort },
+    ];
     const portFreeResults = await Promise.all(
-      portsToVerify.map(async (p) => ({ port: p, free: await isPortFree(bindHost, p) })),
+      portsToVerify.map(async ({ host, port }) => ({
+        port,
+        free: await isPortFree(host, port),
+      })),
     );
     const busyPorts = portFreeResults.filter((r) => !r.free).map((r) => r.port);
     const stagingDirGone = !existsSync(stagingRoot);
@@ -2971,7 +3171,7 @@ async function runStagingAcceptance(opts) {
       gates.G7 = {
         status: "PASS",
         details: [
-          `Teardown removed ${stagingRoot}, released ports [${portsToVerify.join(", ")}], stopped all staging processes, and left repo working tree untouched.`,
+          `Teardown removed ${stagingRoot}, released ports [${portsToVerify.map((p) => p.port).join(", ")}], stopped all staging processes, and left repo working tree untouched.`,
         ],
       };
     } else {

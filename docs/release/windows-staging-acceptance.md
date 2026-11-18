@@ -21,24 +21,27 @@
 All staging state, binaries, certificates, profiles, and logs live exclusively inside a disposable folder `$env:TEMP\tetherplane-staging-<runid>`. All staging processes run in the foreground inside dedicated consoles and exit cleanly on cleanup.
 
 > [!TIP]
-> **Recommended Repeatable Harness (`scripts/staging-acceptance.mjs`)**
+> **Recommended Repeatable Harness (`scripts/staging-acceptance.mjs`) & Latest Rehearsal Evidence**
 >
 > Rather than driving all consoles manually, run the built-in minimally interactive staging harness after building the workspace (`cargo build -p tetherd` or `--release`, `pnpm -r build`, `pnpm --filter @tetherplane/browser-extension build`):
 >
 > ```powershell
 > node scripts/staging-acceptance.mjs --mode auto            # Full G1-G7 desktop UIA + real Chrome extension + mobile emulation (excludes physical phone)
-> node scripts/staging-acceptance.mjs --mode interactive --lan-host <LanIp> --pause-for-mobile  # Adds physical iPhone/Android M1-M10 check
+> # Physical phone G6 via trusted HTTPS reverse proxy (recommended: e.g. Tailscale Serve — no disposable root CA on phone)
+> node scripts/staging-acceptance.mjs --mode interactive --public-origin https://<staging-vm>.<tailnet>.ts.net --trust-proxy-headers --pause-for-mobile
+> # Physical phone G6 via direct WebPKI cert/key (e.g. tailscale cert / ACME DNS-01)
+> node scripts/staging-acceptance.mjs --mode interactive --tls-cert <cert.pem> --tls-key <key.pem> --lan-host <staging-vm>.<tailnet>.ts.net --pause-for-mobile
 > node scripts/staging-acceptance.mjs --allow-partial        # Non-Windows / headless rehearsal (runs G1, G2, G3, G5, G6 emulation, G7; marks UIA/phone BLOCKED)
 > ```
 >
-> Use `--describe` to inspect all structured gates and platform prerequisites without launching processes. The sections below retain the full step-by-step commands for transparent auditing and manual debugging.
+> Use `--describe` to inspect all structured gates and platform prerequisites without launching processes. For latest sanitized cloud rehearsal evidence (`PARTIAL_PASS`: `G1,G2,G3,G5,G7` pass; `G4` & physical `G6` blocked) and least-cost Windows staging VM setup options, see [`staging-evidence/README.md`](staging-evidence/README.md). The sections below retain the full step-by-step manual commands for transparent auditing and debugging.
 
 | Component | Production Value (Untouched) | Isolated Staging Value | Notes |
 | --- | --- | --- | --- |
 | Machine | `Leno`, `CUCK`, `Surface`, `RTX`, `VAULTER` | Dedicated Windows staging VM | Preflight aborts if hostname matches any production device |
 | Workspace | Existing checkouts / `main` | Clean clone on `feat/universal-permissions-control-portal` | Verify HEAD matches PR `#150` |
 | State / Tokens | `%LOCALAPPDATA%\Tetherplane` | `$StagingRoot\state`, `$StagingRoot\secrets` | Ephemeral per-run secrets generated cleanly |
-| Relay Endpoint | Production domain / port `8788` | `https://127.0.0.1:18788` (or staging LAN IP for Stage 6 mobile) | Direct relay TLS (`--tls-cert`/`--tls-key`) keeps `Secure` cookies and direct HTTPS/WSS end-to-end; behind a trusted HTTPS reverse proxy use `--allow-insecure-localhost --public-origin https://...` (and `--trust-proxy-headers` if validating forwarded headers) per [Finding F-3](../security/control-portal-security-review.md#31-f-1-through-f-7-remediation--verification-matrix) |
+| Relay Endpoint | Production domain / port `8788` | `https://127.0.0.1:18788` (or trusted HTTPS origin for Stage 6 mobile) | Prefer trusted HTTPS (`tailscale serve` with `--allow-insecure-localhost --public-origin https://... --trust-proxy-headers`, or WebPKI `--tls-cert`/`--tls-key`) so personal phones never import a disposable CA; see [Finding F-3](../security/control-portal-security-review.md#31-f-1-through-f-7-remediation--verification-matrix) & [Stage 6](#9-stage-6--mobile-browser-acceptance-checklist) |
 | Paired Staging Devices | Real owner device IDs | `staging-win-01` (online), `staging-win-02` (kept offline) | Ephemeral `staging-acct` owner account + `operator:staging-ci` |
 | Extension Host | Production persistence on `17656-17658` | Foreground `browser-extension-host.ts` (`TETHERPLANE_*_TOKEN_FILE` in `$StagingRoot`) | Default popup **Pair with local Tetherplane** targets `127.0.0.1:17656` ([`local-pairing.ts:14`](../../extension/browser/src/local-pairing.ts#L14)); confirm `17656–17658` are unbound on the clean VM, or use `18656–18658` via popup **Advanced manual pairing** |
 | Browser Profile | Default user Chrome profile | `$StagingRoot\chrome-profile` (`--user-data-dir`) | Unpacked extension loaded from `<staging-repo>\extension\browser` |
@@ -563,9 +566,48 @@ Perform every step in the Portal UI (`https://127.0.0.1:18788/portal`) and verif
 
 ## 9. Stage 6 — Mobile Browser Acceptance Checklist
 
-Validate the Control Portal at mobile dimensions using **both** (A) Chromium/Edge responsive device emulation (`390x844` and `360x800`) and (B) a real mobile browser (iOS Safari or Android Chrome):
+Validate the Control Portal at mobile dimensions using **both** (A) Chromium/Edge responsive device emulation (`390x844` and `360x800`) and (B) a real mobile browser (iOS Safari or Android Chrome).
 
-- For **Part (B) real-phone testing** over a private LAN or Tailscale IP (`$LanIp`), update `tls\relay.ext` with `subjectAltName=IP:127.0.0.1,IP:<LanIp>,DNS:localhost` and re-sign `tls\relay.crt` with `tls\relay-ca.crt`, re-launch **PowerShell 2** (`tether-relay`) with `--host <LanIp> --port 18788`, point **PowerShell 4** (`tetherd`) at `--relay-url wss://<LanIp>:18788/device --relay-ca-cert ...\relay-ca.crt`, optionally add a temporary scoped firewall rule `New-NetFirewallRule -DisplayName "Tetherplane-Staging-18788" -Direction Inbound -Protocol TCP -LocalPort 18788 -Profile Private -Action Allow`, and open `https://<LanIp>:18788/portal` on the phone (trusting/installing only `relay-ca.crt` temporarily during the test session, and deleting that profile/CA immediately after). If using an explicit trusted HTTPS reverse proxy instead of direct `--tls-cert`/`--tls-key`, launch `tether-relay` with `--allow-insecure-localhost --public-origin https://<proxy-host> --trust-proxy-headers` rather than plain unconfigured HTTP. *(See [Finding F-3](../security/control-portal-security-review.md#31-f-1-through-f-7-remediation--verification-matrix).)*
+**For Part (B) real-phone testing, prefer a properly trusted HTTPS certificate rather than importing a disposable staging root CA onto a personal phone:**
+
+1. **Option A (Recommended): Trusted HTTPS Reverse Proxy (`tailscale serve` or ACME reverse proxy -> loopback Relay)**
+   - **Why:** Uses a real public Let's Encrypt certificate (automatically trusted by iOS Safari & Android Chrome), requires **no root CA profile installation on your phone**, requires **no inbound Windows Firewall exception on port `18788`**, and keeps SSE (`x-accel-buffering: no`), `HttpOnly; SameSite=Strict; Secure` cookies, and origin checks intact ([Finding F-3](../security/control-portal-security-review.md#31-f-1-through-f-7-remediation--verification-matrix)).
+   - On an isolated staging VM signed into your staging Tailscale tailnet with MagicDNS + HTTPS enabled (do **not** touch `Leno`, `CUCK`, `Surface`, `RTX`, or `VAULTER`):
+     ```powershell
+     # Expose only the loopback staging relay over tailnet HTTPS (:443)
+     tailscale serve --bg https / http://127.0.0.1:18788
+
+     # Run automated G1-G5/G7 + pause at interactive mobile checkpoint
+     node scripts/staging-acceptance.mjs `
+       --mode interactive `
+       --public-origin https://<staging-vm>.<tailnet>.ts.net `
+       --trust-proxy-headers `
+       --pause-for-mobile `
+       --report-file .\staging-final-report.json `
+       --screenshot-dir .\staging-final-shots
+     ```
+   - *(Manual equivalent in PowerShell 2/4: launch `node relay/dist/cli.js --host 127.0.0.1 --port 18788 --allow-insecure-localhost --public-origin https://<staging-vm>.<tailnet>.ts.net --trust-proxy-headers ...` and `tetherd --relay-url ws://127.0.0.1:18788/device --relay-allow-insecure-localhost ...`. Remove the proxy mapping immediately afterward with `tailscale serve --https=443 off` or `tailscale serve reset`.)*
+   - *(Equivalent with Caddy v2 / Nginx ACME DNS-01 on `:443`: reverse-proxy HTTPS to `http://127.0.0.1:18788` passing `Host`, `X-Forwarded-Proto: https`, and `X-Forwarded-Host`.)*
+
+2. **Option B: Direct End-to-End Trusted TLS with WebPKI / ACME DNS-01 Certs (`--tls-cert` / `--tls-key`)**
+   - Mint or fetch a trusted fullchain certificate + private key for the staging VM's reachable DNS hostname (for example `tailscale cert <staging-vm>.<tailnet>.ts.net` or an ACME DNS-01 client like Caddy/win-acme):
+     ```powershell
+     tailscale cert <staging-vm>.<tailnet>.ts.net
+     node scripts/staging-acceptance.mjs `
+       --mode interactive `
+       --tls-cert .\$($env:COMPUTERNAME.ToLower()).<tailnet>.ts.net.crt `
+       --tls-key  .\$($env:COMPUTERNAME.ToLower()).<tailnet>.ts.net.key `
+       --lan-host <staging-vm>.<tailnet>.ts.net `
+       --pause-for-mobile `
+       --report-file .\staging-final-report.json `
+       --screenshot-dir .\staging-final-shots
+     ```
+   - Relay binds HTTPS directly and `tetherd` connects over `wss://<staging-vm>.<tailnet>.ts.net:18788/device` using built-in `webpki-roots` (**no `--relay-ca-cert` needed**, **no CA import on phones**). Ensure port `18788` is reachable over your Tailscale/Private interface (Option A avoids inbound `18788` rules entirely).
+
+3. **Option C (Last-Resort Fallback Only — Disposable Test Phone, Never a Personal Phone): Ephemeral Staging CA (`--lan-host <LanIp>`)**
+   - Only if neither a Tailscale tailnet HTTPS cert nor ACME DNS-01 domain cert is available, run `node scripts/staging-acceptance.mjs --mode interactive --lan-host <LanIp> --pause-for-mobile` (or update `tls\relay.ext` with `subjectAltName=IP:127.0.0.1,IP:<LanIp>,DNS:localhost` manually). Temporarily trust `relay-ca.crt` **solely on a dedicated disposable test phone** during the check and delete the CA/profile from iOS (`Settings -> General -> VPN & Device Management -> Remove Profile` and `Certificate Trust Settings`) or Android (`Settings -> Security -> Encryption & credentials -> User credentials -> Remove`) immediately afterward.
+
+When paused at `[Interactive Mobile Checkpoint]`, open the printed `https://<...>/portal` URL on real iPhone Safari and Android Chrome, enter the printed temporary owner token once into **Owner Bearer Token** -> **Connect** (never put tokens in URLs), and execute `M1–M10`:
 
 | # | Mobile Check | Expected Pass Condition | Result |
 | --- | --- | --- | --- |
@@ -593,8 +635,8 @@ Validate the Control Portal at mobile dimensions using **both** (A) Chromium/Edg
 | **G3** | Real Chrome Extension Pairing & Reconnect | Extension pairs only to staging host, transitions Portal `browser` `Unavailable` -> `12/12 ops active` live via SSE, respects background tab ownership and timed tab-share expiry/detach, transitions to `Unavailable` on Chrome close, and auto-recovers upon Chrome relaunch + re-pair. |
 | **G4** | Interactive Windows UIA & Coexistence | Remote `desktop.snapshot` + `desktop.act` succeed on Tetherplane-owned window while physical cursor, clipboard canary, and human fixture focus/text remain completely unchanged and human window mutations are denied. |
 | **G5** | Grants, Explicit Denies, Isolation, Offline Recovery, Rollback & Lockdown | Family toggles, explicit denies (`explicit_deny`), scoped operator least privilege, cross-account denial, offline policy convergence via `device_hello`, emergency lockdown persistence across `tetherd` restart, and forward-revision rollback to `rev 1` all enforce on both relay and `tetherd`. |
-| **G6** | Mobile Browser Checklist | All items `M1–M10` pass on real mobile viewport + device. |
-| **G7** | Clean Staging Teardown | Cleanup removes all staging files, staging root cert (if added temporarily to `CurrentUser\Root`), temporary staging firewall rule (if added for Stage 6), and staging processes with zero leftover listeners or repo working-tree leaks. |
+| **G6** | Mobile Browser Checklist | All items `M1–M10` pass on real mobile viewport + device (over trusted HTTPS without leaving disposable root CAs installed). |
+| **G7** | Clean Staging Teardown | Cleanup removes all staging files, staging root cert (if added temporarily to `CurrentUser\Root`), temporary Stage 6 reverse proxy route or firewall rule, and staging processes with zero leftover listeners or repo working-tree leaks. |
 
 Any **FAIL** in `G1–G7` blocks exiting Draft or authorizing production rollout until diagnosed, covered by a regression test, and re-verified.
 
@@ -618,7 +660,10 @@ Get-CimInstance Win32_Process | Where-Object {
 }
 Start-Sleep -Seconds 2
 
-# 2. Remove temporary ephemeral staging CA from CurrentUser\Root & temporary Stage 6 firewall rule (if added)
+# 2. Remove temporary Stage 6 Tailscale Serve route (if configured), ephemeral CA (if added), & temporary firewall rule
+if (Get-Command tailscale -ErrorAction SilentlyContinue) {
+    tailscale serve --https=443 off 2>$null | Out-Null
+}
 if (Test-Path (Join-Path $StagingRoot "tls\relay-ca.crt")) {
     $cert = New-Object System.Security.Cryptography.X509Certificates.X509Certificate2 (Join-Path $StagingRoot "tls\relay-ca.crt")
     Get-ChildItem Cert:\CurrentUser\Root | Where-Object { $_.Thumbprint -eq $cert.Thumbprint } | Remove-Item -Force -ErrorAction SilentlyContinue
