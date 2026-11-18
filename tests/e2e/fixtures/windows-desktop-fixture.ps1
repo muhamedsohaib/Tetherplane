@@ -57,9 +57,12 @@ if ($Framework -eq "Wpf") {
     Write-FixtureStartupStage 'window-created'
 
     $panel = New-Object System.Windows.Controls.StackPanel
+    Write-FixtureStartupStage 'stackpanel-created'
     $panel.Margin = New-Object System.Windows.Thickness(16)
+    Write-FixtureStartupStage 'stackpanel-margin-set'
 
     $value = New-Object System.Windows.Controls.TextBox
+    Write-FixtureStartupStage 'textbox-created'
     $value.Name = "$($Prefix)Value"
     $value.Text = "$Prefix-initial"
     $value.Margin = New-Object System.Windows.Thickness(0, 0, 0, 12)
@@ -67,6 +70,7 @@ if ($Framework -eq "Wpf") {
     [System.Windows.Automation.AutomationProperties]::SetAutomationId($value, "$($Prefix)Value")
 
     $invoke = New-Object System.Windows.Controls.Button
+    Write-FixtureStartupStage 'button-created'
     $invoke.Name = "$($Prefix)Invoke"
     $invoke.Content = "$Prefix Invoke"
     $invoke.Width = 180
@@ -76,6 +80,7 @@ if ($Framework -eq "Wpf") {
     [System.Windows.Automation.AutomationProperties]::SetAutomationId($invoke, "$($Prefix)Invoke")
 
     $selection = New-Object System.Windows.Controls.ListBox
+    Write-FixtureStartupStage 'listbox-created'
     $selection.Name = "$($Prefix)Selection"
     $selection.Width = 220
     $selection.Height = 110
@@ -85,11 +90,13 @@ if ($Framework -eq "Wpf") {
     [System.Windows.Automation.AutomationProperties]::SetAutomationId($selection, "$($Prefix)Selection")
 
     $itemAlpha = New-Object System.Windows.Controls.ListBoxItem
+    Write-FixtureStartupStage 'alpha-item-created'
     $itemAlpha.Content = "$Prefix Alpha"
     [System.Windows.Automation.AutomationProperties]::SetName($itemAlpha, "$Prefix Alpha")
     [System.Windows.Automation.AutomationProperties]::SetAutomationId($itemAlpha, "$($Prefix)Alpha")
 
     $itemBeta = New-Object System.Windows.Controls.ListBoxItem
+    Write-FixtureStartupStage 'beta-item-created'
     $itemBeta.Content = "$Prefix Beta"
     [System.Windows.Automation.AutomationProperties]::SetName($itemBeta, "$Prefix Beta")
     [System.Windows.Automation.AutomationProperties]::SetAutomationId($itemBeta, "$($Prefix)Beta")
