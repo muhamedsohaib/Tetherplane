@@ -89,6 +89,36 @@ jobs:
           }
           $sourceInfo | ConvertTo-Json -Depth 3 | Set-Content -LiteralPath (Join-Path $out 'manifest.json') -Encoding utf8
           Write-Output "G4_KIT_ROOT=$out"
+      - name: Diagnose bundled Compact MCP adapter startup
+        shell: pwsh
+        run: |
+          $out = Join-Path $env:RUNNER_TEMP 'TP-G4-Compact-MCP-Kit'
+          $info = [System.Diagnostics.ProcessStartInfo]::new()
+          $info.FileName = Join-Path $out 'node.exe'
+          $info.Arguments = '"' + (Join-Path $out 'adapters\compact-mcp\dist\stdio-server.js') + '" --tetherd "' + (Join-Path $out 'target\debug\tetherd.exe') + '" --allow "' + $env:TEMP + '"'
+          $info.RedirectStandardInput = $true
+          $info.RedirectStandardOutput = $true
+          $info.RedirectStandardError = $true
+          $info.UseShellExecute = $false
+          $info.CreateNoWindow = $true
+          $process = [Diagnostics.Process]::Start($info)
+          $stdoutFuture = $process.StandardOutput.ReadToEndAsync()
+          $stderrFuture = $process.StandardError.ReadToEndAsync()
+          $initialize = '{"jsonrpc":"2.0","id":1,"method":"initialize","params":{"protocolVersion":"2025-03-26","capabilities":{},"clientInfo":{"name":"g4-portable-ci","version":"0.1.0"}}}'
+          try {
+            $process.StandardInput.WriteLine($initialize)
+            $process.StandardInput.Close()
+          } catch {
+            Write-Output ('ADAPTER_STDIN_ERROR=' + $_.Exception.Message)
+          }
+          if (-not $process.WaitForExit(5000)) {
+            Write-Output 'ADAPTER_STARTUP_TIMEOUT=1'
+            Stop-Process -Id $process.Id -Force -ErrorAction SilentlyContinue
+            [void]$process.WaitForExit(3000)
+          }
+          Write-Output ('ADAPTER_EXIT=' + $process.ExitCode)
+          Write-Output ('ADAPTER_STDOUT=' + (($stdoutFuture.Result | Out-String).Trim() | Select-Object -First 1))
+          Write-Output ('ADAPTER_STDERR=' + (($stderrFuture.Result | Out-String).Trim() | Select-Object -First 1))
       - name: Portable kit proof in Windows CI (no interactive UIA claim)
         shell: pwsh
         run: |
