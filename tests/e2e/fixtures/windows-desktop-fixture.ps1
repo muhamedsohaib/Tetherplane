@@ -10,6 +10,15 @@ if ($stateDir -and -not (Test-Path -LiteralPath $stateDir)) {
     New-Item -ItemType Directory -Path $stateDir -Force | Out-Null
 }
 $tmpStatePath = "$StatePath.$PID.tmp"
+$stopPath = "$StatePath.stop"
+$startupPath = "$StatePath.startup.txt"
+
+function Write-FixtureStartupStage {
+    param([string]$Stage)
+    [IO.File]::WriteAllText($startupPath, ("framework=" + $Framework + ";pid=" + $PID + ";stage=" + $Stage))
+}
+
+Write-FixtureStartupStage 'script-started'
 
 function Write-FixtureState {
     param(
@@ -32,9 +41,11 @@ function Write-FixtureState {
 }
 
 if ($Framework -eq "Wpf") {
+    Write-FixtureStartupStage 'before-assembly-load'
     Add-Type -AssemblyName PresentationFramework
     Add-Type -AssemblyName PresentationCore
     Add-Type -AssemblyName WindowsBase
+    Write-FixtureStartupStage 'assemblies-loaded'
 
     $window = New-Object System.Windows.Window
     $window.Title = $Title
@@ -43,6 +54,7 @@ if ($Framework -eq "Wpf") {
     $window.WindowStartupLocation = [System.Windows.WindowStartupLocation]::CenterScreen
     [System.Windows.Automation.AutomationProperties]::SetName($window, "$Prefix Form")
     [System.Windows.Automation.AutomationProperties]::SetAutomationId($window, "$($Prefix)Form")
+    Write-FixtureStartupStage 'window-created'
 
     $panel = New-Object System.Windows.Controls.StackPanel
     $panel.Margin = New-Object System.Windows.Thickness(16)
@@ -101,6 +113,7 @@ if ($Framework -eq "Wpf") {
     [void]$panel.Children.Add($selection)
     [void]$panel.Children.Add($status)
     $window.Content = $panel
+    Write-FixtureStartupStage 'controls-created'
 
     $readWpfSelected = {
         if ($selection.SelectedItem -is [System.Windows.Controls.ListBoxItem]) {
@@ -115,6 +128,11 @@ if ($Framework -eq "Wpf") {
     $timer = New-Object System.Windows.Threading.DispatcherTimer
     $timer.Interval = [TimeSpan]::FromMilliseconds(100)
     $timer.Add_Tick({
+        if (Test-Path -LiteralPath $stopPath) {
+            Write-FixtureStartupStage 'cooperative-stop'
+            $window.Close()
+            return
+        }
         Write-FixtureState `
             -Focused ([bool]$window.IsActive) `
             -TextValue $value.Text `
@@ -124,6 +142,7 @@ if ($Framework -eq "Wpf") {
     $timer.Start()
 
     $window.Add_ContentRendered({
+        Write-FixtureStartupStage 'content-rendered'
         $null = $window.Activate()
         $null = $value.Focus()
         Write-FixtureState `
@@ -134,7 +153,9 @@ if ($Framework -eq "Wpf") {
     })
 
     try {
+        Write-FixtureStartupStage 'entering-showdialog'
         $null = $window.ShowDialog()
+        Write-FixtureStartupStage 'returned-from-showdialog'
     } finally {
         $timer.Stop()
         Remove-Item -LiteralPath $tmpStatePath -Force -ErrorAction SilentlyContinue
@@ -195,10 +216,16 @@ $invoke.Add_Click({
 })
 
 $form.Controls.AddRange(@($value, $invoke, $selection, $status))
+Write-FixtureStartupStage 'winforms-controls-created'
 
 $timer = New-Object System.Windows.Forms.Timer
 $timer.Interval = 100
 $timer.Add_Tick({
+    if (Test-Path -LiteralPath $stopPath) {
+        Write-FixtureStartupStage 'cooperative-stop'
+        $form.Close()
+        return
+    }
     $selectedText = if ($selection.SelectedItem) { $selection.SelectedItem.ToString() } else { $null }
     Write-FixtureState `
         -Focused ([bool]$form.ContainsFocus) `
@@ -209,6 +236,7 @@ $timer.Add_Tick({
 $timer.Start()
 
 $form.Add_Shown({
+    Write-FixtureStartupStage 'winforms-shown'
     $form.Activate()
     $selectedText = if ($selection.SelectedItem) { $selection.SelectedItem.ToString() } else { $null }
     Write-FixtureState `
@@ -219,6 +247,7 @@ $form.Add_Shown({
 })
 
 try {
+    Write-FixtureStartupStage 'winforms-run'
     [System.Windows.Forms.Application]::Run($form)
 } finally {
     $timer.Stop()
