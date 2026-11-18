@@ -109,12 +109,7 @@ impl CapabilityRouter {
             PolicyDecision::Allow => None,
             PolicyDecision::Deny { reason } => Some(error_envelope(
                 invocation,
-                CapabilityError {
-                    code: ErrorCode::PermissionDenied,
-                    message: reason,
-                    recovery_hint: None,
-                    details: json!({}),
-                },
+                policy.denial_error(invocation, reason),
                 started,
             )),
             PolicyDecision::RequireApproval {

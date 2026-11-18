@@ -21,6 +21,7 @@ enum TransportMode {
         url: String,
         device_id: String,
         credential_file: PathBuf,
+        ca_cert_file: Option<PathBuf>,
         allow_insecure_localhost: bool,
     },
 }
@@ -35,7 +36,15 @@ struct CliOptions {
 }
 
 fn parse_args() -> Result<CliOptions, String> {
-    let mut arguments = std::env::args().skip(1);
+    parse_args_from(std::env::args().skip(1))
+}
+
+fn parse_args_from<I, S>(args: I) -> Result<CliOptions, String>
+where
+    I: IntoIterator<Item = S>,
+    S: Into<String>,
+{
+    let mut arguments = args.into_iter().map(Into::into);
     let mut stdio_rpc = false;
     let mut allowed_roots = Vec::new();
     let mut principal_profile = None;
@@ -45,6 +54,7 @@ fn parse_args() -> Result<CliOptions, String> {
     let mut relay_url = None;
     let mut device_id = None;
     let mut device_credential_file = None;
+    let mut relay_ca_cert = None;
     let mut relay_allow_insecure_localhost = false;
 
     while let Some(argument) = arguments.next() {
@@ -100,32 +110,26 @@ fn parse_args() -> Result<CliOptions, String> {
                         "--device-credential-file requires a path".to_owned()
                     })?));
             }
+            "--relay-ca-cert" => {
+                relay_ca_cert =
+                    Some(PathBuf::from(arguments.next().ok_or_else(|| {
+                        "--relay-ca-cert requires a path".to_owned()
+                    })?));
+            }
             "--relay-allow-insecure-localhost" => relay_allow_insecure_localhost = true,
             _ => return Err(format!("unknown tetherd argument: {argument}")),
         }
     }
 
-    let transport = match (stdio_rpc, relay_url) {
-        (true, None) => {
-            if device_id.is_some() || device_credential_file.is_some() {
-                return Err("--device-id and --device-credential-file require --relay-url".into());
-            }
-            TransportMode::Stdio
-        }
-        (false, Some(url)) => TransportMode::Relay {
-            url,
-            device_id: device_id.ok_or_else(|| "--relay-url requires --device-id".to_owned())?,
-            credential_file: device_credential_file
-                .ok_or_else(|| "--relay-url requires --device-credential-file".to_owned())?,
-            allow_insecure_localhost: relay_allow_insecure_localhost,
-        },
-        (true, Some(_)) => {
-            return Err("--stdio-rpc and --relay-url are mutually exclusive".into());
-        }
-        (false, None) => {
-            return Err("tetherd requires either --stdio-rpc or --relay-url".into());
-        }
-    };
+    let transport = resolve_transport_mode(
+        stdio_rpc,
+        relay_url,
+        device_id,
+        device_credential_file,
+        relay_ca_cert,
+        relay_allow_insecure_localhost,
+        state_dir.is_some(),
+    )?;
 
     Ok(CliOptions {
         transport,
@@ -135,6 +139,53 @@ fn parse_args() -> Result<CliOptions, String> {
         browser_bridge,
         browser_bridge_token_file,
     })
+}
+
+fn resolve_transport_mode(
+    stdio_rpc: bool,
+    relay_url: Option<String>,
+    device_id: Option<String>,
+    device_credential_file: Option<PathBuf>,
+    ca_cert_file: Option<PathBuf>,
+    allow_insecure_localhost: bool,
+    has_state_dir: bool,
+) -> Result<TransportMode, String> {
+    match (stdio_rpc, relay_url) {
+        (true, None) => {
+            if device_id.is_some() || device_credential_file.is_some() || ca_cert_file.is_some() {
+                return Err(
+                    "--device-id, --device-credential-file, and --relay-ca-cert require --relay-url"
+                        .into(),
+                );
+            }
+            Ok(TransportMode::Stdio)
+        }
+        (false, Some(url)) => {
+            if !has_state_dir {
+                return Err(
+                    "--relay-url requires --state-dir for durable policy persistence".to_owned(),
+                );
+            }
+            if ca_cert_file.is_some() {
+                let parsed =
+                    url::Url::parse(&url).map_err(|error| format!("invalid relay URL: {error}"))?;
+                if parsed.scheme() != "wss" {
+                    return Err("--relay-ca-cert requires --relay-url to use wss://".to_owned());
+                }
+            }
+            Ok(TransportMode::Relay {
+                url,
+                device_id: device_id
+                    .ok_or_else(|| "--relay-url requires --device-id".to_owned())?,
+                credential_file: device_credential_file
+                    .ok_or_else(|| "--relay-url requires --device-credential-file".to_owned())?,
+                ca_cert_file,
+                allow_insecure_localhost,
+            })
+        }
+        (true, Some(_)) => Err("--stdio-rpc and --relay-url are mutually exclusive".into()),
+        (false, None) => Err("tetherd requires either --stdio-rpc or --relay-url".into()),
+    }
 }
 
 fn load_principal_profile(path: Option<&PathBuf>) -> Result<Option<PrincipalProfile>, String> {
@@ -167,61 +218,101 @@ fn load_browser_token(path: Option<&PathBuf>) -> Result<Option<String>, String> 
     Ok(Some(token.to_owned()))
 }
 
+async fn init_browser_provider(
+    address: Option<String>,
+    browser_token: Option<String>,
+    is_relay_mode: bool,
+) -> Result<Option<Arc<BrowserProvider>>, String> {
+    let Some(address) = address else {
+        return Ok(None);
+    };
+    let bridge_config = BrowserBridgeConfig {
+        address,
+        token: browser_token,
+        timeout_ms: 2_000,
+    };
+    match BrowserProvider::connect_with_retry(
+        bridge_config.clone(),
+        5,
+        Duration::from_millis(100),
+    )
+    .await
+    {
+        Ok(provider) => Ok(Some(Arc::new(provider))),
+        Err(error)
+            if is_relay_mode
+                && matches!(
+                    error.code,
+                    tether_core::ErrorCode::Disconnected | tether_core::ErrorCode::Timeout
+                ) =>
+        {
+            BrowserProvider::new_reconnectable(bridge_config)
+                .map(|provider| {
+                    eprintln!(
+                        "browser bridge not yet listening ({}); registered reconnectable browser provider",
+                        error.message
+                    );
+                    Some(Arc::new(provider))
+                })
+                .map_err(|init_err| format!("browser bridge unavailable: {}", init_err.message))
+        }
+        Err(error) => Err(format!("browser bridge unavailable: {}", error.message)),
+    }
+}
+
+fn load_relay_tls_connector(
+    transport: &TransportMode,
+) -> Result<Option<tokio_tungstenite::Connector>, String> {
+    match transport {
+        TransportMode::Relay { ca_cert_file, .. } => {
+            relay_ws::load_tls_connector(ca_cert_file.as_deref())
+        }
+        TransportMode::Stdio => Ok(None),
+    }
+}
+
+fn exit_config_error(message: &str) -> ! {
+    eprintln!("{message}");
+    std::process::exit(2);
+}
+
 #[tokio::main]
 async fn main() {
-    let options = match parse_args() {
-        Ok(options) => options,
-        Err(message) => {
-            eprintln!("{message}");
-            std::process::exit(2);
-        }
-    };
-
+    let options = parse_args().unwrap_or_else(|message| exit_config_error(&message));
     let transport = options.transport;
 
-    let principal = match load_principal_profile(options.principal_profile.as_ref()) {
-        Ok(principal) => principal,
+    let principal = load_principal_profile(options.principal_profile.as_ref())
+        .unwrap_or_else(|message| exit_config_error(&message));
+    let browser_token = load_browser_token(options.browser_bridge_token_file.as_ref())
+        .unwrap_or_else(|message| exit_config_error(&message));
+    let relay_tls_connector =
+        load_relay_tls_connector(&transport).unwrap_or_else(|message| exit_config_error(&message));
+
+    let browser_provider = match init_browser_provider(
+        options.browser_bridge,
+        browser_token,
+        matches!(transport, TransportMode::Relay { .. }),
+    )
+    .await
+    {
+        Ok(provider) => provider,
         Err(message) => {
             eprintln!("{message}");
-            std::process::exit(2);
+            std::process::exit(1);
         }
     };
 
-    let browser_token = match load_browser_token(options.browser_bridge_token_file.as_ref()) {
-        Ok(token) => token,
-        Err(message) => {
-            eprintln!("{message}");
-            std::process::exit(2);
-        }
+    let relay_device_id = match &transport {
+        TransportMode::Relay { device_id, .. } => Some(device_id.as_str()),
+        TransportMode::Stdio => None,
     };
 
-    let browser_provider = if let Some(address) = options.browser_bridge {
-        match BrowserProvider::connect_with_retry(
-            BrowserBridgeConfig {
-                address,
-                token: browser_token,
-                timeout_ms: 2_000,
-            },
-            5,
-            Duration::from_millis(100),
-        )
-        .await
-        {
-            Ok(provider) => Some(Arc::new(provider)),
-            Err(error) => {
-                eprintln!("browser bridge unavailable: {}", error.message);
-                std::process::exit(1);
-            }
-        }
-    } else {
-        None
-    };
-
-    let runtime = match AgentRuntime::new(
+    let runtime = match AgentRuntime::new_with_device(
         options.allowed_roots,
         principal,
         options.state_dir.as_deref(),
         browser_provider,
+        relay_device_id,
     ) {
         Ok(runtime) => Arc::new(runtime),
         Err(error) => {
@@ -241,15 +332,11 @@ async fn main() {
             url,
             device_id,
             credential_file,
+            ca_cert_file: _,
             allow_insecure_localhost,
         } => {
-            let credential = match relay_ws::load_device_credential(&credential_file) {
-                Ok(credential) => credential,
-                Err(message) => {
-                    eprintln!("{message}");
-                    std::process::exit(2);
-                }
-            };
+            let credential = relay_ws::load_device_credential(&credential_file)
+                .unwrap_or_else(|message| exit_config_error(&message));
             relay_ws::serve(
                 runtime,
                 relay_ws::RelayConfig {
@@ -257,7 +344,9 @@ async fn main() {
                     device_id,
                     credential,
                     allow_insecure_localhost,
+                    tls_connector: relay_tls_connector,
                     reconnect_delay: Duration::from_secs(2),
+                    probe_interval: Duration::from_millis(500),
                 },
             )
             .await
@@ -268,5 +357,93 @@ async fn main() {
     if let Err(message) = result {
         eprintln!("{message}");
         std::process::exit(1);
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn relay_mode_requires_state_dir_while_stdio_keeps_state_dir_optional() {
+        let missing_state_dir = parse_args_from([
+            "--relay-url",
+            "wss://relay.example.com/devices/ws",
+            "--device-id",
+            "Leno",
+            "--device-credential-file",
+            "/tmp/cred",
+        ]);
+        assert!(
+            missing_state_dir.is_err(),
+            "--relay-url without --state-dir must fail closed"
+        );
+        let msg = missing_state_dir.err().unwrap();
+        assert!(
+            msg.contains("--state-dir"),
+            "unexpected error message: {msg}"
+        );
+
+        let with_state_dir = parse_args_from([
+            "--relay-url",
+            "wss://relay.example.com/devices/ws",
+            "--device-id",
+            "Leno",
+            "--device-credential-file",
+            "/tmp/cred",
+            "--state-dir",
+            "/tmp/tether-state",
+        ]);
+        assert!(with_state_dir.is_ok());
+
+        let stdio_without_state = parse_args_from(["--stdio-rpc"]);
+        assert!(stdio_without_state.is_ok());
+    }
+
+    #[test]
+    fn relay_ca_cert_requires_wss_relay_mode() {
+        let valid = parse_args_from([
+            "--relay-url",
+            "wss://127.0.0.1:18788/device",
+            "--device-id",
+            "staging-win-01",
+            "--device-credential-file",
+            "/tmp/cred",
+            "--state-dir",
+            "/tmp/tether-state",
+            "--relay-ca-cert",
+            "/tmp/staging-ca.crt",
+        ]);
+        let opts = valid.expect("--relay-ca-cert should parse in wss:// relay mode");
+        match opts.transport {
+            TransportMode::Relay { ca_cert_file, .. } => {
+                assert_eq!(ca_cert_file, Some(PathBuf::from("/tmp/staging-ca.crt")));
+            }
+            TransportMode::Stdio => panic!("expected relay transport"),
+        }
+
+        let with_stdio = parse_args_from(["--stdio-rpc", "--relay-ca-cert", "/tmp/staging-ca.crt"]);
+        assert!(
+            with_stdio.is_err(),
+            "--relay-ca-cert with --stdio-rpc must fail"
+        );
+
+        let with_ws = parse_args_from([
+            "--relay-url",
+            "ws://127.0.0.1:18788/device",
+            "--relay-allow-insecure-localhost",
+            "--device-id",
+            "staging-win-01",
+            "--device-credential-file",
+            "/tmp/cred",
+            "--state-dir",
+            "/tmp/tether-state",
+            "--relay-ca-cert",
+            "/tmp/staging-ca.crt",
+        ]);
+        assert!(
+            with_ws.is_err(),
+            "--relay-ca-cert with ws:// must be rejected"
+        );
     }
 }

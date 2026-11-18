@@ -165,7 +165,7 @@ Example shape:
 
 The device makes the outbound WebSocket connection. The relay does not connect inbound to tetherd.
 
-For a local integration test only, tetherd accepts loopback ws:// when --relay-allow-insecure-localhost is also present.
+For self-hosted or staging relays signed by a private Certificate Authority rather than a public WebPKI root, pass `--relay-ca-cert <path-to-ca-pem>` to `tetherd` alongside `wss://` (default WebPKI roots remain enabled). For a local integration test only, tetherd accepts loopback ws:// when --relay-allow-insecure-localhost is also present.
 
 ## Local principal remains authoritative
 

@@ -1004,12 +1004,13 @@ async function waitForDevToolsActivePort(options: {
     }
 
     if (
-      options.child.exitCode !== null &&
-      options.child.exitCode !== 0
+      (options.child.exitCode !== null &&
+        options.child.exitCode !== 0) ||
+      options.child.signalCode !== null
     ) {
       throw new CdpBackendError(
         "provider_failure",
-        `isolated Chromium exited with code ${options.child.exitCode}`,
+        `isolated Chromium exited (${options.child.signalCode ?? options.child.exitCode})`,
       );
     }
 

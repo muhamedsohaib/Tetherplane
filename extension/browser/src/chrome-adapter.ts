@@ -9,7 +9,14 @@ type ChromeTabLike = {
   id?: number;
   windowId?: number;
   url?: string;
+  pendingUrl?: string;
+  status?: string;
   active?: boolean;
+};
+
+export type ChromeTabsAdapterOptions = {
+  pollIntervalMs?: number;
+  readyTimeoutMs?: number;
 };
 
 export type ChromeTabsApi = {
@@ -33,12 +40,27 @@ export type ChromeStorageArea = {
 const OWNERSHIP_KEY = "tetherplane_browser_pages_v1";
 const BRIDGE_URL_KEY = "tetherplane_bridge_url";
 const LAUNCH_TOKEN_KEY = "tetherplane_launch_token";
+const DEFAULT_POLL_INTERVAL_MS = 25;
+const DEFAULT_READY_TIMEOUT_MS = 5_000;
 
 export class ChromeTabsAdapter implements ExtensionTabsAdapter {
   readonly #tabs: ChromeTabsApi;
+  readonly #pollIntervalMs: number;
+  readonly #readyTimeoutMs: number;
 
-  constructor(tabs: ChromeTabsApi) {
+  constructor(
+    tabs: ChromeTabsApi,
+    options: ChromeTabsAdapterOptions = {},
+  ) {
     this.#tabs = tabs;
+    this.#pollIntervalMs = Math.max(
+      1,
+      options.pollIntervalMs ?? DEFAULT_POLL_INTERVAL_MS,
+    );
+    this.#readyTimeoutMs = Math.max(
+      0,
+      options.readyTimeoutMs ?? DEFAULT_READY_TIMEOUT_MS,
+    );
   }
 
   async list(): Promise<ExtensionTab[]> {
@@ -60,12 +82,11 @@ export class ChromeTabsAdapter implements ExtensionTabsAdapter {
     url: string;
     active: boolean;
   }): Promise<ExtensionTab> {
-    const tab = toExtensionTab(
-      await this.#tabs.create({
-        url: properties.url,
-        active: properties.active,
-      }),
-    );
+    const raw = await this.#tabs.create({
+      url: properties.url,
+      active: properties.active,
+    });
+    const tab = await this.#waitUntilLoaded(raw);
     if (!tab) {
       throw new Error("Chrome returned a tab without a stable ID");
     }
@@ -79,16 +100,15 @@ export class ChromeTabsAdapter implements ExtensionTabsAdapter {
       active?: boolean;
     },
   ): Promise<ExtensionTab> {
-    const tab = toExtensionTab(
-      await this.#tabs.update(tabId, {
-        ...(properties.url !== undefined
-          ? { url: properties.url }
-          : {}),
-        ...(properties.active !== undefined
-          ? { active: properties.active }
-          : {}),
-      }),
-    );
+    const raw = await this.#tabs.update(tabId, {
+      ...(properties.url !== undefined
+        ? { url: properties.url }
+        : {}),
+      ...(properties.active !== undefined
+        ? { active: properties.active }
+        : {}),
+    });
+    const tab = await this.#waitUntilLoaded(raw);
     if (!tab) {
       throw new Error("Chrome returned a tab without a stable ID");
     }
@@ -97,6 +117,26 @@ export class ChromeTabsAdapter implements ExtensionTabsAdapter {
 
   async remove(tabId: number): Promise<void> {
     await this.#tabs.remove(tabId);
+  }
+
+  async #waitUntilLoaded(
+    initial: ChromeTabLike,
+  ): Promise<ExtensionTab | null> {
+    let current = initial;
+    const deadline = Date.now() + this.#readyTimeoutMs;
+    while (
+      current.status === "loading" &&
+      typeof current.id === "number" &&
+      Date.now() < deadline
+    ) {
+      await sleep(this.#pollIntervalMs);
+      try {
+        current = await this.#tabs.get(current.id);
+      } catch {
+        break;
+      }
+    }
+    return toExtensionTab(current);
   }
 }
 
@@ -201,10 +241,17 @@ function toExtensionTab(tab: ChromeTabLike): ExtensionTab | null {
     return null;
   }
 
+  const resolvedUrl =
+    typeof tab.pendingUrl === "string" && tab.pendingUrl !== ""
+      ? tab.pendingUrl
+      : typeof tab.url === "string" && tab.url !== ""
+        ? tab.url
+        : "about:blank";
+
   return {
     id: tab.id,
     window_id: tab.windowId,
-    url: typeof tab.url === "string" ? tab.url : "about:blank",
+    url: resolvedUrl,
     active: tab.active === true,
   };
 }
@@ -241,4 +288,10 @@ function isLoopbackHost(hostname: string): boolean {
     normalized === "[::1]" ||
     normalized === "::1"
   );
+}
+
+function sleep(delayMs: number): Promise<void> {
+  return new Promise((resolve) => {
+    setTimeout(resolve, delayMs);
+  });
 }

@@ -55,6 +55,55 @@ const CATALOG: Record<string, JsonSchema> = {
     new: string,
     expected_replacements: nonNegativeInteger,
   }),
+  "browser.status": objectSchema([], {}),
+  "browser.pages": objectSchema([], {}),
+  "browser.create_tab": objectSchema(["url"], {
+    url: string,
+    background: boolean,
+  }),
+  "browser.snapshot": objectSchema(["page_id"], {
+    page_id: string,
+    max_elements: nonNegativeInteger,
+  }),
+  "browser.navigate": objectSchema(["page_id", "url"], {
+    page_id: string,
+    url: string,
+  }),
+  "browser.close": objectSchema(["page_id"], {
+    page_id: string,
+  }),
+  "browser.act": objectSchema(["page_id", "action"], {
+    page_id: string,
+    action: {
+      enum: ["click", "type", "select", "press", "check", "uncheck", "submit"],
+    },
+    element_id: string,
+    text: string,
+    value: string,
+    key: string,
+    expected_snapshot_id: string,
+  }),
+  "browser.wait": objectSchema(["page_id"], {
+    page_id: string,
+    selector: string,
+    text: string,
+    timeout_ms: nonNegativeInteger,
+  }),
+  "browser.upload": objectSchema(["page_id", "element_id", "file_path"], {
+    page_id: string,
+    element_id: string,
+    file_path: string,
+    expected_snapshot_id: string,
+  }),
+  "browser.downloads": objectSchema([], {
+    page_id: string,
+  }),
+  "browser.diagnostics": objectSchema(["page_id"], {
+    page_id: string,
+  }),
+  "browser.checkpoint": objectSchema(["page_id"], {
+    page_id: string,
+  }),
   "search.start": objectSchema(["root", "scope", "query"], {
     root: string,
     scope: { enum: ["filename", "content"] },

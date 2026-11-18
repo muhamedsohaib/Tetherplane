@@ -19,6 +19,7 @@ import {
 } from "./devices/registry.ts";
 import {
   RelayControlHttpGateway,
+  type RelayRateLimitConfig,
 } from "./devices/control-http.ts";
 import {
   DeviceWebSocketGateway,
@@ -29,7 +30,10 @@ import {
 import {
   DeviceRouter,
 } from "./routing/device-router.ts";
+import { validatePublicOrigin } from "./cli-config.ts";
 import { RelayHealthHttpGateway } from "./health-http.ts";
+import { PolicyStore } from "./policy/policy-store.ts";
+import type { PersistFileOps } from "./persistence/atomic-json.ts";
 
 type NodeRelayServer =
   | ReturnType<typeof createHttpServer>
@@ -41,10 +45,12 @@ export type RelayListenAddress = {
   httpUrl: string;
   mcpUrl: string;
   deviceWsUrl: string;
+  portalUrl?: string;
 };
 
 export class RelayServer {
   readonly registry: DeviceRegistry;
+  readonly policyStore: PolicyStore;
   readonly router: DeviceRouter;
   readonly deviceGateway: DeviceWebSocketGateway;
   readonly mcpGateway: RemoteMcpHttpGateway;
@@ -55,13 +61,16 @@ export class RelayServer {
 
   readonly #server: NodeRelayServer;
   readonly #allowInsecureLocalhost: boolean;
+  readonly #publicOrigin: string | null;
   #closed = false;
 
   private constructor(options: {
     server: NodeRelayServer;
     secure: boolean;
     allowInsecureLocalhost: boolean;
+    publicOrigin: string | null;
     registry: DeviceRegistry;
+    policyStore: PolicyStore;
     router: DeviceRouter;
     deviceGateway: DeviceWebSocketGateway;
     mcpGateway: RemoteMcpHttpGateway;
@@ -73,7 +82,9 @@ export class RelayServer {
     this.isSecure = options.secure;
     this.#allowInsecureLocalhost =
       options.allowInsecureLocalhost;
+    this.#publicOrigin = options.publicOrigin;
     this.registry = options.registry;
+    this.policyStore = options.policyStore;
     this.router = options.router;
     this.deviceGateway = options.deviceGateway;
     this.mcpGateway = options.mcpGateway;
@@ -88,16 +99,44 @@ export class RelayServer {
     stateFile?: string;
     tls?: HttpsServerOptions;
     allowInsecureLocalhost?: boolean;
+    publicOrigin?: string;
+    trustProxyHeaders?: boolean;
     routeTimeoutMs?: number;
     authLoginBridgeToken?: string;
+    maxPendingPairings?: number;
+    maxAuditHistory?: number;
+    rateLimits?: RelayRateLimitConfig;
+    persistOps?: PersistFileOps;
   }): Promise<RelayServer> {
-    const registry = await DeviceRegistry.open(
-      options.stateFile
+    const publicOrigin =
+      options.publicOrigin === undefined
+        ? null
+        : validatePublicOrigin(options.publicOrigin);
+    const trustProxyHeaders = options.trustProxyHeaders ?? false;
+    if (trustProxyHeaders && !publicOrigin) {
+      throw new Error("trustProxyHeaders requires explicit publicOrigin");
+    }
+
+    const registry = await DeviceRegistry.open({
+      ...(options.stateFile ? { stateFile: options.stateFile } : {}),
+      ...(options.maxPendingPairings !== undefined
+        ? { maxPendingPairings: options.maxPendingPairings }
+        : {}),
+      ...(options.persistOps ? { persistOps: options.persistOps } : {}),
+    });
+    const policyStore = await PolicyStore.open({
+      registry,
+      ...(options.stateFile
         ? { stateFile: options.stateFile }
-        : {},
-    );
+        : {}),
+      ...(options.maxAuditHistory !== undefined
+        ? { maxAuditHistory: options.maxAuditHistory }
+        : {}),
+      ...(options.persistOps ? { persistOps: options.persistOps } : {}),
+    });
     const router = new DeviceRouter({
       registry,
+      policyStore,
       ...(options.routeTimeoutMs === undefined
         ? {}
         : { timeoutMs: options.routeTimeoutMs }),
@@ -112,9 +151,17 @@ export class RelayServer {
       ...(options.oauth ? { oauth: options.oauth } : {}),
     });
     const healthGateway = new RelayHealthHttpGateway();
+    const secure = options.tls !== undefined;
+    const secureCookies =
+      secure || (publicOrigin?.startsWith("https:") ?? false);
     const controlGateway = new RelayControlHttpGateway({
       registry,
+      policyStore,
       authenticator: options.authenticator,
+      secureCookies,
+      ...(publicOrigin ? { publicOrigin } : {}),
+      trustProxyHeaders,
+      ...(options.rateLimits ? { rateLimits: options.rateLimits } : {}),
       disconnectDevice: (deviceId) =>
         deviceGateway.disconnectDevice(deviceId),
     });
@@ -126,8 +173,6 @@ export class RelayServer {
             proofs: new AuthLoginProofRegistry(),
             bridgeToken: options.authLoginBridgeToken,
           });
-
-    const secure = options.tls !== undefined;
     const server: NodeRelayServer =
       options.tls === undefined
         ? createHttpServer()
@@ -145,7 +190,9 @@ export class RelayServer {
       secure,
       allowInsecureLocalhost:
         options.allowInsecureLocalhost ?? false,
+      publicOrigin,
       registry,
+      policyStore,
       router,
       deviceGateway,
       mcpGateway,
@@ -208,6 +255,7 @@ export class RelayServer {
     await this.deviceGateway.close();
 
     if (!this.#server.listening) return;
+    this.#server.closeIdleConnections?.();
     await new Promise<void>((resolve, reject) => {
       this.#server.close((error) => {
         if (error) reject(error);
@@ -234,6 +282,9 @@ export class RelayServer {
       httpUrl,
       mcpUrl: `${httpUrl}/mcp`,
       deviceWsUrl: `${wsScheme}://${authority}/device`,
+      ...(this.#publicOrigin
+        ? { portalUrl: `${this.#publicOrigin}/portal` }
+        : {}),
     };
   }
 }

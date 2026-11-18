@@ -103,6 +103,41 @@ export class ExtensionTabController {
     );
   }
 
+  async syncTabs(): Promise<ExtensionPageRecord[]> {
+    const knownBefore = new Set(this.#pages.keys());
+    const liveTabs = await this.#tabs.list();
+    const liveIds = new Set<string>();
+
+    for (const tab of liveTabs) {
+      const pageId = pageIdForTab(tab.id);
+      liveIds.add(pageId);
+      const existing = this.#pages.has(pageId)
+        ? this.#requirePage(pageId)
+        : undefined;
+      const record: ExtensionPageRecord = {
+        page_id: pageId,
+        tab_id: tab.id,
+        window_id: tab.window_id,
+        url: tab.url,
+        active: tab.active,
+        ownership: existing?.ownership ?? "human",
+        ...(existing?.grant
+          ? { grant: structuredClone(existing.grant) }
+          : {}),
+      };
+      this.#record(record);
+    }
+
+    for (const pageId of knownBefore) {
+      if (!liveIds.has(pageId)) {
+        this.#pages.delete(pageId);
+      }
+    }
+
+    await this.#persist();
+    return this.pages();
+  }
+
   async createOwnedTab(url: string): Promise<ExtensionPageRecord> {
     requireUrl(url);
     const tab = await this.#tabs.create({

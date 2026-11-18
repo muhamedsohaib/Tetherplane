@@ -1,11 +1,10 @@
+import { randomBytes, randomUUID, createHash, timingSafeEqual } from "node:crypto";
+import { readFile } from "node:fs/promises";
+
 import {
-  createHash,
-  randomBytes,
-  randomUUID,
-  timingSafeEqual,
-} from "node:crypto";
-import { mkdir, readFile, rename, writeFile } from "node:fs/promises";
-import path from "node:path";
+  SerializedJsonFileWriter,
+  type PersistFileOps,
+} from "../persistence/atomic-json.ts";
 
 type DeviceRecord = {
   deviceId: string;
@@ -34,30 +33,60 @@ export type DeviceBinding = {
   revokedAt: string | null;
 };
 
+export const DEFAULT_MAX_PENDING_PAIRINGS = 128;
+
+export class PairingCapacityError extends Error {
+  readonly code = "rate_limited";
+  constructor(message = "pending pairing queue capacity exceeded") {
+    super(message);
+    this.name = "PairingCapacityError";
+  }
+}
+
 export class DeviceRegistry {
   readonly #stateFile: string | null;
   readonly #devices = new Map<string, DeviceRecord>();
   readonly #pendingByCode = new Map<string, PendingPairing>();
   readonly #pairingTtlMs: number;
+  readonly #maxPendingPairings: number;
+  readonly #writer: SerializedJsonFileWriter | null;
 
   private constructor(options: {
     stateFile?: string;
     pairingTtlMs?: number;
+    maxPendingPairings?: number;
+    persistOps?: PersistFileOps;
   }) {
     this.#stateFile = options.stateFile ?? null;
     this.#pairingTtlMs = options.pairingTtlMs ?? 10 * 60_000;
+    const maxPending = options.maxPendingPairings ?? DEFAULT_MAX_PENDING_PAIRINGS;
+    if (!Number.isSafeInteger(maxPending) || maxPending < 1) {
+      throw new Error("maxPendingPairings must be a positive integer");
+    }
+    this.#maxPendingPairings = maxPending;
+    this.#writer = this.#stateFile
+      ? new SerializedJsonFileWriter(this.#stateFile, options.persistOps)
+      : null;
   }
 
   static async open(
     options: {
       stateFile?: string;
       pairingTtlMs?: number;
+      maxPendingPairings?: number;
+      persistOps?: PersistFileOps;
     } = {},
   ): Promise<DeviceRegistry> {
     const registry = new DeviceRegistry(options);
     await registry.#load();
     return registry;
   }
+
+  pendingPairingCount(): number {
+    this.#pruneExpiredPending();
+    return this.#pendingByCode.size;
+  }
+
   async startPairing(input: {
     deviceId: string;
     credentialHash: string;
@@ -73,12 +102,18 @@ export class DeviceRegistry {
       throw new Error("device is already paired and must be revoked before re-pairing");
     }
 
+    const now = Date.now();
+    this.#pruneExpiredPending(now);
+    if (this.#pendingByCode.size >= this.#maxPendingPairings) {
+      throw new PairingCapacityError();
+    }
+
     const pending: PendingPairing = {
       pairingId: randomUUID(),
       userCode: pairingCode(),
       deviceId: input.deviceId,
       credentialHash: input.credentialHash.toLowerCase(),
-      expiresAt: Date.now() + this.#pairingTtlMs,
+      expiresAt: now + this.#pairingTtlMs,
     };
     this.#pendingByCode.set(pending.userCode, pending);
     return {
@@ -93,8 +128,10 @@ export class DeviceRegistry {
     userCode: string;
   }): Promise<DeviceBinding> {
     validateAccountId(input.accountId);
+    const now = Date.now();
+    this.#pruneExpiredPending(now);
     const pending = this.#pendingByCode.get(input.userCode);
-    if (!pending || pending.expiresAt <= Date.now()) {
+    if (!pending || pending.expiresAt <= now) {
       if (pending) this.#pendingByCode.delete(input.userCode);
       throw new Error("pairing code is invalid or expired");
     }
@@ -164,6 +201,14 @@ export class DeviceRegistry {
       .map(publicBinding);
   }
 
+  #pruneExpiredPending(now = Date.now()): void {
+    for (const [code, entry] of this.#pendingByCode) {
+      if (entry.expiresAt <= now) {
+        this.#pendingByCode.delete(code);
+      }
+    }
+  }
+
   async #load(): Promise<void> {
     if (!this.#stateFile) return;
     let content: string;
@@ -186,21 +231,16 @@ export class DeviceRegistry {
   }
 
   async #persist(): Promise<void> {
-    if (!this.#stateFile) return;
-    await mkdir(path.dirname(this.#stateFile), { recursive: true });
-    const state: RegistryState = {
-      version: 1,
-      devices: [...this.#devices.values()].sort((a, b) =>
-        a.deviceId.localeCompare(b.deviceId),
-      ),
-    };
-    const temporary = `${this.#stateFile}.tmp-${process.pid}`;
-    await writeFile(
-      temporary,
-      JSON.stringify(state, null, 2) + "\n",
-      { encoding: "utf8", mode: 0o600 },
-    );
-    await rename(temporary, this.#stateFile);
+    if (!this.#writer) return;
+    await this.#writer.write(() => {
+      const state: RegistryState = {
+        version: 1,
+        devices: [...this.#devices.values()].sort((a, b) =>
+          a.deviceId.localeCompare(b.deviceId),
+        ),
+      };
+      return JSON.stringify(state, null, 2) + "\n";
+    });
   }
 }
 export function hashDeviceCredential(secret: string): string {

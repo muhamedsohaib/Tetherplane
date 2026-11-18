@@ -1,17 +1,19 @@
 import { z } from "zod";
-import { OidcClientAuthenticator } from "./auth/oidc-auth.ts";
+import {
+  OidcClientAuthenticator,
+  type OidcOptions,
+} from "./auth/oidc-auth.ts";
 import {
   StaticClientAuthenticator,
+  validateConfiguredIdentityRole,
   type ClientAuthenticator,
+  type ClientIdentityRole,
+  type StaticClientCredential,
 } from "./auth/static-auth.ts";
 import type { OAuthResource } from "./auth/oauth-resource.ts";
 import { readFile } from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
-
-import type {
-  StaticClientCredential,
-} from "./auth/static-auth.ts";
 
 export type RelayCliOptions = {
   host: string;
@@ -21,7 +23,51 @@ export type RelayCliOptions = {
   tlsCert?: string;
   tlsKey?: string;
   allowInsecureLocalhost: boolean;
+  publicOrigin?: string;
+  trustProxyHeaders: boolean;
 };
+
+export function validatePublicOrigin(rawValue: string): string {
+  const trimmed = rawValue.trim();
+  let parsed: URL;
+  try {
+    parsed = new URL(trimmed);
+  } catch {
+    throw new Error("--public-origin must be a valid absolute URL");
+  }
+  if (
+    parsed.username ||
+    parsed.password ||
+    parsed.search ||
+    parsed.hash ||
+    parsed.pathname !== "/"
+  ) {
+    throw new Error(
+      "--public-origin must not contain credentials, path, query, or fragment",
+    );
+  }
+  if (parsed.protocol === "https:") {
+    return parsed.origin;
+  }
+  if (parsed.protocol === "http:" && isLoopbackOriginHost(parsed.hostname)) {
+    return parsed.origin;
+  }
+  throw new Error(
+    "--public-origin must use https:// (or http:// on loopback only)",
+  );
+}
+
+function isLoopbackOriginHost(host: string): boolean {
+  const normalized = host
+    .trim()
+    .toLowerCase()
+    .replace(/^\[|\]$/g, "");
+  return (
+    normalized === "localhost" ||
+    normalized === "127.0.0.1" ||
+    normalized === "::1"
+  );
+}
 
 export function parseRelayArgs(
   args: string[],
@@ -38,6 +84,8 @@ export function parseRelayArgs(
   let tlsCert: string | undefined;
   let tlsKey: string | undefined;
   let allowInsecureLocalhost = false;
+  let publicOrigin: string | undefined;
+  let trustProxyHeaders = false;
 
   for (let index = 0; index < args.length; index += 1) {
     const argument = args[index]!;
@@ -83,6 +131,14 @@ export function parseRelayArgs(
       case "--allow-insecure-localhost":
         allowInsecureLocalhost = true;
         break;
+      case "--public-origin":
+        publicOrigin = validatePublicOrigin(
+          requiredValue(args, ++index, "--public-origin"),
+        );
+        break;
+      case "--trust-proxy-headers":
+        trustProxyHeaders = true;
+        break;
       default:
         throw new Error(
           `unknown tether-relay argument: ${argument}`,
@@ -106,6 +162,11 @@ export function parseRelayArgs(
       "TLS is required unless --allow-insecure-localhost is explicitly enabled",
     );
   }
+  if (trustProxyHeaders && !publicOrigin) {
+    throw new Error(
+      "--trust-proxy-headers requires explicit --public-origin",
+    );
+  }
 
   return {
     host,
@@ -116,6 +177,8 @@ export function parseRelayArgs(
       ? {}
       : { tlsCert, tlsKey: tlsKey! }),
     allowInsecureLocalhost,
+    ...(publicOrigin ? { publicOrigin } : {}),
+    trustProxyHeaders,
   };
 }
 
@@ -169,6 +232,7 @@ function parseClient(
     "account_id",
     "client_id",
     "principal_id",
+    "role",
   ]);
   for (const key of Object.keys(record)) {
     if (!allowed.has(key)) {
@@ -191,15 +255,32 @@ function parseClient(
     );
   }
 
+  const principalId = configString(
+    record,
+    "principal_id",
+    index,
+  );
+  let role: ClientIdentityRole | undefined;
+  if ("role" in record && record.role !== undefined) {
+    if (record.role !== "owner" && record.role !== "operator") {
+      throw new Error(
+        `relay auth client ${index} role must be 'owner' or 'operator'`,
+      );
+    }
+    role = record.role;
+    validateConfiguredIdentityRole(
+      principalId,
+      role,
+      `relay auth client ${index}`,
+    );
+  }
+
   return {
     token,
     accountId: configString(record, "account_id", index),
     clientId: configString(record, "client_id", index),
-    principalId: configString(
-      record,
-      "principal_id",
-      index,
-    ),
+    principalId,
+    ...(role ? { role } : {}),
   };
 }
 
@@ -236,6 +317,8 @@ const oidcCommon = {
   scopes: z.array(z.string()).min(1),
 };
 
+const oidcRoleSchema = z.enum(["owner", "operator"]).optional();
+
 const oidcBindingSchema = z
   .object({
     ...oidcCommon,
@@ -247,6 +330,7 @@ const oidcBindingSchema = z
             clientId: z.string(),
             accountId: z.string(),
             principalId: z.string(),
+            role: oidcRoleSchema,
           })
           .strict(),
       )
@@ -261,6 +345,7 @@ const oidcSubjectSchema = z
       .object({
         strategy: z.literal("subject"),
         principalPrefix: z.string().min(1),
+        role: oidcRoleSchema,
       })
       .strict(),
   })
@@ -307,7 +392,35 @@ export async function loadClientAuth(
     if (!result.success) {
       throw new Error("Invalid OIDC auth configuration");
     }
-    const oidc = result.data.oidc;
+    const rawOidc = result.data.oidc;
+    const oidc: OidcOptions =
+      "bindings" in rawOidc
+        ? {
+            issuer: rawOidc.issuer,
+            audience: rawOidc.audience,
+            jwksUri: rawOidc.jwksUri,
+            scopes: rawOidc.scopes,
+            bindings: rawOidc.bindings.map((binding) => ({
+              subject: binding.subject,
+              clientId: binding.clientId,
+              accountId: binding.accountId,
+              principalId: binding.principalId,
+              ...(binding.role ? { role: binding.role } : {}),
+            })),
+          }
+        : {
+            issuer: rawOidc.issuer,
+            audience: rawOidc.audience,
+            jwksUri: rawOidc.jwksUri,
+            scopes: rawOidc.scopes,
+            identity: {
+              strategy: rawOidc.identity.strategy,
+              principalPrefix: rawOidc.identity.principalPrefix,
+              ...(rawOidc.identity.role
+                ? { role: rawOidc.identity.role }
+                : {}),
+            },
+          };
     const bridge = result.data.deviceLoginBridge;
     const authLoginBridgeToken =
       bridge === undefined

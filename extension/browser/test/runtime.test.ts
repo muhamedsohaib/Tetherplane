@@ -357,3 +357,35 @@ test("command runtime routes upload downloads and diagnostics to operational age
     ],
   });
 });
+
+test("command runtime calls syncTabs on pages operation when controller supports live tab refresh", async () => {
+  const context = runtime();
+  const livePage = {
+    ...structuredClone(context.controller.page),
+    url: "https://fixture.example/synced-live",
+  };
+  let syncCount = 0;
+  (context.controller as ExtensionCommandController).syncTabs = async () => {
+    syncCount += 1;
+    return [livePage];
+  };
+
+  await context.runtime.handleMessage({
+    type: "command",
+    request_id: "request-live-pages",
+    operation: "pages",
+    args: {},
+  });
+
+  assert.equal(syncCount, 1);
+  assert.deepEqual(context.session.sent, [
+    {
+      type: "result",
+      request_id: "request-live-pages",
+      status: "success",
+      data: {
+        pages: [livePage],
+      },
+    },
+  ]);
+});

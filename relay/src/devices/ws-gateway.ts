@@ -184,14 +184,34 @@ function parseDeviceMessage(
   if (!value || typeof value !== "object") return null;
   const record = value as Record<string, unknown>;
   if (
-    record.type !== "result" ||
-    typeof record.routeId !== "string" ||
-    !record.result ||
-    typeof record.result !== "object"
+    record.type === "result" &&
+    typeof record.routeId === "string" &&
+    record.result &&
+    typeof record.result === "object"
   ) {
-    return null;
+    return value as DeviceToRelayMessage;
   }
-  return value as DeviceToRelayMessage;
+  if (
+    record.type === "device_hello" &&
+    typeof record.deviceId === "string"
+  ) {
+    return value as DeviceToRelayMessage;
+  }
+  if (
+    record.type === "policy_ack" &&
+    typeof record.deviceId === "string" &&
+    typeof record.revision === "number" &&
+    typeof record.applied === "boolean"
+  ) {
+    return value as DeviceToRelayMessage;
+  }
+  if (
+    record.type === "device_telemetry" &&
+    typeof record.deviceId === "string"
+  ) {
+    return value as DeviceToRelayMessage;
+  }
+  return null;
 }
 
 async function sendJson(

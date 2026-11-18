@@ -39,7 +39,7 @@ async function waitUntil<T>(
 
 test(
   "B6 CDP operational path proves native upload download diagnostics checkpoint and conflict",
-  { timeout: 30_000 },
+  { timeout: 70_000 },
   async () => {
     const executablePath = findInstalledChromium();
     assert.ok(

@@ -1,6 +1,12 @@
+import { createHash, timingSafeEqual } from "node:crypto";
+import http from "node:http";
 import { WebSocket, WebSocketServer } from "ws";
 
 export type ExtensionBridgeMessage = Record<string, unknown>;
+
+export type ExtensionIdResolver =
+  | string
+  | (() => string | null | undefined | Promise<string | null | undefined>);
 
 export type AuthenticatedExtensionClient = {
   readonly extension_id: string;
@@ -85,29 +91,82 @@ class ExtensionClient implements AuthenticatedExtensionClient {
 export async function startExtensionBridgeServer(options: {
   launchToken: string;
   port?: number;
+  expectedExtensionId?: ExtensionIdResolver;
 }): Promise<ExtensionBridgeServer> {
   if (!options.launchToken.trim()) {
     throw new Error("extension launch token must be non-empty");
   }
+  if (typeof options.expectedExtensionId === "string") {
+    validateExtensionId(options.expectedExtensionId);
+  }
 
-  const server = new WebSocketServer({
-    host: "127.0.0.1",
-    port: options.port ?? 0,
+  const httpServer = http.createServer((_req, response) => {
+    response.statusCode = 404;
+    response.end();
   });
+  const wss = new WebSocketServer({ noServer: true });
+  const verifiedOrigins = new WeakMap<WebSocket, string>();
+
+  httpServer.on("upgrade", (request, socket, head) => {
+    void (async () => {
+      const origin =
+        typeof request.headers.origin === "string"
+          ? request.headers.origin
+          : "";
+      const originExtensionId = extensionIdFromOrigin(origin);
+      if (!originExtensionId) {
+        rejectHttpUpgrade(socket, 403, "Forbidden");
+        return;
+      }
+
+      if (options.expectedExtensionId !== undefined) {
+        const pinned =
+          typeof options.expectedExtensionId === "function"
+            ? await options.expectedExtensionId()
+            : options.expectedExtensionId;
+        if (pinned !== undefined && pinned !== null) {
+          if (
+            !isValidExtensionId(pinned) ||
+            originExtensionId !== pinned
+          ) {
+            rejectHttpUpgrade(socket, 403, "Forbidden");
+            return;
+          }
+        }
+      }
+
+      if (socket.destroyed) {
+        return;
+      }
+
+      wss.handleUpgrade(request, socket, head, (ws) => {
+        verifiedOrigins.set(ws, originExtensionId);
+        wss.emit("connection", ws, request);
+      });
+    })().catch(() => {
+      rejectHttpUpgrade(socket, 500, "Internal Server Error");
+    });
+  });
+
   await new Promise<void>((resolve, reject) => {
-    server.once("listening", () => resolve());
-    server.once("error", reject);
+    httpServer.once("error", reject);
+    httpServer.listen(options.port ?? 0, "127.0.0.1", () => {
+      httpServer.off("error", reject);
+      resolve();
+    });
   });
 
-  const address = server.address();
+  const address = httpServer.address();
   if (address === null || typeof address === "string") {
+    httpServer.close();
     throw new Error("extension bridge did not bind a TCP address");
   }
 
   const clients = new Set<ExtensionClient>();
   const waiters: Array<(client: ExtensionClient) => void> = [];
 
-  server.on("connection", (socket) => {
+  wss.on("connection", (socket) => {
+    const originExtensionId = verifiedOrigins.get(socket);
     let authenticatedClient: ExtensionClient | undefined;
     let authenticated = false;
 
@@ -128,9 +187,11 @@ export async function startExtensionBridgeServer(options: {
       if (!authenticated) {
         if (
           parsed.type !== "hello" ||
-          parsed.token !== options.launchToken ||
+          typeof parsed.token !== "string" ||
+          !constantTimeTokenEqual(parsed.token, options.launchToken) ||
           typeof parsed.extension_id !== "string" ||
-          !parsed.extension_id.trim()
+          !originExtensionId ||
+          parsed.extension_id !== originExtensionId
         ) {
           rejectConnection(4001, "unauthorized");
           return;
@@ -195,8 +256,15 @@ export async function startExtensionBridgeServer(options: {
       for (const client of [...clients]) {
         client.close();
       }
+      await new Promise<void>((resolve) => {
+        wss.close(() => resolve());
+      });
+      if (!httpServer.listening) {
+        return;
+      }
+      httpServer.closeIdleConnections?.();
       await new Promise<void>((resolve, reject) => {
-        server.close((error) => {
+        httpServer.close((error) => {
           if (error) {
             reject(error);
           } else {
@@ -206,6 +274,41 @@ export async function startExtensionBridgeServer(options: {
       });
     },
   };
+}
+
+function rejectHttpUpgrade(
+  socket: import("node:stream").Duplex,
+  statusCode: number,
+  statusText: string,
+): void {
+  if (!socket.destroyed && socket.writable) {
+    socket.write(
+      `HTTP/1.1 ${statusCode} ${statusText}\r\nConnection: close\r\n\r\n`,
+    );
+  }
+  socket.destroy();
+}
+
+function extensionIdFromOrigin(origin: string): string | null {
+  const match = /^chrome-extension:\/\/([a-p]{32})$/.exec(origin);
+  return match?.[1] ?? null;
+}
+
+function isValidExtensionId(value: string): boolean {
+  return /^[a-p]{32}$/.test(value);
+}
+
+function validateExtensionId(value: string): string {
+  if (!isValidExtensionId(value)) {
+    throw new Error("extension ID is invalid");
+  }
+  return value;
+}
+
+function constantTimeTokenEqual(actual: string, expected: string): boolean {
+  const actualDigest = createHash("sha256").update(actual, "utf8").digest();
+  const expectedDigest = createHash("sha256").update(expected, "utf8").digest();
+  return timingSafeEqual(actualDigest, expectedDigest);
 }
 
 function parseMessage(text: string): ExtensionBridgeMessage | null {

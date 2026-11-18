@@ -9,6 +9,7 @@ import {
 import {
   BrowserBridgeService,
   ExtensionBrowserBackend,
+  HotSwappableBrowserBackend,
   startBrowserRpcServer,
   startExtensionBridgeServer,
   startExtensionPairingBroker,
@@ -61,10 +62,21 @@ const extensionServer =
   await startExtensionBridgeServer({
     launchToken: extensionToken,
     port: extensionPort,
+    expectedExtensionId: () =>
+      readPinnedExtensionId(pinnedExtensionIdFile),
   });
 
+const swappableBackend = new HotSwappableBrowserBackend();
 let pairingBroker: ExtensionPairingBroker | null = null;
-let browserRpc: BrowserRpcServer | null = null;
+let browserRpc: BrowserRpcServer | null =
+  await startBrowserRpcServer({
+    service: new BrowserBridgeService({
+      backend: swappableBackend,
+    }),
+    token: agentToken,
+    host: "127.0.0.1",
+    port: rpcPort,
+  });
 let stopping = false;
 let resolveStop!: () => void;
 const stopped = new Promise<void>((resolve) => {
@@ -73,6 +85,9 @@ const stopped = new Promise<void>((resolve) => {
 
 process.stdout.write(
   `AUTH_EXTENSION_WS_READY=${extensionServer.url}\n`,
+);
+process.stdout.write(
+  `AUTH_BROWSER_RPC_READY=${browserRpc.address}\n`,
 );
 
 const requestStop = (): void => {
@@ -148,15 +163,7 @@ try {
         transport: client,
         pollIntervalMs: 20,
       });
-
-    browserRpc = await startBrowserRpcServer({
-      service: new BrowserBridgeService({
-        backend,
-      }),
-      token: agentToken,
-      host: "127.0.0.1",
-      port: rpcPort,
-    });
+    swappableBackend.attach(backend);
 
     process.stdout.write(
       `AUTH_BROWSER_RPC_READY=${browserRpc.address}\n`,
@@ -167,8 +174,7 @@ try {
       stopped,
     ]);
 
-    await browserRpc.close();
-    browserRpc = null;
+    swappableBackend.detach();
 
     if (!stopping) {
       process.stdout.write(

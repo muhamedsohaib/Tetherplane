@@ -1,5 +1,11 @@
 import { createRemoteJWKSet, jwtVerify, type JWTVerifyGetKey } from "jose";
-import type { ClientAuthenticator, ClientIdentity } from "./static-auth.ts";
+import {
+  hasNonOwnerPrincipalPrefix,
+  validateConfiguredIdentityRole,
+  type ClientAuthenticator,
+  type ClientIdentity,
+  type ClientIdentityRole,
+} from "./static-auth.ts";
 
 type OidcCommonOptions = {
   issuer: string;
@@ -17,6 +23,7 @@ type OidcSubjectOptions = {
   identity: {
     strategy: "subject";
     principalPrefix: string;
+    role?: ClientIdentityRole;
   };
   bindings?: never;
 };
@@ -85,6 +92,11 @@ export class OidcClientAuthenticator implements ClientAuthenticator {
             "OIDC identity binding fields must be non-empty strings",
           );
         }
+        validateConfiguredIdentityRole(
+          binding.principalId,
+          binding.role,
+          "OIDC identity binding",
+        );
         const id = JSON.stringify([
           binding.subject,
           binding.clientId,
@@ -104,6 +116,21 @@ export class OidcClientAuthenticator implements ClientAuthenticator {
       ) {
         throw new Error(
           "OIDC subject identity requires a valid principalPrefix",
+        );
+      }
+      if (
+        identity.role !== undefined &&
+        identity.role !== "owner" &&
+        identity.role !== "operator"
+      ) {
+        throw new Error("OIDC subject identity role must be 'owner' or 'operator'");
+      }
+      if (
+        identity.role === "owner" &&
+        hasNonOwnerPrincipalPrefix(identity.principalPrefix)
+      ) {
+        throw new Error(
+          `OIDC subject identity cannot assign owner role to reserved non-owner principalPrefix (${identity.principalPrefix})`,
         );
       }
     }
@@ -159,11 +186,13 @@ export class OidcClientAuthenticator implements ClientAuthenticator {
         if (!isValidAccountId(payload.sub)) {
           return null;
         }
+        const role = this.#options.identity.role;
         return {
           accountId: payload.sub,
           clientId: client,
           principalId:
             this.#options.identity.principalPrefix + payload.sub,
+          ...(role ? { role } : {}),
         };
       }
 
@@ -181,6 +210,7 @@ export class OidcClientAuthenticator implements ClientAuthenticator {
             accountId: binding.accountId,
             clientId: binding.clientId,
             principalId: binding.principalId,
+            ...(binding.role ? { role: binding.role } : {}),
           }
         : null;
     } catch {

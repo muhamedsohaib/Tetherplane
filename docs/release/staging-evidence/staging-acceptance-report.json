@@ -1,0 +1,115 @@
+{
+  "runAt": "2026-11-18T07:27:11.683Z",
+  "hostname": "sandbox",
+  "platform": "linux",
+  "allowPartial": true,
+  "outcome": {
+    "ok": true,
+    "summary": "PARTIAL_PASS (runnable gates PASS; blocked: G4, G6)",
+    "failed": [],
+    "blocked": [
+      "G4",
+      "G6"
+    ]
+  },
+  "screenshotDir": "docs/release/staging-evidence/screenshots",
+  "gates": {
+    "G1": {
+      "status": "PASS",
+      "details": [
+        "Isolated hostname=sandbox, stagingRoot=/tmp/tetherplane-staging-2026-11-18T07-26-24-445Z, tlsMode=ephemeral-ca",
+        "Production LOCALAPPDATA isolated via LOCALAPPDATA=/tmp/tetherplane-staging-2026-11-18T07-26-24-445Z/localappdata"
+      ]
+    },
+    "G2": {
+      "status": "PASS",
+      "details": [
+        "Query tokens -> 400; operator session & management -> 403; HttpOnly; SameSite=Strict; Secure cookie verified; missing CSRF & cross-origin -> 403; logout -> 401; browser storage empty and #token-input cleared."
+      ]
+    },
+    "G3": {
+      "status": "PASS",
+      "details": [
+        "Real Chromium MV3 extension loaded (mdajhkkfplloifpaghcienplhapembmo), paired via local discovery button, verified background owned tab act, verified human tab mutation denial before/after timed share, verified live SSE standby on Chrome exit, and verified auto-recovery upon relaunch + re-pair."
+      ]
+    },
+    "G4": {
+      "status": "BLOCKED",
+      "details": [
+        "Truthful desktop unavailability verified (Unavailable (8 policy-granted)); interactive Windows UIA coexistence blocked because host is 'linux' without interactive Windows session."
+      ]
+    },
+    "G5": {
+      "status": "PASS",
+      "details": [
+        "Verified family toggle revocation, explicit_deny override, device-scoped operator with inert XSS displayName, offline Pending->Confirmed sync on tetherd restart, emergency lockdown durability across restart, >10 snapshot Show-more pagination + filter, monotonic forward rollback to rev 1 (v12), and scoped Lift Emergency Lockdown."
+      ]
+    },
+    "G6": {
+      "status": "BLOCKED",
+      "details": [
+        "Automated Chromium mobile emulation (390x844 & 360x800) M1-M10 PASSED; physical iPhone Safari / Android Chrome browser validation BLOCKED without --pause-for-mobile and physical phones connected to LAN/Tailscale staging host."
+      ],
+      "mobileChecks": {
+        "M1": {
+          "status": "PASS",
+          "detail": "Zero horizontal overflow at 390x844 and 360x800"
+        },
+        "M3": {
+          "status": "PASS",
+          "detail": "Single-column cards and unavailable banners fit cleanly"
+        },
+        "M2": {
+          "status": "PASS",
+          "detail": "Mobile sign-in + reload persists session without web storage"
+        },
+        "M4": {
+          "status": "PASS",
+          "detail": "Select All/Clear and family switch work cleanly at 390x844"
+        },
+        "M5": {
+          "status": "PASS",
+          "detail": "Advanced accordion stays open through SSE and fits 390px"
+        },
+        "M6": {
+          "status": "PASS",
+          "detail": "Confirmation modal fits inside mobile viewport and Lift Lockdown clears state"
+        },
+        "M7": {
+          "status": "PASS",
+          "detail": "Operator Add/Edit/Revoke UX passed cleanly at mobile width"
+        },
+        "M8": {
+          "status": "PASS",
+          "detail": "Snapshot filter/pagination fits 390x844 and 360x800 mobile widths without overflow"
+        },
+        "M9": {
+          "status": "PASS",
+          "detail": "Offline/online SSE converged cleanly without mobile page reload"
+        },
+        "M10": {
+          "status": "PASS",
+          "detail": "Sign out persisted cleanly; 0 console errors & 0 exceptions"
+        }
+      }
+    },
+    "G7": {
+      "status": "PASS",
+      "details": [
+        "Teardown removed /tmp/tetherplane-staging-2026-11-18T07-26-24-445Z, released ports [18788, 17656, 17657, 17658], stopped all staging processes, and left repo working tree untouched."
+      ]
+    }
+  },
+  "screenshots": [
+    "docs/release/staging-evidence/screenshots/01_desktop_standby_overview.png",
+    "docs/release/staging-evidence/screenshots/02_extension_popup_paired.png",
+    "docs/release/staging-evidence/screenshots/03_extension_popup_tab_shared.png",
+    "docs/release/staging-evidence/screenshots/04_desktop_healthy_portal.png",
+    "docs/release/staging-evidence/screenshots/05_desktop_emergency_lockdown.png",
+    "docs/release/staging-evidence/screenshots/06_desktop_snapshots_rollback.png",
+    "docs/release/staging-evidence/screenshots/07_desktop_post_rollback_portal.png",
+    "docs/release/staging-evidence/screenshots/08_mobile_390x844_portal.png",
+    "docs/release/staging-evidence/screenshots/09_mobile_360x800_portal.png",
+    "docs/release/staging-evidence/screenshots/10_mobile_390x844_modal.png"
+  ]
+}

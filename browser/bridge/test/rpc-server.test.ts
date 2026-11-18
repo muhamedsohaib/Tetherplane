@@ -5,6 +5,7 @@ import test from "node:test";
 import {
   BrowserBridgeService,
   BrowserOwnershipRegistry,
+  HotSwappableBrowserBackend,
   startBrowserRpcServer,
   type BrowserServiceBackend,
   type BrowserServicePage,
@@ -69,8 +70,15 @@ test("RPC handshake authenticates and reports actual operations", async () => {
     service: new BrowserBridgeService({ backend, ownership: new BrowserOwnershipRegistry() }),
   });
   try {
-    const denied = await rpc(server.address, { type: "handshake", request_id: "handshake", token: "wrong" });
-    assert.equal(denied.status, "error");
+    for (const bad of ["wrong", "launch-tokem", "launch-token-longer", "", 12345]) {
+      const denied = await rpc(server.address, { type: "handshake", request_id: "handshake", token: bad });
+      assert.equal(denied.status, "error");
+      assert.equal((denied.error as Record<string, unknown>).code, "permission_denied");
+    }
+    const missingToken = await rpc(server.address, { type: "handshake", request_id: "handshake" });
+    assert.equal(missingToken.status, "error");
+    assert.equal((missingToken.error as Record<string, unknown>).code, "permission_denied");
+
     const accepted = await rpc(server.address, { type: "handshake", request_id: "handshake", token: "launch-token" });
     assert.equal(accepted.status, "success");
     assert.ok(Array.isArray((accepted.data as Record<string, unknown>).operations));
@@ -97,6 +105,93 @@ test("service never trusts caller-supplied ownership for a human page", async ()
     assert.equal(response.status, "error");
     assert.equal((response.error as Record<string, unknown>).code, "permission_denied");
     assert.equal(backend.performed.length, 0);
+  } finally {
+    await server.close();
+  }
+});
+
+test("HotSwappableBrowserBackend keeps RPC server listening across extension standby connect disconnect and reconnect", async () => {
+  const swappable = new HotSwappableBrowserBackend();
+  const server = await startBrowserRpcServer({
+    host: "127.0.0.1",
+    port: 0,
+    token: "launch-token",
+    service: new BrowserBridgeService({ backend: swappable }),
+  });
+  try {
+    // 1. Handshake works immediately before extension connects
+    const hs = await rpc(server.address, {
+      type: "handshake",
+      request_id: "hs-1",
+      token: "launch-token",
+    });
+    assert.equal(hs.status, "success");
+
+    // 2. While waiting for extension, browser.status reports standby state and browser.pages fails closed
+    const standbyStatus = await rpc(server.address, {
+      type: "invoke",
+      request_id: "status-1",
+      token: "launch-token",
+      capability: "browser.status",
+      arguments: {},
+    });
+    const standbyData = standbyStatus.data as Record<string, unknown>;
+    assert.equal(standbyData.available, false);
+    assert.equal(
+      (standbyData.capabilities as Record<string, unknown>).connected,
+      false,
+    );
+
+    const standbyPages = await rpc(server.address, {
+      type: "invoke",
+      request_id: "pages-1",
+      token: "launch-token",
+      capability: "browser.pages",
+      arguments: {},
+    });
+    assert.equal(standbyPages.status, "error");
+    assert.equal(
+      (standbyPages.error as Record<string, unknown>).code,
+      "capability_unavailable",
+    );
+
+    // 3. Attach live backend -> browser.status and operations reflect attached availability
+    swappable.attach(new FakeBackend());
+    const liveStatus = await rpc(server.address, {
+      type: "invoke",
+      request_id: "status-2",
+      token: "launch-token",
+      capability: "browser.status",
+      arguments: {},
+    });
+    assert.equal(liveStatus.status, "success");
+    assert.equal((liveStatus.data as Record<string, unknown>).available, true);
+    const livePages = await rpc(server.address, {
+      type: "invoke",
+      request_id: "pages-2",
+      token: "launch-token",
+      capability: "browser.pages",
+      arguments: {},
+    });
+    assert.equal(livePages.status, "success");
+    assert.equal(
+      ((livePages.data as Record<string, unknown>).pages as unknown[]).length,
+      1,
+    );
+
+    // 4. Detach and reattach -> RPC server stays alive and status drops back to standby when detached
+    swappable.detach();
+    assert.equal(swappable.isConnected(), false);
+    const detachedStatus = await rpc(server.address, {
+      type: "invoke",
+      request_id: "status-3",
+      token: "launch-token",
+      capability: "browser.status",
+      arguments: {},
+    });
+    assert.equal((detachedStatus.data as Record<string, unknown>).available, false);
+    swappable.attach(new FakeBackend());
+    assert.equal(swappable.isConnected(), true);
   } finally {
     await server.close();
   }

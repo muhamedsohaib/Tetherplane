@@ -224,3 +224,37 @@ async fn value_action_carries_direct_semantic_value_without_clipboard_use() {
     assert_eq!(performed[0].kind, DesktopActionKind::SetValue);
     assert_eq!(performed[0].value.as_deref(), Some("semantic-direct-value"));
 }
+
+#[tokio::test]
+async fn desktop_provider_propagates_backend_failure_without_false_nodes() {
+    struct FailingBackend;
+
+    impl DesktopBackend for FailingBackend {
+        fn snapshot(&self) -> Result<Vec<DesktopNode>, CapabilityError> {
+            Err(CapabilityError {
+                code: ErrorCode::ProviderFailure,
+                message: "Windows UI Automation provider error: Unspecified error".into(),
+                recovery_hint: None,
+                details: json!({}),
+            })
+        }
+
+        fn target(&self, _reference: &str) -> Result<DesktopNode, CapabilityError> {
+            self.snapshot().map(|_| unreachable!())
+        }
+
+        fn perform(&self, _action: DesktopAction) -> Result<DesktopActionOutcome, CapabilityError> {
+            self.snapshot().map(|_| unreachable!())
+        }
+    }
+
+    let ownership = Arc::new(TrustedOwnershipRegistry::new());
+    let provider = DesktopProvider::new(Arc::new(FailingBackend), ownership);
+
+    let err = provider
+        .execute(&invocation("desktop.snapshot", json!({})))
+        .await
+        .unwrap_err();
+    assert_eq!(err.code, ErrorCode::ProviderFailure);
+    assert!(err.message.contains("Windows UI Automation provider error"));
+}

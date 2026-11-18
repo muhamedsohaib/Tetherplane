@@ -190,3 +190,125 @@ test("saving launch config writes only loopback URL and ephemeral token to suppl
     "ephemeral-token",
   );
 });
+
+test("ChromeTabsAdapter resolves pendingUrl when Chrome omits committed url and waits for loading tabs to complete", async () => {
+  let getCalls = 0;
+  let navigated = false;
+  let postUpdateGetCalls = 0;
+  const api = {
+    async query() {
+      return [
+        {
+          id: 11,
+          windowId: 1,
+          url: "",
+          pendingUrl: "https://pending.example/start",
+          active: true,
+        },
+        {
+          id: 12,
+          windowId: 1,
+          url: "about:blank",
+          pendingUrl: "https://pending.example/blank-transition",
+          active: false,
+        },
+      ];
+    },
+    async get(tabId: number) {
+      getCalls += 1;
+      if (tabId === 13 && !navigated) {
+        if (getCalls < 3) {
+          return {
+            id: 13,
+            windowId: 1,
+            url: "",
+            pendingUrl: "https://fixture.example/owned.html",
+            status: "loading",
+            active: false,
+          };
+        }
+        return {
+          id: 13,
+          windowId: 1,
+          url: "https://fixture.example/owned.html",
+          status: "complete",
+          active: false,
+        };
+      }
+      if (tabId === 13 && navigated) {
+        postUpdateGetCalls += 1;
+        if (postUpdateGetCalls < 2) {
+          return {
+            id: 13,
+            windowId: 1,
+            url: "https://fixture.example/owned.html",
+            pendingUrl: "https://fixture.example/navigated.html",
+            status: "loading",
+            active: false,
+          };
+        }
+      }
+      return {
+        id: tabId,
+        windowId: 1,
+        url: "https://fixture.example/navigated.html",
+        status: "complete",
+        active: false,
+      };
+    },
+    async create() {
+      return {
+        id: 13,
+        windowId: 1,
+        url: "",
+        pendingUrl: "https://fixture.example/owned.html",
+        status: "loading",
+        active: false,
+      };
+    },
+    async update(tabId: number) {
+      navigated = true;
+      return {
+        id: tabId,
+        windowId: 1,
+        url: "https://fixture.example/owned.html",
+        pendingUrl: "https://fixture.example/navigated.html",
+        status: "loading",
+        active: false,
+      };
+    },
+    async remove() {},
+  };
+
+  const tabs = new ChromeTabsAdapter(api, {
+    pollIntervalMs: 5,
+    readyTimeoutMs: 500,
+  });
+
+  assert.deepEqual(await tabs.list(), [
+    {
+      id: 11,
+      window_id: 1,
+      url: "https://pending.example/start",
+      active: true,
+    },
+    {
+      id: 12,
+      window_id: 1,
+      url: "https://pending.example/blank-transition",
+      active: false,
+    },
+  ]);
+
+  const created = await tabs.create({
+    url: "https://fixture.example/owned.html",
+    active: false,
+  });
+  assert.equal(created.url, "https://fixture.example/owned.html");
+  assert.ok(getCalls >= 3, `expected polling until complete, saw getCalls=${getCalls}`);
+
+  const updated = await tabs.update(13, {
+    url: "https://fixture.example/navigated.html",
+  });
+  assert.equal(updated.url, "https://fixture.example/navigated.html");
+});

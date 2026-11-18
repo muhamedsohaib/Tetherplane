@@ -1,3 +1,4 @@
+import { createHash, timingSafeEqual } from "node:crypto";
 import net from "node:net";
 
 import {
@@ -127,11 +128,19 @@ export class BrowserBridgeService {
     }
 
     if (operation === "status") {
+      const capabilities = this.#backend.capabilities();
+      const standby = capabilities.connected === false;
       return {
         data: {
-          available: true,
+          available: !standby,
+          ...(standby
+            ? {
+                unavailable_reason:
+                  "Chrome extension is in standby / waiting for extension reconnect",
+              }
+            : {}),
           mode: "background_only",
-          capabilities: this.#backend.capabilities(),
+          capabilities,
         },
         verification: "not_applicable",
       };
@@ -409,7 +418,8 @@ async function handleLine(
 
   if (
     options.token !== undefined &&
-    request.token !== options.token
+    (typeof request.token !== "string" ||
+      !constantTimeTokenEqual(request.token, options.token))
   ) {
     return errorResponse(
       requestId,
@@ -531,4 +541,110 @@ function browserMode(
   return args.mode === "foreground_lease"
     ? "foreground_lease"
     : "background_only";
+}
+
+export class HotSwappableBrowserBackend implements BrowserServiceBackend {
+  #active: BrowserServiceBackend | null = null;
+
+  constructor(initial?: BrowserServiceBackend | null) {
+    this.#active = initial ?? null;
+  }
+
+  attach(backend: BrowserServiceBackend): void {
+    this.#active = backend;
+  }
+
+  detach(): void {
+    this.#active = null;
+  }
+
+  isConnected(): boolean {
+    return this.#active !== null;
+  }
+
+  #requireActive(): BrowserServiceBackend {
+    if (!this.#active) {
+      throw codedError(
+        "capability_unavailable",
+        "Chrome extension is not currently connected; open the paired Chrome profile or wait for extension service worker reconnect",
+      );
+    }
+    return this.#active;
+  }
+
+  capabilities(): Record<string, unknown> {
+    if (!this.#active) {
+      return {
+        backend: "extension",
+        connected: false,
+        status: "waiting_for_extension",
+        operations: [...OPERATIONS],
+      };
+    }
+    return {
+      connected: true,
+      ...this.#active.capabilities(),
+    };
+  }
+
+  async pages(): Promise<BrowserServicePage[]> {
+    return await this.#requireActive().pages();
+  }
+
+  async createTab(url: string): Promise<BrowserServicePage> {
+    return await this.#requireActive().createTab(url);
+  }
+
+  async navigate(pageId: string, url: string): Promise<BrowserServicePage> {
+    return await this.#requireActive().navigate(pageId, url);
+  }
+
+  async close(pageId: string): Promise<void> {
+    await this.#requireActive().close(pageId);
+  }
+
+  async observe(pageId: string) {
+    return await this.#requireActive().observe(pageId);
+  }
+
+  async perform(
+    pageId: string,
+    action: import("./action.ts").ResolvedBrowserAction,
+  ) {
+    await this.#requireActive().perform(pageId, action);
+  }
+
+  async waitForSettled(
+    pageId: string,
+    afterRevision: number,
+    timeoutMs: number,
+  ) {
+    return await this.#requireActive().waitForSettled(
+      pageId,
+      afterRevision,
+      timeoutMs,
+    );
+  }
+
+  async uploadFile(
+    pageId: string,
+    backendId: string,
+    filePath: string,
+  ) {
+    await this.#requireActive().uploadFile(pageId, backendId, filePath);
+  }
+
+  async downloads(pageId?: string) {
+    return await this.#requireActive().downloads(pageId);
+  }
+
+  async diagnostics(pageId: string, limit: number) {
+    return await this.#requireActive().diagnostics(pageId, limit);
+  }
+}
+
+function constantTimeTokenEqual(actual: string, expected: string): boolean {
+  const actualDigest = createHash("sha256").update(actual, "utf8").digest();
+  const expectedDigest = createHash("sha256").update(expected, "utf8").digest();
+  return timingSafeEqual(actualDigest, expectedDigest);
 }

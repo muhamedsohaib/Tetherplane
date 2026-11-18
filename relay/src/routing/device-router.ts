@@ -7,6 +7,10 @@ import type {
 
 import type { ClientIdentity } from "../auth/static-auth.ts";
 import type { DeviceRegistry } from "../devices/registry.ts";
+import type {
+  PolicyStore,
+  SynchronizedDevicePolicy,
+} from "../policy/policy-store.ts";
 
 export type RelayToDeviceMessage = {
   type: "invoke";
@@ -14,11 +18,41 @@ export type RelayToDeviceMessage = {
   invocation: InvocationEnvelope;
 };
 
-export type DeviceToRelayMessage = {
-  type: "result";
-  routeId: string;
-  result: ResultEnvelope;
+export type RelayPolicySyncMessage = {
+  type: "policy_sync";
+  policy: SynchronizedDevicePolicy;
 };
+
+export type DeviceToRelayMessage =
+  | {
+      type: "result";
+      routeId: string;
+      result: ResultEnvelope;
+    }
+  | {
+      type: "device_hello";
+      deviceId: string;
+      appliedPolicyRevision: number | null;
+      status?: Record<string, unknown> | null;
+      capabilities?: Record<string, unknown> | null;
+    }
+  | {
+      type: "policy_ack";
+      deviceId: string;
+      revision: number;
+      currentRevision?: number | null;
+      applied: boolean;
+      appliedAtMs?: number;
+      status?: Record<string, unknown> | null;
+      capabilities?: Record<string, unknown> | null;
+      error?: string | null;
+    }
+  | {
+      type: "device_telemetry";
+      deviceId: string;
+      status?: Record<string, unknown> | null;
+      capabilities?: Record<string, unknown> | null;
+    };
 
 export type DeviceConnectionHandle = {
   receive(message: DeviceToRelayMessage): void;
@@ -30,7 +64,9 @@ type ActiveConnection = {
   deviceId: string;
   generation: string;
   send(message: RelayToDeviceMessage): Promise<void>;
+  controlQueue: Promise<void>;
 };
+
 type PendingRoute = {
   deviceId: string;
   generation: string;
@@ -41,16 +77,27 @@ type PendingRoute = {
 
 export class DeviceRouter {
   readonly #registry: DeviceRegistry;
+  readonly #policyStore: PolicyStore | null;
   readonly #timeoutMs: number;
   readonly #connections = new Map<string, ActiveConnection>();
   readonly #pending = new Map<string, PendingRoute>();
 
   constructor(options: {
     registry: DeviceRegistry;
+    policyStore?: PolicyStore;
     timeoutMs?: number;
   }) {
     this.#registry = options.registry;
+    this.#policyStore = options.policyStore ?? null;
     this.#timeoutMs = options.timeoutMs ?? 30_000;
+
+    if (this.#policyStore) {
+      this.#policyStore.setSyncHooks({
+        pushPolicy: (deviceId, policy) =>
+          this.pushPolicy(deviceId, policy),
+        isOnline: (deviceId) => this.isOnline(deviceId),
+      });
+    }
   }
 
   connectDevice(input: {
@@ -74,8 +121,10 @@ export class DeviceRouter {
       deviceId: input.deviceId,
       generation: randomUUID(),
       send: input.send,
+      controlQueue: Promise.resolve(),
     };
     this.#connections.set(input.deviceId, connection);
+    this.#policyStore?.notifyChange(input.accountId);
 
     return {
       receive: (message) => {
@@ -98,6 +147,24 @@ export class DeviceRouter {
     return this.#connections.has(deviceId);
   }
 
+  async pushPolicy(
+    deviceId: string,
+    policy: SynchronizedDevicePolicy,
+  ): Promise<boolean> {
+    const connection = this.#connections.get(deviceId);
+    if (!connection) return false;
+    try {
+      const syncMsg: RelayPolicySyncMessage = {
+        type: "policy_sync",
+        policy,
+      };
+      await connection.send(syncMsg as unknown as RelayToDeviceMessage);
+      return true;
+    } catch {
+      return false;
+    }
+  }
+
   async call(
     identity: ClientIdentity,
     invocation: InvocationEnvelope,
@@ -114,6 +181,27 @@ export class DeviceRouter {
       );
     }
     const connection = resolved.connection;
+
+    if (this.#policyStore) {
+      const evaluation =
+        this.#policyStore.evaluateAndRecordInvocation({
+          identity,
+          deviceId: connection.deviceId,
+          capability: invocation.capability,
+        });
+      if (!evaluation.allowed) {
+        return errorResult(
+          invocation.request_id,
+          "permission_denied",
+          evaluation.message ?? "capability is not permitted",
+          evaluation.recoveryHint ?? null,
+          evaluation.denialKind
+            ? { denial_kind: evaluation.denialKind }
+            : {},
+        );
+      }
+    }
+
     const routedInvocation: InvocationEnvelope = {
       ...structuredClone(invocation),
       device_id: connection.deviceId,
@@ -168,10 +256,81 @@ export class DeviceRouter {
     });
   }
 
+  #enqueueControl(
+    connection: ActiveConnection,
+    task: () => Promise<void>,
+  ): void {
+    connection.controlQueue = connection.controlQueue
+      .then(async () => {
+        if (!this.#isCurrent(connection)) return;
+        await task();
+      })
+      .catch(() => {
+        // Control plane errors must not wedge subsequent messages or raise unhandled rejections
+      });
+  }
+
   #receive(
     connection: ActiveConnection,
     message: DeviceToRelayMessage,
   ): void {
+    if (message.type === "device_hello") {
+      const policyStore = this.#policyStore;
+      if (!policyStore) return;
+      this.#enqueueControl(connection, async () => {
+        const policy = await policyStore.handleDeviceHello({
+          deviceId: connection.deviceId,
+          accountId: connection.accountId,
+          appliedPolicyRevision: message.appliedPolicyRevision ?? null,
+          status: message.status ?? null,
+          capabilities: message.capabilities ?? null,
+        });
+        if (policy && this.#isCurrent(connection)) {
+          await this.pushPolicy(connection.deviceId, policy);
+        }
+      });
+      return;
+    }
+
+    if (message.type === "policy_ack") {
+      const policyStore = this.#policyStore;
+      if (!policyStore) return;
+      this.#enqueueControl(connection, () =>
+        policyStore.handlePolicyAck({
+          deviceId: connection.deviceId,
+          accountId: connection.accountId,
+          revision: message.revision,
+          ...(typeof message.currentRevision === "number"
+            ? { currentRevision: message.currentRevision }
+            : {}),
+          applied: message.applied,
+          ...(typeof message.appliedAtMs === "number"
+            ? { appliedAtMs: message.appliedAtMs }
+            : {}),
+          status: message.status ?? null,
+          capabilities: message.capabilities ?? null,
+          error: message.error ?? null,
+        }),
+      );
+      return;
+    }
+
+    if (message.type === "device_telemetry") {
+      const policyStore = this.#policyStore;
+      if (!policyStore || message.deviceId !== connection.deviceId) {
+        return;
+      }
+      this.#enqueueControl(connection, () =>
+        policyStore.handleDeviceTelemetry({
+          deviceId: connection.deviceId,
+          accountId: connection.accountId,
+          status: message.status ?? null,
+          capabilities: message.capabilities ?? null,
+        }),
+      );
+      return;
+    }
+
     if (message.type !== "result") return;
     const pending = this.#pending.get(message.routeId);
     if (
@@ -196,8 +355,10 @@ export class DeviceRouter {
     }
     pending.resolve(message.result);
   }
+
   #disconnect(connection: ActiveConnection): void {
-    if (this.#isCurrent(connection)) {
+    const wasCurrent = this.#isCurrent(connection);
+    if (wasCurrent) {
       this.#connections.delete(connection.deviceId);
     }
     for (const [routeId, pending] of this.#pending) {
@@ -216,6 +377,9 @@ export class DeviceRouter {
           "device disconnected while request was in flight",
         ),
       );
+    }
+    if (wasCurrent) {
+      this.#policyStore?.notifyChange(connection.accountId);
     }
   }
 
@@ -311,6 +475,8 @@ function errorResult(
     | "disconnected"
     | "provider_failure",
   message: string,
+  recoveryHint: string | null = null,
+  details: Record<string, unknown> = {},
 ): ResultEnvelope {
   return {
     protocol_version: "1.0",
@@ -321,8 +487,8 @@ function errorResult(
     error: {
       code,
       message,
-      recovery_hint: null,
-      details: {},
+      recovery_hint: recoveryHint,
+      details,
     },
     verification: "failed",
     continuation: null,
