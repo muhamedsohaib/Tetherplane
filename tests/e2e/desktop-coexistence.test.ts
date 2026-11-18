@@ -80,10 +80,15 @@ async function readState(statePath: string): Promise<Record<string, unknown>> {
 async function waitForState(
   statePath: string,
   predicate: (state: Record<string, unknown>) => boolean,
+  timeoutMs = 20_000,
 ): Promise<Record<string, unknown>> {
+  // A fresh Windows Sandbox can start PowerShell/GUI fixtures slowly. Wait
+  // for application state, not a fixed count of scheduler ticks.
+  const deadline = Date.now() + timeoutMs;
   let lastError: unknown;
   let lastState: Record<string, unknown> | undefined;
-  for (let attempt = 0; attempt < 80; attempt += 1) {
+  let lastStage = "not-recorded";
+  while (Date.now() < deadline) {
     try {
       const state = await readState(statePath);
       lastState = state;
@@ -92,11 +97,47 @@ async function waitForState(
     } catch (error) {
       lastError = error;
     }
+    const startupErrorPath = statePath + ".startup.txt.error.txt";
+    const startupError = await readFile(startupErrorPath, "utf8").catch(
+      () => null,
+    );
+    if (startupError !== null) {
+      throw new Error("fixture terminated during startup: " + startupError);
+    }
+    lastStage = await readFile(statePath + ".startup.txt", "utf8").catch(
+      () => lastStage,
+    );
     await new Promise((resolve) => setTimeout(resolve, 100));
   }
   throw new Error(
-    "fixture state did not reach expected condition; last_state=" +
-      JSON.stringify(lastState ?? null) +
+    "fixture state did not reach expected condition within " + timeoutMs +
+      "ms; last_stage=" + lastStage +
+      "; last_state=" + JSON.stringify(lastState ?? null) +
+      "; last_read_error=" + String(lastError ?? "none"),
+  );
+}
+
+async function waitForExactFile(
+  filePath: string,
+  expected: string,
+  timeoutMs = 30_000,
+): Promise<void> {
+  const deadline = Date.now() + timeoutMs;
+  let lastError: unknown;
+  let lastText: string | undefined;
+  while (Date.now() < deadline) {
+    try {
+      lastText = await readFile(filePath, "utf8");
+      lastError = undefined;
+      if (lastText === expected) return;
+    } catch (error) {
+      lastError = error;
+    }
+    await new Promise((resolve) => setTimeout(resolve, 100));
+  }
+  throw new Error(
+    "Timed out waiting for exact file content: " + filePath +
+      "; observed=" + JSON.stringify(lastText ?? null) +
       "; last_read_error=" + String(lastError ?? "none"),
   );
 }
@@ -198,6 +239,7 @@ async function runDesktopCoexistenceTest(framework: "WinForms" | "Wpf") {
     await waitForState(
       ownedState,
       (state) => state.ready === true && state.framework === framework,
+      45_000,
     );
 
     humanProcess = spawn(
@@ -228,6 +270,7 @@ async function runDesktopCoexistenceTest(framework: "WinForms" | "Wpf") {
         state.ready === true &&
         state.focused === true &&
         state.framework === framework,
+      45_000,
     );
     const ownedBefore = await waitForState(
       ownedState,
@@ -497,7 +540,7 @@ async function runDesktopCoexistenceTest(framework: "WinForms" | "Wpf") {
       // intentional approval_required policy. Never erase its directory first.
       try {
         await writeFile(ownedState + ".stop", "close\n", "utf8");
-        for (let attempt = 0; attempt < 40; attempt += 1) {
+        for (let attempt = 0; attempt < 135; attempt += 1) {
           const read = await call(local.client, "process", {
             op: "read",
             args: { handle: ownedHandle, mode: "tail", tail_bytes: 1024 },
@@ -559,7 +602,7 @@ test(
   // an interactive disposable Windows Sandbox or staging desktop.
   {
     skip: process.platform !== "win32" || process.env.GITHUB_ACTIONS === "true",
-    timeout: 80_000,
+    timeout: 180_000,
   },
   async () => {
     const here = path.dirname(fileURLToPath(import.meta.url));
@@ -604,16 +647,17 @@ test(
           },
         });
         const canaryResult = structured(canary);
-        const canaryRead = await readFile(canaryPath, "utf8").catch(
-          (err: unknown) => "READ_ERROR: " + String(err),
+        // process.run is allowed to return running=true before Windows has
+        // started the child PowerShell. Do not misclassify that as failure.
+        await waitForExactFile(canaryPath, "canary-ok", 30_000).catch(
+          (error: unknown) => {
+            throw new Error(framework + ": launch canary failed: " + String(error) +
+              "; launch=" + JSON.stringify({
+                pid: canaryResult.pid, running: canaryResult.running,
+                exit_code: canaryResult.exit_code, stderr: canaryResult.stderr,
+              }));
+          },
         );
-        assert.equal(canaryRead, "canary-ok", framework +
-          ": Tetherplane process.run PowerShell canary failed: " +
-          JSON.stringify({
-            launch: { pid: canaryResult.pid, running: canaryResult.running,
-              exit_code: canaryResult.exit_code, stderr: canaryResult.stderr },
-            canaryFile: canaryRead,
-          }));
         let lastStage = "missing";
         let stageReached = false;
         let latestProcess: Record<string, unknown> = processInfo;
@@ -621,7 +665,7 @@ test(
           framework === "WinForms"
             ? "stage=winforms-controls-created"
             : "stage=controls-created";
-        for (let i = 0; i < 120; i += 1) {
+        for (let i = 0; i < 450; i += 1) {
           try {
             lastStage = await readFile(statePath + ".startup.txt", "utf8");
             if (lastStage.includes(expected)) {
@@ -664,7 +708,7 @@ test(
           false, framework + ": nonvisible fixture created a live window state");
 
         let stopped = processInfo.running === false;
-        for (let i = 0; i < 60 && !stopped; i += 1) {
+        for (let i = 0; i < 200 && !stopped; i += 1) {
           const statusResult = await call(local.client, "process", {
             op: "read",
             args: { handle: processInfo.handle, mode: "tail", tail_bytes: 1024 },
