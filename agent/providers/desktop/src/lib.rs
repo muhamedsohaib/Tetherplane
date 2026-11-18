@@ -16,6 +16,7 @@ mod foreground_lease;
 mod human_activity;
 mod physical;
 mod private_clipboard;
+pub mod windows_compat;
 #[cfg(windows)]
 mod windows_human_activity;
 #[cfg(windows)]

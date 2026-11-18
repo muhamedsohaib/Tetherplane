@@ -479,11 +479,14 @@ Expected: The first 3 succeed (`STAGING_PROC_OK`, `"staging-read-canary"`), and 
 
 ## 7. Stage 4 — Interactive Windows Desktop UI Automation & Human Coexistence
 
-1. Move physical mouse cursor to a neutral coordinate, set `"STAGING_CLIPBOARD_CANARY"` into the Windows clipboard, record `(X, Y)`, spawn the **Owned fixture FIRST** via `Invoke-StagingMcp` (capturing `$ownedHandle` from `structuredContent.handle`), wait for `$OwnedState` readiness, and **THEN** launch the **Human fixture** in **PowerShell 1** so its `Add_Shown` leaves the Human window focused:
+Validate **both** UI frameworks sequentially (`-Framework WinForms` then `-Framework Wpf`), keeping the **Human** window foreground/focused while Tetherplane acts on the **unfocused Owned** window via background-safe paths:
+
+1. Move physical mouse cursor to a neutral coordinate, set `"STAGING_CLIPBOARD_CANARY"` into the Windows clipboard, and record `$cursorBefore`. Run the procedure below once with `$Framework = "WinForms"` and once with `$Framework = "Wpf"`, spawning the **Owned fixture FIRST** via `Invoke-StagingMcp` (capturing `$ownedHandle`), waiting until `$OwnedState` is ready, **THEN** launching the **Human fixture** in **PowerShell 1** so its window keeps OS foreground focus and `$OwnedState.focused` drops to `false`:
    ```powershell
    $FixtureScript = Join-Path $StagingRepo "tests\e2e\fixtures\windows-desktop-fixture.ps1"
-   $HumanState    = Join-Path $StagingRoot "desktop-human.json"
-   $OwnedState    = Join-Path $StagingRoot "desktop-owned.json"
+   $Framework     = "WinForms" # Run Stage 4 once with "WinForms", then repeat with "Wpf"
+   $HumanState    = Join-Path $StagingRoot "desktop-human-$($Framework.ToLower()).json"
+   $OwnedState    = Join-Path $StagingRoot "desktop-owned-$($Framework.ToLower()).json"
 
    Add-Type -AssemblyName System.Windows.Forms
    Set-Clipboard -Value "STAGING_CLIPBOARD_CANARY"
@@ -492,7 +495,7 @@ Expected: The first 3 succeed (`STAGING_PROC_OK`, `"staging-read-canary"`), and 
    # Spawn owned fixture FIRST so Human spawns second and keeps OS foreground focus
    $ownedResult = (Invoke-StagingMcp -ToolName "process" -Op "run" -ToolArgs @{
        program = "powershell.exe"
-       args    = @("-NoProfile", "-Sta", "-ExecutionPolicy", "Bypass", "-File", $FixtureScript, "-StatePath", $OwnedState, "-Title", "Staging Owned Fixture", "-Prefix", "Owned")
+       args    = @("-NoProfile", "-Sta", "-ExecutionPolicy", "Bypass", "-File", $FixtureScript, "-StatePath", $OwnedState, "-Title", "Staging Owned $Framework Fixture", "-Prefix", "Owned", "-Framework", $Framework)
        wait_ms = 0
        pty     = $false
    }) | ConvertFrom-Json
@@ -503,27 +506,32 @@ Expected: The first 3 succeed (`STAGING_PROC_OK`, `"staging-read-canary"`), and 
    $humanProc = Start-Process powershell.exe -PassThru -ArgumentList @(
        "-NoProfile", "-Sta", "-ExecutionPolicy", "Bypass",
        "-File", $FixtureScript, "-StatePath", $HumanState,
-       "-Title", "Staging Human Fixture", "-Prefix", "Human"
+       "-Title", "Staging Human $Framework Fixture", "-Prefix", "Human",
+       "-Framework", $Framework
    )
    for ($i = 0; $i -lt 50; $i++) {
        try {
-           if ((Get-Content $HumanState -Raw -ErrorAction Stop | ConvertFrom-Json).focused) { break }
+           $h = Get-Content $HumanState -Raw -ErrorAction Stop | ConvertFrom-Json
+           $o = Get-Content $OwnedState -Raw -ErrorAction Stop | ConvertFrom-Json
+           if ($h.focused -and ($o.focused -eq $false)) { break }
        } catch {}
        Start-Sleep -Milliseconds 200
    }
    ```
-2. Keep **Staging Human Fixture** foreground/focused and run `.staging-mcp.mjs` (`Invoke-StagingMcp`) against `staging-win-01`:
+2. Keep **Staging Human \<Framework\> Fixture** foreground/focused (`focused == true` while `$OwnedState.focused == false`) and run `.staging-mcp.mjs` (`Invoke-StagingMcp`) against `staging-win-01`:
    - `Invoke-StagingMcp -ToolName "desktop" -Op "snapshot" -ToolArgs @{ max_nodes = 1000 }` -> verify both windows appear: owned nodes have `origin: "tetherplane"`, human nodes have `origin: "human_or_external"`.
-   - Pick the `reference` of `Owned Value`, `Owned Invoke`, `Owned Beta`, and `Human Invoke` / `Human Value` from snapshot output and execute:
-     - `Invoke-StagingMcp -ToolName "desktop" -Op "act" -ToolArgs @{ reference = "<owned-value-ref>"; action = "set_value"; value = "staging-uia-ok" }`
-     - `Invoke-StagingMcp -ToolName "desktop" -Op "act" -ToolArgs @{ reference = "<owned-invoke-ref>"; action = "invoke" }`
-     - `Invoke-StagingMcp -ToolName "desktop" -Op "act" -ToolArgs @{ reference = "<owned-beta-ref>"; action = "select" }`
+   - Pick the `reference` of `Owned Value`, `Owned Invoke`, `Owned Beta` (when present), and `Human Invoke` from snapshot output and execute:
+     - `Invoke-StagingMcp -ToolName "desktop" -Op "act" -ToolArgs @{ reference = "<owned-value-ref>"; action = "set_value"; value = "staging-uia-ok" }` (WinForms uses background PID-verified `WM_SETTEXT` + readback even when exposed as `ControlType.Pane`; WPF uses background `ValuePattern`).
+     - `Invoke-StagingMcp -ToolName "desktop" -Op "act" -ToolArgs @{ reference = "<owned-invoke-ref>"; action = "invoke" }` (WinForms uses background PID-verified `BM_CLICK`; WPF uses background `InvokePattern`).
+     - **Selection**:
+       - For **`Wpf`** (and WinForms when child `ListItem` nodes expose `"selection"`): call `Invoke-StagingMcp -ToolName "desktop" -Op "act" -ToolArgs @{ reference = "<owned-beta-ref>"; action = "select" }` -> **MUST succeed** and update `$OwnedState.selected == "Owned Beta"`.
+       - For **`WinForms`** under degraded Windows 10 Sandbox UIA where `ListBox` exposes zero `ListItem` children (no node advertises `"selection"`): locate the `OwnedSelection` / `WindowsForms10.LISTBOX` node and call `desktop` `act` with `{ reference = "<listbox-ref>"; action = "select" }` -> **MUST fail closed cleanly** with `capability_unavailable`.
    - Attempt `Invoke-StagingMcp -ToolName "desktop" -Op "act" -ToolArgs @{ reference = "<human-invoke-ref>"; action = "invoke"; origin = "tetherplane" }` -> **MUST fail closed** (`permission_denied` / human-resource protection).
 3. **Verify Coexistence Invariants**:
-   - Inspect `$OwnedState`: `text == "staging-uia-ok"` and `status == "invoked"`.
+   - Inspect `$OwnedState`: `text == "staging-uia-ok"`, `status == "invoked"`, `focused == false` (plus `selected == "Owned Beta"` for WPF or non-degraded WinForms).
    - Inspect `$HumanState`: `focused == true` and `text == "Human-initial"` (untouched).
    - Verify `[System.Windows.Forms.Cursor]::Position` equals `$cursorBefore` and `Get-Clipboard` equals `"STAGING_CLIPBOARD_CANARY"`.
-   - Terminate the owned fixture (`Invoke-StagingMcp -ToolName "process" -Op "terminate" -ToolArgs @{ handle = $ownedHandle; grace_ms = 100; force = $true }`) and stop `$humanProc` cleanly (`Stop-Process -Id $humanProc.Id -Force`).
+   - Terminate the owned fixture (`Invoke-StagingMcp -ToolName "process" -Op "terminate" -ToolArgs @{ handle = $ownedHandle; grace_ms = 100; force = $true }`) and stop `$humanProc` cleanly (`Stop-Process -Id $humanProc.Id -Force`) before running the next framework (`Wpf`) or Stage 5 (and reset `Set-Clipboard -Value ""` afterward).
 
 ---
 
@@ -633,7 +641,7 @@ When paused at `[Interactive Mobile Checkpoint]`, open the printed `https://<...
 | **G1** | Production Device Isolation | Zero commands executed against `Leno`, `CUCK`, `Surface`, `RTX`, or `VAULTER`; zero writes to `%LOCALAPPDATA%\Tetherplane`, `HKCU\...\Run`, or Scheduled Tasks. |
 | **G2** | Auth, Cookies, CSRF, No XSS | `?token=` returns `400`; non-owner portal login and operator `/pair/approve`, `/devices`, `/devices/*/revoke` return `403`; session cookie has `HttpOnly; SameSite=Strict; Secure`; `localStorage`/`sessionStorage` empty; CSRF/cross-origin mutations return `403`; logout returns session to `401`. |
 | **G3** | Real Chrome Extension Pairing & Reconnect | Extension pairs only to staging host, transitions Portal `browser` `Unavailable` -> `12/12 ops active` live via SSE, respects background tab ownership and timed tab-share expiry/detach, transitions to `Unavailable` on Chrome close, and auto-recovers upon Chrome relaunch + re-pair. |
-| **G4** | Interactive Windows UIA & Coexistence | Remote `desktop.snapshot` + `desktop.act` succeed on Tetherplane-owned window while physical cursor, clipboard canary, and human fixture focus/text remain completely unchanged and human window mutations are denied. |
+| **G4** | Interactive Windows UIA & Coexistence | Remote `desktop.snapshot` + `desktop.act` succeed on both Tetherplane-owned WinForms (including native background fallbacks under degraded Sandbox UIA) and unfocused WPF windows while physical cursor, clipboard canary, and human fixture focus/text remain completely unchanged and human window mutations are denied. |
 | **G5** | Grants, Explicit Denies, Isolation, Offline Recovery, Rollback & Lockdown | Family toggles, explicit denies (`explicit_deny`), scoped operator least privilege, cross-account denial, offline policy convergence via `device_hello`, emergency lockdown persistence across `tetherd` restart, and forward-revision rollback to `rev 1` all enforce on both relay and `tetherd`. |
 | **G6** | Mobile Browser Checklist | All items `M1–M10` pass on real mobile viewport + device (over trusted HTTPS without leaving disposable root CAs installed). |
 | **G7** | Clean Staging Teardown | Cleanup removes all staging files, staging root cert (if added temporarily to `CurrentUser\Root`), temporary Stage 6 reverse proxy route or firewall rule, and staging processes with zero leftover listeners or repo working-tree leaks. |

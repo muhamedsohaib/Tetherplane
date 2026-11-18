@@ -7,19 +7,31 @@ use std::time::Duration;
 use serde_json::json;
 use tether_core::{CapabilityError, ErrorCode};
 use uiautomation::patterns::{
-    UIExpandCollapsePattern, UIInvokePattern, UISelectionItemPattern, UITogglePattern,
-    UIValuePattern,
+    UIExpandCollapsePattern, UIInvokePattern, UILegacyIAccessiblePattern, UISelectionItemPattern,
+    UITogglePattern, UIValuePattern,
 };
-use uiautomation::types::ExpandCollapseState;
+use uiautomation::types::{ControlType, ExpandCollapseState};
 use uiautomation::{UIAutomation, UIElement, UITreeWalker};
+use windows_win::raw::window::{send_message, send_push_button};
+use windows_win::sys::{LPARAM, LRESULT, UINT, WM_GETTEXT, WM_GETTEXTLENGTH, WM_SETTEXT, WPARAM};
+use winsafe::{EnumWindows, HWND, co};
 
-use crate::{
-    DesktopAction, DesktopActionKind, DesktopActionOutcome, DesktopBackend, DesktopNode,
-    DesktopPattern, DesktopRect,
+use crate::windows_compat::{
+    ElementCompatInput, MAX_NATIVE_READBACK_CHARS, NATIVE_MESSAGE_TIMEOUT_MS, NativeHwndMeta,
+    NativeListParentMeta, NativeWindowKind, PlannedAction, SemanticControlType,
+    check_focus_preserved, classify_native_window_class, infer_supported_patterns, plan_action,
+    verify_select_readback, verify_set_value_readback,
 };
+use crate::{DesktopAction, DesktopActionOutcome, DesktopBackend, DesktopNode, DesktopRect};
 
 const MAX_WINDOWS_SNAPSHOT_NODES: usize = 1_001;
 const MAX_WINDOWS_SNAPSHOT_DEPTH: usize = 8;
+const MAX_HWND_MAP_ENTRIES: usize = 16_384;
+
+const LB_SETCURSEL: UINT = 0x0186;
+const LB_GETCURSEL: UINT = 0x0188;
+const LB_GETCOUNT: UINT = 0x018B;
+const LB_ERR: LRESULT = -1;
 
 static UIA_INIT_LOCK: Mutex<()> = Mutex::new(());
 
@@ -37,18 +49,43 @@ enum WorkerRequest {
 }
 
 #[derive(Clone, Debug, Eq, Ord, PartialEq, PartialOrd)]
-struct ElementIdentity {
-    process_id: u32,
-    parent_reference: Option<String>,
-    automation_id: String,
-    class_name: String,
-    name: String,
-    role: String,
+enum ElementIdentity {
+    RuntimeId {
+        process_id: u32,
+        runtime_id: Vec<i32>,
+    },
+    Structural {
+        process_id: u32,
+        parent_reference: Option<String>,
+        native_hwnd: usize,
+        sibling_index: usize,
+        automation_id: String,
+        class_name: String,
+        control_type_id: i32,
+    },
 }
 
 struct CachedElement {
     element: UIElement,
     node: DesktopNode,
+    sibling_index: usize,
+    list_parent_hwnd: Option<usize>,
+}
+
+struct ElementObservation<'a> {
+    process_id: u32,
+    parent_reference: Option<&'a str>,
+    sibling_index: usize,
+    native_hwnd_addr: usize,
+    control_type: SemanticControlType,
+    hwnd_meta: Option<NativeHwndMeta>,
+    list_parent: Option<NativeListParentMeta>,
+}
+
+struct WalkFrame<'a> {
+    parent_reference: Option<&'a str>,
+    parent_list_meta: Option<&'a NativeHwndMeta>,
+    depth: usize,
 }
 
 struct WorkerState {
@@ -116,11 +153,17 @@ impl WorkerState {
             .get_root_element()
             .map_err(|error| uia_provider_error(&error))?;
         let walker = self.walker.clone();
+        let hwnd_map = collect_hwnd_map();
         self.references.clear();
 
         let mut nodes = Vec::new();
         if let Ok(first) = walker.get_first_child(&root) {
-            self.walk_siblings(&walker, first, None, 0, &mut nodes);
+            let frame = WalkFrame {
+                parent_reference: None,
+                parent_list_meta: None,
+                depth: 0,
+            };
+            self.walk_siblings(&walker, first, &frame, &hwnd_map, &mut nodes);
         }
         Ok(nodes)
     }
@@ -129,38 +172,84 @@ impl WorkerState {
         &mut self,
         walker: &UITreeWalker,
         mut current: UIElement,
-        parent_reference: Option<&str>,
-        depth: usize,
+        frame: &WalkFrame<'_>,
+        hwnd_map: &HashMap<usize, NativeHwndMeta>,
         nodes: &mut Vec<DesktopNode>,
     ) {
+        let mut sibling_index = 0_usize;
+        let mut list_item_index = 0_usize;
+
         loop {
             if nodes.len() >= MAX_WINDOWS_SNAPSHOT_NODES {
                 return;
             }
 
-            let described = self.describe_element(&current, parent_reference);
-            let current_reference = described.as_ref().map(|node| node.reference.clone());
-            if let Some(node) = described {
-                nodes.push(node);
+            let mut current_reference = None;
+            let mut child_list_meta = None;
+
+            if let Ok(process_id) = current.get_process_id() {
+                let native_hwnd_addr = element_native_hwnd(&current);
+                let control_type = element_control_type(&current);
+                let hwnd_meta = (native_hwnd_addr != 0)
+                    .then(|| hwnd_map.get(&native_hwnd_addr).cloned())
+                    .flatten();
+
+                let list_parent = if let Some(parent_meta) = frame.parent_list_meta
+                    && native_hwnd_addr == 0
+                    && control_type != SemanticControlType::ScrollBar
+                {
+                    let idx = list_item_index;
+                    list_item_index = list_item_index.saturating_add(1);
+                    Some(NativeListParentMeta {
+                        hwnd: parent_meta.clone(),
+                        sibling_index: idx,
+                        item_count: None,
+                    })
+                } else {
+                    None
+                };
+
+                child_list_meta = hwnd_meta
+                    .as_ref()
+                    .filter(|meta| {
+                        meta.process_id == process_id
+                            && classify_native_window_class(&meta.class_name)
+                                == NativeWindowKind::ListBox
+                    })
+                    .cloned();
+
+                let observation = ElementObservation {
+                    process_id,
+                    parent_reference: frame.parent_reference,
+                    sibling_index,
+                    native_hwnd_addr,
+                    control_type,
+                    hwnd_meta,
+                    list_parent,
+                };
+                if let Some(node) = self.describe_element(&current, &observation) {
+                    current_reference = Some(node.reference.clone());
+                    nodes.push(node);
+                }
             }
 
-            if depth < MAX_WINDOWS_SNAPSHOT_DEPTH
+            if frame.depth < MAX_WINDOWS_SNAPSHOT_DEPTH
                 && nodes.len() < MAX_WINDOWS_SNAPSHOT_NODES
                 && let Ok(child) = walker.get_first_child(&current)
             {
-                self.walk_siblings(
-                    walker,
-                    child,
-                    current_reference.as_deref(),
-                    depth + 1,
-                    nodes,
-                );
+                let child_frame = WalkFrame {
+                    parent_reference: current_reference.as_deref(),
+                    parent_list_meta: child_list_meta.as_ref(),
+                    depth: frame.depth + 1,
+                };
+                self.walk_siblings(walker, child, &child_frame, hwnd_map, nodes);
             }
 
             if nodes.len() >= MAX_WINDOWS_SNAPSHOT_NODES {
                 return;
             }
 
+            sibling_index = sibling_index.saturating_add(1);
             match walker.get_next_sibling(&current) {
                 Ok(next) => current = next,
                 Err(_) => return,
@@ -171,9 +260,8 @@ impl WorkerState {
     fn describe_element(
         &mut self,
         element: &UIElement,
-        parent_reference: Option<&str>,
+        obs: &ElementObservation<'_>,
     ) -> Option<DesktopNode> {
-        let process_id = element.get_process_id().ok()?;
         let automation_id = element.get_automation_id().unwrap_or_default();
         let class_name = element.get_classname().unwrap_or_default();
         let name = element.get_name().unwrap_or_default();
@@ -181,20 +269,42 @@ impl WorkerState {
             .get_localized_control_type()
             .unwrap_or_else(|_| "unknown".to_owned());
 
-        let identity = ElementIdentity {
-            process_id,
-            parent_reference: parent_reference.map(str::to_owned),
-            automation_id: automation_id.clone(),
-            class_name: class_name.clone(),
-            name: name.clone(),
-            role: role.clone(),
-        };
-        let reference = if let Some(reference) = self.stable_references.get(&identity) {
-            reference.clone()
+        let identity = element_identity(element, obs, &automation_id, &class_name);
+        let reference = if let Some(existing) = self.stable_references.get(&identity) {
+            existing.clone()
         } else {
-            let reference = self.allocate_reference();
-            self.stable_references.insert(identity, reference.clone());
-            reference
+            let fresh = self.allocate_reference();
+            self.stable_references.insert(identity, fresh.clone());
+            fresh
+        };
+
+        let enabled = element.is_enabled().unwrap_or(false);
+        let focused = element.has_keyboard_focus().unwrap_or(false);
+        let focusable = element.is_keyboard_focusable().unwrap_or(false);
+        let needs_legacy = should_query_legacy_in_snapshot(obs);
+        let (legacy_role, legacy_state) = if needs_legacy {
+            read_legacy_role_and_state(element)
+        } else {
+            (None, None)
+        };
+
+        let compat_input = ElementCompatInput {
+            process_id: obs.process_id,
+            framework_id: element.get_framework_id().unwrap_or_default(),
+            control_type: obs.control_type,
+            enabled,
+            focused,
+            is_password: false,
+            has_invoke_pattern: element.get_pattern::<UIInvokePattern>().is_ok(),
+            has_value_pattern: element.get_pattern::<UIValuePattern>().is_ok(),
+            value_is_readonly: None,
+            has_selection_item_pattern: element.get_pattern::<UISelectionItemPattern>().is_ok(),
+            has_toggle_pattern: element.get_pattern::<UITogglePattern>().is_ok(),
+            has_expand_collapse_pattern: element.get_pattern::<UIExpandCollapsePattern>().is_ok(),
+            legacy_role,
+            legacy_state,
+            native_hwnd: obs.hwnd_meta.clone(),
+            list_parent: obs.list_parent.clone(),
         };
 
         let bounding_rectangle = element
@@ -209,24 +319,27 @@ impl WorkerState {
 
         let node = DesktopNode {
             reference: reference.clone(),
-            parent_reference: parent_reference.map(str::to_owned),
+            parent_reference: obs.parent_reference.map(str::to_owned),
             role,
             name,
             automation_id: non_empty(automation_id),
             class_name: non_empty(class_name),
-            process_id,
-            enabled: element.is_enabled().unwrap_or(false),
-            focusable: element.is_keyboard_focusable().unwrap_or(false),
-            focused: element.has_keyboard_focus().unwrap_or(false),
+            process_id: obs.process_id,
+            enabled,
+            focusable,
+            focused,
             bounding_rectangle,
-            patterns: supported_patterns(element),
+            patterns: infer_supported_patterns(&compat_input),
         };
 
+        let list_parent_hwnd = obs.list_parent.as_ref().map(|parent| parent.hwnd.addr);
         self.references.insert(
             reference,
             CachedElement {
                 element: element.clone(),
                 node: node.clone(),
+                sibling_index: obs.sibling_index,
+                list_parent_hwnd,
             },
         );
         Some(node)
@@ -248,13 +361,38 @@ impl WorkerState {
             .ok_or_else(|| stale_reference(reference))?;
         let element = cached.element.clone();
         let parent_reference = cached.node.parent_reference.clone();
+        let sibling_index = cached.sibling_index;
+        let list_parent_hwnd = cached.list_parent_hwnd;
 
-        element
+        let process_id = element
             .get_process_id()
             .map_err(|_| stale_reference(reference))?;
+        let native_hwnd_addr = element_native_hwnd(&element);
+        let control_type = element_control_type(&element);
+        let hwnd_meta = lookup_hwnd_meta(native_hwnd_addr, process_id);
+        let list_parent = if list_parent_hwnd.is_some() {
+            resolve_live_list_parent(
+                &self.automation,
+                &self.walker,
+                &element,
+                process_id,
+                list_parent_hwnd,
+            )
+        } else {
+            None
+        };
 
+        let observation = ElementObservation {
+            process_id,
+            parent_reference: parent_reference.as_deref(),
+            sibling_index,
+            native_hwnd_addr,
+            control_type,
+            hwnd_meta,
+            list_parent,
+        };
         let refreshed = self
-            .describe_element(&element, parent_reference.as_deref())
+            .describe_element(&element, &observation)
             .ok_or_else(|| stale_reference(reference))?;
 
         if refreshed.reference != reference {
@@ -265,17 +403,22 @@ impl WorkerState {
 
     fn perform(&mut self, action: &DesktopAction) -> Result<DesktopActionOutcome, CapabilityError> {
         let before = self.target(&action.reference)?;
-        let element = self
+        let cached = self
             .references
             .get(&action.reference)
-            .ok_or_else(|| stale_reference(&action.reference))?
-            .element
-            .clone();
+            .ok_or_else(|| stale_reference(&action.reference))?;
+        let element = cached.element.clone();
+        let cached_list_parent_hwnd = cached.list_parent_hwnd;
 
-        let (verified, delta) =
-            execute_semantic_action(&self.automation, &self.walker, &element, action)?;
+        let (verified, delta) = execute_semantic_action(
+            &self.automation,
+            &self.walker,
+            &element,
+            cached_list_parent_hwnd,
+            action,
+        )?;
 
-        let target = self.target(&action.reference).unwrap_or(before);
+        let target = self.refresh_target(&action.reference).unwrap_or(before);
         Ok(DesktopActionOutcome {
             target,
             verified,
@@ -290,276 +433,645 @@ impl WorkerState {
     }
 }
 
-fn execute_semantic_action(
-    automation: &UIAutomation,
-    walker: &UITreeWalker,
+fn element_identity(
     element: &UIElement,
-    action: &DesktopAction,
-) -> Result<(bool, serde_json::Value), CapabilityError> {
-    match action.kind {
-        DesktopActionKind::Invoke => execute_invoke(element),
-        DesktopActionKind::SetValue => execute_set_value(element, action),
-        DesktopActionKind::Select => execute_select(automation, walker, element),
-        DesktopActionKind::Toggle => execute_toggle(element),
-        DesktopActionKind::Expand => execute_expand(element),
-        DesktopActionKind::Collapse => execute_collapse(element),
+    obs: &ElementObservation<'_>,
+    automation_id: &str,
+    class_name: &str,
+) -> ElementIdentity {
+    match element.get_runtime_id() {
+        Ok(runtime_id) if !runtime_id.is_empty() => ElementIdentity::RuntimeId {
+            process_id: obs.process_id,
+            runtime_id,
+        },
+        _ => ElementIdentity::Structural {
+            process_id: obs.process_id,
+            parent_reference: obs.parent_reference.map(str::to_owned),
+            native_hwnd: obs.native_hwnd_addr,
+            sibling_index: obs.sibling_index,
+            automation_id: automation_id.to_owned(),
+            class_name: class_name.to_owned(),
+            control_type_id: obs.control_type.as_i32(),
+        },
     }
 }
 
-fn execute_invoke(element: &UIElement) -> Result<(bool, serde_json::Value), CapabilityError> {
-    let pattern = element
-        .get_pattern::<UIInvokePattern>()
-        .map_err(|error| uia_action_error(&error))?;
-
-    if try_background_native_invoke(element)? {
-        return Ok((
-            false,
-            json!({
-                "action": "invoke",
-                "transport": "native_button_message",
-            }),
-        ));
-    }
-
-    if !element.has_keyboard_focus().unwrap_or(false) {
-        return Err(CapabilityError {
-            code: ErrorCode::ActionUnverified,
-            message:
-                "background-safe invoke is unavailable for this unfocused control".into(),
-            recovery_hint: Some(
-                "use a provider-native background invocation path or an explicitly authorized foreground lease"
-                    .into(),
-            ),
-            details: serde_json::json!({}),
-        });
-    }
-
-    pattern.invoke().map_err(|error| uia_action_error(&error))?;
-    Ok((
-        false,
-        json!({
-            "action": "invoke",
-            "transport": "uia_invoke_pattern_already_focused",
-        }),
-    ))
+fn should_query_legacy_in_snapshot(obs: &ElementObservation<'_>) -> bool {
+    let is_native_button = obs.hwnd_meta.as_ref().is_some_and(|meta| {
+        meta.process_id == obs.process_id
+            && classify_native_window_class(&meta.class_name) == NativeWindowKind::Button
+    });
+    let is_native_list_item = obs.list_parent.is_some()
+        && obs.hwnd_meta.is_none()
+        && obs.control_type != SemanticControlType::ScrollBar;
+    is_native_button || is_native_list_item
 }
 
-fn try_background_native_invoke(element: &UIElement) -> Result<bool, CapabilityError> {
-    let role = element.get_localized_control_type().unwrap_or_default();
-    if !role.eq_ignore_ascii_case("button") {
-        return Ok(false);
-    }
+fn read_legacy_role_and_state(element: &UIElement) -> (Option<u32>, Option<u32>) {
+    let Ok(legacy) = element.get_pattern::<UILegacyIAccessiblePattern>() else {
+        return (None, None);
+    };
+    (legacy.get_role().ok(), legacy.get_state().ok())
+}
 
+fn element_native_hwnd(element: &UIElement) -> usize {
     let Ok(handle) = element.get_native_window_handle() else {
-        return Ok(false);
+        return 0;
     };
     let raw: isize = handle.into();
-    if raw == 0 {
-        return Ok(false);
-    }
+    usize::from_ne_bytes(raw.to_ne_bytes())
+}
 
-    let hwnd = raw as windows_win::sys::HWND;
-    windows_win::raw::window::send_push_button(hwnd, Some(1_000)).map_err(|error| {
-        CapabilityError {
-            code: ErrorCode::ActionUnverified,
-            message: format!("background-safe native invoke failed: {error}"),
-            recovery_hint: Some("take a fresh desktop snapshot and retry semantically".into()),
-            details: serde_json::json!({}),
+fn element_control_type(element: &UIElement) -> SemanticControlType {
+    element.get_control_type().map_or(
+        SemanticControlType::Other(0),
+        |control_type: ControlType| {
+            SemanticControlType::from_uia_control_type_id(control_type as i32)
+        },
+    )
+}
+
+fn collect_hwnd_map() -> HashMap<usize, NativeHwndMeta> {
+    let mut map = HashMap::new();
+    let _ = EnumWindows(|top: HWND| -> bool {
+        if map.len() >= MAX_HWND_MAP_ENTRIES {
+            return true;
         }
-    })?;
-    Ok(true)
+        record_hwnd_meta(&top, &mut map);
+        top.EnumChildWindows(|child: HWND| -> bool {
+            if map.len() >= MAX_HWND_MAP_ENTRIES {
+                return false;
+            }
+            record_hwnd_meta(&child, &mut map);
+            true
+        });
+        true
+    });
+    map
 }
 
-fn execute_set_value(
-    element: &UIElement,
-    action: &DesktopAction,
-) -> Result<(bool, serde_json::Value), CapabilityError> {
-    let value = action
-        .value
-        .as_deref()
-        .ok_or_else(|| invalid_arguments("set_value requires value"))?;
-    let pattern = element
-        .get_pattern::<UIValuePattern>()
-        .map_err(|error| uia_action_error(&error))?;
-
-    if pattern.is_readonly().unwrap_or(false) {
-        return Err(CapabilityError {
-            code: ErrorCode::PermissionDenied,
-            message: "desktop value target is read-only".into(),
-            recovery_hint: None,
-            details: serde_json::json!({}),
-        });
+fn record_hwnd_meta(hwnd: &HWND, map: &mut HashMap<usize, NativeHwndMeta>) {
+    let addr = hwnd.ptr().expose_provenance();
+    if addr == 0 {
+        return;
     }
-
-    if try_background_native_set_value(element, value)? {
-        let persisted = pattern.get_value().is_ok_and(|current| current == value);
-        return Ok((
-            persisted,
-            json!({
-                "action": "set_value",
-                "value_persisted": persisted,
-                "transport": "native_window_message",
-            }),
-        ));
-    }
-
-    if !element.has_keyboard_focus().unwrap_or(false) {
-        return Err(CapabilityError {
-            code: ErrorCode::ActionUnverified,
-            message:
-                "background-safe value mutation is unavailable for this unfocused control".into(),
-            recovery_hint: Some(
-                "use a provider-native background mutation path or an explicitly authorized foreground lease"
-                    .into(),
-            ),
-            details: serde_json::json!({}),
-        });
-    }
-
-    pattern
-        .set_value(value)
-        .map_err(|error| uia_action_error(&error))?;
-    let persisted = pattern.get_value().is_ok_and(|current| current == value);
-    Ok((
-        persisted,
-        json!({
-            "action": "set_value",
-            "value_persisted": persisted,
-            "transport": "uia_value_pattern_already_focused",
-        }),
-    ))
+    map.entry(addr).or_insert_with(|| {
+        let (_, process_id) = hwnd.GetWindowThreadProcessId();
+        read_hwnd_meta(hwnd, addr, process_id)
+    });
 }
 
-fn try_background_native_set_value(
-    element: &UIElement,
-    value: &str,
-) -> Result<bool, CapabilityError> {
-    let Ok(handle) = element.get_native_window_handle() else {
-        return Ok(false);
-    };
-    let raw: isize = handle.into();
-    if raw == 0 {
-        return Ok(false);
+fn read_hwnd_meta(hwnd: &HWND, addr: usize, process_id: u32) -> NativeHwndMeta {
+    let class_name = hwnd
+        .RealGetWindowClass()
+        .ok()
+        .filter(|name| !name.trim().is_empty())
+        .or_else(|| hwnd.GetClassName().ok())
+        .unwrap_or_default();
+    let style_bytes = hwnd.GetWindowLongPtr(co::GWLP::STYLE).to_le_bytes();
+    let style = u32::from_le_bytes([
+        style_bytes[0],
+        style_bytes[1],
+        style_bytes[2],
+        style_bytes[3],
+    ]);
+
+    NativeHwndMeta {
+        addr,
+        process_id,
+        class_name,
+        style,
+        valid_window: hwnd.IsWindow(),
+        window_enabled: hwnd.IsWindowEnabled(),
+    }
+}
+
+fn lookup_hwnd_meta(addr: usize, expected_pid: u32) -> Option<NativeHwndMeta> {
+    if addr == 0 {
+        return None;
+    }
+    with_verified_pid_hwnd(addr, expected_pid, |hwnd| {
+        Ok(read_hwnd_meta(hwnd, addr, expected_pid))
+    })
+    .ok()
+}
+
+fn with_verified_pid_hwnd<T, F>(
+    target_addr: usize,
+    expected_pid: u32,
+    mut op: F,
+) -> Result<T, CapabilityError>
+where
+    F: FnMut(&HWND) -> Result<T, CapabilityError>,
+{
+    if target_addr == 0 {
+        return Err(action_unverified("native window handle is null"));
     }
 
-    let hwnd = raw as windows_win::sys::HWND;
-    if windows_win::raw::window::send_set_text(hwnd, value) {
-        Ok(true)
+    let mut outcome: Option<Result<T, CapabilityError>> = None;
+    let enum_res = EnumWindows(|top: HWND| -> bool {
+        if outcome.is_some() {
+            return true;
+        }
+        if top.ptr().expose_provenance() == target_addr {
+            outcome = Some(run_verified_hwnd_op(&top, expected_pid, &mut op));
+            return true;
+        }
+
+        top.EnumChildWindows(|child: HWND| -> bool {
+            if outcome.is_some() {
+                return false;
+            }
+            if child.ptr().expose_provenance() == target_addr {
+                outcome = Some(run_verified_hwnd_op(&child, expected_pid, &mut op));
+                return false;
+            }
+            true
+        });
+        true
+    });
+
+    if let Some(res) = outcome {
+        res
+    } else if let Err(error) = enum_res {
+        Err(action_unverified(format!(
+            "failed to verify native window handle ownership: {error}"
+        )))
     } else {
-        Err(CapabilityError {
-            code: ErrorCode::ActionUnverified,
-            message: "background-safe native value mutation failed".into(),
-            recovery_hint: Some("take a fresh desktop snapshot and retry semantically".into()),
-            details: serde_json::json!({}),
-        })
+        Err(action_unverified(
+            "native window handle is no longer present in desktop hierarchy",
+        ))
     }
 }
 
-fn execute_select(
-    automation: &UIAutomation,
-    walker: &UITreeWalker,
-    element: &UIElement,
-) -> Result<(bool, serde_json::Value), CapabilityError> {
-    let pattern = element
-        .get_pattern::<UISelectionItemPattern>()
-        .map_err(|error| uia_action_error(&error))?;
-
-    if try_background_native_select(automation, walker, element)? {
-        let selected = pattern.is_selected().unwrap_or(false);
-        return Ok((
-            selected,
-            json!({
-                "action": "select",
-                "selected": selected,
-                "transport": "native_listbox_message",
-            }),
+fn run_verified_hwnd_op<T, F>(
+    hwnd: &HWND,
+    expected_pid: u32,
+    op: &mut F,
+) -> Result<T, CapabilityError>
+where
+    F: FnMut(&HWND) -> Result<T, CapabilityError>,
+{
+    let (_, pid) = hwnd.GetWindowThreadProcessId();
+    if pid != expected_pid {
+        return Err(action_unverified(
+            "native window handle belongs to a different process",
         ));
     }
-
-    if !element.has_keyboard_focus().unwrap_or(false) {
-        return Err(CapabilityError {
-            code: ErrorCode::ActionUnverified,
-            message:
-                "background-safe selection is unavailable for this unfocused control".into(),
-            recovery_hint: Some(
-                "use a provider-native background selection path or an explicitly authorized foreground lease"
-                    .into(),
-            ),
-            details: serde_json::json!({}),
-        });
+    if !hwnd.IsWindow() {
+        return Err(action_unverified("native window handle is no longer valid"));
     }
-
-    pattern.select().map_err(|error| uia_action_error(&error))?;
-    let selected = pattern.is_selected().unwrap_or(false);
-    Ok((
-        selected,
-        json!({
-            "action": "select",
-            "selected": selected,
-            "transport": "uia_selection_pattern_already_focused",
-        }),
-    ))
+    op(hwnd)
 }
 
-fn try_background_native_select(
+fn resolve_live_list_parent(
     automation: &UIAutomation,
     walker: &UITreeWalker,
     element: &UIElement,
-) -> Result<bool, CapabilityError> {
-    const LB_SETCURSEL: windows_win::sys::UINT = 0x0186;
-    const LB_ERR: windows_win::sys::LRESULT = -1;
-
-    let Ok(parent) = walker.get_parent(element) else {
-        return Ok(false);
-    };
-    let parent_role = parent.get_localized_control_type().unwrap_or_default();
-    if !parent_role.eq_ignore_ascii_case("list") {
-        return Ok(false);
+    expected_pid: u32,
+    expected_parent_hwnd: Option<usize>,
+) -> Option<NativeListParentMeta> {
+    let parent = walker.get_parent(element).ok()?;
+    if parent.get_process_id().ok()? != expected_pid {
+        return None;
     }
 
-    let Ok(handle) = parent.get_native_window_handle() else {
-        return Ok(false);
-    };
-    let raw: isize = handle.into();
-    if raw == 0 {
-        return Ok(false);
+    let parent_addr = element_native_hwnd(&parent);
+    if parent_addr == 0
+        || expected_parent_hwnd.is_some_and(|expected_addr| expected_addr != parent_addr)
+    {
+        return None;
     }
 
-    let Ok(mut current) = walker.get_first_child(&parent) else {
-        return Ok(false);
-    };
-    let mut index = 0_usize;
-    loop {
+    let parent_meta = lookup_hwnd_meta(parent_addr, expected_pid)?;
+    if classify_native_window_class(&parent_meta.class_name) != NativeWindowKind::ListBox {
+        return None;
+    }
+
+    let mut current = walker.get_first_child(&parent).ok()?;
+    let mut item_index = 0_usize;
+    for _ in 0..MAX_WINDOWS_SNAPSHOT_NODES {
+        let cur_hwnd = element_native_hwnd(&current);
+        let cur_type = element_control_type(&current);
         if automation
             .compare_elements(&current, element)
             .unwrap_or(false)
         {
-            break;
+            if cur_hwnd != 0 || cur_type == SemanticControlType::ScrollBar {
+                return None;
+            }
+            return Some(NativeListParentMeta {
+                hwnd: parent_meta,
+                sibling_index: item_index,
+                item_count: None,
+            });
         }
-        let Ok(next) = walker.get_next_sibling(&current) else {
-            return Ok(false);
-        };
-        current = next;
-        index = index.saturating_add(1);
+        if cur_hwnd == 0 && cur_type != SemanticControlType::ScrollBar {
+            item_index = item_index.saturating_add(1);
+        }
+        current = walker.get_next_sibling(&current).ok()?;
     }
 
-    let hwnd = raw as windows_win::sys::HWND;
-    let result = windows_win::raw::window::send_message(hwnd, LB_SETCURSEL, index, 0, Some(1_000))
-        .map_err(|error| CapabilityError {
-            code: ErrorCode::ActionUnverified,
-            message: format!("background-safe native selection failed: {error}"),
-            recovery_hint: Some("take a fresh desktop snapshot and retry semantically".into()),
-            details: serde_json::json!({}),
-        })?;
-    if result == LB_ERR {
-        return Err(CapabilityError {
-            code: ErrorCode::ActionUnverified,
-            message: "background-safe native selection was rejected by the list control".into(),
-            recovery_hint: Some("take a fresh desktop snapshot and retry semantically".into()),
-            details: serde_json::json!({}),
-        });
+    None
+}
+
+fn build_live_compat_input(
+    automation: &UIAutomation,
+    walker: &UITreeWalker,
+    element: &UIElement,
+    process_id: u32,
+    cached_list_parent_hwnd: Option<usize>,
+) -> (ElementCompatInput, Option<UIValuePattern>) {
+    let value_pattern = element.get_pattern::<UIValuePattern>().ok();
+    let value_is_readonly = value_pattern
+        .as_ref()
+        .and_then(|pattern| pattern.is_readonly().ok());
+    let (legacy_role, legacy_state) = read_legacy_role_and_state(element);
+    let native_hwnd = lookup_hwnd_meta(element_native_hwnd(element), process_id);
+    let mut list_parent = if native_hwnd.is_none() {
+        resolve_live_list_parent(
+            automation,
+            walker,
+            element,
+            process_id,
+            cached_list_parent_hwnd,
+        )
+    } else {
+        None
+    };
+    if let Some(ref mut meta) = list_parent {
+        meta.item_count = lb_get_count(meta.hwnd.addr, process_id);
     }
-    Ok(true)
+
+    let input = ElementCompatInput {
+        process_id,
+        framework_id: element.get_framework_id().unwrap_or_default(),
+        control_type: element_control_type(element),
+        enabled: element.is_enabled().unwrap_or(false),
+        focused: element.has_keyboard_focus().unwrap_or(false),
+        is_password: element.is_password().unwrap_or(false),
+        has_invoke_pattern: element.get_pattern::<UIInvokePattern>().is_ok(),
+        has_value_pattern: value_pattern.is_some(),
+        value_is_readonly,
+        has_selection_item_pattern: element.get_pattern::<UISelectionItemPattern>().is_ok(),
+        has_toggle_pattern: element.get_pattern::<UITogglePattern>().is_ok(),
+        has_expand_collapse_pattern: element.get_pattern::<UIExpandCollapsePattern>().is_ok(),
+        legacy_role,
+        legacy_state,
+        native_hwnd,
+        list_parent,
+    };
+    (input, value_pattern)
+}
+
+fn foreground_process_id() -> Option<u32> {
+    HWND::GetForegroundWindow().and_then(|hwnd| {
+        let (_, process_id) = hwnd.GetWindowThreadProcessId();
+        (process_id != 0).then_some(process_id)
+    })
+}
+
+fn execute_semantic_action(
+    automation: &UIAutomation,
+    walker: &UITreeWalker,
+    element: &UIElement,
+    cached_list_parent_hwnd: Option<usize>,
+    action: &DesktopAction,
+) -> Result<(bool, serde_json::Value), CapabilityError> {
+    let process_id = element
+        .get_process_id()
+        .map_err(|_| stale_reference(&action.reference))?;
+    let (input, value_pattern) = build_live_compat_input(
+        automation,
+        walker,
+        element,
+        process_id,
+        cached_list_parent_hwnd,
+    );
+    let planned = plan_action(&input, action)?;
+
+    let fg_before = foreground_process_id();
+    let target_was_foreground = fg_before == Some(process_id);
+
+    let outcome = dispatch_planned_action(
+        element,
+        process_id,
+        planned,
+        value_pattern.as_ref(),
+        target_was_foreground,
+        fg_before,
+    )?;
+
+    check_focus_preserved(
+        process_id,
+        target_was_foreground,
+        fg_before,
+        foreground_process_id(),
+    )?;
+
+    Ok(outcome)
+}
+
+fn dispatch_planned_action(
+    element: &UIElement,
+    process_id: u32,
+    planned: PlannedAction,
+    value_pattern: Option<&UIValuePattern>,
+    target_was_foreground: bool,
+    fg_before: Option<u32>,
+) -> Result<(bool, serde_json::Value), CapabilityError> {
+    match planned {
+        PlannedAction::NativeEditSetText { hwnd_addr, value } => {
+            wm_set_text(hwnd_addr, process_id, &value)?;
+            check_focus_preserved(
+                process_id,
+                target_was_foreground,
+                fg_before,
+                foreground_process_id(),
+            )?;
+            let observed = wm_get_text(hwnd_addr, process_id)?
+                .or_else(|| value_pattern.and_then(|pattern| pattern.get_value().ok()));
+            verify_set_value_readback(&value, observed.as_deref(), "native_window_message")?;
+            Ok((
+                true,
+                json!({
+                    "action": "set_value",
+                    "value_persisted": true,
+                    "transport": "native_window_message",
+                }),
+            ))
+        }
+        PlannedAction::NativeButtonClick { hwnd_addr } => {
+            native_button_click(hwnd_addr, process_id)?;
+            Ok((
+                false,
+                json!({
+                    "action": "invoke",
+                    "transport": "native_button_message",
+                }),
+            ))
+        }
+        PlannedAction::NativeListBoxSelect {
+            parent_hwnd_addr,
+            index,
+        } => {
+            let observed_index = lb_set_cur_sel(parent_hwnd_addr, process_id, index)?;
+            verify_select_readback(index, observed_index)?;
+            Ok((
+                true,
+                json!({
+                    "action": "select",
+                    "selected": true,
+                    "transport": "native_listbox_message",
+                }),
+            ))
+        }
+        PlannedAction::UiaValuePattern {
+            value,
+            background_unfocused,
+        } => execute_uia_value_pattern(element, value_pattern, &value, background_unfocused),
+        PlannedAction::UiaInvokePattern {
+            background_unfocused,
+        } => execute_uia_invoke_pattern(element, background_unfocused),
+        PlannedAction::UiaSelectionItemPattern {
+            background_unfocused,
+        } => execute_uia_select_pattern(element, background_unfocused),
+        PlannedAction::UiaTogglePattern => execute_toggle(element),
+        PlannedAction::UiaExpandPattern => execute_expand(element),
+        PlannedAction::UiaCollapsePattern => execute_collapse(element),
+    }
+}
+
+fn execute_uia_value_pattern(
+    element: &UIElement,
+    value_pattern: Option<&UIValuePattern>,
+    value: &str,
+    background_unfocused: bool,
+) -> Result<(bool, serde_json::Value), CapabilityError> {
+    let pattern = value_pattern
+        .ok_or_else(|| action_unverified("UI Automation ValuePattern is unavailable"))?;
+    if !background_unfocused && !element.has_keyboard_focus().unwrap_or(false) {
+        return Err(action_unverified(
+            "background-safe value mutation aborted because control lost focus",
+        ));
+    }
+    pattern
+        .set_value(value)
+        .map_err(|error| uia_action_error(&error))?;
+    let transport = if background_unfocused {
+        "uia_value_pattern_background"
+    } else {
+        "uia_value_pattern_already_focused"
+    };
+    let observed = pattern.get_value().ok();
+    verify_set_value_readback(value, observed.as_deref(), transport)?;
+    Ok((
+        true,
+        json!({
+            "action": "set_value",
+            "value_persisted": true,
+            "transport": transport,
+        }),
+    ))
+}
+
+fn execute_uia_invoke_pattern(
+    element: &UIElement,
+    background_unfocused: bool,
+) -> Result<(bool, serde_json::Value), CapabilityError> {
+    let pattern = element
+        .get_pattern::<UIInvokePattern>()
+        .map_err(|error| uia_action_error(&error))?;
+    if !background_unfocused && !element.has_keyboard_focus().unwrap_or(false) {
+        return Err(action_unverified(
+            "background-safe invoke aborted because control lost focus",
+        ));
+    }
+    pattern.invoke().map_err(|error| uia_action_error(&error))?;
+    let transport = if background_unfocused {
+        "uia_invoke_pattern_background"
+    } else {
+        "uia_invoke_pattern_already_focused"
+    };
+    Ok((
+        false,
+        json!({
+            "action": "invoke",
+            "transport": transport,
+        }),
+    ))
+}
+
+fn execute_uia_select_pattern(
+    element: &UIElement,
+    background_unfocused: bool,
+) -> Result<(bool, serde_json::Value), CapabilityError> {
+    let pattern = element
+        .get_pattern::<UISelectionItemPattern>()
+        .map_err(|error| uia_action_error(&error))?;
+    if !background_unfocused && !element.has_keyboard_focus().unwrap_or(false) {
+        return Err(action_unverified(
+            "background-safe selection aborted because control lost focus",
+        ));
+    }
+    pattern.select().map_err(|error| uia_action_error(&error))?;
+    if !pattern.is_selected().unwrap_or(false) {
+        return Err(action_unverified(
+            "desktop UIA selection could not be verified by post-action readback",
+        ));
+    }
+    let transport = if background_unfocused {
+        "uia_selection_pattern_background"
+    } else {
+        "uia_selection_pattern_already_focused"
+    };
+    Ok((
+        true,
+        json!({
+            "action": "select",
+            "selected": true,
+            "transport": transport,
+        }),
+    ))
+}
+
+fn wm_set_text(hwnd_addr: usize, expected_pid: u32, value: &str) -> Result<(), CapabilityError> {
+    with_verified_pid_hwnd(hwnd_addr, expected_pid, |hwnd| {
+        let utf16: Vec<u16> = value.encode_utf16().chain(std::iter::once(0)).collect();
+        let lparam = LPARAM::from_ne_bytes(utf16.as_ptr().expose_provenance().to_ne_bytes());
+        let result = send_message(
+            hwnd.ptr(),
+            WM_SETTEXT,
+            0,
+            lparam,
+            Some(NATIVE_MESSAGE_TIMEOUT_MS),
+        )
+        .map_err(|error| {
+            action_unverified(format!(
+                "background-safe native value mutation failed: {error}"
+            ))
+        })?;
+        drop(utf16);
+        if result == 0 {
+            return Err(action_unverified(
+                "background-safe native value mutation was rejected by window",
+            ));
+        }
+        Ok(())
+    })
+}
+
+fn wm_get_text(hwnd_addr: usize, expected_pid: u32) -> Result<Option<String>, CapabilityError> {
+    with_verified_pid_hwnd(hwnd_addr, expected_pid, |hwnd| {
+        let len_result = send_message(
+            hwnd.ptr(),
+            WM_GETTEXTLENGTH,
+            0,
+            0,
+            Some(NATIVE_MESSAGE_TIMEOUT_MS),
+        )
+        .map_err(|error| {
+            action_unverified(format!(
+                "background-safe native text length query failed: {error}"
+            ))
+        })?;
+        let Ok(len) = usize::try_from(len_result) else {
+            return Ok(None);
+        };
+        if len == 0 {
+            return Ok(Some(String::new()));
+        }
+        if len > MAX_NATIVE_READBACK_CHARS {
+            return Err(action_unverified(format!(
+                "native control text length {len} exceeds readback bound {MAX_NATIVE_READBACK_CHARS}"
+            )));
+        }
+        let buf_len: WPARAM = len + 1;
+        let mut buffer = vec![0_u16; buf_len];
+        let lparam = LPARAM::from_ne_bytes(buffer.as_mut_ptr().expose_provenance().to_ne_bytes());
+        let copied_result = send_message(
+            hwnd.ptr(),
+            WM_GETTEXT,
+            buf_len,
+            lparam,
+            Some(NATIVE_MESSAGE_TIMEOUT_MS),
+        )
+        .map_err(|error| {
+            action_unverified(format!(
+                "background-safe native text readback failed: {error}"
+            ))
+        })?;
+        let Ok(copied) = usize::try_from(copied_result) else {
+            return Ok(None);
+        };
+        let valid_len = copied.min(len);
+        Ok(String::from_utf16(&buffer[..valid_len]).ok())
+    })
+}
+
+fn native_button_click(hwnd_addr: usize, expected_pid: u32) -> Result<(), CapabilityError> {
+    with_verified_pid_hwnd(hwnd_addr, expected_pid, |hwnd| {
+        send_push_button(hwnd.ptr(), Some(NATIVE_MESSAGE_TIMEOUT_MS)).map_err(|error| {
+            action_unverified(format!("background-safe native invoke failed: {error}"))
+        })?;
+        Ok(())
+    })
+}
+
+fn lb_get_count(hwnd_addr: usize, expected_pid: u32) -> Option<usize> {
+    with_verified_pid_hwnd(hwnd_addr, expected_pid, |hwnd| {
+        let count_res = send_message(
+            hwnd.ptr(),
+            LB_GETCOUNT,
+            0,
+            0,
+            Some(NATIVE_MESSAGE_TIMEOUT_MS),
+        )
+        .map_err(|error| {
+            action_unverified(format!(
+                "background-safe native list count query failed: {error}"
+            ))
+        })?;
+        Ok(usize::try_from(count_res).ok())
+    })
+    .ok()
+    .flatten()
+}
+
+fn lb_set_cur_sel(
+    hwnd_addr: usize,
+    expected_pid: u32,
+    index: usize,
+) -> Result<LRESULT, CapabilityError> {
+    with_verified_pid_hwnd(hwnd_addr, expected_pid, |hwnd| {
+        let result = send_message(
+            hwnd.ptr(),
+            LB_SETCURSEL,
+            index,
+            0,
+            Some(NATIVE_MESSAGE_TIMEOUT_MS),
+        )
+        .map_err(|error| {
+            action_unverified(format!("background-safe native selection failed: {error}"))
+        })?;
+        if result == LB_ERR {
+            return Err(action_unverified(
+                "background-safe native selection was rejected by the list control",
+            ));
+        }
+        send_message(
+            hwnd.ptr(),
+            LB_GETCURSEL,
+            0,
+            0,
+            Some(NATIVE_MESSAGE_TIMEOUT_MS),
+        )
+        .map_err(|error| {
+            action_unverified(format!(
+                "background-safe native selection readback failed: {error}"
+            ))
+        })
+    })
 }
 
 fn execute_toggle(element: &UIElement) -> Result<(bool, serde_json::Value), CapabilityError> {
@@ -732,26 +1244,6 @@ impl Drop for WindowsUiaBackend {
     }
 }
 
-fn supported_patterns(element: &UIElement) -> Vec<DesktopPattern> {
-    let mut patterns = Vec::with_capacity(5);
-    if element.get_pattern::<UIInvokePattern>().is_ok() {
-        patterns.push(DesktopPattern::Invoke);
-    }
-    if element.get_pattern::<UIValuePattern>().is_ok() {
-        patterns.push(DesktopPattern::Value);
-    }
-    if element.get_pattern::<UISelectionItemPattern>().is_ok() {
-        patterns.push(DesktopPattern::Selection);
-    }
-    if element.get_pattern::<UITogglePattern>().is_ok() {
-        patterns.push(DesktopPattern::Toggle);
-    }
-    if element.get_pattern::<UIExpandCollapsePattern>().is_ok() {
-        patterns.push(DesktopPattern::ExpandCollapse);
-    }
-    patterns
-}
-
 fn non_empty(value: String) -> Option<String> {
     (!value.is_empty()).then_some(value)
 }
@@ -761,9 +1253,15 @@ fn uia_provider_error(error: &uiautomation::Error) -> CapabilityError {
 }
 
 fn uia_action_error(error: &uiautomation::Error) -> CapabilityError {
+    action_unverified(format!(
+        "Windows UI Automation semantic action failed: {error}"
+    ))
+}
+
+fn action_unverified(message: impl Into<String>) -> CapabilityError {
     CapabilityError {
         code: ErrorCode::ActionUnverified,
-        message: format!("Windows UI Automation semantic action failed: {error}"),
+        message: message.into(),
         recovery_hint: Some("take a fresh desktop snapshot and retry semantically".into()),
         details: serde_json::json!({}),
     }
@@ -783,15 +1281,6 @@ fn disconnected_worker() -> CapabilityError {
         code: ErrorCode::Disconnected,
         message: "Windows UI Automation worker is disconnected".into(),
         recovery_hint: Some("restart the local Tetherplane agent".into()),
-        details: serde_json::json!({}),
-    }
-}
-
-fn invalid_arguments(message: &str) -> CapabilityError {
-    CapabilityError {
-        code: ErrorCode::InvalidArguments,
-        message: message.to_owned(),
-        recovery_hint: None,
         details: serde_json::json!({}),
     }
 }

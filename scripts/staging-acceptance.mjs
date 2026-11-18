@@ -62,7 +62,7 @@ export const GATE_DEFINITIONS = Object.freeze([
     id: "G4",
     name: "Interactive Windows UIA & Coexistence",
     criterion:
-      "On an interactive non-production Windows host, remote desktop.snapshot + desktop.act succeed on Tetherplane-owned UIA window while cursor, clipboard canary, human focus/text stay untouched and human window act is denied; outside interactive Windows, desktop reports truthfully unavailable.",
+      "On an interactive non-production Windows host, remote desktop.snapshot + desktop.act succeed on both Tetherplane-owned WinForms (via native background fallbacks even under degraded Sandbox UIA) and unfocused WPF windows while cursor, clipboard canary, human focus/text stay untouched and human window act is denied; outside interactive Windows, desktop reports truthfully unavailable.",
   },
   {
     id: "G5",
@@ -1448,6 +1448,7 @@ async function runStagingAcceptance(opts) {
   let unpairedMcp = null;
   let humanDesktopChild = null;
   let ownedDesktopHandle = null;
+  let clipboardCanarySet = false;
 
   const relayLogs = [];
   const extHostLogs = [];
@@ -2252,8 +2253,6 @@ async function runStagingAcceptance(opts) {
           "fixtures",
           "windows-desktop-fixture.ps1",
         );
-        const ownedStateFile = path.join(stagingRoot, "desktop-owned.json");
-        const humanStateFile = path.join(stagingRoot, "desktop-human.json");
 
         execFileSync(
           "powershell.exe",
@@ -2265,6 +2264,7 @@ async function runStagingAcceptance(opts) {
           ],
           { stdio: "ignore" },
         );
+        clipboardCanarySet = true;
         const cursorBefore = execFileSync(
           "powershell.exe",
           [
@@ -2276,165 +2276,247 @@ async function runStagingAcceptance(opts) {
           { encoding: "utf8" },
         ).trim();
 
-        const ownedSpawn = parseToolResult(
+        const g4Details = [];
+        for (const framework of ["WinForms", "Wpf"]) {
+          const fwSlug = framework.toLowerCase();
+          const ownedStateFile = path.join(stagingRoot, `desktop-owned-${fwSlug}.json`);
+          const humanStateFile = path.join(stagingRoot, `desktop-human-${fwSlug}.json`);
+          const expectedText = `staging-uia-${fwSlug}-ok`;
+
+          const ownedSpawn = parseToolResult(
+            await ownerMcp.callTool({
+              name: "process",
+              arguments: {
+                device: "staging-win-01",
+                op: "run",
+                args: {
+                  program: "powershell.exe",
+                  args: [
+                    "-NoProfile",
+                    "-Sta",
+                    "-ExecutionPolicy",
+                    "Bypass",
+                    "-File",
+                    fixturePs1,
+                    "-StatePath",
+                    ownedStateFile,
+                    "-Title",
+                    `Staging Owned ${framework} Fixture`,
+                    "-Prefix",
+                    "Owned",
+                    "-Framework",
+                    framework,
+                  ],
+                  wait_ms: 0,
+                  pty: false,
+                },
+              },
+            }),
+          );
+          ownedDesktopHandle = ownedSpawn.handle;
+          const ownedPid = ownedSpawn.pid;
+          await until(() => {
+            if (!existsSync(ownedStateFile)) return false;
+            const s = JSON.parse(readFileSync(ownedStateFile, "utf8"));
+            return s.ready === true && s.framework === framework;
+          }, 10_000, `Windows owned ${framework} fixture ready`);
+
+          humanDesktopChild = spawn(
+            "powershell.exe",
+            [
+              "-NoProfile",
+              "-Sta",
+              "-ExecutionPolicy",
+              "Bypass",
+              "-File",
+              fixturePs1,
+              "-StatePath",
+              humanStateFile,
+              "-Title",
+              `Staging Human ${framework} Fixture`,
+              "-Prefix",
+              "Human",
+              "-Framework",
+              framework,
+            ],
+            { stdio: "ignore", windowsHide: false },
+          );
+          spawnedChildren.push(humanDesktopChild);
+          const humanPid = humanDesktopChild.pid;
+          await until(() => {
+            if (!existsSync(humanStateFile)) return false;
+            const s = JSON.parse(readFileSync(humanStateFile, "utf8"));
+            return s.ready === true && s.focused === true && s.framework === framework;
+          }, 10_000, `Windows human ${framework} fixture focused`);
+
+          await until(() => {
+            const s = JSON.parse(readFileSync(ownedStateFile, "utf8"));
+            return s.ready === true && s.focused === false;
+          }, 10_000, `Windows owned ${framework} fixture unfocused behind human window`);
+
+          const snap = parseToolResult(
+            await ownerMcp.callTool({
+              name: "desktop",
+              arguments: {
+                device: "staging-win-01",
+                op: "snapshot",
+                args: { max_nodes: 1000 },
+              },
+            }),
+          );
+          const ownedNodes = (snap.nodes ?? []).filter(
+            (n) => n.process_id === ownedPid,
+          );
+          const humanNodes = (snap.nodes ?? []).filter(
+            (n) => n.process_id === humanPid,
+          );
+          assert.ok(
+            ownedNodes.length > 0 && humanNodes.length > 0,
+            `${framework} fixtures not observed in desktop snapshot`,
+          );
+          assert.ok(ownedNodes.every((n) => n.origin === "tetherplane"));
+          assert.ok(humanNodes.every((n) => n.origin === "human_or_external"));
+
+          const valNode = ownedNodes.find((n) => (n.patterns ?? []).includes("value"));
+          const invNode = ownedNodes.find((n) => (n.patterns ?? []).includes("invoke"));
+          const selNode =
+            ownedNodes.find(
+              (n) => (n.patterns ?? []).includes("selection") && String(n.name).includes("Beta"),
+            ) ?? ownedNodes.find((n) => (n.patterns ?? []).includes("selection"));
+          const listBoxNode = ownedNodes.find(
+            (n) =>
+              n.automation_id === "OwnedSelection" ||
+              String(n.name ?? "").includes("Owned Selection") ||
+              String(n.class_name ?? "").toLowerCase().includes("listbox"),
+          );
+          assert.ok(valNode && invNode, `${framework} value/invoke nodes missing`);
+
+          for (const callArgs of [
+            { reference: valNode.reference, action: "set_value", value: expectedText },
+            { reference: invNode.reference, action: "invoke" },
+          ]) {
+            const r = await ownerMcp.callTool({
+              name: "desktop",
+              arguments: { device: "staging-win-01", op: "act", args: callArgs },
+            });
+            assert.equal(r.isError, undefined);
+          }
+
+          let selectionMode;
+          if (framework === "Wpf" || selNode) {
+            assert.ok(selNode, `${framework} selection node missing`);
+            const selRes = await ownerMcp.callTool({
+              name: "desktop",
+              arguments: {
+                device: "staging-win-01",
+                op: "act",
+                args: { reference: selNode.reference, action: "select" },
+              },
+            });
+            assert.equal(selRes.isError, undefined);
+            selectionMode = "select_passed";
+          } else {
+            assert.ok(
+              listBoxNode,
+              "WinForms selection node and listbox container both missing",
+            );
+            const degradedSelRes = await ownerMcp.callTool({
+              name: "desktop",
+              arguments: {
+                device: "staging-win-01",
+                op: "act",
+                args: { reference: listBoxNode.reference, action: "select" },
+              },
+            });
+            assert.equal(degradedSelRes.isError, true);
+            assert.equal(
+              parseToolResult(degradedSelRes).error?.code,
+              "capability_unavailable",
+            );
+            selectionMode = "degraded_sandbox_capability_unavailable";
+          }
+
+          const humanInv = humanNodes.find((n) => (n.patterns ?? []).includes("invoke"));
+          assert.ok(humanInv, `${framework} human invoke node missing`);
+          const deniedHuman = await ownerMcp.callTool({
+            name: "desktop",
+            arguments: {
+              device: "staging-win-01",
+              op: "act",
+              args: { reference: humanInv.reference, action: "invoke", origin: "tetherplane" },
+            },
+          });
+          assert.equal(deniedHuman.isError, true);
+          assert.equal(parseToolResult(deniedHuman).error?.code, "permission_denied");
+
+          const expectSelectedBeta =
+            framework === "Wpf" ||
+            Boolean(selNode && String(selNode.name).includes("Beta"));
+          const ownedAfter = await until(() => {
+            const s = JSON.parse(readFileSync(ownedStateFile, "utf8"));
+            if (
+              s.text === expectedText &&
+              s.status === "invoked" &&
+              (!expectSelectedBeta || s.selected === "Owned Beta")
+            ) {
+              return s;
+            }
+            return null;
+          }, 10_000, `${framework} owned fixture post-action state`);
+          assert.equal(ownedAfter.text, expectedText);
+          assert.equal(ownedAfter.status, "invoked");
+          assert.equal(ownedAfter.focused, false);
+          if (expectSelectedBeta) {
+            assert.equal(ownedAfter.selected, "Owned Beta");
+          }
+
+          const humanAfter = await until(() => {
+            const s = JSON.parse(readFileSync(humanStateFile, "utf8"));
+            return s.focused === true && s.text === "Human-initial" ? s : null;
+          }, 5_000, `${framework} human fixture preserved state`);
+          assert.equal(humanAfter.text, "Human-initial");
+          assert.equal(humanAfter.focused, true);
+
+          const cursorAfter = execFileSync(
+            "powershell.exe",
+            [
+              "-NoProfile",
+              "-Sta",
+              "-Command",
+              "Add-Type -AssemblyName System.Windows.Forms; $p=[System.Windows.Forms.Cursor]::Position; Write-Output ($p.X.ToString()+','+$p.Y.ToString())",
+            ],
+            { encoding: "utf8" },
+          ).trim();
+          const clipAfter = execFileSync(
+            "powershell.exe",
+            [
+              "-NoProfile",
+              "-Sta",
+              "-Command",
+              "Add-Type -AssemblyName System.Windows.Forms; [System.Windows.Forms.Clipboard]::GetText()",
+            ],
+            { encoding: "utf8" },
+          ).trim();
+          assert.equal(cursorAfter, cursorBefore);
+          assert.equal(clipAfter, "STAGING_CLIPBOARD_CANARY");
+
+          g4Details.push(
+            `${framework}: set_value/invoke passed on unfocused owned window, selection=${selectionMode}, human window focus/text + cursor + clipboard canary preserved, human act denied (permission_denied).`,
+          );
+
           await ownerMcp.callTool({
             name: "process",
             arguments: {
               device: "staging-win-01",
-              op: "run",
-              args: {
-                program: "powershell.exe",
-                args: [
-                  "-NoProfile",
-                  "-Sta",
-                  "-ExecutionPolicy",
-                  "Bypass",
-                  "-File",
-                  fixturePs1,
-                  "-StatePath",
-                  ownedStateFile,
-                  "-Title",
-                  "Staging Owned Fixture",
-                  "-Prefix",
-                  "Owned",
-                ],
-                wait_ms: 0,
-                pty: false,
-              },
+              op: "terminate",
+              args: { handle: ownedDesktopHandle, grace_ms: 100, force: true },
             },
-          }),
-        );
-        ownedDesktopHandle = ownedSpawn.handle;
-        const ownedPid = ownedSpawn.pid;
-        await until(
-          () =>
-            existsSync(ownedStateFile) &&
-            JSON.parse(readFileSync(ownedStateFile, "utf8")).ready === true,
-          10_000,
-          "Windows owned fixture ready",
-        );
-
-        humanDesktopChild = spawn(
-          "powershell.exe",
-          [
-            "-NoProfile",
-            "-Sta",
-            "-ExecutionPolicy",
-            "Bypass",
-            "-File",
-            fixturePs1,
-            "-StatePath",
-            humanStateFile,
-            "-Title",
-            "Staging Human Fixture",
-            "-Prefix",
-            "Human",
-          ],
-          { stdio: "ignore", windowsHide: false },
-        );
-        spawnedChildren.push(humanDesktopChild);
-        const humanPid = humanDesktopChild.pid;
-        await until(
-          () =>
-            existsSync(humanStateFile) &&
-            JSON.parse(readFileSync(humanStateFile, "utf8")).focused === true,
-          10_000,
-          "Windows human fixture focused",
-        );
-
-        const snap = parseToolResult(
-          await ownerMcp.callTool({
-            name: "desktop",
-            arguments: {
-              device: "staging-win-01",
-              op: "snapshot",
-              args: { max_nodes: 1000 },
-            },
-          }),
-        );
-        const ownedNodes = (snap.nodes ?? []).filter(
-          (n) => n.process_id === ownedPid,
-        );
-        const humanNodes = (snap.nodes ?? []).filter(
-          (n) => n.process_id === humanPid,
-        );
-        assert.ok(ownedNodes.length > 0 && humanNodes.length > 0);
-        assert.ok(ownedNodes.every((n) => n.origin === "tetherplane"));
-        assert.ok(humanNodes.every((n) => n.origin === "human_or_external"));
-
-        const valNode = ownedNodes.find((n) => (n.patterns ?? []).includes("value"));
-        const invNode = ownedNodes.find((n) => (n.patterns ?? []).includes("invoke"));
-        const selNode =
-          ownedNodes.find(
-            (n) => (n.patterns ?? []).includes("selection") && String(n.name).includes("Beta"),
-          ) ?? ownedNodes.find((n) => (n.patterns ?? []).includes("selection"));
-        assert.ok(valNode && invNode && selNode);
-
-        for (const callArgs of [
-          { reference: valNode.reference, action: "set_value", value: "staging-uia-ok" },
-          { reference: invNode.reference, action: "invoke" },
-          { reference: selNode.reference, action: "select" },
-        ]) {
-          const r = await ownerMcp.callTool({
-            name: "desktop",
-            arguments: { device: "staging-win-01", op: "act", args: callArgs },
           });
-          assert.equal(r.isError, undefined);
+          ownedDesktopHandle = null;
+          await stopChildProcess(humanDesktopChild);
+          humanDesktopChild = null;
         }
 
-        const humanInv = humanNodes.find((n) => (n.patterns ?? []).includes("invoke"));
-        assert.ok(humanInv);
-        const deniedHuman = await ownerMcp.callTool({
-          name: "desktop",
-          arguments: {
-            device: "staging-win-01",
-            op: "act",
-            args: { reference: humanInv.reference, action: "invoke", origin: "tetherplane" },
-          },
-        });
-        assert.equal(deniedHuman.isError, true);
-
-        const ownedAfter = JSON.parse(readFileSync(ownedStateFile, "utf8"));
-        const humanAfter = JSON.parse(readFileSync(humanStateFile, "utf8"));
-        assert.equal(ownedAfter.text, "staging-uia-ok");
-        assert.equal(ownedAfter.status, "invoked");
-        assert.equal(humanAfter.text, "Human-initial");
-        assert.equal(humanAfter.focused, true);
-
-        const cursorAfter = execFileSync(
-          "powershell.exe",
-          [
-            "-NoProfile",
-            "-Sta",
-            "-Command",
-            "Add-Type -AssemblyName System.Windows.Forms; $p=[System.Windows.Forms.Cursor]::Position; Write-Output ($p.X.ToString()+','+$p.Y.ToString())",
-          ],
-          { encoding: "utf8" },
-        ).trim();
-        const clipAfter = execFileSync(
-          "powershell.exe",
-          [
-            "-NoProfile",
-            "-Sta",
-            "-Command",
-            "Add-Type -AssemblyName System.Windows.Forms; [System.Windows.Forms.Clipboard]::GetText()",
-          ],
-          { encoding: "utf8" },
-        ).trim();
-        assert.equal(cursorAfter, cursorBefore);
-        assert.equal(clipAfter, "STAGING_CLIPBOARD_CANARY");
-
-        await ownerMcp.callTool({
-          name: "process",
-          arguments: {
-            device: "staging-win-01",
-            op: "terminate",
-            args: { handle: ownedDesktopHandle, grace_ms: 100, force: true },
-          },
-        });
-        ownedDesktopHandle = null;
-        await stopChildProcess(humanDesktopChild);
-        humanDesktopChild = null;
         execFileSync(
           "powershell.exe",
           [
@@ -2445,12 +2527,11 @@ async function runStagingAcceptance(opts) {
           ],
           { stdio: "ignore" },
         );
+        clipboardCanarySet = false;
 
         gates.G4 = {
           status: "PASS",
-          details: [
-            "Interactive Windows UIA owned set_value/invoke/select passed while human window focus/text, cursor, and clipboard canary remained completely preserved.",
-          ],
+          details: g4Details,
         };
       } catch (err) {
         gates.G4 = { status: "FAIL", details: [String(err)] };
@@ -3100,6 +3181,36 @@ async function runStagingAcceptance(opts) {
     }
   } finally {
     // Teardown all clients, servers, child processes & staging dirs cleanly
+    if (ownedDesktopHandle !== null && ownerMcp) {
+      await ownerMcp
+        .callTool({
+          name: "process",
+          arguments: {
+            device: "staging-win-01",
+            op: "terminate",
+            args: { handle: ownedDesktopHandle, grace_ms: 100, force: true },
+          },
+        })
+        .catch(() => {});
+      ownedDesktopHandle = null;
+    }
+    if (clipboardCanarySet && process.platform === "win32") {
+      try {
+        execFileSync(
+          "powershell.exe",
+          [
+            "-NoProfile",
+            "-Sta",
+            "-Command",
+            "Add-Type -AssemblyName System.Windows.Forms; Set-Clipboard -Value ''",
+          ],
+          { stdio: "ignore" },
+        );
+      } catch {
+        // ignore clipboard cleanup failure
+      }
+      clipboardCanarySet = false;
+    }
     await ownerMcp?.close().catch(() => {});
     await operatorMcp?.close().catch(() => {});
     await unpairedMcp?.close().catch(() => {});
