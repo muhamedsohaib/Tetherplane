@@ -17,6 +17,7 @@ foreach ($framework in @('WinForms', 'Wpf')) {
     $fixture + '" -StatePath "' + $state +
     '" -Title "Nonvisible G4 preflight" -Prefix Owned -Framework ' + $framework +
     ' -InitializeOnly'
+  $psi.RedirectStandardInput = $true  # Match tetherd process.run piped stdin; keep the pipe open.
   $psi.RedirectStandardOutput = $true
   $psi.RedirectStandardError = $true
   $psi.UseShellExecute = $false
