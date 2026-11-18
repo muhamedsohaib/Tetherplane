@@ -108,6 +108,26 @@ function findPattern(
   return node;
 }
 
+async function stopSpawnedFixture(child: ChildProcess): Promise<boolean> {
+  if (child.exitCode !== null || child.signalCode !== null) return true;
+
+  const waitForExit = new Promise<boolean>((resolve) => {
+    const timer = setTimeout(() => {
+      child.off("exit", onExit);
+      resolve(false);
+    }, 5_000);
+    const onExit = () => {
+      clearTimeout(timer);
+      resolve(true);
+    };
+    child.once("exit", onExit);
+  });
+  // Windows child.kill() requests process termination, but the event is
+  // asynchronous. Never delete fixture state until its writer exits.
+  child.kill();
+  return await waitForExit;
+}
+
 async function runDesktopCoexistenceTest(framework: "WinForms" | "Wpf") {
   const here = path.dirname(fileURLToPath(import.meta.url));
   const fixturePath = path.join(here, "fixtures", "windows-desktop-fixture.ps1");
@@ -120,6 +140,7 @@ async function runDesktopCoexistenceTest(framework: "WinForms" | "Wpf") {
   const local = await startLocalCompact();
   let ownedHandle: string | undefined;
   let humanProcess: ChildProcess | undefined;
+  let originalFailure: unknown;
 
   try {
     const listed = await local.client.listTools();
@@ -408,18 +429,56 @@ async function runDesktopCoexistenceTest(framework: "WinForms" | "Wpf") {
       (structured(selfMint).error as Record<string, unknown>).code,
       "permission_denied",
     );
+  } catch (error) {
+    originalFailure = error;
+    throw error;
   } finally {
+    const cleanupErrors: string[] = [];
+    let ownedStopped = ownedHandle === undefined;
     if (ownedHandle !== undefined) {
-      await call(local.client, "process", {
-        op: "terminate",
-        args: { handle: ownedHandle, grace_ms: 100, force: true },
-      }).catch(() => undefined);
+      try {
+        const termination = await call(local.client, "process", {
+          op: "terminate",
+          args: { handle: ownedHandle, grace_ms: 100, force: true },
+        });
+        if (termination.isError) {
+          throw new Error("owned fixture termination rejected: " +
+            JSON.stringify(structured(termination)));
+        }
+        const outcome = structured(termination);
+        if (outcome.running !== false) {
+          throw new Error("owned fixture is still running after termination");
+        }
+        ownedStopped = true;
+      } catch (error) {
+        cleanupErrors.push("owned fixture: " + String(error));
+      }
     }
+
+    let humanStopped = !humanProcess?.pid;
     if (humanProcess?.pid) {
-      humanProcess.kill();
+      try {
+        humanStopped = await stopSpawnedFixture(humanProcess);
+        if (!humanStopped) cleanupErrors.push("human fixture exit timed out");
+      } catch (error) {
+        cleanupErrors.push("human fixture: " + String(error));
+      }
     }
-    await local.close().catch(() => undefined);
-    await rm(temp, { recursive: true, force: true });
+
+    await local.close().catch((error: unknown) => {
+      cleanupErrors.push("local MCP close: " + String(error));
+    });
+    if (ownedStopped && humanStopped) {
+      await rm(temp, { recursive: true, force: true });
+    } else {
+      cleanupErrors.push("fixture processes not confirmed stopped; retained state directory " + temp);
+    }
+    if (cleanupErrors.length > 0) {
+      const message = "G4 fixture teardown incomplete: " + cleanupErrors.join("; ");
+      console.error(message);
+      // Preserve the original assertion failure if one led to teardown.
+      if (originalFailure === undefined) throw new Error(message);
+    }
   }
 }
 
