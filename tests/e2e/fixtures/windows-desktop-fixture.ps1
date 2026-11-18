@@ -2,7 +2,8 @@ param(
     [Parameter(Mandatory = $true)][string]$StatePath,
     [Parameter(Mandatory = $true)][string]$Title,
     [Parameter(Mandatory = $true)][string]$Prefix,
-    [ValidateSet("WinForms", "Wpf")][string]$Framework = "WinForms"
+    [ValidateSet("WinForms", "Wpf")][string]$Framework = "WinForms",
+    [switch]$InitializeOnly
 )
 
 $stateDir = Split-Path -Parent $StatePath
@@ -121,6 +122,7 @@ if ($Framework -eq "Wpf") {
     [void]$panel.Children.Add($status)
     $window.Content = $panel
     Write-FixtureStartupStage 'controls-created'
+    if ($InitializeOnly) { return }
 
     $readWpfSelected = {
         if ($selection.SelectedItem -is [System.Windows.Controls.ListBoxItem]) {
@@ -224,6 +226,7 @@ $invoke.Add_Click({
 
 $form.Controls.AddRange(@($value, $invoke, $selection, $status))
 Write-FixtureStartupStage 'winforms-controls-created'
+if ($InitializeOnly) { return }
 
 $timer = New-Object System.Windows.Forms.Timer
 $timer.Interval = 100
