@@ -574,24 +574,41 @@ test(
 
         let lastStage = "missing";
         let stageReached = false;
-        for (let i = 0; i < 200; i += 1) {
+        let latestProcess: Record<string, unknown> = processInfo;
+        const expected =
+          framework === "WinForms"
+            ? "stage=winforms-controls-created"
+            : "stage=controls-created";
+        for (let i = 0; i < 120; i += 1) {
           try {
             lastStage = await readFile(statePath + ".startup.txt", "utf8");
-            const expected =
-              framework === "WinForms"
-                ? "stage=winforms-controls-created"
-                : "stage=controls-created";
             if (lastStage.includes(expected)) {
               stageReached = true;
               break;
             }
           } catch {
-            // Bootstrap may not have created the file yet.
+            // Bootstrap may not have created its stage file yet.
+          }
+          if (i % 10 === 0) {
+            const read = await call(local.client, "process", {
+              op: "read",
+              args: { handle: processInfo.handle, mode: "tail", tail_bytes: 2048 },
+            });
+            latestProcess = structured(read);
+            if (latestProcess.running === false) break;
           }
           await new Promise((resolve) => setTimeout(resolve, 100));
         }
         assert.equal(stageReached, true,
-          framework + ": owned process did not initialize; last_stage=" + lastStage);
+          framework + ": owned process did not initialize; last_stage=" + lastStage +
+          "; child_status=" + JSON.stringify({
+            pid: latestProcess.pid ?? processInfo.pid,
+            running: latestProcess.running,
+            exit_code: latestProcess.exit_code,
+            stdout: latestProcess.stdout,
+            stderr: latestProcess.stderr,
+            terminal_reason: latestProcess.terminal_reason,
+          }));
         assert.equal(await readFile(statePath, "utf8").then(
           () => true, () => false),
           false, framework + ": nonvisible fixture created a live window state");
