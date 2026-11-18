@@ -1,0 +1,113 @@
+name: G4 Offline Windows Sandbox Compact MCP Kit
+
+on:
+  push:
+    branches:
+      - experiment/g4-sandbox-kit-20261118
+
+permissions:
+  contents: read
+
+jobs:
+  build-kit:
+    runs-on: windows-latest
+    timeout-minutes: 50
+    steps:
+      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
+        with:
+          persist-credentials: false
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4.4.0
+        with:
+          node-version: '22'
+      - name: Build exact Rust agent and TypeScript workspace
+        shell: pwsh
+        run: |
+          cargo build -p tetherd --release --locked
+          if ($LASTEXITCODE -ne 0) { throw 'Rust build failed' }
+          corepack enable
+          corepack prepare pnpm@10.34.5 --activate
+          pnpm install --frozen-lockfile
+          if ($LASTEXITCODE -ne 0) { throw 'Install failed' }
+          pnpm -r build
+          if ($LASTEXITCODE -ne 0) { throw 'TypeScript build failed' }
+      - name: Build portable bundled Compact MCP tests and adapter
+        shell: pwsh
+        run: |
+          $toolDir = Join-Path $env:RUNNER_TEMP 'g4-esbuild'
+          npm install --prefix $toolDir --no-audit --no-fund --no-package-lock esbuild@0.25.12
+          if ($LASTEXITCODE -ne 0) { throw 'Pinned bundler install failed' }
+          $esbuild = Join-Path $toolDir 'node_modules\esbuild\bin\esbuild'
+          $out = Join-Path $env:RUNNER_TEMP 'TP-G4-Compact-MCP-Kit'
+          $testDir = Join-Path $out 'tests\e2e'
+          $adapterDir = Join-Path $out 'adapters\compact-mcp\dist'
+          $binaryDir = Join-Path $out 'target\debug'
+          foreach ($dir in @($testDir,$adapterDir,$binaryDir,(Join-Path $testDir 'fixtures'))) {
+            New-Item -ItemType Directory -Path $dir -Force | Out-Null
+          }
+          $banner = "--banner:js=import { createRequire } from 'node:module'; const require = createRequire(import.meta.url);"
+          & node $esbuild 'tests/e2e/desktop-coexistence.test.ts' --bundle --platform=node --target=node22 --format=esm $banner "--outfile=$(Join-Path $testDir 'desktop-coexistence.test.mjs')"
+          if ($LASTEXITCODE -ne 0) { throw 'Desktop integration test bundling failed' }
+          & node $esbuild 'tests/e2e/local-compact.test.ts' --bundle --platform=node --target=node22 --format=esm $banner "--outfile=$(Join-Path $testDir 'local-compact.test.mjs')"
+          if ($LASTEXITCODE -ne 0) { throw 'Local Compact MCP test bundling failed' }
+          & node $esbuild 'adapters/compact-mcp/src/stdio-server.ts' --bundle --platform=node --target=node22 --format=esm $banner "--outfile=$(Join-Path $adapterDir 'stdio-server.js')"
+          if ($LASTEXITCODE -ne 0) { throw 'Compact MCP adapter bundling failed' }
+          Copy-Item target\release\tetherd.exe (Join-Path $binaryDir 'tetherd.exe')
+          Copy-Item tests\e2e\fixtures\windows-desktop-fixture.ps1 (Join-Path $testDir 'fixtures\windows-desktop-fixture.ps1')
+          Copy-Item (Get-Command node.exe).Source (Join-Path $out 'node.exe')
+          Copy-Item Cargo.toml (Join-Path $out 'Cargo.toml')
+          Copy-Item pnpm-workspace.yaml (Join-Path $out 'pnpm-workspace.yaml')
+          [IO.File]::WriteAllText((Join-Path $out 'package.json'), '{"private":true,"type":"module"}', [Text.UTF8Encoding]::new($false))
+          $guestLauncher = @'
+          @echo off
+          setlocal
+          if /I not "%USERNAME%"=="WDAGUtilityAccount" (
+            echo ABORT: Only run this kit inside disposable Windows Sandbox.
+            pause
+            exit /b 2
+          )
+          set "GITHUB_ACTIONS="
+          set "CI="
+          set "REPORT=%TEMP%\Tetherplane-G4-Compact-MCP-Result.txt"
+          echo TETHERPLANE G4 LOCAL COMPACT MCP - NOT FULL REMOTE G4 > "%REPORT%"
+          echo Source provider commit: 079352ba94ed63b2c7294cfd308f7718a034ae82 >> "%REPORT%"
+          echo Host: %COMPUTERNAME% >> "%REPORT%"
+          echo Test: WinForms + WPF, owned process and human coexistence >> "%REPORT%"
+          "%~dp0node.exe" --test "%~dp0tests\e2e\desktop-coexistence.test.mjs" >> "%REPORT%" 2>&1
+          set "TEST_EXIT=%ERRORLEVEL%"
+          echo G4_LOCAL_COMPACT_MCP_EXIT=%TEST_EXIT% >> "%REPORT%"
+          type "%REPORT%"
+          start "" notepad.exe "%REPORT%"
+          pause
+          exit /b %TEST_EXIT%
+          '@
+          [IO.File]::WriteAllText((Join-Path $out 'Run-G4-Guest.cmd'), $guestLauncher, [Text.Encoding]::ASCII)
+          $sourceInfo = @{
+            source_provider_commit = '079352ba94ed63b2c7294cfd308f7718a034ae82'
+            packaging_commit = '${{ github.sha }}'
+            scope = 'local Compact MCP desktop coexistence test only; full remote G4 and physical G6 not certified'
+          }
+          $sourceInfo | ConvertTo-Json -Depth 3 | Set-Content -LiteralPath (Join-Path $out 'manifest.json') -Encoding utf8
+          Write-Output "G4_KIT_ROOT=$out"
+      - name: Portable kit proof in Windows CI (no interactive UIA claim)
+        shell: pwsh
+        run: |
+          $out = Join-Path $env:RUNNER_TEMP 'TP-G4-Compact-MCP-Kit'
+          Push-Location $out
+          try {
+            & .\node.exe --test .\tests\e2e\local-compact.test.mjs
+            if ($LASTEXITCODE -ne 0) { throw 'Portable Compact MCP smoke test failed' }
+            & .\node.exe --test .\tests\e2e\desktop-coexistence.test.mjs
+            if ($LASTEXITCODE -ne 0) { throw 'Desktop test module failed to load' }
+            Write-Output 'G4_PORTABLE_KIT_WINDOWS_CI_SMOKE_PASS=1'
+            Write-Output 'G4_INTERACTIVE_DESKTOP_CI=SKIPPED_INTENTIONALLY'
+          } finally {
+            Pop-Location
+          }
+      - name: Upload offline guest kit (no installation on production devices)
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        with:
+          name: tetherplane-g4-sandbox-compact-mcp-${{ github.sha }}
+          path: ${{ runner.temp }}/TP-G4-Compact-MCP-Kit/
+          retention-days: 7
+          if-no-files-found: error
