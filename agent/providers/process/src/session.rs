@@ -206,8 +206,12 @@ impl ProcessSession {
             ProcessBackend::Piped(child) => {
                 child.lock().await.stdin.take();
             }
-            ProcessBackend::Pty { writer, .. } => {
+            ProcessBackend::Pty { writer, master, .. } => {
                 writer
+                    .lock()
+                    .unwrap_or_else(std::sync::PoisonError::into_inner)
+                    .take();
+                master
                     .lock()
                     .unwrap_or_else(std::sync::PoisonError::into_inner)
                     .take();
