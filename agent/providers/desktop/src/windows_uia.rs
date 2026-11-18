@@ -1084,9 +1084,11 @@ fn lb_set_cur_sel(
         // same-process parent. No physical focus, cursor or clipboard input.
         let (_, pid) = hwnd.GetWindowThreadProcessId();
         let style_bytes = hwnd.GetWindowLongPtr(co::GWLP::STYLE).to_le_bytes();
-        let style = u32::from_le_bytes(style_bytes[..4].try_into().map_err(|_| {
-            action_unverified("invalid native ListBox style bytes")
-        })?);
+        let style = u32::from_le_bytes(
+            style_bytes[..4]
+                .try_into()
+                .map_err(|_| action_unverified("invalid native ListBox style bytes"))?,
+        );
         if selected_before != selected_after && (style & LBS_NOTIFY) != 0 {
             let parent = hwnd.GetParent().map_err(|error| {
                 action_unverified(format!("native ListBox parent unavailable: {error}"))
@@ -1101,7 +1103,8 @@ fn lb_set_cur_sel(
                 action_unverified(format!("native ListBox control ID unavailable: {error}"))
             })?;
             let command = usize::from(control_id) | (LBN_SELCHANGE << 16);
-            let list_hwnd_lparam = LPARAM::from_ne_bytes(hwnd.ptr().expose_provenance().to_ne_bytes());
+            let list_hwnd_lparam =
+                LPARAM::from_ne_bytes(hwnd.ptr().expose_provenance().to_ne_bytes());
             send_message(
                 parent.ptr(),
                 WM_COMMAND,
@@ -1110,7 +1113,9 @@ fn lb_set_cur_sel(
                 Some(NATIVE_MESSAGE_TIMEOUT_MS),
             )
             .map_err(|error| {
-                action_unverified(format!("native ListBox selection notification failed: {error}"))
+                action_unverified(format!(
+                    "native ListBox selection notification failed: {error}"
+                ))
             })?;
             let final_index = send_message(
                 hwnd.ptr(),
@@ -1120,7 +1125,9 @@ fn lb_set_cur_sel(
                 Some(NATIVE_MESSAGE_TIMEOUT_MS),
             )
             .map_err(|error| {
-                action_unverified(format!("native selection post-notification read failed: {error}"))
+                action_unverified(format!(
+                    "native selection post-notification read failed: {error}"
+                ))
             })?;
             verify_select_readback(index, final_index)?;
             return Ok(final_index);
