@@ -82,16 +82,22 @@ async function waitForState(
   predicate: (state: Record<string, unknown>) => boolean,
 ): Promise<Record<string, unknown>> {
   let lastError: unknown;
+  let lastState: Record<string, unknown> | undefined;
   for (let attempt = 0; attempt < 80; attempt += 1) {
     try {
       const state = await readState(statePath);
+      lastState = state;
       if (predicate(state)) return state;
     } catch (error) {
       lastError = error;
     }
     await new Promise((resolve) => setTimeout(resolve, 100));
   }
-  throw new Error("fixture state did not reach expected condition: " + String(lastError ?? ""));
+  throw new Error(
+    "fixture state did not reach expected condition; last_state=" +
+      JSON.stringify(lastState ?? null) +
+      "; last_read_error=" + String(lastError ?? "none"),
+  );
 }
 
 function findPattern(
@@ -431,6 +437,35 @@ async function runDesktopCoexistenceTest(framework: "WinForms" | "Wpf") {
     );
   } catch (error) {
     originalFailure = error;
+    // The interactive failure may happen before the test harness can assert
+    // on a fixture's state. Capture only this disposable fixture's state
+    // and the owned child's stderr before teardown; do not change policy.
+    const detail: Record<string, unknown> = {
+      framework,
+      error: String(error),
+    };
+    for (const [label, statePath] of [
+      ["owned_state", ownedState],
+      ["human_state", humanState],
+    ] as const) {
+      try {
+        detail[label] = await readState(statePath);
+      } catch (readError) {
+        detail[label + "_error"] = String(readError);
+      }
+    }
+    if (ownedHandle) {
+      try {
+        const processResult = await call(local.client, "process", {
+          op: "read",
+          args: { handle: ownedHandle, mode: "tail", tail_bytes: 4096 },
+        });
+        detail.owned_process = structured(processResult);
+      } catch (processError) {
+        detail.owned_process_error = String(processError);
+      }
+    }
+    console.error("G4_FIXTURE_FAILURE_CONTEXT=" + JSON.stringify(detail));
     throw error;
   } finally {
     const cleanupErrors: string[] = [];
