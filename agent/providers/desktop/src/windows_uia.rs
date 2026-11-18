@@ -32,6 +32,9 @@ const LB_SETCURSEL: UINT = 0x0186;
 const LB_GETCURSEL: UINT = 0x0188;
 const LB_GETCOUNT: UINT = 0x018B;
 const LB_ERR: LRESULT = -1;
+const LBS_NOTIFY: u32 = 0x0001;
+const WM_COMMAND: UINT = 0x0111;
+const LBN_SELCHANGE: usize = 1;
 
 static UIA_INIT_LOCK: Mutex<()> = Mutex::new(());
 
@@ -1041,6 +1044,14 @@ fn lb_set_cur_sel(
     index: usize,
 ) -> Result<LRESULT, CapabilityError> {
     with_verified_pid_hwnd(hwnd_addr, expected_pid, |hwnd| {
+        let selected_before = send_message(
+            hwnd.ptr(),
+            LB_GETCURSEL,
+            0,
+            0,
+            Some(NATIVE_MESSAGE_TIMEOUT_MS),
+        )
+        .map_err(|error| action_unverified(format!("native selection pre-read failed: {error}")))?;
         let result = send_message(
             hwnd.ptr(),
             LB_SETCURSEL,
@@ -1056,18 +1067,65 @@ fn lb_set_cur_sel(
                 "background-safe native selection was rejected by the list control",
             ));
         }
-        send_message(
+        let selected_after = send_message(
             hwnd.ptr(),
             LB_GETCURSEL,
             0,
             0,
             Some(NATIVE_MESSAGE_TIMEOUT_MS),
         )
-        .map_err(|error| {
-            action_unverified(format!(
-                "background-safe native selection readback failed: {error}"
-            ))
-        })
+        .map_err(|error| action_unverified(format!("native selection readback failed: {error}")))?;
+        verify_select_readback(index, selected_after)?;
+
+        // LB_SETCURSEL changes the native index but deliberately does NOT
+        // dispatch LBN_SELCHANGE. WinForms therefore retains the old managed
+        // SelectedItem unless its parent receives WM_COMMAND. Notify only
+        // for a changed single-select ListBox with LBS_NOTIFY, and only its
+        // same-process parent. No physical focus, cursor or clipboard input.
+        let (_, pid) = hwnd.GetWindowThreadProcessId();
+        let style_bytes = hwnd.GetWindowLongPtr(co::GWLP::STYLE).to_le_bytes();
+        let style = u32::from_le_bytes(style_bytes[..4].try_into().map_err(|_| {
+            action_unverified("invalid native ListBox style bytes")
+        })?);
+        if selected_before != selected_after && (style & LBS_NOTIFY) != 0 {
+            let parent = hwnd.GetParent().map_err(|error| {
+                action_unverified(format!("native ListBox parent unavailable: {error}"))
+            })?;
+            let (_, parent_pid) = parent.GetWindowThreadProcessId();
+            if pid != expected_pid || parent_pid != expected_pid || !parent.IsWindow() {
+                return Err(action_unverified(
+                    "native ListBox parent is not a valid same-process window",
+                ));
+            }
+            let control_id = hwnd.GetDlgCtrlID().map_err(|error| {
+                action_unverified(format!("native ListBox control ID unavailable: {error}"))
+            })?;
+            let command = usize::from(control_id) | (LBN_SELCHANGE << 16);
+            let list_hwnd_lparam = LPARAM::from_ne_bytes(hwnd.ptr().expose_provenance().to_ne_bytes());
+            send_message(
+                parent.ptr(),
+                WM_COMMAND,
+                command,
+                list_hwnd_lparam,
+                Some(NATIVE_MESSAGE_TIMEOUT_MS),
+            )
+            .map_err(|error| {
+                action_unverified(format!("native ListBox selection notification failed: {error}"))
+            })?;
+            let final_index = send_message(
+                hwnd.ptr(),
+                LB_GETCURSEL,
+                0,
+                0,
+                Some(NATIVE_MESSAGE_TIMEOUT_MS),
+            )
+            .map_err(|error| {
+                action_unverified(format!("native selection post-notification read failed: {error}"))
+            })?;
+            verify_select_readback(index, final_index)?;
+            return Ok(final_index);
+        }
+        Ok(selected_after)
     })
 }
 
