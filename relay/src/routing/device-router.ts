@@ -64,6 +64,7 @@ type ActiveConnection = {
   deviceId: string;
   generation: string;
   send(message: RelayToDeviceMessage): Promise<void>;
+  controlQueue: Promise<void>;
 };
 
 type PendingRoute = {
@@ -120,6 +121,7 @@ export class DeviceRouter {
       deviceId: input.deviceId,
       generation: randomUUID(),
       send: input.send,
+      controlQueue: Promise.resolve(),
     };
     this.#connections.set(input.deviceId, connection);
     this.#policyStore?.notifyChange(input.accountId);
@@ -254,58 +256,78 @@ export class DeviceRouter {
     });
   }
 
+  #enqueueControl(
+    connection: ActiveConnection,
+    task: () => Promise<void>,
+  ): void {
+    connection.controlQueue = connection.controlQueue
+      .then(async () => {
+        if (!this.#isCurrent(connection)) return;
+        await task();
+      })
+      .catch(() => {
+        // Control plane errors must not wedge subsequent messages or raise unhandled rejections
+      });
+  }
+
   #receive(
     connection: ActiveConnection,
     message: DeviceToRelayMessage,
   ): void {
     if (message.type === "device_hello") {
-      if (!this.#policyStore) return;
-      void this.#policyStore
-        .handleDeviceHello({
+      const policyStore = this.#policyStore;
+      if (!policyStore) return;
+      this.#enqueueControl(connection, async () => {
+        const policy = await policyStore.handleDeviceHello({
           deviceId: connection.deviceId,
           accountId: connection.accountId,
           appliedPolicyRevision: message.appliedPolicyRevision ?? null,
           status: message.status ?? null,
           capabilities: message.capabilities ?? null,
-        })
-        .then(async (policy) => {
-          if (policy && this.#isCurrent(connection)) {
-            await this.pushPolicy(connection.deviceId, policy);
-          }
         });
+        if (policy && this.#isCurrent(connection)) {
+          await this.pushPolicy(connection.deviceId, policy);
+        }
+      });
       return;
     }
 
     if (message.type === "policy_ack") {
-      if (!this.#policyStore) return;
-      void this.#policyStore.handlePolicyAck({
-        deviceId: connection.deviceId,
-        accountId: connection.accountId,
-        revision: message.revision,
-        ...(typeof message.currentRevision === "number"
-          ? { currentRevision: message.currentRevision }
-          : {}),
-        applied: message.applied,
-        ...(typeof message.appliedAtMs === "number"
-          ? { appliedAtMs: message.appliedAtMs }
-          : {}),
-        status: message.status ?? null,
-        capabilities: message.capabilities ?? null,
-        error: message.error ?? null,
-      });
+      const policyStore = this.#policyStore;
+      if (!policyStore) return;
+      this.#enqueueControl(connection, () =>
+        policyStore.handlePolicyAck({
+          deviceId: connection.deviceId,
+          accountId: connection.accountId,
+          revision: message.revision,
+          ...(typeof message.currentRevision === "number"
+            ? { currentRevision: message.currentRevision }
+            : {}),
+          applied: message.applied,
+          ...(typeof message.appliedAtMs === "number"
+            ? { appliedAtMs: message.appliedAtMs }
+            : {}),
+          status: message.status ?? null,
+          capabilities: message.capabilities ?? null,
+          error: message.error ?? null,
+        }),
+      );
       return;
     }
 
     if (message.type === "device_telemetry") {
-      if (!this.#policyStore || message.deviceId !== connection.deviceId) {
+      const policyStore = this.#policyStore;
+      if (!policyStore || message.deviceId !== connection.deviceId) {
         return;
       }
-      void this.#policyStore.handleDeviceTelemetry({
-        deviceId: connection.deviceId,
-        accountId: connection.accountId,
-        status: message.status ?? null,
-        capabilities: message.capabilities ?? null,
-      });
+      this.#enqueueControl(connection, () =>
+        policyStore.handleDeviceTelemetry({
+          deviceId: connection.deviceId,
+          accountId: connection.accountId,
+          status: message.status ?? null,
+          capabilities: message.capabilities ?? null,
+        }),
+      );
       return;
     }
 

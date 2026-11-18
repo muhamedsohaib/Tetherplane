@@ -17,6 +17,10 @@ export {
   hashDeviceCredential,
   type DeviceBinding,
 } from "./devices/registry.ts";
+export {
+  SerializedJsonFileWriter,
+  type PersistFileOps,
+} from "./persistence/atomic-json.ts";
 export type {
   EndpointRateLimit,
   RelayRateLimitConfig,

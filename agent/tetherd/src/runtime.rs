@@ -549,7 +549,9 @@ fn persist_synchronized_policy(
         });
     }
     drop(file);
-    if let Err(error) = fs::rename(&temp_path, &target) {
+    if let Err(error) =
+        rename_with_transient_retry(&[10, 20, 40, 80, 120], || fs::rename(&temp_path, &target))
+    {
         let _ = fs::remove_file(&temp_path);
         return Err(CapabilityError {
             code: ErrorCode::ProviderFailure,
@@ -559,6 +561,34 @@ fn persist_synchronized_policy(
         });
     }
     Ok(())
+}
+
+fn is_transient_rename_error(error: &std::io::Error) -> bool {
+    if error.kind() == std::io::ErrorKind::PermissionDenied {
+        return true;
+    }
+    #[cfg(windows)]
+    if matches!(error.raw_os_error(), Some(5 | 32 | 33)) {
+        return true;
+    }
+    false
+}
+
+fn rename_with_transient_retry<F>(delays_ms: &[u64], mut rename_fn: F) -> std::io::Result<()>
+where
+    F: FnMut() -> std::io::Result<()>,
+{
+    let mut attempt = 0usize;
+    loop {
+        match rename_fn() {
+            Ok(()) => return Ok(()),
+            Err(error) if is_transient_rename_error(&error) && attempt < delays_ms.len() => {
+                std::thread::sleep(std::time::Duration::from_millis(delays_ms[attempt]));
+                attempt += 1;
+            }
+            Err(error) => return Err(error),
+        }
+    }
 }
 
 #[cfg(windows)]
@@ -1667,5 +1697,37 @@ mod tests {
             },
         );
         assert!(runtime.apply_synchronized_policy(escalated).is_err());
+    }
+
+    #[test]
+    fn transient_windows_rename_retries_before_succeeding_and_does_not_retry_fatal_errors() {
+        let mut attempts = 0usize;
+        let result = super::rename_with_transient_retry(&[1, 1, 1], || {
+            attempts += 1;
+            if attempts < 3 {
+                Err(std::io::Error::new(
+                    std::io::ErrorKind::PermissionDenied,
+                    "simulated Windows sharing/lock error",
+                ))
+            } else {
+                Ok(())
+            }
+        });
+        assert!(
+            result.is_ok(),
+            "transient PermissionDenied should retry and succeed"
+        );
+        assert_eq!(attempts, 3);
+
+        let mut fatal_attempts = 0usize;
+        let fatal = super::rename_with_transient_retry(&[1, 1, 1], || {
+            fatal_attempts += 1;
+            Err(std::io::Error::new(
+                std::io::ErrorKind::NotFound,
+                "missing file is not transient",
+            ))
+        });
+        assert!(fatal.is_err());
+        assert_eq!(fatal_attempts, 1);
     }
 }

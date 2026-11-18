@@ -1,6 +1,5 @@
 import { randomUUID } from "node:crypto";
-import { mkdir, readFile, rename, writeFile } from "node:fs/promises";
-import path from "node:path";
+import { readFile } from "node:fs/promises";
 
 import {
   hasNonOwnerPrincipalPrefix,
@@ -8,6 +7,11 @@ import {
   type ClientIdentity,
 } from "../auth/static-auth.ts";
 import type { DeviceBinding, DeviceRegistry } from "../devices/registry.ts";
+import {
+  SerializedJsonFileWriter,
+  errorCodeOf,
+  type PersistFileOps,
+} from "../persistence/atomic-json.ts";
 
 export type ToolFamily =
   | "device"
@@ -454,11 +458,13 @@ export class PolicyStore {
     | ((deviceId: string, policy: SynchronizedDevicePolicy) => Promise<boolean>)
     | null = null;
   #isOnlineCallback: ((deviceId: string) => boolean) | null = null;
+  readonly #writer: SerializedJsonFileWriter | null;
 
   private constructor(options: {
     registry: DeviceRegistry;
     stateFile?: string;
     maxAuditHistory?: number;
+    persistOps?: PersistFileOps;
   }) {
     this.#registry = options.registry;
     this.#stateFile = options.stateFile
@@ -469,12 +475,16 @@ export class PolicyStore {
       throw new Error("maxAuditHistory must be a positive integer");
     }
     this.#maxAuditHistory = maxAudit;
+    this.#writer = this.#stateFile
+      ? new SerializedJsonFileWriter(this.#stateFile, options.persistOps)
+      : null;
   }
 
   static async open(options: {
     registry: DeviceRegistry;
     stateFile?: string;
     maxAuditHistory?: number;
+    persistOps?: PersistFileOps;
   }): Promise<PolicyStore> {
     const store = new PolicyStore(options);
     await store.#load();
@@ -1736,30 +1746,21 @@ export class PolicyStore {
   }
 
   async #persist(): Promise<void> {
-    if (!this.#stateFile) return;
+    if (!this.#writer) return;
     try {
-      await mkdir(path.dirname(this.#stateFile), { recursive: true });
-      const state: PersistedPolicyState = {
-        version: 1,
-        records: [...this.#records.values()],
-        snapshots: retainSnapshotsForPersistence(this.#snapshots),
-        auditHistory: this.#auditHistory.slice(-this.#maxAuditHistory),
-        identityUsage: [...this.#identityUsage.values()],
-        operators: [...this.#operators.values()],
-      };
-      const temporary = `${this.#stateFile}.tmp-${process.pid}-${randomUUID()}`;
-      await writeFile(temporary, JSON.stringify(state, null, 2) + "\n", {
-        encoding: "utf8",
-        mode: 0o600,
+      await this.#writer.write(() => {
+        const state: PersistedPolicyState = {
+          version: 1,
+          records: [...this.#records.values()],
+          snapshots: retainSnapshotsForPersistence(this.#snapshots),
+          auditHistory: this.#auditHistory.slice(-this.#maxAuditHistory),
+          identityUsage: [...this.#identityUsage.values()],
+          operators: [...this.#operators.values()],
+        };
+        return JSON.stringify(state, null, 2) + "\n";
       });
-      await rename(temporary, this.#stateFile);
     } catch (error) {
-      if (
-        typeof error === "object" &&
-        error !== null &&
-        "code" in error &&
-        (error as { code?: unknown }).code === "ENOENT"
-      ) {
+      if (errorCodeOf(error) === "ENOENT") {
         return;
       }
       throw error;

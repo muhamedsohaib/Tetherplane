@@ -1,5 +1,12 @@
 import assert from "node:assert/strict";
-import { mkdtemp, rm } from "node:fs/promises";
+import {
+  mkdtemp,
+  readFile,
+  readdir,
+  rename as fsRename,
+  rm,
+  writeFile as fsWriteFile,
+} from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
 import test from "node:test";
@@ -7,9 +14,13 @@ import test from "node:test";
 import WebSocket from "ws";
 
 import {
+  DeviceRegistry,
+  PolicyStore,
   RelayServer,
+  SerializedJsonFileWriter,
   StaticClientAuthenticator,
   hashDeviceCredential,
+  type PersistFileOps,
 } from "../src/index.ts";
 
 function createTestAuthenticator(): StaticClientAuthenticator {
@@ -53,6 +64,43 @@ async function until<T>(
     await new Promise((resolve) => setTimeout(resolve, 20));
   }
   throw new Error(`Timed out waiting for ${label}`);
+}
+
+async function waitForDevice(
+  baseUrl: string,
+  predicate: (device: Record<string, any>) => boolean,
+  label: string,
+  timeoutMs = 5_000,
+): Promise<Record<string, any>> {
+  return until(async () => {
+    const overview = await jsonRequest(baseUrl, "/portal/api/overview", {
+      method: "GET",
+      token: "owner-token-a",
+    });
+    if (overview.status !== 200) return null;
+    const device = overview.body.devices?.[0] as Record<string, any> | undefined;
+    return device && predicate(device) ? device : null;
+  }, timeoutMs, label);
+}
+
+async function closeSocketAndWaitOffline(
+  ws: WebSocket,
+  relay: RelayServer,
+  deviceId: string,
+): Promise<void> {
+  await new Promise<void>((resolve) => {
+    if (ws.readyState === WebSocket.CLOSED) {
+      resolve();
+      return;
+    }
+    ws.once("close", () => resolve());
+    ws.close();
+  });
+  await until(
+    () => !relay.router.isOnline(deviceId),
+    5_000,
+    `${deviceId} to go offline after close`,
+  );
 }
 
 async function jsonRequest(
@@ -301,18 +349,15 @@ test("newly owner-paired device gets universal default policy, stays pending unt
     );
 
     await policySyncDone;
-    await new Promise((r) => setTimeout(r, 25));
-
-    const afterConnect = await jsonRequest(
+    const lenoOnline = await waitForDevice(
       address.httpUrl,
-      "/portal/api/overview",
-      {
-        method: "GET",
-        token: "owner-token-a",
-      },
+      (d) =>
+        d.online === true &&
+        d.syncStatus === "applied" &&
+        d.confirmedByDevice === true &&
+        d.appliedRevision === 1,
+      "initial device connection rev 1 ACK",
     );
-    assert.equal(afterConnect.status, 200);
-    const lenoOnline = afterConnect.body.devices[0];
     assert.equal(lenoOnline.online, true);
     assert.equal(lenoOnline.syncStatus, "applied");
     assert.equal(lenoOnline.confirmedByDevice, true);
@@ -423,17 +468,14 @@ test("one-click device policy updates, explicit deny rules, offline pending stat
       }),
     );
 
-    await new Promise((r) => setTimeout(r, 40));
-
-    const afterReconnect = await jsonRequest(
+    const lenoSynced = await waitForDevice(
       address.httpUrl,
-      "/portal/api/overview",
-      {
-        method: "GET",
-        token: "owner-token-a",
-      },
+      (d) =>
+        d.syncStatus === "applied" &&
+        d.confirmedByDevice === true &&
+        d.appliedRevision === 2,
+      "rev 2 ACK after reconnect",
     );
-    const lenoSynced = afterReconnect.body.devices[0];
     assert.equal(lenoSynced.syncStatus, "applied");
     assert.equal(lenoSynced.confirmedByDevice, true);
     assert.equal(lenoSynced.desiredRevision, 2);
@@ -454,17 +496,15 @@ test("one-click device policy updates, explicit deny rules, offline pending stat
       },
     );
     assert.equal(rolledBack.status, 200);
-    await new Promise((r) => setTimeout(r, 40));
-
-    const afterRollback = await jsonRequest(
+    const lenoRestored = await waitForDevice(
       address.httpUrl,
-      "/portal/api/overview",
-      {
-        method: "GET",
-        token: "owner-token-a",
-      },
+      (d) =>
+        d.desiredRevision === 3 &&
+        d.appliedRevision === 3 &&
+        d.syncStatus === "applied" &&
+        d.confirmedByDevice === true,
+      "rev 3 rollback ACK",
     );
-    const lenoRestored = afterRollback.body.devices[0];
     assert.equal(lenoRestored.desiredRevision, 3);
     assert.equal(lenoRestored.appliedRevision, 3);
     assert.equal(lenoRestored.syncStatus, "applied");
@@ -961,7 +1001,7 @@ test("monotonic policy revisions, rejected ACKs, operator ACK error reset, and r
             error: "simulated persistence failure at rev 2",
           }),
         );
-        // Also send a delayed rev 1 ACK after failure — must NOT clear rev 2 error or mark rev 2 applied!
+        // Also send a delayed rev 1 ACK and trailing telemetry marker after failure — must NOT clear rev 2 error or mark rev 2 applied!
         ws.send(
           JSON.stringify({
             type: "policy_ack",
@@ -969,6 +1009,13 @@ test("monotonic policy revisions, rejected ACKs, operator ACK error reset, and r
             revision: 1,
             applied: true,
             appliedAtMs: Date.now(),
+          }),
+        );
+        ws.send(
+          JSON.stringify({
+            type: "device_telemetry",
+            deviceId: "Leno",
+            status: { os: "linux", delayed_ack_sent: true },
           }),
         );
       } else {
@@ -984,7 +1031,14 @@ test("monotonic policy revisions, rejected ACKs, operator ACK error reset, and r
       }
     });
 
-    await new Promise((r) => setTimeout(r, 40));
+    await waitForDevice(
+      address.httpUrl,
+      (d) =>
+        d.online === true &&
+        d.confirmedByDevice === true &&
+        d.appliedRevision === 1,
+      "ws1 initial rev 1 ACK",
+    );
 
     // Update policy to rev 2 -> device rejects it and sends delayed rev 1 ACK
     await jsonRequest(address.httpUrl, "/portal/api/devices/Leno/policy", {
@@ -995,14 +1049,15 @@ test("monotonic policy revisions, rejected ACKs, operator ACK error reset, and r
         reason: "Revoke process at rev 2",
       },
     });
-    await new Promise((r) => setTimeout(r, 50));
 
-    const afterReject = await jsonRequest(
+    const lenoRejected = await waitForDevice(
       address.httpUrl,
-      "/portal/api/overview",
-      { method: "GET", token: "owner-token-a" },
+      (d) =>
+        d.syncStatus === "failed" &&
+        d.confirmedByDevice === false &&
+        d.status?.delayed_ack_sent === true,
+      "rev 2 rejection and delayed rev 1 ACK processed",
     );
-    const lenoRejected = afterReject.body.devices[0];
     assert.equal(lenoRejected.syncStatus, "failed");
     assert.equal(lenoRejected.confirmedByDevice, false);
     assert.equal(lenoRejected.desiredRevision, 2);
@@ -1020,19 +1075,21 @@ test("monotonic policy revisions, rejected ACKs, operator ACK error reset, and r
         reason: "Add read-only operator at rev 3",
       },
     });
-    await new Promise((r) => setTimeout(r, 50));
-    const afterRev3 = await jsonRequest(
+    const lenoRev3 = await waitForDevice(
       address.httpUrl,
-      "/portal/api/overview",
-      { method: "GET", token: "owner-token-a" },
+      (d) =>
+        d.desiredRevision === 3 &&
+        d.appliedRevision === 3 &&
+        d.syncStatus === "applied" &&
+        d.confirmedByDevice === true,
+      "rev 3 operator update confirmed",
     );
-    assert.equal(afterRev3.body.devices[0].syncStatus, "applied");
-    assert.equal(afterRev3.body.devices[0].confirmedByDevice, true);
-    assert.equal(afterRev3.body.devices[0].appliedRevision, 3);
-    assert.equal(afterRev3.body.devices[0].lastAckError, null);
+    assert.equal(lenoRev3.syncStatus, "applied");
+    assert.equal(lenoRev3.confirmedByDevice, true);
+    assert.equal(lenoRev3.appliedRevision, 3);
+    assert.equal(lenoRev3.lastAckError, null);
 
-    ws1.close();
-    await new Promise((r) => setTimeout(r, 30));
+    await closeSocketAndWaitOffline(ws1, relay, "Leno");
 
     // 3. Reconnect with older revision (e.g. 0): appliedRevision must reset until rev 3 is ACKed
     let deferAckResolve: (() => void) | null = null;
@@ -1053,26 +1110,39 @@ test("monotonic policy revisions, rejected ACKs, operator ACK error reset, and r
         }),
       );
     });
-    await new Promise((r) => setTimeout(r, 40));
+    await until(
+      () => pushedOnLagReconnect.length === 1,
+      5_000,
+      "rev 3 policy_sync push on lagging reconnect",
+    );
 
-    const whileWaitingReconnectAck = await jsonRequest(
+    const lenoWaitingReconnectAck = await waitForDevice(
       address.httpUrl,
-      "/portal/api/overview",
-      { method: "GET", token: "owner-token-a" },
+      (d) =>
+        d.online === true &&
+        d.syncStatus === "pending" &&
+        d.confirmedByDevice === false,
+      "lagging reconnect pending state before ACK",
     );
     assert.deepEqual(pushedOnLagReconnect, [3]);
     assert.equal(
-      whileWaitingReconnectAck.body.devices[0].confirmedByDevice,
+      lenoWaitingReconnectAck.confirmedByDevice,
       false,
       "confirmedByDevice must reset to false when reconnecting with appliedPolicyRevision < desiredRevision",
     );
-    assert.equal(whileWaitingReconnectAck.body.devices[0].syncStatus, "pending");
-    assert.equal(whileWaitingReconnectAck.body.devices[0].appliedRevision, null);
+    assert.equal(lenoWaitingReconnectAck.syncStatus, "pending");
+    assert.equal(lenoWaitingReconnectAck.appliedRevision, null);
 
     deferAckResolve!();
-    await new Promise((r) => setTimeout(r, 40));
-    ws2.close();
-    await new Promise((r) => setTimeout(r, 30));
+    await waitForDevice(
+      address.httpUrl,
+      (d) =>
+        d.confirmedByDevice === true &&
+        d.appliedRevision === 3 &&
+        d.syncStatus === "applied",
+      "ws2 deferred rev 3 ACK confirmed",
+    );
+    await closeSocketAndWaitOffline(ws2, relay, "Leno");
 
     // 4. Reconnect claiming appliedPolicyRevision=7 (> desiredRevision=3):
     // Relay must NOT push stale rev 3 downward, and next mutation must jump above 7 (to 8)
@@ -1089,7 +1159,14 @@ test("monotonic policy revisions, rejected ACKs, operator ACK error reset, and r
         }),
       );
     });
-    await new Promise((r) => setTimeout(r, 40));
+    await waitForDevice(
+      address.httpUrl,
+      (d) =>
+        d.online === true &&
+        d.appliedRevision === 7 &&
+        d.syncStatus === "failed",
+      "ws3 ahead appliedPolicyRevision=7 processed",
+    );
     assert.deepEqual(
       pushedWhenDeviceAhead,
       [],
@@ -1110,7 +1187,19 @@ test("monotonic policy revisions, rejected ACKs, operator ACK error reset, and r
     );
     assert.equal(aheadUpdate.status, 200);
     assert.equal(aheadUpdate.body.device.desiredRevision, 8);
-    await new Promise((r) => setTimeout(r, 40));
+    await until(
+      () => pushedWhenDeviceAhead.length === 1,
+      5_000,
+      "rev 8 push to device ahead at rev 7",
+    );
+    await waitForDevice(
+      address.httpUrl,
+      (d) =>
+        d.desiredRevision === 8 &&
+        d.appliedRevision === 8 &&
+        d.confirmedByDevice === true,
+      "rev 8 ACK confirmed",
+    );
     assert.deepEqual(pushedWhenDeviceAhead, [8]);
 
     ws3.close();
@@ -1296,15 +1385,14 @@ test("reconciles real tetherd provider availability and object-map tool_families
     );
 
     await acked;
-    await new Promise((r) => setTimeout(r, 40));
-
-    const overview = await jsonRequest(address.httpUrl, "/portal/api/overview", {
-      method: "GET",
-      token: "owner-token-a",
-    });
-    assert.equal(overview.status, 200);
-    const leno = overview.body.devices[0];
-    assert.equal(leno.agentHealth, "degraded");
+    const leno = await waitForDevice(
+      address.httpUrl,
+      (d) =>
+        d.confirmedByDevice === true &&
+        d.appliedRevision === 1 &&
+        d.agentHealth === "degraded",
+      "rust-like capabilities and degraded health reflected",
+    );
     assert.deepEqual(
       leno.unavailableCapabilities.map((u: Record<string, any>) => u.name),
       ["browser", "desktop"],
@@ -1818,6 +1906,348 @@ test("snapshot persistence preserves rev 1 baselines, full overview history, and
     );
   } finally {
     await relay.close();
+    await rm(dir, { recursive: true, force: true });
+  }
+});
+
+test("concurrent DeviceRegistry persistence serializes writes without temp file collisions", async () => {
+  const dir = await mkdtemp(path.join(os.tmpdir(), "tether-reg-persist-race-"));
+  const stateFile = path.join(dir, "devices.json");
+  const secretHash = hashDeviceCredential("device-persist-race-secret-32chars");
+
+  try {
+    const registry = await DeviceRegistry.open({ stateFile });
+    const pendings = [];
+    for (let i = 0; i < 8; i += 1) {
+      pendings.push(
+        await registry.startPairing({
+          deviceId: `RaceDev${i}`,
+          credentialHash: secretHash,
+        }),
+      );
+    }
+
+    const bindings = await Promise.all(
+      pendings.map((p) =>
+        registry.approvePairing({
+          accountId: "account-a",
+          userCode: p.userCode,
+        }),
+      ),
+    );
+    assert.equal(bindings.length, 8);
+
+    const reloadedRegistry = await DeviceRegistry.open({ stateFile });
+    assert.equal(reloadedRegistry.listDevices("account-a").length, 8);
+  } finally {
+    await rm(dir, { recursive: true, force: true });
+  }
+});
+
+test("concurrent PolicyStore persistence serializes writes without stale disk overwrites", async () => {
+  const dir = await mkdtemp(path.join(os.tmpdir(), "tether-pol-persist-race-"));
+  const stateFile = path.join(dir, "devices.json");
+  const secretHash = hashDeviceCredential("policy-persist-race-secret-32char");
+
+  let activeWrites = 0;
+  let maxConcurrentWrites = 0;
+  let delayedOlderOnce = false;
+  const persistOps: PersistFileOps = {
+    writeFile: async (filePath, data, opts) => {
+      activeWrites += 1;
+      maxConcurrentWrites = Math.max(maxConcurrentWrites, activeWrites);
+      try {
+        if (
+          !delayedOlderOnce &&
+          data.includes('"reason": "slow-older"') &&
+          !data.includes('"revision": 3')
+        ) {
+          delayedOlderOnce = true;
+          await new Promise((r) => setTimeout(r, 35));
+        }
+        await fsWriteFile(filePath, data, opts);
+      } finally {
+        activeWrites -= 1;
+      }
+    },
+  };
+
+  try {
+    const registry = await DeviceRegistry.open({ stateFile });
+    const pending = await registry.startPairing({
+      deviceId: "RaceLeno",
+      credentialHash: secretHash,
+    });
+    const binding = await registry.approvePairing({
+      accountId: "account-a",
+      userCode: pending.userCode,
+    });
+
+    const policyStore = await PolicyStore.open({
+      registry,
+      stateFile,
+      persistOps,
+    });
+    await policyStore.ensureDevicePolicy(binding);
+
+    const pSlowOlder = policyStore.updateDevicePolicy({
+      accountId: "account-a",
+      actorPrincipalId: "human:account-a",
+      deviceId: binding.deviceId,
+      mutation: {
+        revokeFamilies: ["process"],
+        reason: "slow-older",
+      },
+    });
+    const pFastNewer = policyStore.updateDevicePolicy({
+      accountId: "account-a",
+      actorPrincipalId: "human:account-a",
+      deviceId: binding.deviceId,
+      mutation: {
+        grantFamilies: ["process"],
+        reason: "fast-latest",
+      },
+    });
+    await Promise.all([pSlowOlder, pFastNewer]);
+
+    assert.equal(
+      maxConcurrentWrites,
+      1,
+      "PolicyStore persistence writes must be strictly serialized",
+    );
+
+    const diskJson = JSON.parse(
+      await readFile(`${stateFile}.policy.json`, "utf8"),
+    ) as {
+      records: Array<{
+        policy: {
+          device_id: string;
+          revision: number;
+          reason: string;
+          owner_policy: { denied_families: string[] };
+        };
+      }>;
+    };
+    const latestDiskRecord = diskJson.records.find(
+      (r) => r.policy.device_id === binding.deviceId,
+    );
+    assert.ok(latestDiskRecord);
+    assert.equal(latestDiskRecord.policy.revision, 3);
+    assert.equal(latestDiskRecord.policy.reason, "fast-latest");
+    assert.deepEqual(latestDiskRecord.policy.owner_policy.denied_families, []);
+
+    const entries = await readdir(dir);
+    assert.deepEqual(
+      entries.filter((name) => name.includes(".tmp-")),
+      [],
+      "No temporary policy files should remain after serialized persistence",
+    );
+  } finally {
+    await rm(dir, { recursive: true, force: true });
+  }
+});
+
+test("Relay handles transient Windows rename errors (EPERM/EACCES/EBUSY) and concurrent WS/HTTP policy persistence without HTTP 400", async () => {
+  const dir = await mkdtemp(path.join(os.tmpdir(), "tether-win-rename-retry-"));
+  const stateFile = path.join(dir, "devices.json");
+  const secret = "device-secret-leno-win-retry-32chars";
+
+  let activePolicyWrites = 0;
+  let maxConcurrentPolicyWrites = 0;
+  let injectTransientRenames = false;
+  let injectedCount = 0;
+  const faultCodes = ["EPERM", "EBUSY", "EACCES"] as const;
+
+  const persistOps: PersistFileOps = {
+    writeFile: async (filePath, data, opts) => {
+      const isPolicy = filePath.includes(".policy.json");
+      if (isPolicy) {
+        activePolicyWrites += 1;
+        maxConcurrentPolicyWrites = Math.max(
+          maxConcurrentPolicyWrites,
+          activePolicyWrites,
+        );
+      }
+      try {
+        await fsWriteFile(filePath, data, opts);
+      } finally {
+        if (isPolicy) {
+          activePolicyWrites -= 1;
+        }
+      }
+    },
+    rename: async (oldPath, newPath) => {
+      if (
+        injectTransientRenames &&
+        newPath.endsWith(".policy.json") &&
+        injectedCount < faultCodes.length
+      ) {
+        const code = faultCodes[injectedCount]!;
+        injectedCount += 1;
+        throw Object.assign(new Error(`simulated Windows ${code} lock`), {
+          code,
+        });
+      }
+      await fsRename(oldPath, newPath);
+    },
+  };
+
+  const relay = await RelayServer.create({
+    authenticator: createTestAuthenticator(),
+    stateFile,
+    allowInsecureLocalhost: true,
+    persistOps,
+  });
+
+  try {
+    const address = await relay.listen({ host: "127.0.0.1", port: 0 });
+    await pairDevice(address.httpUrl, "Leno", secret);
+
+    const ws = new WebSocket(address.deviceWsUrl, {
+      headers: {
+        authorization: `Device ${secret}`,
+        "x-tetherplane-device-id": "Leno",
+      },
+    });
+    await new Promise<void>((resolve, reject) => {
+      ws.once("open", resolve);
+      ws.once("error", reject);
+    });
+
+    ws.on("message", (raw) => {
+      const msg = JSON.parse(String(raw)) as Record<string, any>;
+      if (msg.type === "policy_sync") {
+        ws.send(
+          JSON.stringify({
+            type: "policy_ack",
+            deviceId: "Leno",
+            revision: msg.policy.revision,
+            applied: true,
+            appliedAtMs: Date.now(),
+            capabilities: sampleCapabilities("Leno"),
+          }),
+        );
+        ws.send(
+          JSON.stringify({
+            type: "device_telemetry",
+            deviceId: "Leno",
+            status: { os: "windows", version: "0.1.0" },
+            capabilities: sampleCapabilities("Leno"),
+          }),
+        );
+      }
+    });
+
+    ws.send(
+      JSON.stringify({
+        type: "device_hello",
+        deviceId: "Leno",
+        appliedPolicyRevision: null,
+        capabilities: sampleCapabilities("Leno"),
+      }),
+    );
+
+    await until(async () => {
+      const overview = await jsonRequest(
+        address.httpUrl,
+        "/portal/api/overview",
+        { method: "GET", token: "owner-token-a" },
+      );
+      return overview.body.devices?.[0]?.confirmedByDevice === true
+        ? overview.body.devices[0]
+        : null;
+    }, 5_000, "initial rev 1 confirmation");
+
+    injectTransientRenames = true;
+    for (let i = 0; i < 10; i += 1) {
+      const res = await jsonRequest(
+        address.httpUrl,
+        "/portal/api/devices/Leno/policy",
+        {
+          method: "POST",
+          token: "owner-token-a",
+          body: {
+            grantFamilies: i % 2 === 0 ? ["files"] : [],
+            revokeFamilies: i % 2 === 1 ? ["files"] : [],
+            reason: `Rapid Windows batch update ${i}`,
+          },
+        },
+      );
+      assert.equal(
+        res.status,
+        200,
+        `Expected HTTP 200 during concurrent Windows persistence at step ${i}, got ${res.status}: ${JSON.stringify(res.body)}`,
+      );
+    }
+
+    const synced = await until(async () => {
+      const overview = await jsonRequest(
+        address.httpUrl,
+        "/portal/api/overview",
+        { method: "GET", token: "owner-token-a" },
+      );
+      const dev = overview.body.devices?.[0];
+      return dev && dev.desiredRevision === 11 && dev.appliedRevision === 11
+        ? dev
+        : null;
+    }, 5_000, "rev 11 ACK after rapid updates");
+
+    assert.equal(synced.confirmedByDevice, true);
+    assert.equal(injectedCount, 3);
+    assert.equal(maxConcurrentPolicyWrites, 1);
+
+    const entries = await readdir(dir);
+    assert.deepEqual(
+      entries.filter((name) => name.includes(".tmp-")),
+      [],
+    );
+
+    ws.close();
+  } finally {
+    await relay.close();
+    await rm(dir, { recursive: true, force: true });
+  }
+});
+
+test("SerializedJsonFileWriter cleans up temp files on fatal errors without wedging subsequent writes", async () => {
+  const dir = await mkdtemp(path.join(os.tmpdir(), "tether-writer-fatal-"));
+  const target = path.join(dir, "state.json");
+  const unlinkedPaths: string[] = [];
+  let failOnce = true;
+
+  const writer = new SerializedJsonFileWriter(target, {
+    rename: async (oldPath, newPath) => {
+      if (failOnce) {
+        failOnce = false;
+        throw Object.assign(new Error("simulated disk full error"), {
+          code: "ENOSPC",
+        });
+      }
+      await fsRename(oldPath, newPath);
+    },
+    unlink: async (filePath) => {
+      unlinkedPaths.push(filePath);
+      await rm(filePath, { force: true });
+    },
+  });
+
+  try {
+    const pFail = writer.write(() => JSON.stringify({ step: 1 }));
+    const pRecover = writer.write(() => JSON.stringify({ step: 2 }));
+
+    await assert.rejects(pFail, { code: "ENOSPC" });
+    await pRecover;
+
+    assert.equal(unlinkedPaths.length, 1);
+    const saved = JSON.parse(await readFile(target, "utf8")) as { step: number };
+    assert.equal(saved.step, 2);
+
+    const entries = await readdir(dir);
+    assert.deepEqual(
+      entries.filter((name) => name.includes(".tmp-")),
+      [],
+    );
+  } finally {
     await rm(dir, { recursive: true, force: true });
   }
 });

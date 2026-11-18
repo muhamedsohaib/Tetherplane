@@ -33,6 +33,7 @@ import {
 import { validatePublicOrigin } from "./cli-config.ts";
 import { RelayHealthHttpGateway } from "./health-http.ts";
 import { PolicyStore } from "./policy/policy-store.ts";
+import type { PersistFileOps } from "./persistence/atomic-json.ts";
 
 type NodeRelayServer =
   | ReturnType<typeof createHttpServer>
@@ -105,6 +106,7 @@ export class RelayServer {
     maxPendingPairings?: number;
     maxAuditHistory?: number;
     rateLimits?: RelayRateLimitConfig;
+    persistOps?: PersistFileOps;
   }): Promise<RelayServer> {
     const publicOrigin =
       options.publicOrigin === undefined
@@ -120,6 +122,7 @@ export class RelayServer {
       ...(options.maxPendingPairings !== undefined
         ? { maxPendingPairings: options.maxPendingPairings }
         : {}),
+      ...(options.persistOps ? { persistOps: options.persistOps } : {}),
     });
     const policyStore = await PolicyStore.open({
       registry,
@@ -129,6 +132,7 @@ export class RelayServer {
       ...(options.maxAuditHistory !== undefined
         ? { maxAuditHistory: options.maxAuditHistory }
         : {}),
+      ...(options.persistOps ? { persistOps: options.persistOps } : {}),
     });
     const router = new DeviceRouter({
       registry,
