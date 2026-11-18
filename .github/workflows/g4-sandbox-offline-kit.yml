@@ -23,6 +23,9 @@ jobs:
       - name: Build exact Rust agent and TypeScript workspace
         shell: pwsh
         run: |
+          # Sandbox lacks the GitHub runner's dynamically supplied MSVC runtime.
+          # Only this disposable kit build statically links the C runtime; production agents unchanged.
+          $env:RUSTFLAGS = '-C target-feature=+crt-static'
           cargo build -p tetherd --release --locked
           if ($LASTEXITCODE -ne 0) { throw 'Rust build failed' }
           corepack enable
@@ -31,6 +34,28 @@ jobs:
           if ($LASTEXITCODE -ne 0) { throw 'Install failed' }
           pnpm -r build
           if ($LASTEXITCODE -ne 0) { throw 'TypeScript build failed' }
+      - name: Assert guest-compatible tetherd native imports
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = 'Stop'
+          $binary = Join-Path $env:GITHUB_WORKSPACE 'target\release\tetherd.exe'
+          if (-not (Test-Path -LiteralPath $binary)) { throw 'Expected release agent missing' }
+          $vswhere = Join-Path 'C:\Program Files (x86)' 'Microsoft Visual Studio\Installer\vswhere.exe'
+          if (-not (Test-Path -LiteralPath $vswhere)) { throw 'Cannot inspect PE runtime dependencies: vswhere.exe missing' }
+          $vsInstall = & $vswhere -latest -products '*' -requires Microsoft.VisualStudio.Component.VC.Tools.x86.x64 -property installationPath
+          if (-not $vsInstall) { throw 'Cannot inspect PE runtime dependencies: MSVC tools missing' }
+          $toolset = @(Get-ChildItem (Join-Path $vsInstall 'VC\Tools\MSVC') -Directory | Sort-Object Name -Descending)[0]
+          $dumpbin = Join-Path $toolset.FullName 'bin\Hostx64\x64\dumpbin.exe'
+          if (-not (Test-Path -LiteralPath $dumpbin)) { throw 'Cannot inspect PE runtime dependencies: dumpbin.exe missing' }
+          $imports = (& $dumpbin /nologo /dependents $binary) -join [Environment]::NewLine
+          if ($LASTEXITCODE -ne 0) { throw 'PE import scan failed' }
+          Write-Output "G4_GUEST_AGENT_IMPORTS_BEGIN"
+          Write-Output $imports
+          Write-Output "G4_GUEST_AGENT_IMPORTS_END"
+          if ($imports -match '(?i)(?:VCRUNTIME140(?:_1)?|MSVCP140(?:_1|_2)?|api-ms-win-crt-[a-z0-9-]+)\.dll') {
+            throw 'G4_GUEST_PORTABILITY_FAIL: tetherd imports an external MSVC/UCRT runtime DLL'
+          }
+          Write-Output 'G4_GUEST_PORTABILITY_NO_MSVC_RUNTIME_IMPORTS=PASS'
       - name: Build portable bundled Compact MCP tests and adapter
         shell: pwsh
         run: |
