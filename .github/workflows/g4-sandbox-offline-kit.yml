@@ -4,6 +4,7 @@ on:
   push:
     branches:
       - experiment/g4-sandbox-kit-20261118
+      - fix/g4-wpf-fixture-startup-20261118
 
 permissions:
   contents: read
