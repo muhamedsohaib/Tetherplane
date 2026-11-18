@@ -21,6 +21,21 @@ function Write-FixtureStartupStage {
 
 Write-FixtureStartupStage 'script-started'
 
+# Surface constructor/property failures in retained guest diagnostics instead
+# of leaving a running process without an owned.json readiness file.
+$ErrorActionPreference = 'Stop'
+trap {
+    $startupError = ($_ | Out-String)
+    try {
+        [IO.File]::WriteAllText("$startupPath.error.txt", $startupError)
+        Write-FixtureStartupStage 'fatal-error'
+    } catch {
+        # Preserve the original failure even if diagnostic IO fails.
+    }
+    Write-Error $startupError -ErrorAction Continue
+    exit 1
+}
+
 function Write-FixtureState {
     param(
         [bool]$Focused,
@@ -48,7 +63,7 @@ if ($Framework -eq "Wpf") {
     Add-Type -AssemblyName WindowsBase
     Write-FixtureStartupStage 'assemblies-loaded'
 
-    $window = New-Object System.Windows.Window
+    $window = [System.Windows.Window]::new()
     $window.Title = $Title
     $window.Width = 520
     $window.Height = 360
@@ -57,46 +72,47 @@ if ($Framework -eq "Wpf") {
     [System.Windows.Automation.AutomationProperties]::SetAutomationId($window, "$($Prefix)Form")
     Write-FixtureStartupStage 'window-created'
 
-    $panel = New-Object System.Windows.Controls.StackPanel
+    Write-FixtureStartupStage 'before-stackpanel-constructor'
+    $panel = [System.Windows.Controls.StackPanel]::new()
     Write-FixtureStartupStage 'stackpanel-created'
-    $panel.Margin = New-Object System.Windows.Thickness(16)
+    $panel.Margin = [System.Windows.Thickness]::new(16)
     Write-FixtureStartupStage 'stackpanel-margin-set'
 
-    $value = New-Object System.Windows.Controls.TextBox
+    $value = [System.Windows.Controls.TextBox]::new()
     Write-FixtureStartupStage 'textbox-created'
     $value.Name = "$($Prefix)Value"
     $value.Text = "$Prefix-initial"
-    $value.Margin = New-Object System.Windows.Thickness(0, 0, 0, 12)
+    $value.Margin = [System.Windows.Thickness]::new(0, 0, 0, 12)
     [System.Windows.Automation.AutomationProperties]::SetName($value, "$Prefix Value")
     [System.Windows.Automation.AutomationProperties]::SetAutomationId($value, "$($Prefix)Value")
 
-    $invoke = New-Object System.Windows.Controls.Button
+    $invoke = [System.Windows.Controls.Button]::new()
     Write-FixtureStartupStage 'button-created'
     $invoke.Name = "$($Prefix)Invoke"
     $invoke.Content = "$Prefix Invoke"
     $invoke.Width = 180
     $invoke.HorizontalAlignment = [System.Windows.HorizontalAlignment]::Left
-    $invoke.Margin = New-Object System.Windows.Thickness(0, 0, 0, 12)
+    $invoke.Margin = [System.Windows.Thickness]::new(0, 0, 0, 12)
     [System.Windows.Automation.AutomationProperties]::SetName($invoke, "$Prefix Invoke")
     [System.Windows.Automation.AutomationProperties]::SetAutomationId($invoke, "$($Prefix)Invoke")
 
-    $selection = New-Object System.Windows.Controls.ListBox
+    $selection = [System.Windows.Controls.ListBox]::new()
     Write-FixtureStartupStage 'listbox-created'
     $selection.Name = "$($Prefix)Selection"
     $selection.Width = 220
     $selection.Height = 110
     $selection.HorizontalAlignment = [System.Windows.HorizontalAlignment]::Left
-    $selection.Margin = New-Object System.Windows.Thickness(0, 0, 0, 12)
+    $selection.Margin = [System.Windows.Thickness]::new(0, 0, 0, 12)
     [System.Windows.Automation.AutomationProperties]::SetName($selection, "$Prefix Selection")
     [System.Windows.Automation.AutomationProperties]::SetAutomationId($selection, "$($Prefix)Selection")
 
-    $itemAlpha = New-Object System.Windows.Controls.ListBoxItem
+    $itemAlpha = [System.Windows.Controls.ListBoxItem]::new()
     Write-FixtureStartupStage 'alpha-item-created'
     $itemAlpha.Content = "$Prefix Alpha"
     [System.Windows.Automation.AutomationProperties]::SetName($itemAlpha, "$Prefix Alpha")
     [System.Windows.Automation.AutomationProperties]::SetAutomationId($itemAlpha, "$($Prefix)Alpha")
 
-    $itemBeta = New-Object System.Windows.Controls.ListBoxItem
+    $itemBeta = [System.Windows.Controls.ListBoxItem]::new()
     Write-FixtureStartupStage 'beta-item-created'
     $itemBeta.Content = "$Prefix Beta"
     [System.Windows.Automation.AutomationProperties]::SetName($itemBeta, "$Prefix Beta")
@@ -106,7 +122,7 @@ if ($Framework -eq "Wpf") {
     [void]$selection.Items.Add($itemBeta)
     $selection.SelectedIndex = 0
 
-    $status = New-Object System.Windows.Controls.TextBlock
+    $status = [System.Windows.Controls.TextBlock]::new()
     $status.Name = "$($Prefix)Status"
     $status.Text = "idle"
     [System.Windows.Automation.AutomationProperties]::SetName($status, "$Prefix Status")
@@ -134,7 +150,7 @@ if ($Framework -eq "Wpf") {
         }
     }
 
-    $timer = New-Object System.Windows.Threading.DispatcherTimer
+    $timer = [System.Windows.Threading.DispatcherTimer]::new()
     $timer.Interval = [TimeSpan]::FromMilliseconds(100)
     $timer.Add_Tick({
         if (Test-Path -LiteralPath $stopPath) {
