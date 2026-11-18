@@ -11,11 +11,12 @@ foreach ($framework in @('WinForms', 'Wpf')) {
   $stderrFile = Join-Path $root 'stderr.txt'
   $psi = [Diagnostics.ProcessStartInfo]::new()
   $psi.FileName = 'powershell.exe'
-  foreach ($arg in @('-NoProfile','-NonInteractive','-Sta','-ExecutionPolicy','Bypass',
-       '-File', $fixture, '-StatePath', $state, '-Title', 'Nonvisible G4 preflight',
-       '-Prefix', 'Owned', '-Framework', $framework, '-InitializeOnly')) {
-    [void]$psi.ArgumentList.Add($arg)
-  }
+  # Windows PowerShell 5.1 uses .NET Framework: ProcessStartInfo.ArgumentList
+  # is unavailable. Quote only paths from the runner's own trusted workspace.
+  $psi.Arguments = '-NoProfile -NonInteractive -Sta -ExecutionPolicy Bypass -File "' +
+    $fixture + '" -StatePath "' + $state +
+    '" -Title "Nonvisible G4 preflight" -Prefix Owned -Framework ' + $framework +
+    ' -InitializeOnly'
   $psi.RedirectStandardOutput = $true
   $psi.RedirectStandardError = $true
   $psi.UseShellExecute = $false
