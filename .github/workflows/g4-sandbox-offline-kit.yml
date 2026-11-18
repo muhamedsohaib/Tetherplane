@@ -102,7 +102,8 @@ jobs:
           set "CI="
           set "REPORT=%TEMP%\Tetherplane-G4-Compact-MCP-Result.txt"
           echo TETHERPLANE G4 LOCAL COMPACT MCP - NOT FULL REMOTE G4 > "%REPORT%"
-          echo Source provider commit: 079352ba94ed63b2c7294cfd308f7718a034ae82 >> "%REPORT%"
+          echo Source provider commit: ${{ github.sha }} >> "%REPORT%"
+          echo Baseline provider commit: 079352ba94ed63b2c7294cfd308f7718a034ae82 >> "%REPORT%"
           echo Host: %COMPUTERNAME% >> "%REPORT%"
           echo Test: WinForms + WPF, owned process and human coexistence >> "%REPORT%"
           "%~dp0node.exe" --test "%~dp0tests\e2e\desktop-coexistence.test.mjs" >> "%REPORT%" 2>&1
@@ -115,7 +116,8 @@ jobs:
           '@
           [IO.File]::WriteAllText((Join-Path $out 'Run-G4-Guest.cmd'), $guestLauncher, [Text.Encoding]::ASCII)
           $sourceInfo = @{
-            source_provider_commit = '079352ba94ed63b2c7294cfd308f7718a034ae82'
+            source_provider_commit = '${{ github.sha }}'
+            baseline_provider_commit = '079352ba94ed63b2c7294cfd308f7718a034ae82'
             packaging_commit = '${{ github.sha }}'
             scope = 'local Compact MCP desktop coexistence test only; full remote G4 and physical G6 not certified'
           }
