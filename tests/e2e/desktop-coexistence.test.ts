@@ -466,6 +466,15 @@ async function runDesktopCoexistenceTest(framework: "WinForms" | "Wpf") {
     } catch (readError) {
       detail.owned_startup_stage_error = String(readError);
     }
+    try {
+      // The fixture writes this file before exiting if a WPF constructor
+      // or property setter fails. Keep the original error in Sandbox TAP.
+      detail.owned_startup_error = await readFile(
+        ownedState + ".startup.txt.error.txt", "utf8",
+      );
+    } catch (readError) {
+      detail.owned_startup_error_unavailable = String(readError);
+    }
     if (ownedHandle) {
       try {
         const processResult = await call(local.client, "process", {
