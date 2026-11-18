@@ -32,6 +32,15 @@ The dependency `uiautomation = 0.25.1` does not expose an AutoSetFocus setter on
 
 **Confidence:** High that default UIA focus caused this specific observed activation. The effect of correctly setting AutoSetFocus=false *in the same client's COM instance* is a **testable hypothesis**; not yet proven in the disposable guest. Do not claim G4 PASS from this document.
 
+## Independent Surface host compatibility check
+
+Read-only Windows host checks via the existing authorized Surface connection on 2026-11-18 UTC:
+- OS reported Windows NT 10.0.19045.0 (Surface host).
+- `CUIAutomation8` CLSID `{E22AD333-B25F-460C-83D0-0581107395C9}` exists in both HKCR and HKLM Classes registration.
+- A noninteractive `Activator.CreateInstance(Type.GetTypeFromCLSID(...))` succeeded and the resulting COM object was immediately released: **CUIAUTOMATION8_COM_ACTIVATION=PASS**.
+- UIAutomationCore.dll version reported `7.2.19041.320`.
+- This checks **COM class availability on the host only**; it does not establish that `IUIAutomation2::SetAutoSetFocus(false)` has been invoked in the Rust worker, and does not establish real-guest nofocus action behavior.
+
 ## Smallest safe engineering direction for Hydrogen
 
 1. Maintain **Draft PR #153** in the isolated branch. Do not modify production Tetherplane agents or OAuth/permissions.
