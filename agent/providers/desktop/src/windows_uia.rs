@@ -227,10 +227,9 @@ impl WorkerState {
                     hwnd_meta,
                     list_parent,
                 };
-                if let Some(node) = self.describe_element(&current, &observation) {
-                    current_reference = Some(node.reference.clone());
-                    nodes.push(node);
-                }
+                let node = self.describe_element(&current, &observation);
+                current_reference = Some(node.reference.clone());
+                nodes.push(node);
             }
 
             if frame.depth < MAX_WINDOWS_SNAPSHOT_DEPTH
@@ -261,7 +260,7 @@ impl WorkerState {
         &mut self,
         element: &UIElement,
         obs: &ElementObservation<'_>,
-    ) -> Option<DesktopNode> {
+    ) -> DesktopNode {
         let automation_id = element.get_automation_id().unwrap_or_default();
         let class_name = element.get_classname().unwrap_or_default();
         let name = element.get_name().unwrap_or_default();
@@ -342,7 +341,7 @@ impl WorkerState {
                 list_parent_hwnd,
             },
         );
-        Some(node)
+        node
     }
 
     fn target(&mut self, reference: &str) -> Result<DesktopNode, CapabilityError> {
@@ -391,9 +390,7 @@ impl WorkerState {
             hwnd_meta,
             list_parent,
         };
-        let refreshed = self
-            .describe_element(&element, &observation)
-            .ok_or_else(|| stale_reference(reference))?;
+        let refreshed = self.describe_element(&element, &observation);
 
         if refreshed.reference != reference {
             return Err(stale_reference(reference));
