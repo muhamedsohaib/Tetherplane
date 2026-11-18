@@ -544,7 +544,14 @@ async function runDesktopCoexistenceTest(framework: "WinForms" | "Wpf") {
 // cursor, accessing the clipboard, or taking any foreground focus.
 test(
   "Windows Compact MCP launches nonvisible WinForms and WPF fixture constructors",
-  { skip: process.platform !== "win32", timeout: 80_000 },
+  // GitHub-hosted Windows CI runs without an interactive desktop; GUI-backed
+  // PowerShell may remain alive without entering its script under that host.
+  // Direct constructor preflight runs in CI; MCP child GUI launches require
+  // an interactive disposable Windows Sandbox or staging desktop.
+  {
+    skip: process.platform !== "win32" || process.env.GITHUB_ACTIONS === "true",
+    timeout: 80_000,
+  },
   async () => {
     const here = path.dirname(fileURLToPath(import.meta.url));
     const fixturePath = path.join(here, "fixtures", "windows-desktop-fixture.ps1");
