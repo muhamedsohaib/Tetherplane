@@ -539,6 +539,83 @@ async function runDesktopCoexistenceTest(framework: "WinForms" | "Wpf") {
   }
 }
 
+// A noninteractive process-launch check, distinct from the full G4 UIA gate.
+// It constructs and exits GUI fixtures without showing windows, moving a
+// cursor, accessing the clipboard, or taking any foreground focus.
+test(
+  "Windows Compact MCP launches nonvisible WinForms and WPF fixture constructors",
+  { skip: process.platform !== "win32", timeout: 80_000 },
+  async () => {
+    const here = path.dirname(fileURLToPath(import.meta.url));
+    const fixturePath = path.join(here, "fixtures", "windows-desktop-fixture.ps1");
+    const local = await startLocalCompact();
+    try {
+      for (const framework of ["WinForms", "Wpf"] as const) {
+        const statePath = path.join(local.root, "nonvisible-" + framework + ".json");
+        const result = await call(local.client, "process", {
+          op: "run",
+          args: {
+            program: "powershell.exe",
+            args: [
+              "-NoProfile", "-NonInteractive", "-Sta",
+              "-ExecutionPolicy", "Bypass", "-File", fixturePath,
+              "-StatePath", statePath, "-Title", "Nonvisible G4 MCP preflight",
+              "-Prefix", "Owned", "-Framework", framework, "-InitializeOnly",
+            ],
+            wait_ms: 10000,
+            pty: false,
+          },
+        });
+        assert.equal(result.isError, undefined,
+          framework + ": nonvisible process.run was denied");
+        const processInfo = structured(result);
+        assert.ok(typeof processInfo.handle === "string",
+          framework + ": no owned process handle returned");
+
+        let lastStage = "missing";
+        let stageReached = false;
+        for (let i = 0; i < 200; i += 1) {
+          try {
+            lastStage = await readFile(statePath + ".startup.txt", "utf8");
+            const expected =
+              framework === "WinForms"
+                ? "stage=winforms-controls-created"
+                : "stage=controls-created";
+            if (lastStage.includes(expected)) {
+              stageReached = true;
+              break;
+            }
+          } catch {
+            // Bootstrap may not have created the file yet.
+          }
+          await new Promise((resolve) => setTimeout(resolve, 100));
+        }
+        assert.equal(stageReached, true,
+          framework + ": owned process did not initialize; last_stage=" + lastStage);
+        assert.equal(await readFile(statePath, "utf8").then(
+          () => true, () => false),
+          false, framework + ": nonvisible fixture created a live window state");
+
+        let stopped = processInfo.running === false;
+        for (let i = 0; i < 60 && !stopped; i += 1) {
+          const statusResult = await call(local.client, "process", {
+            op: "read",
+            args: { handle: processInfo.handle, mode: "tail", tail_bytes: 1024 },
+          });
+          assert.equal(statusResult.isError, undefined);
+          stopped = structured(statusResult).running === false;
+          if (!stopped) await new Promise((resolve) => setTimeout(resolve, 100));
+        }
+        assert.equal(stopped, true,
+          framework + ": nonvisible fixture did not exit on its own");
+        console.log("G4_" + framework.toUpperCase() + "_MCP_NONVISIBLE_STARTUP=PASS");
+      }
+    } finally {
+      await local.close();
+    }
+  },
+);
+
 const skipInteractiveWindowsDesktop =
   // GitHub-hosted Windows runners do not provide the interactive desktop
   // required to certify UI Automation coexistence. This proof runs on
