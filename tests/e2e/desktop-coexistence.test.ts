@@ -10,12 +10,17 @@ import type { Client } from "@modelcontextprotocol/sdk/client/index.js";
 
 import {
   createBoundedOutputCollector,
+  evaluateFocusCoexistence,
   extractToolPayload,
+  hasFixtureHeartbeatAdvanced,
+  isFixtureRenderedReady,
   selectHumanInvokeTarget,
   selectOwnedFixtureTargets,
   summarizeNodesForDiagnostics,
   type DesktopNode,
   type ExtractedToolPayload,
+  type FixtureStateSnapshot,
+  type FocusCoexistenceVerdict,
 } from "./helpers/desktop-coexistence-helpers.ts";
 import { startLocalCompact } from "./helpers/start-local.ts";
 import {
@@ -25,6 +30,20 @@ import {
   type ForegroundInfo,
 } from "./helpers/windows-foreground.ts";
 
+type ForegroundRecord = {
+  hwnd: number;
+  pid: number;
+  process_name: string;
+  class_name: string;
+};
+
+type ForegroundCheckpoint = {
+  label: string;
+  at_iso: string;
+  foreground: ForegroundRecord | null;
+  foreground_error?: string;
+};
+
 type CursorCheckpoint = {
   label: string;
   at_iso: string;
@@ -32,12 +51,7 @@ type CursorCheckpoint = {
   dx_from_baseline: number | null;
   dy_from_baseline: number | null;
   clipboard_matches_baseline: boolean | null;
-  foreground: {
-    hwnd: number;
-    pid: number;
-    process_name: string;
-    class_name: string;
-  } | null;
+  foreground: ForegroundRecord | null;
   foreground_error?: string;
 };
 
@@ -101,6 +115,16 @@ function powershell(command: string): string {
   ).trim();
 }
 
+function toForegroundRecord(info: ForegroundInfo | null): ForegroundRecord | null {
+  if (!info) return null;
+  return {
+    hwnd: info.hwnd,
+    pid: info.pid,
+    process_name: info.processName,
+    class_name: info.className,
+  };
+}
+
 function readForegroundForDiagnostics(): {
   info: ForegroundInfo | null;
   error?: string;
@@ -112,11 +136,28 @@ function readForegroundForDiagnostics(): {
   }
 }
 
+function recordForegroundCheckpoint(
+  timeline: ForegroundCheckpoint[],
+  label: string,
+): ForegroundInfo | null {
+  const fg = readForegroundForDiagnostics();
+  const checkpoint: ForegroundCheckpoint = {
+    label,
+    at_iso: new Date().toISOString(),
+    foreground: toForegroundRecord(fg.info),
+  };
+  if (fg.error !== undefined) {
+    checkpoint.foreground_error = fg.error;
+  }
+  timeline.push(checkpoint);
+  return fg.info;
+}
+
 function recordCursorCheckpoint(
   timeline: CursorCheckpoint[],
   label: string,
   baseline: CursorClipboardState | null,
-): CursorClipboardState {
+): { state: CursorClipboardState; foreground: ForegroundInfo | null } {
   const state = getCursorClipboardState();
   const fg = readForegroundForDiagnostics();
   const checkpoint: CursorCheckpoint = {
@@ -128,20 +169,13 @@ function recordCursorCheckpoint(
     clipboard_matches_baseline: baseline
       ? state.clipboardTextBase64 === baseline.clipboardTextBase64
       : null,
-    foreground: fg.info
-      ? {
-          hwnd: fg.info.hwnd,
-          pid: fg.info.pid,
-          process_name: fg.info.processName,
-          class_name: fg.info.className,
-        }
-      : null,
+    foreground: toForegroundRecord(fg.info),
   };
   if (fg.error !== undefined) {
     checkpoint.foreground_error = fg.error;
   }
   timeline.push(checkpoint);
-  return state;
+  return { state, foreground: fg.info };
 }
 
 function buildActionEvidence(
@@ -175,20 +209,20 @@ function buildActionEvidence(
   };
 }
 
-async function readState(statePath: string): Promise<Record<string, unknown>> {
-  return JSON.parse(await readFile(statePath, "utf8")) as Record<string, unknown>;
+async function readState(statePath: string): Promise<FixtureStateSnapshot> {
+  return JSON.parse(await readFile(statePath, "utf8")) as FixtureStateSnapshot;
 }
 
 async function waitForState(
   statePath: string,
-  predicate: (state: Record<string, unknown>) => boolean,
+  predicate: (state: FixtureStateSnapshot) => boolean,
   timeoutMs = 20_000,
-): Promise<Record<string, unknown>> {
+): Promise<FixtureStateSnapshot> {
   // A fresh Windows Sandbox can start PowerShell/GUI fixtures slowly. Wait
   // for application state, not a fixed count of scheduler ticks.
   const deadline = Date.now() + timeoutMs;
   let lastError: unknown;
-  let lastState: Record<string, unknown> | undefined;
+  let lastState: FixtureStateSnapshot | undefined;
   let lastStage = "not-recorded";
   while (Date.now() < deadline) {
     try {
@@ -216,6 +250,141 @@ async function waitForState(
       "ms; last_stage=" + lastStage +
       "; last_state=" + JSON.stringify(lastState ?? null) +
       "; last_read_error=" + String(lastError ?? "none"),
+  );
+}
+
+async function waitForCorroboratedFocusCoexistence(params: {
+  framework: "WinForms" | "Wpf";
+  ownedStatePath: string;
+  humanStatePath: string;
+  ownedReadyState: FixtureStateSnapshot;
+  ownedPid: number;
+  humanPid: number;
+  timeoutMs?: number;
+}): Promise<{
+  ownedState: FixtureStateSnapshot;
+  humanState: FixtureStateSnapshot;
+  foreground: ForegroundInfo;
+  verdict: FocusCoexistenceVerdict;
+}> {
+  const {
+    framework,
+    ownedStatePath,
+    humanStatePath,
+    ownedReadyState,
+    ownedPid,
+    humanPid,
+    timeoutMs = 20_000,
+  } = params;
+  const deadline = Date.now() + timeoutMs;
+  let lastOwned: FixtureStateSnapshot | null = null;
+  let lastHuman: FixtureStateSnapshot | null = null;
+  let lastForeground: ForegroundInfo | null = null;
+  let lastForegroundError: string | undefined;
+  let lastVerdict: FocusCoexistenceVerdict = {
+    ready: false,
+    reason: "pending",
+    discrepancy: null,
+  };
+  let lastHeartbeatAdvanced = false;
+  let lastReadError: unknown;
+  let lastProbeAt = 0;
+
+  while (Date.now() < deadline) {
+    try {
+      lastOwned = await readState(ownedStatePath);
+      lastHuman = await readState(humanStatePath);
+      lastReadError = undefined;
+    } catch (error) {
+      lastReadError = error;
+    }
+
+    for (const [label, statePath] of [
+      ["owned", ownedStatePath],
+      ["human", humanStatePath],
+    ] as const) {
+      const startupError = await readFile(
+        statePath + ".startup.txt.error.txt",
+        "utf8",
+      ).catch(() => null);
+      if (startupError !== null) {
+        throw new Error(
+          `${label} fixture terminated during focus coexistence check: ${startupError}`,
+        );
+      }
+    }
+
+    const now = Date.now();
+    const candidatesReady =
+      lastOwned?.focused === false &&
+      lastHuman?.focused === true &&
+      hasFixtureHeartbeatAdvanced(ownedReadyState, lastOwned);
+    if (candidatesReady || now - lastProbeAt >= 500) {
+      const fg = readForegroundForDiagnostics();
+      lastForeground = fg.info;
+      lastForegroundError = fg.error;
+      lastProbeAt = now;
+    }
+
+    lastHeartbeatAdvanced = hasFixtureHeartbeatAdvanced(
+      ownedReadyState,
+      lastOwned,
+    );
+    lastVerdict = evaluateFocusCoexistence({
+      framework,
+      ownedState: lastOwned,
+      humanState: lastHuman,
+      ownedPid,
+      humanPid,
+      foreground: lastForeground,
+    });
+    if (lastVerdict.ready && lastHeartbeatAdvanced && lastForeground) {
+      return {
+        ownedState: lastOwned as FixtureStateSnapshot,
+        humanState: lastHuman as FixtureStateSnapshot,
+        foreground: lastForeground,
+        verdict: lastVerdict,
+      };
+    }
+
+    await new Promise((resolve) => setTimeout(resolve, 100));
+  }
+
+  const finalFg = readForegroundForDiagnostics();
+  lastForeground = finalFg.info ?? lastForeground;
+  lastForegroundError = finalFg.error ?? lastForegroundError;
+  const ownedStage = await readFile(
+    ownedStatePath + ".startup.txt",
+    "utf8",
+  ).catch(() => "not-recorded");
+  const humanStage = await readFile(
+    humanStatePath + ".startup.txt",
+    "utf8",
+  ).catch(() => "not-recorded");
+
+  throw new Error(
+    "fixture focus coexistence was not corroborated within " +
+      timeoutMs +
+      "ms; verdict=" +
+      JSON.stringify(lastVerdict) +
+      "; owned_heartbeat_advanced=" +
+      String(lastHeartbeatAdvanced) +
+      "; owned_ready_seq=" +
+      String(ownedReadyState.state_seq ?? null) +
+      "; owned_stage=" +
+      ownedStage +
+      "; human_stage=" +
+      humanStage +
+      "; owned_state=" +
+      JSON.stringify(lastOwned) +
+      "; human_state=" +
+      JSON.stringify(lastHuman) +
+      "; os_foreground=" +
+      JSON.stringify(toForegroundRecord(lastForeground)) +
+      "; os_foreground_error=" +
+      String(lastForegroundError ?? "none") +
+      "; last_read_error=" +
+      String(lastReadError ?? "none"),
   );
 }
 
@@ -288,7 +457,9 @@ async function runDesktopCoexistenceTest(framework: "WinForms" | "Wpf") {
     null;
   let selectedTargetsSummary: Record<string, unknown> | null = null;
   let idleControlSummary: Record<string, unknown> | null = null;
+  let focusCoexistenceSummary: Record<string, unknown> | null = null;
   let baselineCursorState: CursorClipboardState | null = null;
+  const foregroundTimeline: ForegroundCheckpoint[] = [];
   const cursorTimeline: CursorCheckpoint[] = [];
   const actionEvidence: Record<string, ActionEvidenceRecord> = {};
 
@@ -315,7 +486,7 @@ async function runDesktopCoexistenceTest(framework: "WinForms" | "Wpf") {
     // fixture window opens so any one-time helper build cannot disturb focus.
     currentStage = "prewarm_probes";
     getCursorClipboardState();
-    readForegroundForDiagnostics();
+    recordForegroundCheckpoint(foregroundTimeline, "after_prewarm");
 
     currentStage = "launch_owned";
     const owned = structured(
@@ -338,6 +509,7 @@ async function runDesktopCoexistenceTest(framework: "WinForms" | "Wpf") {
             "Owned",
             "-Framework",
             framework,
+            "-NoActivate",
           ],
           wait_ms: 0,
           pty: false,
@@ -348,11 +520,12 @@ async function runDesktopCoexistenceTest(framework: "WinForms" | "Wpf") {
     ownedPid = owned.pid as number;
 
     currentStage = "wait_owned_ready";
-    await waitForState(
+    const ownedReadyState = await waitForState(
       ownedState,
-      (state) => state.ready === true && state.framework === framework,
+      (state) => isFixtureRenderedReady(state, framework),
       45_000,
     );
+    recordForegroundCheckpoint(foregroundTimeline, "after_owned_ready");
 
     currentStage = "launch_human";
     humanProcess = spawn(
@@ -384,18 +557,41 @@ async function runDesktopCoexistenceTest(framework: "WinForms" | "Wpf") {
     await waitForState(
       humanState,
       (state) =>
-        state.ready === true &&
-        state.focused === true &&
-        state.framework === framework,
+        isFixtureRenderedReady(state, framework) && state.focused === true,
       45_000,
     );
+    recordForegroundCheckpoint(foregroundTimeline, "after_human_ready");
 
     currentStage = "wait_owned_unfocused";
-    const ownedBefore = await waitForState(
-      ownedState,
-      (state) => state.ready === true && state.focused === false,
-    );
+    const corroborated = await waitForCorroboratedFocusCoexistence({
+      framework,
+      ownedStatePath: ownedState,
+      humanStatePath: humanState,
+      ownedReadyState,
+      ownedPid,
+      humanPid,
+      timeoutMs: 20_000,
+    });
+    const ownedBefore = corroborated.ownedState;
     assert.equal(ownedBefore.focused, false);
+    assert.equal(corroborated.humanState.focused, true);
+    assert.equal(corroborated.foreground.pid, humanPid);
+    recordForegroundCheckpoint(foregroundTimeline, "after_owned_unfocused");
+    focusCoexistenceSummary = {
+      verdict: corroborated.verdict,
+      owned_ready_seq: ownedReadyState.state_seq ?? null,
+      owned_before_seq: ownedBefore.state_seq ?? null,
+      owned_before_ticks: ownedBefore.tick_count ?? null,
+      owned_hwnd: ownedBefore.hwnd ?? null,
+      owned_window_is_active: ownedBefore.window_is_active ?? null,
+      owned_focus_mismatch: ownedBefore.focus_mismatch ?? null,
+      human_before_seq: corroborated.humanState.state_seq ?? null,
+      human_before_ticks: corroborated.humanState.tick_count ?? null,
+      human_hwnd: corroborated.humanState.hwnd ?? null,
+      human_window_is_active: corroborated.humanState.window_is_active ?? null,
+      human_focus_mismatch: corroborated.humanState.focus_mismatch ?? null,
+      os_foreground: toForegroundRecord(corroborated.foreground),
+    };
 
     currentStage = "snapshot";
     const snapshot = structured(
@@ -435,7 +631,7 @@ async function runDesktopCoexistenceTest(framework: "WinForms" | "Wpf") {
       cursorTimeline,
       "before_idle_control",
       null,
-    );
+    ).state;
     await new Promise((resolve) =>
       setTimeout(resolve, IDLE_CONTROL_INTERVAL_MS),
     );
@@ -443,7 +639,7 @@ async function runDesktopCoexistenceTest(framework: "WinForms" | "Wpf") {
       cursorTimeline,
       "after_idle_control",
       idleBefore,
-    );
+    ).state;
     idleControlSummary = {
       duration_ms: IDLE_CONTROL_INTERVAL_MS,
       before: idleBefore.cursor,
@@ -455,15 +651,21 @@ async function runDesktopCoexistenceTest(framework: "WinForms" | "Wpf") {
       dy: idleAfter.cursor.y - idleBefore.cursor.y,
     };
 
-    baselineCursorState = recordCursorCheckpoint(
+    const baselineCheckpoint = recordCursorCheckpoint(
       cursorTimeline,
       "before_actions",
       idleAfter,
     );
+    baselineCursorState = baselineCheckpoint.state;
     const cursorBefore = baselineCursorState.cursor;
     const clipboardBefore = baselineCursorState.clipboardTextBase64;
     const humanBefore = await readState(humanState);
     assert.equal(humanBefore.focused, true);
+    assert.equal(
+      baselineCheckpoint.foreground?.pid,
+      humanPid,
+      `${framework} OS foreground drifted away from human fixture before actions: ${JSON.stringify(baselineCheckpoint.foreground)}`,
+    );
 
     currentStage = "act_set_value";
     const valueResult = await call(local.client, "desktop", {
@@ -479,7 +681,7 @@ async function runDesktopCoexistenceTest(framework: "WinForms" | "Wpf") {
       valueNode,
       valueResult,
     );
-    recordCursorCheckpoint(
+    const afterSetValueCheckpoint = recordCursorCheckpoint(
       cursorTimeline,
       "after_set_value",
       baselineCursorState,
@@ -495,6 +697,11 @@ async function runDesktopCoexistenceTest(framework: "WinForms" | "Wpf") {
       true,
       `${framework} human fixture lost focus after semantic set_value`,
     );
+    assert.equal(
+      afterSetValueCheckpoint.foreground?.pid,
+      humanPid,
+      `${framework} OS foreground changed after semantic set_value: ${JSON.stringify(afterSetValueCheckpoint.foreground)}`,
+    );
 
     currentStage = "act_invoke";
     const invokeResult = await call(local.client, "desktop", {
@@ -509,7 +716,7 @@ async function runDesktopCoexistenceTest(framework: "WinForms" | "Wpf") {
       invokeNode,
       invokeResult,
     );
-    recordCursorCheckpoint(
+    const afterInvokeCheckpoint = recordCursorCheckpoint(
       cursorTimeline,
       "after_invoke",
       baselineCursorState,
@@ -524,6 +731,11 @@ async function runDesktopCoexistenceTest(framework: "WinForms" | "Wpf") {
       (await readState(humanState)).focused,
       true,
       `${framework} human fixture lost focus after semantic invoke`,
+    );
+    assert.equal(
+      afterInvokeCheckpoint.foreground?.pid,
+      humanPid,
+      `${framework} OS foreground changed after semantic invoke: ${JSON.stringify(afterInvokeCheckpoint.foreground)}`,
     );
 
     currentStage = "act_select";
@@ -544,7 +756,7 @@ async function runDesktopCoexistenceTest(framework: "WinForms" | "Wpf") {
         selectionNode,
         selectionResult,
       );
-      recordCursorCheckpoint(
+      const afterSelectCheckpoint = recordCursorCheckpoint(
         cursorTimeline,
         "after_select",
         baselineCursorState,
@@ -559,6 +771,11 @@ async function runDesktopCoexistenceTest(framework: "WinForms" | "Wpf") {
         (await readState(humanState)).focused,
         true,
         `${framework} human fixture lost focus after semantic select`,
+      );
+      assert.equal(
+        afterSelectCheckpoint.foreground?.pid,
+        humanPid,
+        `${framework} OS foreground changed after semantic select: ${JSON.stringify(afterSelectCheckpoint.foreground)}`,
       );
     } else {
       assert.ok(
@@ -603,22 +820,32 @@ async function runDesktopCoexistenceTest(framework: "WinForms" | "Wpf") {
     assert.equal(ownedAfter.text, "owned-semantic-value");
     assert.equal(ownedAfter.status, "invoked");
     assert.equal(ownedAfter.focused, false);
+    assert.ok(
+      Number(ownedAfter.state_seq) > Number(ownedBefore.state_seq),
+      `${framework} owned state_seq did not advance after actions (before=${String(ownedBefore.state_seq)}, after=${String(ownedAfter.state_seq)})`,
+    );
     if (expectSelectedBeta) {
       assert.equal(ownedAfter.selected, "Owned Beta");
     }
 
     currentStage = "verify_coexistence";
     await new Promise((resolve) => setTimeout(resolve, 200));
-    const afterActionsState = recordCursorCheckpoint(
+    const afterActionsCheckpoint = recordCursorCheckpoint(
       cursorTimeline,
       "after_owned_verified",
       baselineCursorState,
     );
+    const afterActionsState = afterActionsCheckpoint.state;
     assert.deepEqual(afterActionsState.cursor, cursorBefore);
     assert.equal(afterActionsState.clipboardTextBase64, clipboardBefore);
     const humanAfter = await readState(humanState);
     assert.equal(humanAfter.focused, true);
     assert.equal(humanAfter.text, "Human-initial");
+    assert.equal(
+      afterActionsCheckpoint.foreground?.pid,
+      humanPid,
+      `${framework} OS foreground was not human fixture at verify_coexistence: ${JSON.stringify(afterActionsCheckpoint.foreground)}`,
+    );
 
     currentStage = "negative_human_act";
     const humanInvoke = selectHumanInvokeTarget(humanNodes);
@@ -670,7 +897,7 @@ async function runDesktopCoexistenceTest(framework: "WinForms" | "Wpf") {
       cursorTimeline,
       "after_private_clipboard",
       baselineCursorState,
-    );
+    ).state;
     assert.equal(afterPrivateClipboard.clipboardTextBase64, clipboardBefore);
 
     currentStage = "negative_no_lease";
@@ -692,7 +919,7 @@ async function runDesktopCoexistenceTest(framework: "WinForms" | "Wpf") {
       cursorTimeline,
       "after_no_lease",
       baselineCursorState,
-    );
+    ).state;
     assert.deepEqual(afterNoLease.cursor, cursorBefore);
 
     currentStage = "negative_self_mint";
@@ -718,12 +945,17 @@ async function runDesktopCoexistenceTest(framework: "WinForms" | "Wpf") {
     // on a fixture's state. Capture only this disposable fixture's state,
     // structured MCP responses, cursor/foreground timeline, and child output
     // before teardown; do not change policy or expose clipboard text.
+    const failureFg = readForegroundForDiagnostics();
     const detail: Record<string, unknown> = {
       framework,
       stage: currentStage,
       owned_pid: ownedPid ?? null,
       human_pid: humanPid ?? null,
       error: String(error),
+      focus_coexistence: focusCoexistenceSummary,
+      foreground_at_failure: toForegroundRecord(failureFg.info),
+      foreground_at_failure_error: failureFg.error ?? null,
+      foreground_timeline: foregroundTimeline,
       idle_control: idleControlSummary,
       cursor_timeline: cursorTimeline,
       selected_targets: selectedTargetsSummary,
@@ -784,6 +1016,8 @@ async function runDesktopCoexistenceTest(framework: "WinForms" | "Wpf") {
       stage: currentStage,
       owned_pid: ownedPid ?? null,
       human_pid: humanPid ?? null,
+      focus_coexistence: focusCoexistenceSummary,
+      foreground_timeline: foregroundTimeline,
       idle_control: idleControlSummary,
       cursor_before: baselineCursorState?.cursor ?? null,
       cursor_timeline: cursorTimeline,

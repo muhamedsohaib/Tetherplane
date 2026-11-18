@@ -1,13 +1,20 @@
 import assert from "node:assert/strict";
+import { readFileSync } from "node:fs";
+import path from "node:path";
 import test from "node:test";
+import { fileURLToPath } from "node:url";
 
 import {
   createBoundedOutputCollector,
+  evaluateFocusCoexistence,
   extractToolPayload,
+  hasFixtureHeartbeatAdvanced,
+  isFixtureRenderedReady,
   selectHumanInvokeTarget,
   selectOwnedFixtureTargets,
   summarizeNodesForDiagnostics,
   type DesktopNode,
+  type FixtureStateSnapshot,
 } from "./helpers/desktop-coexistence-helpers.ts";
 
 function makeNode(overrides: Partial<DesktopNode> & { reference: string; name: string }): DesktopNode {
@@ -273,4 +280,304 @@ test("summarizeNodesForDiagnostics and bounded output collector preserve metadat
   collector.append("12345");
   collector.append("67890");
   assert.equal(collector.read(), "34567890");
+});
+
+function makeFixtureState(
+  overrides: Partial<FixtureStateSnapshot> = {},
+): FixtureStateSnapshot {
+  return {
+    ready: true,
+    content_rendered: true,
+    focused: false,
+    window_is_active: false,
+    window_is_keyboard_focus_within: false,
+    hwnd: 1001,
+    os_foreground_available: true,
+    os_foreground_hwnd: 2002,
+    os_foreground_pid: 1068,
+    os_foreground_matches_window: false,
+    os_foreground_matches_process: false,
+    focus_mismatch: false,
+    state_seq: 2,
+    tick_count: 1,
+    activated_events: 0,
+    deactivated_events: 0,
+    write_errors: 0,
+    last_write_error: null,
+    last_source: "timer",
+    updated_at_utc: "2026-11-18T22:00:00.0000000Z",
+    text: "Owned-initial",
+    selected: "Owned Alpha",
+    status: "idle",
+    pid: 3516,
+    framework: "Wpf",
+    ...overrides,
+  };
+}
+
+test("isFixtureRenderedReady rejects pre-ContentRendered timer ticks and accepts rendered snapshots", () => {
+  assert.equal(
+    isFixtureRenderedReady(
+      makeFixtureState({
+        ready: true,
+        content_rendered: false,
+        state_seq: 1,
+      }),
+      "Wpf",
+    ),
+    false,
+  );
+  assert.equal(
+    isFixtureRenderedReady(
+      makeFixtureState({
+        ready: false,
+        content_rendered: false,
+        state_seq: 1,
+      }),
+      "Wpf",
+    ),
+    false,
+  );
+  assert.equal(
+    isFixtureRenderedReady(
+      makeFixtureState({
+        ready: true,
+        content_rendered: true,
+        state_seq: 0,
+      }),
+      "Wpf",
+    ),
+    false,
+  );
+  assert.equal(
+    isFixtureRenderedReady(
+      makeFixtureState({
+        framework: "WinForms",
+      }),
+      "Wpf",
+    ),
+    false,
+  );
+  assert.equal(
+    isFixtureRenderedReady(
+      makeFixtureState({
+        ready: true,
+        content_rendered: true,
+        state_seq: 1,
+        framework: "Wpf",
+      }),
+      "Wpf",
+    ),
+    true,
+  );
+});
+
+test("hasFixtureHeartbeatAdvanced detects frozen state files and accepts monotonic timer updates", () => {
+  const initial = makeFixtureState({ state_seq: 1, tick_count: 0 });
+  assert.equal(
+    hasFixtureHeartbeatAdvanced(
+      initial,
+      makeFixtureState({ state_seq: 1, tick_count: 0 }),
+    ),
+    false,
+  );
+  assert.equal(
+    hasFixtureHeartbeatAdvanced(
+      initial,
+      makeFixtureState({ state_seq: 2, tick_count: 0 }),
+    ),
+    false,
+  );
+  assert.equal(
+    hasFixtureHeartbeatAdvanced(
+      initial,
+      makeFixtureState({ state_seq: 2, tick_count: 1 }),
+    ),
+    true,
+  );
+});
+
+test("evaluateFocusCoexistence rejects dual-focused contradiction from af02b58 WPF failure", () => {
+  const ownedState = makeFixtureState({
+    pid: 3516,
+    hwnd: 1001,
+    focused: true,
+    window_is_active: true,
+    os_foreground_hwnd: 2002,
+    os_foreground_pid: 1068,
+    os_foreground_matches_window: false,
+    focus_mismatch: true,
+  });
+  const humanState = makeFixtureState({
+    pid: 1068,
+    hwnd: 2002,
+    focused: true,
+    window_is_active: true,
+    os_foreground_hwnd: 2002,
+    os_foreground_pid: 1068,
+    os_foreground_matches_window: true,
+    os_foreground_matches_process: true,
+  });
+
+  const verdict = evaluateFocusCoexistence({
+    framework: "Wpf",
+    ownedState,
+    humanState,
+    ownedPid: 3516,
+    humanPid: 1068,
+    foreground: {
+      hwnd: 2002,
+      pid: 1068,
+      processName: "powershell",
+      className: "HwndWrapper[powershell.exe;;1]",
+    },
+  });
+
+  assert.equal(verdict.ready, false);
+  assert.equal(verdict.reason, "dual_focused_discrepancy");
+  assert.ok(verdict.discrepancy?.includes("both"));
+});
+
+test("evaluateFocusCoexistence rejects stale owned focused=false when OS foreground is actually owned PID", () => {
+  const ownedState = makeFixtureState({
+    pid: 3516,
+    hwnd: 1001,
+    focused: false,
+    os_foreground_hwnd: 2002,
+    os_foreground_pid: 1068,
+    os_foreground_matches_window: false,
+  });
+  const humanState = makeFixtureState({
+    pid: 1068,
+    hwnd: 2002,
+    focused: true,
+    os_foreground_hwnd: 2002,
+    os_foreground_pid: 1068,
+    os_foreground_matches_window: true,
+    os_foreground_matches_process: true,
+  });
+
+  const verdict = evaluateFocusCoexistence({
+    framework: "Wpf",
+    ownedState,
+    humanState,
+    ownedPid: 3516,
+    humanPid: 1068,
+    foreground: {
+      hwnd: 1001,
+      pid: 3516,
+      processName: "powershell",
+      className: "HwndWrapper[powershell.exe;;owned]",
+    },
+  });
+
+  assert.equal(verdict.ready, false);
+  assert.equal(verdict.reason, "os_foreground_is_owned");
+  assert.ok(verdict.discrepancy);
+});
+
+test("evaluateFocusCoexistence rejects missing or third-party OS foreground window", () => {
+  const ownedState = makeFixtureState({ pid: 3516, hwnd: 1001, focused: false });
+  const humanState = makeFixtureState({
+    pid: 1068,
+    hwnd: 2002,
+    focused: true,
+    os_foreground_hwnd: 2002,
+    os_foreground_pid: 1068,
+    os_foreground_matches_window: true,
+    os_foreground_matches_process: true,
+  });
+
+  const missingFg = evaluateFocusCoexistence({
+    framework: "Wpf",
+    ownedState,
+    humanState,
+    ownedPid: 3516,
+    humanPid: 1068,
+    foreground: null,
+  });
+  assert.equal(missingFg.ready, false);
+  assert.equal(missingFg.reason, "os_foreground_unavailable");
+
+  const otherFg = evaluateFocusCoexistence({
+    framework: "Wpf",
+    ownedState,
+    humanState,
+    ownedPid: 3516,
+    humanPid: 1068,
+    foreground: {
+      hwnd: 9999,
+      pid: 4444,
+      processName: "explorer",
+      className: "Shell_TrayWnd",
+    },
+  });
+  assert.equal(otherFg.ready, false);
+  assert.equal(otherFg.reason, "os_foreground_not_human");
+});
+
+test("evaluateFocusCoexistence passes only when both fixtures and independent OS foreground agree", () => {
+  const ownedState = makeFixtureState({
+    pid: 3516,
+    hwnd: 1001,
+    focused: false,
+    window_is_active: false,
+    os_foreground_hwnd: 2002,
+    os_foreground_pid: 1068,
+    os_foreground_matches_window: false,
+    os_foreground_matches_process: false,
+  });
+  const humanState = makeFixtureState({
+    pid: 1068,
+    hwnd: 2002,
+    focused: true,
+    window_is_active: true,
+    os_foreground_hwnd: 2002,
+    os_foreground_pid: 1068,
+    os_foreground_matches_window: true,
+    os_foreground_matches_process: true,
+  });
+
+  const verdict = evaluateFocusCoexistence({
+    framework: "Wpf",
+    ownedState,
+    humanState,
+    ownedPid: 3516,
+    humanPid: 1068,
+    foreground: {
+      hwnd: 2002,
+      pid: 1068,
+      processName: "powershell",
+      className: "HwndWrapper[powershell.exe;;human]",
+    },
+  });
+
+  assert.equal(verdict.ready, true);
+  assert.equal(verdict.reason, "corroborated");
+  assert.equal(verdict.discrepancy, null);
+});
+
+test("windows-desktop-fixture.ps1 enforces read-only OS foreground inspection, non-activating WPF mode, and no forbidden focus/input APIs", () => {
+  const here = path.dirname(fileURLToPath(import.meta.url));
+  const fixturePath = path.join(here, "fixtures", "windows-desktop-fixture.ps1");
+  const source = readFileSync(fixturePath, "utf8");
+
+  assert.match(source, /\[switch\]\$NoActivate/);
+  assert.match(source, /\[switch\]\$SelfTestTimer/);
+  assert.match(source, /\$window\.ShowActivated\s*=\s*\$false/);
+  assert.match(source, /\$window\.Show\(\)/);
+  assert.match(source, /\[System\.Windows\.Threading\.Dispatcher\]::Run\(\)/);
+  assert.doesNotMatch(source, /\$window\.ShowDialog\(\)/);
+  assert.match(source, /GetForegroundWindow/);
+  assert.match(source, /GetWindowThreadProcessId/);
+  assert.match(source, /MoveFileExW/);
+  assert.match(source, /state_seq/);
+  assert.match(source, /tick_count/);
+  assert.match(source, /content_rendered/);
+  assert.match(source, /updated_at_utc/);
+  assert.match(source, /focus_mismatch/);
+  assert.doesNotMatch(
+    source,
+    /\b(SetForegroundWindow|SetCursorPos|SendInput|mouse_event|keybd_event|AttachThreadInput)\b/,
+  );
 });
