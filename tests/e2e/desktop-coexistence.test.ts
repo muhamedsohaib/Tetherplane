@@ -572,6 +572,32 @@ test(
         assert.ok(typeof processInfo.handle === "string",
           framework + ": no owned process handle returned");
 
+        // Establish that the same allowed process provider can launch a
+        // non-GUI PowerShell command before attributing any stall to WPF.
+        const canaryPath = path.join(local.root, "launch-canary-" + framework + ".txt");
+        const canary = await call(local.client, "process", {
+          op: "run",
+          args: {
+            program: "powershell.exe",
+            args: [
+              "-NoProfile", "-NonInteractive", "-Command",
+              "[IO.File]::WriteAllText('" + canaryPath.replace(/'/g, "''") + "', 'canary-ok')",
+            ],
+            wait_ms: 5000,
+            pty: false,
+          },
+        });
+        const canaryResult = structured(canary);
+        const canaryRead = await readFile(canaryPath, "utf8").catch(
+          (err: unknown) => "READ_ERROR: " + String(err),
+        );
+        assert.equal(canaryRead, "canary-ok", framework +
+          ": Tetherplane process.run PowerShell canary failed: " +
+          JSON.stringify({
+            launch: { pid: canaryResult.pid, running: canaryResult.running,
+              exit_code: canaryResult.exit_code, stderr: canaryResult.stderr },
+            canaryFile: canaryRead,
+          }));
         let lastStage = "missing";
         let stageReached = false;
         let latestProcess: Record<string, unknown> = processInfo;
@@ -599,8 +625,16 @@ test(
           }
           await new Promise((resolve) => setTimeout(resolve, 100));
         }
+        const launchedProcessDiagnostic = !stageReached ? powershell(
+          "$p=Get-CimInstance Win32_Process -Filter 'ProcessId = " +
+            String(processInfo.pid) + "' -ErrorAction SilentlyContinue;" +
+          " if ($p) { $p | Select-Object ProcessId,ParentProcessId,Name," +
+          "@{N='Executable';E={$_.ExecutablePath}} | ConvertTo-Json -Compress }" +
+          " else { 'missing' }",
+        ) : "not-needed";
         assert.equal(stageReached, true,
           framework + ": owned process did not initialize; last_stage=" + lastStage +
+          "; process_cim=" + launchedProcessDiagnostic +
           "; child_status=" + JSON.stringify({
             pid: latestProcess.pid ?? processInfo.pid,
             running: latestProcess.running,
