@@ -1,0 +1,182 @@
+name: G4 Offline Windows Sandbox Compact MCP Kit
+
+on:
+  push:
+    branches:
+      - experiment/g4-sandbox-kit-20261118
+
+permissions:
+  contents: read
+
+jobs:
+  build-kit:
+    runs-on: windows-latest
+    timeout-minutes: 50
+    steps:
+      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
+        with:
+          persist-credentials: false
+      - name: Nonvisible GUI fixture construction preflight (no input or user desktop)
+        shell: pwsh
+        run: |
+          powershell.exe -NoProfile -NonInteractive -ExecutionPolicy Bypass -File tests/e2e/fixtures/verify-windows-fixture-startup.ps1
+          if ($LASTEXITCODE -ne 0) { throw 'G4 fixture construction preflight failed' }
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4.4.0
+        with:
+          node-version: '22'
+      - name: Build exact Rust agent and TypeScript workspace
+        shell: pwsh
+        run: |
+          # Sandbox lacks the GitHub runner's dynamically supplied MSVC runtime.
+          # Only this disposable kit build statically links the C runtime; production agents unchanged.
+          $env:RUSTFLAGS = '-C target-feature=+crt-static'
+          cargo build -p tetherd --release --locked
+          if ($LASTEXITCODE -ne 0) { throw 'Rust build failed' }
+          corepack enable
+          corepack prepare pnpm@10.34.5 --activate
+          pnpm install --frozen-lockfile
+          if ($LASTEXITCODE -ne 0) { throw 'Install failed' }
+          pnpm -r build
+          if ($LASTEXITCODE -ne 0) { throw 'TypeScript build failed' }
+      - name: Assert guest-compatible tetherd native imports
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = 'Stop'
+          $binary = Join-Path $env:GITHUB_WORKSPACE 'target\release\tetherd.exe'
+          if (-not (Test-Path -LiteralPath $binary)) { throw 'Expected release agent missing' }
+          $vswhere = Join-Path 'C:\Program Files (x86)' 'Microsoft Visual Studio\Installer\vswhere.exe'
+          if (-not (Test-Path -LiteralPath $vswhere)) { throw 'Cannot inspect PE runtime dependencies: vswhere.exe missing' }
+          $vsInstall = & $vswhere -latest -products '*' -requires Microsoft.VisualStudio.Component.VC.Tools.x86.x64 -property installationPath
+          if (-not $vsInstall) { throw 'Cannot inspect PE runtime dependencies: MSVC tools missing' }
+          $toolset = @(Get-ChildItem (Join-Path $vsInstall 'VC\Tools\MSVC') -Directory | Sort-Object Name -Descending)[0]
+          $dumpbin = Join-Path $toolset.FullName 'bin\Hostx64\x64\dumpbin.exe'
+          if (-not (Test-Path -LiteralPath $dumpbin)) { throw 'Cannot inspect PE runtime dependencies: dumpbin.exe missing' }
+          $imports = (& $dumpbin /nologo /dependents $binary) -join [Environment]::NewLine
+          if ($LASTEXITCODE -ne 0) { throw 'PE import scan failed' }
+          Write-Output "G4_GUEST_AGENT_IMPORTS_BEGIN"
+          Write-Output $imports
+          Write-Output "G4_GUEST_AGENT_IMPORTS_END"
+          if ($imports -match '(?i)(?:VCRUNTIME140(?:_1)?|MSVCP140(?:_1|_2)?|api-ms-win-crt-[a-z0-9-]+)\.dll') {
+            throw 'G4_GUEST_PORTABILITY_FAIL: tetherd imports an external MSVC/UCRT runtime DLL'
+          }
+          Write-Output 'G4_GUEST_PORTABILITY_NO_MSVC_RUNTIME_IMPORTS=PASS'
+      - name: Build portable bundled Compact MCP tests and adapter
+        shell: pwsh
+        run: |
+          $toolDir = Join-Path $env:RUNNER_TEMP 'g4-esbuild'
+          npm install --prefix $toolDir --no-audit --no-fund --no-package-lock esbuild@0.25.12
+          if ($LASTEXITCODE -ne 0) { throw 'Pinned bundler install failed' }
+          $esbuild = Join-Path $toolDir 'node_modules\esbuild\bin\esbuild'
+          $out = Join-Path $env:RUNNER_TEMP 'TP-G4-Compact-MCP-Kit'
+          $testDir = Join-Path $out 'tests\e2e'
+          $adapterDir = Join-Path $out 'adapters\compact-mcp\dist'
+          $binaryDir = Join-Path $out 'target\debug'
+          foreach ($dir in @($testDir,$adapterDir,$binaryDir,(Join-Path $testDir 'fixtures'))) {
+            New-Item -ItemType Directory -Path $dir -Force | Out-Null
+          }
+          $banner = "--banner:js=import { createRequire as __tpKitCreateRequire } from 'node:module'; var require = __tpKitCreateRequire(import.meta.url);"
+          & node $esbuild 'tests/e2e/desktop-coexistence.test.ts' --bundle --platform=node --target=node22 --format=esm $banner "--outfile=$(Join-Path $testDir 'desktop-coexistence.test.mjs')"
+          if ($LASTEXITCODE -ne 0) { throw 'Desktop integration test bundling failed' }
+          & node $esbuild 'tests/e2e/local-compact.test.ts' --bundle --platform=node --target=node22 --format=esm $banner "--outfile=$(Join-Path $testDir 'local-compact.test.mjs')"
+          if ($LASTEXITCODE -ne 0) { throw 'Local Compact MCP test bundling failed' }
+          & node $esbuild 'adapters/compact-mcp/src/stdio-server.ts' --bundle --platform=node --target=node22 --format=esm $banner "--outfile=$(Join-Path $adapterDir 'stdio-server.js')"
+          if ($LASTEXITCODE -ne 0) { throw 'Compact MCP adapter bundling failed' }
+          Copy-Item target\release\tetherd.exe (Join-Path $binaryDir 'tetherd.exe')
+          Copy-Item tests\e2e\fixtures\windows-desktop-fixture.ps1 (Join-Path $testDir 'fixtures\windows-desktop-fixture.ps1')
+          Copy-Item (Get-Command node.exe).Source (Join-Path $out 'node.exe')
+          Copy-Item Cargo.toml (Join-Path $out 'Cargo.toml')
+          Copy-Item pnpm-workspace.yaml (Join-Path $out 'pnpm-workspace.yaml')
+          $protocolPackageDir = Join-Path $out 'node_modules\@tetherplane\protocol'
+          $protocolSchemaDir = Join-Path $protocolPackageDir 'schemas'
+          New-Item -ItemType Directory -Path $protocolSchemaDir -Force | Out-Null
+          Copy-Item protocol\package.json (Join-Path $protocolPackageDir 'package.json')
+          Copy-Item protocol\schemas\error.schema.json (Join-Path $protocolSchemaDir 'error.schema.json')
+          Copy-Item protocol\schemas\result.schema.json (Join-Path $protocolSchemaDir 'result.schema.json')
+          Write-Output 'G4_PORTABLE_PROTOCOL_SCHEMAS_INCLUDED=1'
+          [IO.File]::WriteAllText((Join-Path $out 'package.json'), '{"private":true,"type":"module"}', [Text.UTF8Encoding]::new($false))
+          $guestLauncher = @'
+          @echo off
+          setlocal
+          if /I not "%USERNAME%"=="WDAGUtilityAccount" (
+            echo ABORT: Only run this kit inside disposable Windows Sandbox.
+            pause
+            exit /b 2
+          )
+          set "GITHUB_ACTIONS="
+          set "CI="
+          set "REPORT=%TEMP%\Tetherplane-G4-Compact-MCP-Result.txt"
+          echo TETHERPLANE G4 LOCAL COMPACT MCP - NOT FULL REMOTE G4 > "%REPORT%"
+          echo Source provider commit: ${{ github.sha }} >> "%REPORT%"
+          echo Baseline provider commit: 079352ba94ed63b2c7294cfd308f7718a034ae82 >> "%REPORT%"
+          echo Host: %COMPUTERNAME% >> "%REPORT%"
+          echo Test: WinForms + WPF, owned process and human coexistence >> "%REPORT%"
+          "%~dp0node.exe" --test "%~dp0tests\e2e\desktop-coexistence.test.mjs" >> "%REPORT%" 2>&1
+          set "TEST_EXIT=%ERRORLEVEL%"
+          echo G4_LOCAL_COMPACT_MCP_EXIT=%TEST_EXIT% >> "%REPORT%"
+          type "%REPORT%"
+          start "" notepad.exe "%REPORT%"
+          pause
+          exit /b %TEST_EXIT%
+          '@
+          [IO.File]::WriteAllText((Join-Path $out 'Run-G4-Guest.cmd'), $guestLauncher, [Text.Encoding]::ASCII)
+          $sourceInfo = @{
+            source_provider_commit = '${{ github.sha }}'
+            baseline_provider_commit = '079352ba94ed63b2c7294cfd308f7718a034ae82'
+            packaging_commit = '${{ github.sha }}'
+            scope = 'local Compact MCP desktop coexistence test only; full remote G4 and physical G6 not certified'
+          }
+          $sourceInfo | ConvertTo-Json -Depth 3 | Set-Content -LiteralPath (Join-Path $out 'manifest.json') -Encoding utf8
+          Write-Output "G4_KIT_ROOT=$out"
+      - name: Diagnose bundled Compact MCP adapter startup
+        shell: pwsh
+        run: |
+          $out = Join-Path $env:RUNNER_TEMP 'TP-G4-Compact-MCP-Kit'
+          $info = [System.Diagnostics.ProcessStartInfo]::new()
+          $info.FileName = Join-Path $out 'node.exe'
+          $info.Arguments = '"' + (Join-Path $out 'adapters\compact-mcp\dist\stdio-server.js') + '" --tetherd "' + (Join-Path $out 'target\debug\tetherd.exe') + '" --allow "' + $env:TEMP + '"'
+          $info.RedirectStandardInput = $true
+          $info.RedirectStandardOutput = $true
+          $info.RedirectStandardError = $true
+          $info.UseShellExecute = $false
+          $info.CreateNoWindow = $true
+          $process = [Diagnostics.Process]::Start($info)
+          $stdoutFuture = $process.StandardOutput.ReadToEndAsync()
+          $stderrFuture = $process.StandardError.ReadToEndAsync()
+          $initialize = '{"jsonrpc":"2.0","id":1,"method":"initialize","params":{"protocolVersion":"2025-03-26","capabilities":{},"clientInfo":{"name":"g4-portable-ci","version":"0.1.0"}}}'
+          try {
+            $process.StandardInput.WriteLine($initialize)
+            $process.StandardInput.Close()
+          } catch {
+            Write-Output ('ADAPTER_STDIN_ERROR=' + $_.Exception.Message)
+          }
+          if (-not $process.WaitForExit(5000)) {
+            Write-Output 'ADAPTER_STARTUP_TIMEOUT=1'
+            Stop-Process -Id $process.Id -Force -ErrorAction SilentlyContinue
+            [void]$process.WaitForExit(3000)
+          }
+          Write-Output ('ADAPTER_EXIT=' + $process.ExitCode)
+          Write-Output ('ADAPTER_STDOUT=' + (($stdoutFuture.Result | Out-String).Trim() | Select-Object -First 1))
+          Write-Output ('ADAPTER_STDERR=' + (($stderrFuture.Result | Out-String).Trim() | Select-Object -First 1))
+      - name: Portable kit proof in Windows CI (no interactive UIA claim)
+        shell: pwsh
+        run: |
+          $out = Join-Path $env:RUNNER_TEMP 'TP-G4-Compact-MCP-Kit'
+          Push-Location $out
+          try {
+            & .\node.exe --test .\tests\e2e\local-compact.test.mjs
+            if ($LASTEXITCODE -ne 0) { throw 'Portable Compact MCP smoke test failed' }
+            & .\node.exe --test .\tests\e2e\desktop-coexistence.test.mjs
+            if ($LASTEXITCODE -ne 0) { throw 'Desktop test module failed to load' }
+            Write-Output 'G4_PORTABLE_KIT_WINDOWS_CI_SMOKE_PASS=1'
+            Write-Output 'G4_INTERACTIVE_DESKTOP_CI=SKIPPED_INTENTIONALLY'
+          } finally {
+            Pop-Location
+          }
+      - name: Upload offline guest kit (no installation on production devices)
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        with:
+          name: tetherplane-g4-sandbox-compact-mcp-${{ github.sha }}
+          path: ${{ runner.temp }}/TP-G4-Compact-MCP-Kit/
+          retention-days: 7
+          if-no-files-found: error
