@@ -257,11 +257,18 @@ impl DesktopProvider {
             value,
         })?;
 
+        let mut data = json!({
+            "verified": outcome.verified,
+            "target": self.node_json(&outcome.target),
+        });
+        if let Some(transport) = outcome.delta.get("transport").and_then(Value::as_str)
+            && let Some(object) = data.as_object_mut()
+        {
+            object.insert("transport".into(), Value::String(transport.to_owned()));
+        }
+
         Ok(ProviderResult {
-            data: json!({
-                "verified": outcome.verified,
-                "target": self.node_json(&outcome.target),
-            }),
+            data,
             delta: Some(outcome.delta),
             verification: if outcome.verified {
                 VerificationStatus::Verified

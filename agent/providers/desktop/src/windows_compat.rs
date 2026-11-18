@@ -58,6 +58,7 @@ pub enum SemanticControlType {
     ScrollBar,
     SplitButton,
     Text,
+    TitleBar,
     Window,
     Other(i32),
 }
@@ -81,6 +82,7 @@ impl SemanticControlType {
             50_031 => Self::SplitButton,
             50_032 => Self::Window,
             50_033 => Self::Pane,
+            50_037 => Self::TitleBar,
             other => Self::Other(other),
         }
     }
@@ -103,6 +105,7 @@ impl SemanticControlType {
             Self::SplitButton => 50_031,
             Self::Window => 50_032,
             Self::Pane => 50_033,
+            Self::TitleBar => 50_037,
             Self::Other(id) => id,
         }
     }
@@ -261,6 +264,7 @@ fn is_verified_native_edit(input: &ElementCompatInput) -> Option<&NativeHwndMeta
             | SemanticControlType::List
             | SemanticControlType::ListItem
             | SemanticControlType::ScrollBar
+            | SemanticControlType::TitleBar
             | SemanticControlType::Window
     ) {
         return None;
@@ -284,6 +288,7 @@ fn is_verified_native_pushbutton(input: &ElementCompatInput) -> Option<&NativeHw
             | SemanticControlType::List
             | SemanticControlType::ListItem
             | SemanticControlType::ScrollBar
+            | SemanticControlType::TitleBar
             | SemanticControlType::Window
             | SemanticControlType::Text
     ) {
@@ -379,7 +384,9 @@ pub fn infer_supported_patterns(input: &ElementCompatInput) -> Vec<DesktopPatter
     if input.has_invoke_pattern || is_verified_native_pushbutton(input).is_some() {
         push(DesktopPattern::Invoke);
     }
-    if input.has_value_pattern || is_verified_native_edit(input).is_some() {
+    if input.control_type != SemanticControlType::TitleBar
+        && (input.has_value_pattern || is_verified_native_edit(input).is_some())
+    {
         push(DesktopPattern::Value);
     }
     let native_list_item_ready = verified_native_list_item(input)
@@ -459,6 +466,12 @@ fn plan_set_value(
     if value.contains('\0') {
         return Err(invalid_arguments(
             "desktop set_value payload must not contain NUL bytes",
+        ));
+    }
+    if input.control_type == SemanticControlType::TitleBar {
+        return Err(capability_unavailable(
+            &action.reference,
+            DesktopPattern::Value,
         ));
     }
 
@@ -637,6 +650,7 @@ fn ensure_background_uia_eligible(
         ),
         details: json!({
             "framework_id": input.framework_id,
+            "control_type": input.control_type.as_i32(),
         }),
     })
 }

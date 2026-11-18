@@ -181,3 +181,60 @@ test("cursor and clipboard helper prefers one compiled read-only probe", (t) => 
     5_000,
   );
 });
+
+test("compiled probe build hides csc.exe console window with bounded timeout", (t) => {
+  const platform = Object.getOwnPropertyDescriptor(process, "platform")!;
+  Object.defineProperty(process, "platform", { ...platform, value: "win32" });
+  const calls: Array<{
+    file: string;
+    args: string[];
+    options: childProcess.ExecFileSyncOptions | undefined;
+  }> = [];
+
+  t.mock.method(fs, "existsSync", (target: fs.PathLike) =>
+    String(target).toLowerCase().endsWith("csc.exe"),
+  );
+  t.mock.method(fs, "writeFileSync", () => undefined);
+  t.mock.method(
+    childProcess,
+    "execFileSync",
+    (
+      file: string,
+      argsOrOptions: string[] | childProcess.ExecFileSyncOptions,
+      options?: childProcess.ExecFileSyncOptions,
+    ) => {
+      const args = Array.isArray(argsOrOptions) ? argsOrOptions : [];
+      const actualOptions = Array.isArray(argsOrOptions) ? options : argsOrOptions;
+      calls.push({ file, args, options: actualOptions });
+      if (file.toLowerCase().endsWith("csc.exe")) {
+        return "";
+      }
+      return file.includes("fg-probe")
+        ? "123:456:fixture:FixtureWindow\r\n"
+        : "12\t34\t\r\n";
+    },
+  );
+  syncBuiltinESMExports();
+  t.after(() => {
+    t.mock.restoreAll();
+    syncBuiltinESMExports();
+    Object.defineProperty(process, "platform", platform);
+  });
+
+  getForegroundInfo();
+  getCursorClipboardState();
+
+  const compileCalls = calls.filter((call) =>
+    call.file.toLowerCase().endsWith("csc.exe"),
+  );
+  assert.equal(compileCalls.length, 2);
+  for (const compileCall of compileCalls) {
+    assert.equal(compileCall.options?.windowsHide, true);
+    assert.ok(
+      typeof compileCall.options?.timeout === "number" &&
+        compileCall.options.timeout > 0 &&
+        compileCall.options.timeout <= 30_000,
+      "csc.exe compilation must have a bounded timeout",
+    );
+  }
+});

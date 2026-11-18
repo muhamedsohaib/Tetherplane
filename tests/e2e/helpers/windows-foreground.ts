@@ -202,12 +202,20 @@ export function getForegroundInfo(): ForegroundInfo {
 
       if (!existsSync(exePath)) {
         writeFileSync(csPath, CS_SOURCE.trim(), "utf8");
-        execFileSync(csc, [
-          "/nologo",
-          "/target:winexe",
-          `/out:${exePath}`,
-          csPath,
-        ]);
+        execFileSync(
+          csc,
+          [
+            "/nologo",
+            "/target:winexe",
+            `/out:${exePath}`,
+            csPath,
+          ],
+          {
+            stdio: ["ignore", "pipe", "pipe"],
+            windowsHide: true,
+            timeout: 15_000,
+          },
+        );
       }
       probeExePath = exePath;
     }
@@ -276,12 +284,20 @@ export function getCursorClipboardState(): CursorClipboardState {
           STATE_CS_SOURCE.trim(),
           "utf8",
         );
-        execFileSync(csc, [
-          "/nologo",
-          "/target:winexe",
-          `/out:${exePath}`,
-          csPath,
-        ]);
+        execFileSync(
+          csc,
+          [
+            "/nologo",
+            "/target:winexe",
+            `/out:${exePath}`,
+            csPath,
+          ],
+          {
+            stdio: ["ignore", "pipe", "pipe"],
+            windowsHide: true,
+            timeout: 15_000,
+          },
+        );
       }
       stateProbeExePath = exePath;
     }

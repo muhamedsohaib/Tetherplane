@@ -8,18 +8,56 @@ import { fileURLToPath } from "node:url";
 
 import type { Client } from "@modelcontextprotocol/sdk/client/index.js";
 
+import {
+  createBoundedOutputCollector,
+  extractToolPayload,
+  selectHumanInvokeTarget,
+  selectOwnedFixtureTargets,
+  summarizeNodesForDiagnostics,
+  type DesktopNode,
+  type ExtractedToolPayload,
+} from "./helpers/desktop-coexistence-helpers.ts";
 import { startLocalCompact } from "./helpers/start-local.ts";
+import {
+  getCursorClipboardState,
+  getForegroundInfo,
+  type CursorClipboardState,
+  type ForegroundInfo,
+} from "./helpers/windows-foreground.ts";
 
-type DesktopNode = {
-  reference: string;
-  role?: string;
-  name: string;
-  automation_id?: string | null;
-  class_name?: string | null;
-  process_id: number;
-  origin: string;
-  patterns: string[];
+type CursorCheckpoint = {
+  label: string;
+  at_iso: string;
+  cursor: { x: number; y: number };
+  dx_from_baseline: number | null;
+  dy_from_baseline: number | null;
+  clipboard_matches_baseline: boolean | null;
+  foreground: {
+    hwnd: number;
+    pid: number;
+    process_name: string;
+    class_name: string;
+  } | null;
+  foreground_error?: string;
 };
+
+type ActionEvidenceRecord = {
+  action: string;
+  target: {
+    reference: string;
+    role: string | null;
+    name: string;
+    automation_id: string | null;
+    class_name: string | null;
+    patterns: string[];
+  };
+  at_iso: string;
+  payload: ExtractedToolPayload;
+  transport: string | null;
+  verified: boolean | null;
+};
+
+const IDLE_CONTROL_INTERVAL_MS = 500;
 
 async function call(
   client: Client,
@@ -53,24 +91,88 @@ function structured(
 function powershell(command: string): string {
   return execFileSync(
     "powershell.exe",
-    ["-NoProfile", "-Sta", "-Command", command],
-    { encoding: "utf8" },
+    ["-NoProfile", "-NonInteractive", "-Sta", "-Command", command],
+    {
+      encoding: "utf8",
+      stdio: ["ignore", "pipe", "pipe"],
+      windowsHide: true,
+      timeout: 15_000,
+    },
   ).trim();
 }
 
-function cursorPosition(): { x: number; y: number } {
-  const value = powershell(
-    "Add-Type -AssemblyName System.Windows.Forms; $p=[System.Windows.Forms.Cursor]::Position; Write-Output ($p.X.ToString()+','+$p.Y.ToString())",
-  );
-  const [x, y] = value.split(",").map(Number);
-  assert.ok(Number.isInteger(x) && Number.isInteger(y));
-  return { x: x as number, y: y as number };
+function readForegroundForDiagnostics(): {
+  info: ForegroundInfo | null;
+  error?: string;
+} {
+  try {
+    return { info: getForegroundInfo() };
+  } catch (error) {
+    return { info: null, error: String(error) };
+  }
 }
 
-function clipboardTextBase64(): string {
-  return powershell(
-    "Add-Type -AssemblyName System.Windows.Forms; $t=[System.Windows.Forms.Clipboard]::GetText(); Write-Output ([Convert]::ToBase64String([Text.Encoding]::UTF8.GetBytes($t)))",
-  );
+function recordCursorCheckpoint(
+  timeline: CursorCheckpoint[],
+  label: string,
+  baseline: CursorClipboardState | null,
+): CursorClipboardState {
+  const state = getCursorClipboardState();
+  const fg = readForegroundForDiagnostics();
+  const checkpoint: CursorCheckpoint = {
+    label,
+    at_iso: new Date().toISOString(),
+    cursor: { x: state.cursor.x, y: state.cursor.y },
+    dx_from_baseline: baseline ? state.cursor.x - baseline.cursor.x : null,
+    dy_from_baseline: baseline ? state.cursor.y - baseline.cursor.y : null,
+    clipboard_matches_baseline: baseline
+      ? state.clipboardTextBase64 === baseline.clipboardTextBase64
+      : null,
+    foreground: fg.info
+      ? {
+          hwnd: fg.info.hwnd,
+          pid: fg.info.pid,
+          process_name: fg.info.processName,
+          class_name: fg.info.className,
+        }
+      : null,
+  };
+  if (fg.error !== undefined) {
+    checkpoint.foreground_error = fg.error;
+  }
+  timeline.push(checkpoint);
+  return state;
+}
+
+function buildActionEvidence(
+  action: string,
+  node: DesktopNode,
+  result: Awaited<ReturnType<typeof call>>,
+): ActionEvidenceRecord {
+  const payload = extractToolPayload(result);
+  const transport =
+    typeof payload.structured?.transport === "string"
+      ? payload.structured.transport
+      : null;
+  const verified =
+    typeof payload.structured?.verified === "boolean"
+      ? payload.structured.verified
+      : null;
+  return {
+    action,
+    target: {
+      reference: node.reference,
+      role: node.role ?? null,
+      name: node.name,
+      automation_id: node.automation_id ?? null,
+      class_name: node.class_name ?? null,
+      patterns: [...node.patterns],
+    },
+    at_iso: new Date().toISOString(),
+    payload,
+    transport,
+    verified,
+  };
 }
 
 async function readState(statePath: string): Promise<Record<string, unknown>> {
@@ -142,20 +244,6 @@ async function waitForExactFile(
   );
 }
 
-function findPattern(
-  nodes: DesktopNode[],
-  pattern: string,
-  nameIncludes?: string,
-): DesktopNode {
-  const node = nodes.find(
-    (candidate) =>
-      candidate.patterns.includes(pattern) &&
-      (nameIncludes === undefined || candidate.name.includes(nameIncludes)),
-  );
-  assert.ok(node, "expected desktop node with pattern " + pattern);
-  return node;
-}
-
 async function stopSpawnedFixture(child: ChildProcess): Promise<boolean> {
   if (child.exitCode !== null || child.signalCode !== null) return true;
 
@@ -187,17 +275,32 @@ async function runDesktopCoexistenceTest(framework: "WinForms" | "Wpf") {
 
   const local = await startLocalCompact();
   let ownedHandle: string | undefined;
+  let ownedPid: number | undefined;
   let humanProcess: ChildProcess | undefined;
+  let humanPid: number | undefined;
+  const humanStdout = createBoundedOutputCollector(4096);
+  const humanStderr = createBoundedOutputCollector(4096);
   let originalFailure: unknown;
-  let selectionEvidence: Record<string, unknown> | undefined;
+  let currentStage = "init";
+  let ownedNodesSummary: ReturnType<typeof summarizeNodesForDiagnostics> | null =
+    null;
+  let humanNodesSummary: ReturnType<typeof summarizeNodesForDiagnostics> | null =
+    null;
+  let selectedTargetsSummary: Record<string, unknown> | null = null;
+  let idleControlSummary: Record<string, unknown> | null = null;
+  let baselineCursorState: CursorClipboardState | null = null;
+  const cursorTimeline: CursorCheckpoint[] = [];
+  const actionEvidence: Record<string, ActionEvidenceRecord> = {};
 
   try {
+    currentStage = "list_tools";
     const listed = await local.client.listTools();
     assert.deepEqual(
       listed.tools.map((tool) => tool.name).sort(),
       ["batch", "browser", "desktop", "device", "files", "process"],
     );
 
+    currentStage = "capabilities";
     const capabilities = structured(
       await call(local.client, "device", {
         op: "capabilities",
@@ -208,6 +311,13 @@ async function runDesktopCoexistenceTest(framework: "WinForms" | "Wpf") {
     const desktop = providers.find((provider) => provider.namespace === "desktop");
     assert.equal(desktop?.available, true);
 
+    // Pre-warm read-only cursor/clipboard and foreground probes before either
+    // fixture window opens so any one-time helper build cannot disturb focus.
+    currentStage = "prewarm_probes";
+    getCursorClipboardState();
+    readForegroundForDiagnostics();
+
+    currentStage = "launch_owned";
     const owned = structured(
       await call(local.client, "process", {
         op: "run",
@@ -235,13 +345,16 @@ async function runDesktopCoexistenceTest(framework: "WinForms" | "Wpf") {
       }),
     );
     ownedHandle = owned.handle as string;
-    const ownedPid = owned.pid as number;
+    ownedPid = owned.pid as number;
+
+    currentStage = "wait_owned_ready";
     await waitForState(
       ownedState,
       (state) => state.ready === true && state.framework === framework,
       45_000,
     );
 
+    currentStage = "launch_human";
     humanProcess = spawn(
       "powershell.exe",
       [
@@ -260,10 +373,14 @@ async function runDesktopCoexistenceTest(framework: "WinForms" | "Wpf") {
         "-Framework",
         framework,
       ],
-      { stdio: "ignore", windowsHide: false },
+      { stdio: ["ignore", "pipe", "pipe"], windowsHide: false },
     );
+    humanProcess.stdout?.on("data", (chunk: Buffer) => humanStdout.append(chunk));
+    humanProcess.stderr?.on("data", (chunk: Buffer) => humanStderr.append(chunk));
     assert.ok(humanProcess.pid);
-    const humanPid = humanProcess.pid as number;
+    humanPid = humanProcess.pid as number;
+
+    currentStage = "wait_human_ready";
     await waitForState(
       humanState,
       (state) =>
@@ -272,12 +389,15 @@ async function runDesktopCoexistenceTest(framework: "WinForms" | "Wpf") {
         state.framework === framework,
       45_000,
     );
+
+    currentStage = "wait_owned_unfocused";
     const ownedBefore = await waitForState(
       ownedState,
       (state) => state.ready === true && state.focused === false,
     );
     assert.equal(ownedBefore.focused, false);
 
+    currentStage = "snapshot";
     const snapshot = structured(
       await call(local.client, "desktop", {
         op: "snapshot",
@@ -287,30 +407,65 @@ async function runDesktopCoexistenceTest(framework: "WinForms" | "Wpf") {
     const nodes = snapshot.nodes as DesktopNode[];
     const ownedNodes = nodes.filter((node) => node.process_id === ownedPid);
     const humanNodes = nodes.filter((node) => node.process_id === humanPid);
+    ownedNodesSummary = summarizeNodesForDiagnostics(ownedNodes);
+    humanNodesSummary = summarizeNodesForDiagnostics(humanNodes);
     assert.ok(ownedNodes.length > 0, `${framework} owned fixture was not observed`);
     assert.ok(humanNodes.length > 0, `${framework} human fixture was not observed`);
     assert.ok(ownedNodes.every((node) => node.origin === "tetherplane"));
     assert.ok(humanNodes.every((node) => node.origin === "human_or_external"));
 
-    const valueNode = findPattern(ownedNodes, "value");
-    const invokeNode = findPattern(ownedNodes, "invoke");
-    const selectionNode =
-      ownedNodes.find(
-        (node) =>
-          node.patterns.includes("selection") && node.name.includes("Beta"),
-      ) ?? ownedNodes.find((node) => node.patterns.includes("selection"));
-    const listBoxNode = ownedNodes.find(
-      (node) =>
-        node.automation_id === "OwnedSelection" ||
-        node.name.includes("Owned Selection") ||
-        (node.class_name ?? "").toLowerCase().includes("listbox"),
-    );
+    currentStage = "select_targets";
+    const { valueNode, invokeNode, selectionNode, listBoxNode } =
+      selectOwnedFixtureTargets(ownedNodes);
+    selectedTargetsSummary = {
+      value: summarizeNodesForDiagnostics([valueNode])[0],
+      invoke: summarizeNodesForDiagnostics([invokeNode])[0],
+      selection: selectionNode
+        ? summarizeNodesForDiagnostics([selectionNode])[0]
+        : null,
+      listbox: listBoxNode
+        ? summarizeNodesForDiagnostics([listBoxNode])[0]
+        : null,
+    };
 
-    const cursorBefore = cursorPosition();
-    const clipboardBefore = clipboardTextBase64();
+    // Measure an explicit idle-control interval with zero Tetherplane calls to
+    // distinguish external host/RDP cursor drift from provider-induced movement.
+    currentStage = "idle_control";
+    const idleBefore = recordCursorCheckpoint(
+      cursorTimeline,
+      "before_idle_control",
+      null,
+    );
+    await new Promise((resolve) =>
+      setTimeout(resolve, IDLE_CONTROL_INTERVAL_MS),
+    );
+    const idleAfter = recordCursorCheckpoint(
+      cursorTimeline,
+      "after_idle_control",
+      idleBefore,
+    );
+    idleControlSummary = {
+      duration_ms: IDLE_CONTROL_INTERVAL_MS,
+      before: idleBefore.cursor,
+      after: idleAfter.cursor,
+      moved:
+        idleAfter.cursor.x !== idleBefore.cursor.x ||
+        idleAfter.cursor.y !== idleBefore.cursor.y,
+      dx: idleAfter.cursor.x - idleBefore.cursor.x,
+      dy: idleAfter.cursor.y - idleBefore.cursor.y,
+    };
+
+    baselineCursorState = recordCursorCheckpoint(
+      cursorTimeline,
+      "before_actions",
+      idleAfter,
+    );
+    const cursorBefore = baselineCursorState.cursor;
+    const clipboardBefore = baselineCursorState.clipboardTextBase64;
     const humanBefore = await readState(humanState);
     assert.equal(humanBefore.focused, true);
 
+    currentStage = "act_set_value";
     const valueResult = await call(local.client, "desktop", {
       op: "act",
       args: {
@@ -319,7 +474,21 @@ async function runDesktopCoexistenceTest(framework: "WinForms" | "Wpf") {
         value: "owned-semantic-value",
       },
     });
-    assert.equal(valueResult.isError, undefined);
+    actionEvidence.set_value = buildActionEvidence(
+      "set_value",
+      valueNode,
+      valueResult,
+    );
+    recordCursorCheckpoint(
+      cursorTimeline,
+      "after_set_value",
+      baselineCursorState,
+    );
+    assert.equal(
+      valueResult.isError,
+      undefined,
+      `${framework} desktop.act(set_value) failed: ${JSON.stringify(actionEvidence.set_value)}`,
+    );
     await new Promise((resolve) => setTimeout(resolve, 200));
     assert.equal(
       (await readState(humanState)).focused,
@@ -327,6 +496,7 @@ async function runDesktopCoexistenceTest(framework: "WinForms" | "Wpf") {
       `${framework} human fixture lost focus after semantic set_value`,
     );
 
+    currentStage = "act_invoke";
     const invokeResult = await call(local.client, "desktop", {
       op: "act",
       args: {
@@ -334,7 +504,21 @@ async function runDesktopCoexistenceTest(framework: "WinForms" | "Wpf") {
         action: "invoke",
       },
     });
-    assert.equal(invokeResult.isError, undefined);
+    actionEvidence.invoke = buildActionEvidence(
+      "invoke",
+      invokeNode,
+      invokeResult,
+    );
+    recordCursorCheckpoint(
+      cursorTimeline,
+      "after_invoke",
+      baselineCursorState,
+    );
+    assert.equal(
+      invokeResult.isError,
+      undefined,
+      `${framework} desktop.act(invoke) failed: ${JSON.stringify(actionEvidence.invoke)}`,
+    );
     await new Promise((resolve) => setTimeout(resolve, 200));
     assert.equal(
       (await readState(humanState)).focused,
@@ -342,6 +526,7 @@ async function runDesktopCoexistenceTest(framework: "WinForms" | "Wpf") {
       `${framework} human fixture lost focus after semantic invoke`,
     );
 
+    currentStage = "act_select";
     if (framework === "Wpf" || selectionNode !== undefined) {
       assert.ok(
         selectionNode,
@@ -354,11 +539,21 @@ async function runDesktopCoexistenceTest(framework: "WinForms" | "Wpf") {
           action: "select",
         },
       });
-      selectionEvidence = {
-        node: selectionNode,
-        result: selectionResult,
-      };
-      assert.equal(selectionResult.isError, undefined);
+      actionEvidence.select = buildActionEvidence(
+        "select",
+        selectionNode,
+        selectionResult,
+      );
+      recordCursorCheckpoint(
+        cursorTimeline,
+        "after_select",
+        baselineCursorState,
+      );
+      assert.equal(
+        selectionResult.isError,
+        undefined,
+        `${framework} desktop.act(select) failed: ${JSON.stringify(actionEvidence.select)}`,
+      );
       await new Promise((resolve) => setTimeout(resolve, 200));
       assert.equal(
         (await readState(humanState)).focused,
@@ -377,6 +572,16 @@ async function runDesktopCoexistenceTest(framework: "WinForms" | "Wpf") {
           action: "select",
         },
       });
+      actionEvidence.select = buildActionEvidence(
+        "select",
+        listBoxNode,
+        degradedSelect,
+      );
+      recordCursorCheckpoint(
+        cursorTimeline,
+        "after_select_degraded",
+        baselineCursorState,
+      );
       assert.equal(degradedSelect.isError, true);
       assert.equal(
         (structured(degradedSelect).error as Record<string, unknown>).code,
@@ -384,6 +589,7 @@ async function runDesktopCoexistenceTest(framework: "WinForms" | "Wpf") {
       );
     }
 
+    currentStage = "wait_owned_after";
     const expectSelectedBeta =
       framework === "Wpf" ||
       Boolean(selectionNode && selectionNode.name.includes("Beta"));
@@ -401,14 +607,21 @@ async function runDesktopCoexistenceTest(framework: "WinForms" | "Wpf") {
       assert.equal(ownedAfter.selected, "Owned Beta");
     }
 
+    currentStage = "verify_coexistence";
     await new Promise((resolve) => setTimeout(resolve, 200));
-    assert.deepEqual(cursorPosition(), cursorBefore);
-    assert.equal(clipboardTextBase64(), clipboardBefore);
+    const afterActionsState = recordCursorCheckpoint(
+      cursorTimeline,
+      "after_owned_verified",
+      baselineCursorState,
+    );
+    assert.deepEqual(afterActionsState.cursor, cursorBefore);
+    assert.equal(afterActionsState.clipboardTextBase64, clipboardBefore);
     const humanAfter = await readState(humanState);
     assert.equal(humanAfter.focused, true);
     assert.equal(humanAfter.text, "Human-initial");
 
-    const humanInvoke = findPattern(humanNodes, "invoke");
+    currentStage = "negative_human_act";
+    const humanInvoke = selectHumanInvokeTarget(humanNodes);
     const deniedHuman = await call(local.client, "desktop", {
       op: "act",
       args: {
@@ -423,6 +636,7 @@ async function runDesktopCoexistenceTest(framework: "WinForms" | "Wpf") {
       "permission_denied",
     );
 
+    currentStage = "negative_stale_ref";
     const stale = await call(local.client, "desktop", {
       op: "act",
       args: {
@@ -436,6 +650,7 @@ async function runDesktopCoexistenceTest(framework: "WinForms" | "Wpf") {
       "stale_reference",
     );
 
+    currentStage = "private_clipboard";
     const privateSet = await call(local.client, "desktop", {
       op: "private_clipboard_set",
       args: {
@@ -451,8 +666,14 @@ async function runDesktopCoexistenceTest(framework: "WinForms" | "Wpf") {
       }),
     );
     assert.equal(privateGet.text, "private-e2e-value");
-    assert.equal(clipboardTextBase64(), clipboardBefore);
+    const afterPrivateClipboard = recordCursorCheckpoint(
+      cursorTimeline,
+      "after_private_clipboard",
+      baselineCursorState,
+    );
+    assert.equal(afterPrivateClipboard.clipboardTextBase64, clipboardBefore);
 
+    currentStage = "negative_no_lease";
     const noLease = await call(local.client, "desktop", {
       op: "physical_pointer_move",
       args: {
@@ -467,8 +688,14 @@ async function runDesktopCoexistenceTest(framework: "WinForms" | "Wpf") {
       (structured(noLease).error as Record<string, unknown>).code,
       "foreground_lease_required",
     );
-    assert.deepEqual(cursorPosition(), cursorBefore);
+    const afterNoLease = recordCursorCheckpoint(
+      cursorTimeline,
+      "after_no_lease",
+      baselineCursorState,
+    );
+    assert.deepEqual(afterNoLease.cursor, cursorBefore);
 
+    currentStage = "negative_self_mint";
     const selfMint = await call(local.client, "desktop", {
       op: "foreground_lease_acquire",
       args: {
@@ -484,15 +711,25 @@ async function runDesktopCoexistenceTest(framework: "WinForms" | "Wpf") {
       (structured(selfMint).error as Record<string, unknown>).code,
       "permission_denied",
     );
+    currentStage = "completed";
   } catch (error) {
     originalFailure = error;
     // The interactive failure may happen before the test harness can assert
-    // on a fixture's state. Capture only this disposable fixture's state
-    // and the owned child's stderr before teardown; do not change policy.
+    // on a fixture's state. Capture only this disposable fixture's state,
+    // structured MCP responses, cursor/foreground timeline, and child output
+    // before teardown; do not change policy or expose clipboard text.
     const detail: Record<string, unknown> = {
       framework,
+      stage: currentStage,
+      owned_pid: ownedPid ?? null,
+      human_pid: humanPid ?? null,
       error: String(error),
-      selection_evidence: selectionEvidence ?? null,
+      idle_control: idleControlSummary,
+      cursor_timeline: cursorTimeline,
+      selected_targets: selectedTargetsSummary,
+      action_evidence: actionEvidence,
+      owned_nodes_summary: ownedNodesSummary,
+      human_nodes_summary: humanNodesSummary,
     };
     for (const [label, statePath] of [
       ["owned_state", ownedState],
@@ -503,20 +740,22 @@ async function runDesktopCoexistenceTest(framework: "WinForms" | "Wpf") {
       } catch (readError) {
         detail[label + "_error"] = String(readError);
       }
-    }
-    try {
-      detail.owned_startup_stage = await readFile(ownedState + ".startup.txt", "utf8");
-    } catch (readError) {
-      detail.owned_startup_stage_error = String(readError);
-    }
-    try {
-      // The fixture writes this file before exiting if a WPF constructor
-      // or property setter fails. Keep the original error in Sandbox TAP.
-      detail.owned_startup_error = await readFile(
-        ownedState + ".startup.txt.error.txt", "utf8",
-      );
-    } catch (readError) {
-      detail.owned_startup_error_unavailable = String(readError);
+      try {
+        detail[label + "_startup_stage"] = await readFile(
+          statePath + ".startup.txt",
+          "utf8",
+        );
+      } catch (readError) {
+        detail[label + "_startup_stage_error"] = String(readError);
+      }
+      try {
+        detail[label + "_startup_error"] = await readFile(
+          statePath + ".startup.txt.error.txt",
+          "utf8",
+        );
+      } catch (readError) {
+        detail[label + "_startup_error_unavailable"] = String(readError);
+      }
     }
     if (ownedHandle) {
       try {
@@ -524,14 +763,52 @@ async function runDesktopCoexistenceTest(framework: "WinForms" | "Wpf") {
           op: "read",
           args: { handle: ownedHandle, mode: "tail", tail_bytes: 4096 },
         });
-        detail.owned_process = structured(processResult);
+        detail.owned_process = extractToolPayload(processResult);
       } catch (processError) {
         detail.owned_process_error = String(processError);
       }
     }
+    detail.human_process = {
+      pid: humanPid ?? null,
+      exit_code: humanProcess?.exitCode ?? null,
+      signal_code: humanProcess?.signalCode ?? null,
+      stdout: humanStdout.read(),
+      stderr: humanStderr.read(),
+    };
     console.error("G4_FIXTURE_FAILURE_CONTEXT=" + JSON.stringify(detail));
     throw error;
   } finally {
+    const telemetry = {
+      framework,
+      outcome: originalFailure === undefined ? "pass" : "fail",
+      stage: currentStage,
+      owned_pid: ownedPid ?? null,
+      human_pid: humanPid ?? null,
+      idle_control: idleControlSummary,
+      cursor_before: baselineCursorState?.cursor ?? null,
+      cursor_timeline: cursorTimeline,
+      actions: Object.fromEntries(
+        Object.entries(actionEvidence).map(([key, record]) => [
+          key,
+          {
+            reference: record.target.reference,
+            automation_id: record.target.automation_id,
+            name: record.target.name,
+            is_error: record.payload.is_error,
+            transport: record.transport,
+            verified: record.verified,
+            error_code:
+              typeof (record.payload.structured?.error as Record<string, unknown> | undefined)
+                ?.code === "string"
+                ? (record.payload.structured?.error as Record<string, unknown>)
+                    .code
+                : null,
+          },
+        ]),
+      ),
+    };
+    console.log("G4_COEXISTENCE_TELEMETRY=" + JSON.stringify(telemetry));
+
     const cleanupErrors: string[] = [];
     let ownedStopped = ownedHandle === undefined;
     if (ownedHandle !== undefined) {
@@ -547,7 +824,7 @@ async function runDesktopCoexistenceTest(framework: "WinForms" | "Wpf") {
           });
           if (read.isError) {
             throw new Error("owned fixture status read rejected: " +
-              JSON.stringify(structured(read)));
+              JSON.stringify(extractToolPayload(read)));
           }
           const status = structured(read);
           if (status.running === false) {
@@ -568,6 +845,8 @@ async function runDesktopCoexistenceTest(framework: "WinForms" | "Wpf") {
     if (humanProcess?.pid) {
       try {
         humanStopped = await stopSpawnedFixture(humanProcess);
+        humanProcess.stdout?.destroy();
+        humanProcess.stderr?.destroy();
         if (!humanStopped) cleanupErrors.push("human fixture exit timed out");
       } catch (error) {
         cleanupErrors.push("human fixture: " + String(error));
@@ -735,7 +1014,7 @@ const skipInteractiveWindowsDesktop =
 
 test(
   "Windows WinForms desktop coexists with a human window through Compact MCP",
-  { skip: skipInteractiveWindowsDesktop },
+  { skip: skipInteractiveWindowsDesktop, timeout: 180_000 },
   async () => {
     await runDesktopCoexistenceTest("WinForms");
   },
@@ -743,7 +1022,7 @@ test(
 
 test(
   "Windows WPF desktop coexists with an unfocused owned window and human window through Compact MCP",
-  { skip: skipInteractiveWindowsDesktop },
+  { skip: skipInteractiveWindowsDesktop, timeout: 180_000 },
   async () => {
     await runDesktopCoexistenceTest("Wpf");
   },

@@ -258,3 +258,60 @@ async fn desktop_provider_propagates_backend_failure_without_false_nodes() {
     assert_eq!(err.code, ErrorCode::ProviderFailure);
     assert!(err.message.contains("Windows UI Automation provider error"));
 }
+
+#[tokio::test]
+async fn semantic_action_surfaces_backend_transport_in_result_data() {
+    struct TransportBackend {
+        target: DesktopNode,
+    }
+
+    impl DesktopBackend for TransportBackend {
+        fn snapshot(&self) -> Result<Vec<DesktopNode>, CapabilityError> {
+            Ok(vec![self.target.clone()])
+        }
+
+        fn target(&self, _reference: &str) -> Result<DesktopNode, CapabilityError> {
+            Ok(self.target.clone())
+        }
+
+        fn perform(&self, _action: DesktopAction) -> Result<DesktopActionOutcome, CapabilityError> {
+            Ok(DesktopActionOutcome {
+                target: self.target.clone(),
+                verified: true,
+                delta: json!({
+                    "action": "set_value",
+                    "value_persisted": true,
+                    "transport": "uia_value_pattern_background",
+                }),
+            })
+        }
+    }
+
+    let ownership = Arc::new(TrustedOwnershipRegistry::new());
+    ownership.register(ResourceKey::Process(100), ResourceOrigin::Tetherplane);
+    let provider = DesktopProvider::new(
+        Arc::new(TransportBackend {
+            target: node("el_owned", 100, "Owned"),
+        }),
+        ownership,
+    );
+
+    let result = provider
+        .execute(&invocation(
+            "desktop.act",
+            json!({
+                "reference": "el_owned",
+                "action": "set_value",
+                "value": "hello"
+            }),
+        ))
+        .await
+        .unwrap();
+
+    assert_eq!(result.data["verified"], true);
+    assert_eq!(result.data["transport"], "uia_value_pattern_background");
+    assert_eq!(
+        result.delta.as_ref().and_then(|d| d.get("transport")),
+        Some(&json!("uia_value_pattern_background"))
+    );
+}

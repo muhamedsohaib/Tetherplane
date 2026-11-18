@@ -701,6 +701,51 @@ fn split_button_and_unknown_ownerdraw_and_password_behave_safely() {
     );
 }
 
+#[test]
+fn titlebar_msaa_value_pattern_is_not_advertised_or_mutable() {
+    // Windows UIA non-client TitleBar (UIA_TitleBarControlTypeId = 50037)
+    // exposes an MSAA ValuePattern proxy for the window title, often with
+    // Value.IsReadOnly=false and FrameworkId=""/"Win32", before WPF children.
+    let mut titlebar = base_input(5151);
+    titlebar.framework_id = "Win32".into();
+    titlebar.control_type = SemanticControlType::from_uia_control_type_id(50_037);
+    assert_eq!(titlebar.control_type, SemanticControlType::TitleBar);
+    assert_eq!(titlebar.control_type.as_i32(), 50_037);
+    titlebar.has_value_pattern = true;
+    titlebar.value_is_readonly = Some(false);
+    titlebar.focused = false;
+
+    assert!(
+        !infer_supported_patterns(&titlebar).contains(&DesktopPattern::Value),
+        "non-client TitleBar must not advertise editable Value pattern"
+    );
+
+    let unfocused_err = plan_action(
+        &titlebar,
+        &DesktopAction {
+            reference: "desk_titlebar".into(),
+            kind: DesktopActionKind::SetValue,
+            value: Some("owned-semantic-value".into()),
+        },
+    )
+    .expect_err("SetValue on unfocused TitleBar must fail closed");
+    assert_eq!(unfocused_err.code, ErrorCode::CapabilityUnavailable);
+
+    // Even if focused or with WPF framework_id, TitleBar must never be treated as an editable input.
+    titlebar.focused = true;
+    titlebar.framework_id = "WPF".into();
+    let focused_err = plan_action(
+        &titlebar,
+        &DesktopAction {
+            reference: "desk_titlebar_focused".into(),
+            kind: DesktopActionKind::SetValue,
+            value: Some("owned-semantic-value".into()),
+        },
+    )
+    .expect_err("SetValue on focused TitleBar must fail closed");
+    assert_eq!(focused_err.code, ErrorCode::CapabilityUnavailable);
+}
+
 fn check_bounded_send_calls(name: &str, source: &str) {
     let compact: String = source.chars().filter(|c| !c.is_whitespace()).collect();
     for callee in ["send_message(", "send_push_button("] {
