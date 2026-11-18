@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import { execFileSync, spawn, type ChildProcess } from "node:child_process";
-import { mkdtemp, readFile, rm } from "node:fs/promises";
+import { mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
 import test from "node:test";
@@ -87,6 +87,7 @@ async function waitForState(
     try {
       const state = await readState(statePath);
       lastState = state;
+      lastError = undefined;
       if (predicate(state)) return state;
     } catch (error) {
       lastError = error;
@@ -147,6 +148,7 @@ async function runDesktopCoexistenceTest(framework: "WinForms" | "Wpf") {
   let ownedHandle: string | undefined;
   let humanProcess: ChildProcess | undefined;
   let originalFailure: unknown;
+  let selectionEvidence: Record<string, unknown> | undefined;
 
   try {
     const listed = await local.client.listTools();
@@ -309,6 +311,10 @@ async function runDesktopCoexistenceTest(framework: "WinForms" | "Wpf") {
           action: "select",
         },
       });
+      selectionEvidence = {
+        node: selectionNode,
+        result: selectionResult,
+      };
       assert.equal(selectionResult.isError, undefined);
       await new Promise((resolve) => setTimeout(resolve, 200));
       assert.equal(
@@ -443,6 +449,7 @@ async function runDesktopCoexistenceTest(framework: "WinForms" | "Wpf") {
     const detail: Record<string, unknown> = {
       framework,
       error: String(error),
+      selection_evidence: selectionEvidence ?? null,
     };
     for (const [label, statePath] of [
       ["owned_state", ownedState],
@@ -453,6 +460,11 @@ async function runDesktopCoexistenceTest(framework: "WinForms" | "Wpf") {
       } catch (readError) {
         detail[label + "_error"] = String(readError);
       }
+    }
+    try {
+      detail.owned_startup_stage = await readFile(ownedState + ".startup.txt", "utf8");
+    } catch (readError) {
+      detail.owned_startup_stage_error = String(readError);
     }
     if (ownedHandle) {
       try {
@@ -471,20 +483,30 @@ async function runDesktopCoexistenceTest(framework: "WinForms" | "Wpf") {
     const cleanupErrors: string[] = [];
     let ownedStopped = ownedHandle === undefined;
     if (ownedHandle !== undefined) {
+      // This child is a fixture we started, not a general system process.
+      // Ask the fixture to close itself, rather than bypass process.terminate's
+      // intentional approval_required policy. Never erase its directory first.
       try {
-        const termination = await call(local.client, "process", {
-          op: "terminate",
-          args: { handle: ownedHandle, grace_ms: 100, force: true },
-        });
-        if (termination.isError) {
-          throw new Error("owned fixture termination rejected: " +
-            JSON.stringify(structured(termination)));
+        await writeFile(ownedState + ".stop", "close\n", "utf8");
+        for (let attempt = 0; attempt < 40; attempt += 1) {
+          const read = await call(local.client, "process", {
+            op: "read",
+            args: { handle: ownedHandle, mode: "tail", tail_bytes: 1024 },
+          });
+          if (read.isError) {
+            throw new Error("owned fixture status read rejected: " +
+              JSON.stringify(structured(read)));
+          }
+          const status = structured(read);
+          if (status.running === false) {
+            ownedStopped = true;
+            break;
+          }
+          await new Promise((resolve) => setTimeout(resolve, 150));
         }
-        const outcome = structured(termination);
-        if (outcome.running !== false) {
-          throw new Error("owned fixture is still running after termination");
+        if (!ownedStopped) {
+          cleanupErrors.push("owned fixture did not observe cooperative stop signal");
         }
-        ownedStopped = true;
       } catch (error) {
         cleanupErrors.push("owned fixture: " + String(error));
       }
