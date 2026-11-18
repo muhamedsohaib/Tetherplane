@@ -326,3 +326,43 @@ test("detached human tab remains human across service-worker controller restart"
       error.code === "permission_denied",
   );
 });
+
+test("syncTabs refreshes changed URLs, active flags, newly opened human tabs, and removed tabs while preserving ownership grants", async () => {
+  const tabs = new FakeTabs([humanTab()]);
+  const store = new MemoryStore();
+  const controller = new ExtensionTabController({ tabs, store });
+  await controller.initialize();
+
+  const owned = await controller.createOwnedTab("https://fixture.example/one");
+  await controller.attachHumanTab(1, {
+    operations: ["navigate"],
+    ttl_ms: 60_000,
+  });
+
+  // Simulate Chrome completing background tab navigation, human opening tab 3 and closing or moving active state
+  tabs.tabs.get(owned.tab_id)!.url = "https://fixture.example/final";
+  tabs.tabs.get(1)!.active = false;
+  tabs.tabs.set(3, {
+    id: 3,
+    window_id: 1,
+    url: "https://human.example/new-tab",
+    active: true,
+  });
+
+  const synced = await controller.syncTabs();
+  const syncedOwned = synced.find((p) => p.page_id === owned.page_id);
+  const syncedShared = synced.find((p) => p.page_id === "tab:1");
+  const syncedNewHuman = synced.find((p) => p.page_id === "tab:3");
+
+  assert.equal(syncedOwned?.url, "https://fixture.example/final");
+  assert.equal(syncedOwned?.ownership, "tetherplane");
+  assert.equal(syncedShared?.active, false);
+  assert.equal(syncedShared?.ownership, "shared-authorized");
+  assert.equal(syncedNewHuman?.ownership, "human");
+  assert.equal(syncedNewHuman?.active, true);
+
+  // Removing a tab prunes it on next syncTabs
+  await tabs.remove(3);
+  const afterClose = await controller.syncTabs();
+  assert.equal(afterClose.some((p) => p.page_id === "tab:3"), false);
+});

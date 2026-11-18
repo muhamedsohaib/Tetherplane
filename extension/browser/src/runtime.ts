@@ -15,6 +15,7 @@ export type ExtensionRuntimeSession = {
 
 export type ExtensionCommandController = {
   pages(): unknown[];
+  syncTabs?(): Promise<unknown[]>;
   createOwnedTab(url: string): Promise<unknown>;
   navigate(pageId: string, url: string): Promise<unknown>;
   close(pageId: string): Promise<void>;
@@ -129,7 +130,9 @@ export class ExtensionCommandRuntime {
     switch (operation) {
       case "pages":
         return {
-          pages: this.#controller.pages(),
+          pages: this.#controller.syncTabs
+            ? await this.#controller.syncTabs()
+            : this.#controller.pages(),
         };
 
       case "create_tab":

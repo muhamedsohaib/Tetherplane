@@ -182,11 +182,12 @@ async function runBridgeLoop(
           operationalAgent,
         });
 
+      const pages = await controller.syncTabs();
       session.send({
         type: "event",
         event: "extension_ready",
         data: {
-          pages: controller.pages(),
+          pages,
         },
       });
 
