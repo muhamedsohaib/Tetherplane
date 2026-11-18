@@ -45,7 +45,7 @@ jobs:
           foreach ($dir in @($testDir,$adapterDir,$binaryDir,(Join-Path $testDir 'fixtures'))) {
             New-Item -ItemType Directory -Path $dir -Force | Out-Null
           }
-          $banner = "--banner:js=import { createRequire } from 'node:module'; const require = createRequire(import.meta.url);"
+          $banner = "--banner:js=import { createRequire as __tpKitCreateRequire } from 'node:module'; var require = __tpKitCreateRequire(import.meta.url);"
           & node $esbuild 'tests/e2e/desktop-coexistence.test.ts' --bundle --platform=node --target=node22 --format=esm $banner "--outfile=$(Join-Path $testDir 'desktop-coexistence.test.mjs')"
           if ($LASTEXITCODE -ne 0) { throw 'Desktop integration test bundling failed' }
           & node $esbuild 'tests/e2e/local-compact.test.ts' --bundle --platform=node --target=node22 --format=esm $banner "--outfile=$(Join-Path $testDir 'local-compact.test.mjs')"
@@ -57,6 +57,13 @@ jobs:
           Copy-Item (Get-Command node.exe).Source (Join-Path $out 'node.exe')
           Copy-Item Cargo.toml (Join-Path $out 'Cargo.toml')
           Copy-Item pnpm-workspace.yaml (Join-Path $out 'pnpm-workspace.yaml')
+          $protocolPackageDir = Join-Path $out 'node_modules\@tetherplane\protocol'
+          $protocolSchemaDir = Join-Path $protocolPackageDir 'schemas'
+          New-Item -ItemType Directory -Path $protocolSchemaDir -Force | Out-Null
+          Copy-Item protocol\package.json (Join-Path $protocolPackageDir 'package.json')
+          Copy-Item protocol\schemas\error.schema.json (Join-Path $protocolSchemaDir 'error.schema.json')
+          Copy-Item protocol\schemas\result.schema.json (Join-Path $protocolSchemaDir 'result.schema.json')
+          Write-Output 'G4_PORTABLE_PROTOCOL_SCHEMAS_INCLUDED=1'
           [IO.File]::WriteAllText((Join-Path $out 'package.json'), '{"private":true,"type":"module"}', [Text.UTF8Encoding]::new($false))
           $guestLauncher = @'
           @echo off
