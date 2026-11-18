@@ -563,15 +563,18 @@ fn persist_synchronized_policy(
     Ok(())
 }
 
-fn is_transient_rename_error(error: &std::io::Error) -> bool {
-    if error.kind() == std::io::ErrorKind::PermissionDenied {
-        return true;
-    }
-    #[cfg(windows)]
-    if matches!(error.raw_os_error(), Some(5 | 32 | 33)) {
-        return true;
-    }
+#[cfg(windows)]
+fn is_transient_windows_os_error(error: &std::io::Error) -> bool {
+    matches!(error.raw_os_error(), Some(5 | 32 | 33))
+}
+
+#[cfg(not(windows))]
+fn is_transient_windows_os_error(_error: &std::io::Error) -> bool {
     false
+}
+
+fn is_transient_rename_error(error: &std::io::Error) -> bool {
+    error.kind() == std::io::ErrorKind::PermissionDenied || is_transient_windows_os_error(error)
 }
 
 fn rename_with_transient_retry<F>(delays_ms: &[u64], mut rename_fn: F) -> std::io::Result<()>
@@ -1729,5 +1732,31 @@ mod tests {
         });
         assert!(fatal.is_err());
         assert_eq!(fatal_attempts, 1);
+
+        let mut raw_attempts = 0usize;
+        let raw_result = super::rename_with_transient_retry(&[1, 1, 1], || {
+            raw_attempts += 1;
+            if raw_attempts < 3 {
+                Err(std::io::Error::from_raw_os_error(32))
+            } else {
+                Ok(())
+            }
+        });
+        #[cfg(windows)]
+        {
+            assert!(
+                raw_result.is_ok(),
+                "Windows ERROR_SHARING_VIOLATION (32) should retry and succeed"
+            );
+            assert_eq!(raw_attempts, 3);
+        }
+        #[cfg(not(windows))]
+        {
+            assert!(
+                raw_result.is_err(),
+                "POSIX EPIPE (32) must not be treated as a transient Windows lock"
+            );
+            assert_eq!(raw_attempts, 1);
+        }
     }
 }
