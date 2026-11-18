@@ -18,7 +18,20 @@
 
 ## 1. Staging Topology & Port Isolation
 
-All staging state, binaries, certificates, profiles, and logs live exclusively inside a disposable folder `$env:TEMP\tetherplane-staging-<runid>`. All staging processes run in the foreground inside dedicated PowerShell consoles and exit cleanly on cleanup.
+All staging state, binaries, certificates, profiles, and logs live exclusively inside a disposable folder `$env:TEMP\tetherplane-staging-<runid>`. All staging processes run in the foreground inside dedicated consoles and exit cleanly on cleanup.
+
+> [!TIP]
+> **Recommended Repeatable Harness (`scripts/staging-acceptance.mjs`)**
+>
+> Rather than driving all consoles manually, run the built-in minimally interactive staging harness after building the workspace (`cargo build -p tetherd` or `--release`, `pnpm -r build`, `pnpm --filter @tetherplane/browser-extension build`):
+>
+> ```powershell
+> node scripts/staging-acceptance.mjs --mode auto            # Full G1-G7 desktop UIA + real Chrome extension + mobile emulation (excludes physical phone)
+> node scripts/staging-acceptance.mjs --mode interactive --lan-host <LanIp> --pause-for-mobile  # Adds physical iPhone/Android M1-M10 check
+> node scripts/staging-acceptance.mjs --allow-partial        # Non-Windows / headless rehearsal (runs G1, G2, G3, G5, G6 emulation, G7; marks UIA/phone BLOCKED)
+> ```
+>
+> Use `--describe` to inspect all structured gates and platform prerequisites without launching processes. The sections below retain the full step-by-step commands for transparent auditing and manual debugging.
 
 | Component | Production Value (Untouched) | Isolated Staging Value | Notes |
 | --- | --- | --- | --- |
@@ -87,22 +100,39 @@ New-StagingSecret (Join-Path $SecretsDir "device-02.cred")
 New-StagingSecret (Join-Path $SecretsDir "browser-bridge.token")
 New-StagingSecret (Join-Path $SecretsDir "browser-extension-launch.token")
 
-# 5. Generate self-signed localhost TLS cert/key (PEM) for HTTPS/WSS + Secure cookies
-#    (If testing Stage 6 mobile over LAN/Tailscale, append ,IP:<staging-lan-ip> to subjectAltName)
+# 5. Generate two-tier staging PKI (ephemeral root CA relay-ca.crt -> leaf relay.crt)
+#    tetherd uses rustls + --relay-ca-cert; Node uses NODE_EXTRA_CA_CERTS=relay-ca.crt
+#    (If testing Stage 6 mobile over LAN/Tailscale, append ,IP:<staging-lan-ip> to leaf subjectAltName)
 $opensslCmd = Get-Command openssl -ErrorAction SilentlyContinue
-if (-not $opensslCmd) { throw "OpenSSL is required to mint staging localhost PEM cert/key (Git for Windows ships openssl.exe)." }
-& $opensslCmd.Source req -x509 -newkey rsa:2048 -nodes -days 2 `
-    -keyout (Join-Path $TlsDir "relay.key") `
-    -out    (Join-Path $TlsDir "relay.crt") `
-    -subj "/CN=127.0.0.1" `
-    -addext "basicConstraints=critical,CA:TRUE" `
-    -addext "keyUsage=critical,digitalSignature,keyEncipherment,keyCertSign" `
-    -addext "extendedKeyUsage=serverAuth" `
-    -addext "subjectAltName=IP:127.0.0.1,DNS:localhost" 2>$null
+if (-not $opensslCmd) { throw "OpenSSL is required to mint staging TLS PKI (Git for Windows ships openssl.exe)." }
+$caKey  = Join-Path $TlsDir "relay-ca.key"
+$caCrt  = Join-Path $TlsDir "relay-ca.crt"
+$srvKey = Join-Path $TlsDir "relay.key"
+$srvCsr = Join-Path $TlsDir "relay.csr"
+$srvCrt = Join-Path $TlsDir "relay.crt"
+$srvExt = Join-Path $TlsDir "relay.ext"
 
-# Optional: temporarily trust the staging self-signed cert for Chrome & tetherd Schannel on the staging VM
-# (Stage 7 cleanup deletes this exact thumbprint from Cert:\CurrentUser\Root)
-Import-Certificate -FilePath (Join-Path $TlsDir "relay.crt") -CertStoreLocation Cert:\CurrentUser\Root | Out-Null
+& $opensslCmd.Source req -x509 -newkey rsa:2048 -nodes -days 2 `
+    -keyout $caKey -out $caCrt -subj "/CN=Tetherplane Staging Ephemeral CA" `
+    -addext "basicConstraints=critical,CA:TRUE,pathlen:0" `
+    -addext "keyUsage=critical,keyCertSign,cRLSign" 2>$null
+
+& $opensslCmd.Source req -new -newkey rsa:2048 -nodes `
+    -keyout $srvKey -out $srvCsr -subj "/CN=127.0.0.1" 2>$null
+
+@"
+basicConstraints=critical,CA:FALSE
+keyUsage=critical,digitalSignature,keyEncipherment
+extendedKeyUsage=serverAuth
+subjectAltName=IP:127.0.0.1,DNS:localhost
+"@ | Set-Content -Path $srvExt -Encoding ascii
+
+& $opensslCmd.Source x509 -req -in $srvCsr -CA $caCrt -CAkey $caKey -CAcreateserial `
+    -out $srvCrt -days 2 -extfile $srvExt 2>$null
+
+# Optional: temporarily trust ONLY the ephemeral staging CA for interactive Chrome during this run
+# (Stage 7 cleanup deletes this exact CA thumbprint from Cert:\CurrentUser\Root)
+Import-Certificate -FilePath $caCrt -CertStoreLocation Cert:\CurrentUser\Root | Out-Null
 
 # 6. Build release tetherd + TypeScript workspaces + Chrome extension bundle
 cargo build --release -p tetherd
@@ -294,7 +324,7 @@ function Invoke-StagingMcp {
 ```
 
 > [!NOTE]
-> Because Stage 0 mints a self-signed certificate for `127.0.0.1`, set `NODE_EXTRA_CA_CERTS=$(Join-Path $TlsDir "relay.crt")` for staging Node verification commands, and remove the temporary thumbprint from `Cert:\CurrentUser\Root` in Stage 7 cleanup.
+> Because Stage 0 mints an ephemeral staging root CA (`relay-ca.crt`) signing leaf `relay.crt`, set `NODE_EXTRA_CA_CERTS=$(Join-Path $TlsDir "relay-ca.crt")` for staging Node verification commands, pass `--relay-ca-cert (Join-Path $TlsDir "relay-ca.crt")` to `tetherd`, and remove the temporary CA thumbprint from `Cert:\CurrentUser\Root` in Stage 7 cleanup if installed.
 
 ---
 
@@ -310,7 +340,7 @@ Set-Location (Join-Path $StagingRoot "repo")
 $env:STAGING_OWNER_TOKEN    = (Get-Content (Join-Path $StagingRoot "secrets\owner.token") -Raw).Trim()
 $env:STAGING_OPERATOR_TOKEN = (Get-Content (Join-Path $StagingRoot "secrets\operator.token") -Raw).Trim()
 $env:STAGING_UNPAIRED_TOKEN = (Get-Content (Join-Path $StagingRoot "secrets\unpaired.token") -Raw).Trim()
-$env:NODE_EXTRA_CA_CERTS    = Join-Path $StagingRoot "tls\relay.crt"
+$env:NODE_EXTRA_CA_CERTS    = Join-Path $StagingRoot "tls\relay-ca.crt"
 
 node relay/dist/cli.js `
     --host 127.0.0.1 `
@@ -326,7 +356,7 @@ Confirm stdout prints: `tether-relay listening on https://127.0.0.1:18788`, `MCP
 In **PowerShell 1**, verify API auth, URL token rejection, cookie flags, and CSRF protection:
 
 ```powershell
-$env:NODE_EXTRA_CA_CERTS = Join-Path $TlsDir "relay.crt"
+$env:NODE_EXTRA_CA_CERTS = Join-Path $TlsDir "relay-ca.crt"
 node $AuthCheckScript $StagingRelayUrl (Join-Path $SecretsDir "owner.token") (Join-Path $SecretsDir "operator.token")
 ```
 
@@ -380,9 +410,10 @@ $StagingRoot = "<StagingRoot-from-PowerShell-1>"
 Set-Location (Join-Path $StagingRoot "repo")
 $tetherd = Join-Path $StagingRoot "repo\target\release\tetherd.exe"
 
-# Uses the temporary staging root cert trusted in Stage 0 so wss:// works identically to production
+# Pass --relay-ca-cert pointing to the ephemeral staging CA so rustls verifies wss:// strictly against staging PKI
 & $tetherd `
     --relay-url wss://127.0.0.1:18788/device `
+    --relay-ca-cert (Join-Path $StagingRoot "tls\relay-ca.crt") `
     --device-id staging-win-01 `
     --device-credential-file (Join-Path $StagingRoot "secrets\device-01.cred") `
     --state-dir (Join-Path $StagingRoot "state-01") `
@@ -398,7 +429,7 @@ $tetherd = Join-Path $StagingRoot "repo\target\release\tetherd.exe"
 4. Run remote MCP smoke from **PowerShell 1**:
 
 ```powershell
-$env:NODE_EXTRA_CA_CERTS = Join-Path $TlsDir "relay.crt"
+$env:NODE_EXTRA_CA_CERTS = Join-Path $TlsDir "relay-ca.crt"
 Invoke-StagingMcp -ToolName "device"  -Op "status"
 Invoke-StagingMcp -ToolName "files"   -Op "read" -ToolArgs @{ path = (Join-Path $SandboxDir "canary.txt") }
 Invoke-StagingMcp -ToolName "process" -Op "run"  -ToolArgs @{ program = "cmd.exe"; args = @("/C", "echo STAGING_PROC_OK"); pty = $false }
@@ -431,9 +462,9 @@ Expected: The first 3 succeed (`STAGING_PROC_OK`, `"staging-read-canary"`), and 
    - Within ~1 second without refreshing the Portal tab, **`staging-win-01`** updates live via `tetherd` `device_telemetry` + relay SSE from `degraded` / `Unavailable` to **`Health: healthy`** and **`browser`: `12/12 ops active`**.
 5. **Verify Browser Tab Ownership & Timed Tab Share**:
    - Call `Invoke-StagingMcp -ToolName "browser" -Op "create_tab" -ToolArgs @{ url = "https://example.org" }` -> opens a background tab owned by Tetherplane without changing or focusing the human `https://example.com` tab.
-   - Call `Invoke-StagingMcp -ToolName "browser" -Op "pages"` -> obtain both page IDs; attempt `Invoke-StagingMcp -ToolName "browser" -Op "snapshot" -ToolArgs @{ page_id = "<human-page-id>" }` (or `navigate`) on the unshared human tab -> MUST fail (`permission_denied` / human-tab protection).
-   - Call `Invoke-StagingMcp -ToolName "browser" -Op "snapshot" -ToolArgs @{ page_id = "<owned-page-id>" }` on the newly created Tetherplane-owned tab -> succeeds with semantic nodes.
-   - Focus the human tab, open the extension popup, set duration `5 minutes`, click **Share current tab** -> re-run `snapshot` on that human tab -> **succeeds**. Click **Stop sharing current tab** -> re-running `snapshot` on that tab **denies** again.
+   - Call `Invoke-StagingMcp -ToolName "browser" -Op "pages"` -> obtain both page IDs; attempt a mutating operation `Invoke-StagingMcp -ToolName "browser" -Op "navigate" -ToolArgs @{ page_id = "<human-page-id>"; url = "https://example.org" }` (or `act`) on the unshared human tab -> MUST fail (`permission_denied` / human-tab protection).
+   - Call `Invoke-StagingMcp -ToolName "browser" -Op "snapshot" -ToolArgs @{ page_id = "<owned-page-id>" }` on the newly created Tetherplane-owned tab -> succeeds with semantic nodes (and `act` mutates only the owned tab).
+   - Focus the human tab, open the extension popup, set duration `5 minutes`, click **Share current tab** -> re-run `act` / `navigate` on that human tab -> **succeeds**. Click **Stop sharing current tab** -> re-running `act` / `navigate` on that tab **denies** (`permission_denied`) again.
 6. **Verify Browser Disconnection & Live Reconnection Recovery**:
    - **Close the staging Chrome browser window completely** (leaving `tetherd` and `browser-extension-host.ts` running).
    - **PowerShell 3** prints `AUTH_EXTENSION_DISCONNECTED=True` and re-opens `AUTH_PAIRING_READY`.
@@ -534,7 +565,7 @@ Perform every step in the Portal UI (`https://127.0.0.1:18788/portal`) and verif
 
 Validate the Control Portal at mobile dimensions using **both** (A) Chromium/Edge responsive device emulation (`390x844` and `360x800`) and (B) a real mobile browser (iOS Safari or Android Chrome):
 
-- For **Part (B) real-phone testing** over a private LAN or Tailscale IP (`$LanIp`), temporarily re-mint the staging cert with `subjectAltName=IP:127.0.0.1,IP:<LanIp>,DNS:localhost`, re-launch **PowerShell 2** (`tether-relay`) with `--host <LanIp> --port 18788`, point **PowerShell 4** (`tetherd`) at `--relay-url wss://<LanIp>:18788/device`, optionally add a temporary scoped firewall rule `New-NetFirewallRule -DisplayName "Tetherplane-Staging-18788" -Direction Inbound -Protocol TCP -LocalPort 18788 -Profile Private -Action Allow`, and open `https://<LanIp>:18788/portal` on the phone (accepting/installing the disposable staging cert only during the test session). If using an explicit trusted HTTPS reverse proxy instead of direct `--tls-cert`/`--tls-key`, launch `tether-relay` with `--allow-insecure-localhost --public-origin https://<proxy-host> --trust-proxy-headers` rather than plain unconfigured HTTP. *(See [Finding F-3](../security/control-portal-security-review.md#31-f-1-through-f-7-remediation--verification-matrix).)*
+- For **Part (B) real-phone testing** over a private LAN or Tailscale IP (`$LanIp`), update `tls\relay.ext` with `subjectAltName=IP:127.0.0.1,IP:<LanIp>,DNS:localhost` and re-sign `tls\relay.crt` with `tls\relay-ca.crt`, re-launch **PowerShell 2** (`tether-relay`) with `--host <LanIp> --port 18788`, point **PowerShell 4** (`tetherd`) at `--relay-url wss://<LanIp>:18788/device --relay-ca-cert ...\relay-ca.crt`, optionally add a temporary scoped firewall rule `New-NetFirewallRule -DisplayName "Tetherplane-Staging-18788" -Direction Inbound -Protocol TCP -LocalPort 18788 -Profile Private -Action Allow`, and open `https://<LanIp>:18788/portal` on the phone (trusting/installing only `relay-ca.crt` temporarily during the test session, and deleting that profile/CA immediately after). If using an explicit trusted HTTPS reverse proxy instead of direct `--tls-cert`/`--tls-key`, launch `tether-relay` with `--allow-insecure-localhost --public-origin https://<proxy-host> --trust-proxy-headers` rather than plain unconfigured HTTP. *(See [Finding F-3](../security/control-portal-security-review.md#31-f-1-through-f-7-remediation--verification-matrix).)*
 
 | # | Mobile Check | Expected Pass Condition | Result |
 | --- | --- | --- | --- |
@@ -587,9 +618,9 @@ Get-CimInstance Win32_Process | Where-Object {
 }
 Start-Sleep -Seconds 2
 
-# 2. Remove temporary self-signed staging cert from CurrentUser\Root & temporary Stage 6 firewall rule (if added)
-if (Test-Path (Join-Path $StagingRoot "tls\relay.crt")) {
-    $cert = New-Object System.Security.Cryptography.X509Certificates.X509Certificate2 (Join-Path $StagingRoot "tls\relay.crt")
+# 2. Remove temporary ephemeral staging CA from CurrentUser\Root & temporary Stage 6 firewall rule (if added)
+if (Test-Path (Join-Path $StagingRoot "tls\relay-ca.crt")) {
+    $cert = New-Object System.Security.Cryptography.X509Certificates.X509Certificate2 (Join-Path $StagingRoot "tls\relay-ca.crt")
     Get-ChildItem Cert:\CurrentUser\Root | Where-Object { $_.Thumbprint -eq $cert.Thumbprint } | Remove-Item -Force -ErrorAction SilentlyContinue
 }
 Remove-NetFirewallRule -DisplayName "Tetherplane-Staging-18788" -ErrorAction SilentlyContinue

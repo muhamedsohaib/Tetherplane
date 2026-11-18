@@ -1262,9 +1262,11 @@ dependencies = [
  "tether-process-provider",
  "tether-search-provider",
  "tokio",
+ "tokio-rustls",
  "tokio-tungstenite",
  "url",
  "uuid",
+ "webpki-roots 1.0.9",
 ]
 
 [[package]]
