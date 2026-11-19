@@ -629,11 +629,8 @@ test(
         8_000,
         "operator:helper removed from UI",
       );
-      const helperAfterRemove = await helperClient.callTool({
-        name: "files",
-        arguments: { op: "read", device: "Leno", args: { path: targetFile } },
-      });
-      assert.equal(helperAfterRemove.isError, true);
+      // Observe the ephemeral confirmation before performing another
+      // potentially slow MCP call; keep the independent denial assertion.
       await until(
         () => browser!.eval<boolean>(
           `Boolean(document.querySelector('#toast-stack .toast[data-kind="policy-confirmed"]')?.textContent?.includes('Revoke operator access confirmed by device'))`,
@@ -641,6 +638,11 @@ test(
         8_000,
         "operator access removal confirmed by Leno device",
       );
+      const helperAfterRemove = await helperClient.callTool({
+        name: "files",
+        arguments: { op: "read", device: "Leno", args: { path: targetFile } },
+      });
+      assert.equal(helperAfterRemove.isError, true);
 
       // Clear selection and create extra revisions on Leno (>11 total) to verify Snapshot Filter + Pagination + Rollback
       await browser.eval(`document.getElementById("clear-selected-devices-btn").click()`);
