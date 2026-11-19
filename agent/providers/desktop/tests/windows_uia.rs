@@ -3,8 +3,15 @@
 use tether_desktop_provider::{DesktopBackend, WindowsUiaBackend};
 
 #[test]
-fn windows_uia_worker_starts_and_returns_a_bounded_semantic_snapshot() {
+fn windows_uia_worker_starts_with_auto_set_focus_disabled_and_returns_bounded_snapshot() {
     let backend = WindowsUiaBackend::new().expect("Windows UI Automation worker should initialize");
+    assert!(
+        !backend
+            .auto_set_focus_enabled()
+            .expect("live UIA worker must expose IUIAutomation2::AutoSetFocus"),
+        "live WindowsUiaBackend CUIAutomation8 client must disable AutoSetFocus before any operations"
+    );
+
     let nodes = backend
         .snapshot()
         .expect("Windows UI Automation snapshot should succeed");
@@ -12,6 +19,12 @@ fn windows_uia_worker_starts_and_returns_a_bounded_semantic_snapshot() {
     assert!(nodes.len() <= 1_001);
     assert!(nodes.iter().all(|node| node.reference.starts_with("desk_")));
     assert!(nodes.iter().all(|node| !node.role.is_empty()));
+    assert!(
+        !backend
+            .auto_set_focus_enabled()
+            .expect("live UIA worker must preserve IUIAutomation2::AutoSetFocus=false"),
+        "live WindowsUiaBackend CUIAutomation8 client must keep AutoSetFocus=false"
+    );
 }
 
 #[test]
@@ -40,10 +53,16 @@ fn semantic_windows_backend_contains_no_physical_input_or_global_clipboard_calls
             "AttachThreadInput",
             "OpenClipboard",
             "SetClipboardData",
+            "UIAutomation::new(",
+            "UIAutomation::new_direct(",
+            "SetFocus(",
+            "BringWindowToTop",
+            "SwitchToThisWindow",
+            "AllowSetForegroundWindow",
         ] {
             assert!(
                 !source.contains(forbidden),
-                "{name} must not contain physical/global input or unbounded message primitive: {forbidden}"
+                "{name} must not contain physical/global input, focus-stealing, or unbounded message primitive: {forbidden}"
             );
         }
         let compact: String = source.chars().filter(|c| !c.is_whitespace()).collect();

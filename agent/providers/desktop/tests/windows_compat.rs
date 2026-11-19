@@ -6,10 +6,12 @@ use tether_desktop_provider::windows_compat::{
     MSAA_ROLE_GROUPING, MSAA_ROLE_LISTITEM, MSAA_ROLE_PUSHBUTTON, MSAA_ROLE_RADIOBUTTON,
     MSAA_STATE_READONLY, MSAA_STATE_UNAVAILABLE, NativeHwndMeta, NativeListParentMeta,
     NativeWindowKind, PlannedAction, SemanticControlType, WS_DISABLED, check_focus_preserved,
-    classify_native_window_class, infer_supported_patterns, is_background_safe_uia_framework,
-    plan_action, verify_select_readback, verify_set_value_readback,
+    classify_native_window_class, infer_supported_patterns, initialize_no_focus_client_with_retry,
+    is_background_safe_uia_framework, map_uia2_init_error, plan_action, verify_select_readback,
+    verify_set_value_readback, verify_uia_auto_set_focus_disabled,
 };
 use tether_desktop_provider::{DesktopAction, DesktopActionKind, DesktopPattern};
+use win_uia2_nofocus::Uia2Error;
 
 fn base_input(process_id: u32) -> ElementCompatInput {
     ElementCompatInput {
@@ -804,12 +806,194 @@ fn windows_compat_and_uia_contain_no_physical_input_clipboard_or_unbounded_send_
             "AttachThreadInput",
             "OpenClipboard",
             "SetClipboardData",
+            "UIAutomation::new(",
+            "UIAutomation::new_direct(",
+            "SetFocus(",
+            "BringWindowToTop",
+            "SwitchToThisWindow",
+            "AllowSetForegroundWindow",
         ] {
             assert!(
                 !source.contains(forbidden),
-                "{name} must not contain forbidden physical/clipboard/unbounded pattern: {forbidden}"
+                "{name} must not contain forbidden physical/clipboard/focus/unbounded pattern: {forbidden}"
             );
         }
         check_bounded_send_calls(name, source);
     }
+
+    // Verify windows_uia.rs constructs its single client through NoFocusUiaClient,
+    // adapts that exact COM object via UIAutomation::from, and enforces AutoSetFocus readback.
+    assert!(
+        uia_source.contains("NoFocusUiaClient::new_mta"),
+        "windows_uia.rs must construct its COM client via NoFocusUiaClient::new_mta"
+    );
+    assert!(
+        uia_source.contains("UIAutomation::from("),
+        "windows_uia.rs must adapt the verified CUIAutomation8 client via UIAutomation::from"
+    );
+    assert!(
+        uia_source.contains("query_auto_set_focus("),
+        "windows_uia.rs must verify AutoSetFocus via query_auto_set_focus"
+    );
+}
+
+#[test]
+fn uia2_no_focus_init_fails_closed_immediately_on_permanent_configuration_errors() {
+    let class_not_reg = i32::from_ne_bytes(0x8004_0154_u32.to_ne_bytes());
+    let rpc_changed_mode = i32::from_ne_bytes(0x8001_0106_u32.to_ne_bytes());
+    let e_nointerface = i32::from_ne_bytes(0x8000_4002_u32.to_ne_bytes());
+
+    let permanent_cases = [
+        (
+            Uia2Error::AutoSetFocusStillEnabled,
+            ErrorCode::CapabilityUnavailable,
+        ),
+        (
+            Uia2Error::DisableAutoSetFocusFailed {
+                hresult: e_nointerface,
+                message: "AutoSetFocus rejected".into(),
+            },
+            ErrorCode::CapabilityUnavailable,
+        ),
+        (
+            Uia2Error::VerifyAutoSetFocusFailed {
+                hresult: e_nointerface,
+                message: "AutoSetFocus readback failed".into(),
+            },
+            ErrorCode::CapabilityUnavailable,
+        ),
+        (
+            Uia2Error::InterfaceQueryFailed {
+                hresult: e_nointerface,
+                message: "IUIAutomation2 unsupported".into(),
+            },
+            ErrorCode::CapabilityUnavailable,
+        ),
+        (
+            Uia2Error::CreateClientFailed {
+                hresult: class_not_reg,
+                message: "Class not registered".into(),
+            },
+            ErrorCode::CapabilityUnavailable,
+        ),
+        (
+            Uia2Error::ComInitFailed {
+                hresult: rpc_changed_mode,
+                message: "Cannot change thread mode".into(),
+            },
+            ErrorCode::ProviderFailure,
+        ),
+    ];
+
+    for (error, expected_code) in permanent_cases {
+        let mut attempts = 0_usize;
+        let mut sleeps = Vec::new();
+        let result: Result<(), _> = initialize_no_focus_client_with_retry(
+            &[25, 50],
+            || {
+                attempts += 1;
+                Err(error.clone())
+            },
+            |delay_ms| sleeps.push(delay_ms),
+        );
+        let mapped = result.expect_err("permanent UIA2 focus-safe init error must fail closed");
+        assert_eq!(attempts, 1, "permanent error must not retry: {error}");
+        assert!(sleeps.is_empty(), "permanent error must not sleep: {error}");
+        assert_eq!(
+            mapped.code, expected_code,
+            "unexpected error code for {error}"
+        );
+        assert_eq!(mapped.details["auto_set_focus_required"], false);
+    }
+}
+
+#[test]
+fn uia2_no_focus_init_retries_only_transient_com_errors_and_fails_closed_when_exhausted() {
+    let e_fail = i32::from_ne_bytes(0x8000_4005_u32.to_ne_bytes());
+
+    let mut attempts = 0_usize;
+    let mut sleeps = Vec::new();
+    let recovered = initialize_no_focus_client_with_retry(
+        &[25, 50],
+        || {
+            attempts += 1;
+            if attempts < 3 {
+                Err(Uia2Error::CreateClientFailed {
+                    hresult: e_fail,
+                    message: "Unspecified error".into(),
+                })
+            } else {
+                Ok("verified-cuiautomation8-client")
+            }
+        },
+        |delay_ms| sleeps.push(delay_ms),
+    )
+    .expect("transient COM init glitch should recover on retry");
+    assert_eq!(recovered, "verified-cuiautomation8-client");
+    assert_eq!(attempts, 3);
+    assert_eq!(sleeps, vec![25, 50]);
+
+    let mut exhausted_attempts = 0_usize;
+    let mut exhausted_sleeps = Vec::new();
+    let exhausted: Result<(), _> = initialize_no_focus_client_with_retry(
+        &[25, 50],
+        || {
+            exhausted_attempts += 1;
+            Err(Uia2Error::CreateClientFailed {
+                hresult: e_fail,
+                message: "Unspecified error".into(),
+            })
+        },
+        |delay_ms| exhausted_sleeps.push(delay_ms),
+    );
+    let err = exhausted.expect_err("exhausted transient errors must still fail closed");
+    assert_eq!(exhausted_attempts, 3);
+    assert_eq!(exhausted_sleeps, vec![25, 50]);
+    assert_eq!(err.code, ErrorCode::ProviderFailure);
+    assert!(err.message.contains("Windows UI Automation"));
+
+    let mut mixed_attempts = 0_usize;
+    let mut mixed_sleeps = Vec::new();
+    let mixed: Result<(), _> = initialize_no_focus_client_with_retry(
+        &[25, 50],
+        || {
+            mixed_attempts += 1;
+            if mixed_attempts == 1 {
+                Err(Uia2Error::CreateClientFailed {
+                    hresult: e_fail,
+                    message: "Unspecified error".into(),
+                })
+            } else {
+                Err(Uia2Error::AutoSetFocusStillEnabled)
+            }
+        },
+        |delay_ms| mixed_sleeps.push(delay_ms),
+    );
+    let mixed_err = mixed.expect_err("permanent error after transient retry must fail closed");
+    assert_eq!(mixed_attempts, 2);
+    assert_eq!(mixed_sleeps, vec![25]);
+    assert_eq!(mixed_err.code, ErrorCode::CapabilityUnavailable);
+    assert_eq!(mixed_err.details["auto_set_focus_required"], false);
+}
+
+#[test]
+fn uia2_auto_set_focus_readback_verification_fails_closed_unless_false() {
+    assert!(verify_uia_auto_set_focus_disabled(Ok(false)).is_ok());
+
+    let still_enabled = verify_uia_auto_set_focus_disabled(Ok(true))
+        .expect_err("AutoSetFocus=true readback must fail closed");
+    assert_eq!(still_enabled.code, ErrorCode::CapabilityUnavailable);
+    assert_eq!(still_enabled.details["auto_set_focus_required"], false);
+
+    let e_nointerface = i32::from_ne_bytes(0x8000_4002_u32.to_ne_bytes());
+    let query_failed = verify_uia_auto_set_focus_disabled(Err(Uia2Error::InterfaceQueryFailed {
+        hresult: e_nointerface,
+        message: "No such interface supported".into(),
+    }))
+    .expect_err("failed IUIAutomation2 readback must fail closed");
+    assert_eq!(query_failed.code, ErrorCode::CapabilityUnavailable);
+
+    let mapped = map_uia2_init_error(&Uia2Error::AutoSetFocusStillEnabled);
+    assert_eq!(mapped.code, ErrorCode::CapabilityUnavailable);
+    assert!(mapped.message.contains("AutoSetFocus"));
 }

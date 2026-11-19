@@ -1,5 +1,7 @@
 import assert from "node:assert/strict";
-import { readFileSync } from "node:fs";
+import { spawnSync } from "node:child_process";
+import { mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import os from "node:os";
 import path from "node:path";
 import test from "node:test";
 import { fileURLToPath } from "node:url";
@@ -8,6 +10,7 @@ import {
   createBoundedOutputCollector,
   evaluateFocusCoexistence,
   extractToolPayload,
+  formatTapSafeDiagnosticLine,
   hasFixtureHeartbeatAdvanced,
   isFixtureRenderedReady,
   selectHumanInvokeTarget,
@@ -580,4 +583,177 @@ test("windows-desktop-fixture.ps1 enforces read-only OS foreground inspection, n
     source,
     /\b(SetForegroundWindow|SetCursorPos|SendInput|mouse_event|keybd_event|AttachThreadInput)\b/,
   );
+});
+
+test("formatTapSafeDiagnosticLine emits valid single-line JSON with zero backslashes or hashes even for nested AssertionError payloads", () => {
+  const nestedEvidence = {
+    action: "set_value",
+    payload: {
+      is_error: true,
+      structured: {
+        error: {
+          code: "action_unverified",
+          message:
+            "semantic desktop action altered foreground focus in background_only mode",
+          details: {
+            target_process_id: 3632,
+            foreground_pid_before: 2856,
+            foreground_pid_after: 3632,
+          },
+        },
+      },
+      raw_text: '{"error":{"code":"action_unverified"}}',
+    },
+    transport: null,
+    verified: null,
+  };
+  let caught: unknown;
+  try {
+    assert.equal(
+      true,
+      undefined,
+      `Wpf desktop.act(set_value) failed: ${JSON.stringify(nestedEvidence)}`,
+    );
+  } catch (error) {
+    caught = error;
+  }
+
+  const detail = {
+    framework: "Wpf",
+    stage: "act_set_value",
+    owned_pid: 3632,
+    human_pid: 2856,
+    error: String(caught),
+    owned_state_startup_stage: "content-rendered\r\n",
+    windows_path: "C:\\Users\\WDAGUtilityAccount\\AppData\\Local\\Temp\\state.json",
+    hash_note: "PR #153 check \x1b[31mred\x1b[0m \uD800 tail",
+    action_evidence: { set_value: nestedEvidence },
+  };
+
+  const line = formatTapSafeDiagnosticLine(
+    "G4_FIXTURE_FAILURE_CONTEXT=",
+    detail,
+  );
+  assert.ok(line.startsWith("G4_FIXTURE_FAILURE_CONTEXT="));
+  const jsonPart = line.slice("G4_FIXTURE_FAILURE_CONTEXT=".length);
+  assert.equal(jsonPart.includes("\\"), false, "JSON must contain no backslashes");
+  assert.equal(jsonPart.includes("#"), false, "JSON must contain no '#' characters");
+  assert.equal(jsonPart.includes("\n"), false, "JSON must be single-line");
+  assert.equal(jsonPart.includes("\r"), false, "JSON must contain no CR");
+
+  const parsed = JSON.parse(jsonPart) as Record<string, unknown>;
+  assert.equal(parsed.framework, "Wpf");
+  assert.equal(parsed.stage, "act_set_value");
+  assert.equal(parsed.owned_pid, 3632);
+  assert.equal(parsed.human_pid, 2856);
+  assert.equal(
+    parsed.windows_path,
+    "C:/Users/WDAGUtilityAccount/AppData/Local/Temp/state.json",
+  );
+  const ev = (parsed.action_evidence as Record<string, unknown>)
+    .set_value as Record<string, unknown>;
+  const errObj = (
+    (ev.payload as Record<string, unknown>).structured as Record<string, unknown>
+  ).error as Record<string, unknown>;
+  assert.equal(errObj.code, "action_unverified");
+});
+
+test("formatTapSafeDiagnosticLine survives node --test --test-reporter=tap without corrupting JSON", () => {
+  let caught: unknown;
+  try {
+    const nested = {
+      payload: {
+        text: '{"error":{"code":"action_unverified"}}',
+      },
+    };
+    assert.equal(
+      true,
+      undefined,
+      `Wpf desktop.act(set_value) failed: ${JSON.stringify(nested)}`,
+    );
+  } catch (error) {
+    caught = error;
+  }
+
+  const failurePayloadLine = formatTapSafeDiagnosticLine(
+    "G4_FIXTURE_FAILURE_CONTEXT=",
+    {
+      framework: "Wpf",
+      stage: "act_set_value",
+      error: String(caught),
+      path: "C:\\Users\\WDAGUtilityAccount\\Temp\\fixture.json",
+      tag: "PR #153",
+    },
+  );
+  const telemetryPayloadLine = formatTapSafeDiagnosticLine(
+    "G4_COEXISTENCE_TELEMETRY=",
+    {
+      framework: "Wpf",
+      outcome: "fail",
+      tag: "#153",
+    },
+  );
+
+  const tempDir = mkdtempSync(path.join(os.tmpdir(), "tp-tap-json-"));
+  const testFile = path.join(tempDir, "tap-repro.test.mjs");
+  try {
+    writeFileSync(
+      testFile,
+      [
+        'import assert from "node:assert/strict";',
+        'import test from "node:test";',
+        'test("emits tap-safe json on failure", () => {',
+        "  try {",
+        '    assert.equal(true, undefined, "forced failure");',
+        "  } catch (error) {",
+        `    console.error(${JSON.stringify(failurePayloadLine)});`,
+        "    throw error;",
+        "  } finally {",
+        `    console.log(${JSON.stringify(telemetryPayloadLine)});`,
+        "  }",
+        "});",
+      ].join("\n"),
+      "utf8",
+    );
+
+    const childEnv = { ...process.env };
+    delete childEnv.NODE_TEST_CONTEXT;
+    const run = spawnSync(
+      process.execPath,
+      ["--test", "--test-reporter=tap", testFile],
+      { encoding: "utf8", env: childEnv },
+    );
+    assert.notEqual(run.status, 0);
+    const combined = `${run.stdout}\n${run.stderr}`;
+    const lines = combined.split(/\r?\n/);
+
+    const failureLine = lines.find((line) =>
+      line.includes("G4_FIXTURE_FAILURE_CONTEXT="),
+    );
+    const telemetryLine = lines.find((line) =>
+      line.includes("G4_COEXISTENCE_TELEMETRY="),
+    );
+    assert.ok(failureLine, `missing failure context line in TAP output:\n${combined}`);
+    assert.ok(telemetryLine, `missing telemetry line in TAP output:\n${combined}`);
+
+    const parsedFailure = JSON.parse(
+      failureLine.split("G4_FIXTURE_FAILURE_CONTEXT=", 2)[1] ?? "",
+    ) as Record<string, unknown>;
+    assert.equal(parsedFailure.framework, "Wpf");
+    assert.equal(parsedFailure.stage, "act_set_value");
+    assert.equal(
+      parsedFailure.path,
+      "C:/Users/WDAGUtilityAccount/Temp/fixture.json",
+    );
+    assert.equal(parsedFailure.tag, "PR (hash)153");
+
+    const parsedTelemetry = JSON.parse(
+      telemetryLine.split("G4_COEXISTENCE_TELEMETRY=", 2)[1] ?? "",
+    ) as Record<string, unknown>;
+    assert.equal(parsedTelemetry.framework, "Wpf");
+    assert.equal(parsedTelemetry.outcome, "fail");
+    assert.equal(parsedTelemetry.tag, "(hash)153");
+  } finally {
+    rmSync(tempDir, { recursive: true, force: true });
+  }
 });

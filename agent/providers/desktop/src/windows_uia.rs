@@ -12,6 +12,7 @@ use uiautomation::patterns::{
 };
 use uiautomation::types::{ControlType, ExpandCollapseState};
 use uiautomation::{UIAutomation, UIElement, UITreeWalker};
+use win_uia2_nofocus::{ComMtaGuard, NoFocusUiaClient, query_auto_set_focus};
 use windows_win::raw::window::{send_message, send_push_button};
 use windows_win::sys::{LPARAM, LRESULT, UINT, WM_GETTEXT, WM_GETTEXTLENGTH, WM_SETTEXT, WPARAM};
 use winsafe::{EnumWindows, HWND, co};
@@ -19,8 +20,9 @@ use winsafe::{EnumWindows, HWND, co};
 use crate::windows_compat::{
     ElementCompatInput, MAX_NATIVE_READBACK_CHARS, NATIVE_MESSAGE_TIMEOUT_MS, NativeHwndMeta,
     NativeListParentMeta, NativeWindowKind, PlannedAction, SemanticControlType,
-    check_focus_preserved, classify_native_window_class, infer_supported_patterns, plan_action,
-    verify_select_readback, verify_set_value_readback,
+    check_focus_preserved, classify_native_window_class, infer_supported_patterns,
+    initialize_no_focus_client_with_retry, map_uia2_init_error, plan_action,
+    verify_select_readback, verify_set_value_readback, verify_uia_auto_set_focus_disabled,
 };
 use crate::{DesktopAction, DesktopActionOutcome, DesktopBackend, DesktopNode, DesktopRect};
 
@@ -39,6 +41,7 @@ const LBN_SELCHANGE: usize = 1;
 static UIA_INIT_LOCK: Mutex<()> = Mutex::new(());
 
 enum WorkerRequest {
+    AutoSetFocusEnabled(Sender<Result<bool, CapabilityError>>),
     Snapshot(Sender<Result<Vec<DesktopNode>, CapabilityError>>),
     Target {
         reference: String,
@@ -92,40 +95,43 @@ struct WalkFrame<'a> {
 }
 
 struct WorkerState {
-    automation: UIAutomation,
-    walker: UITreeWalker,
+    // Field declaration order is load-bearing: every UIA COM object (`references`, `walker`,
+    // `automation`) drops before `_com_apartment` executes `CoUninitialize`.
     references: HashMap<String, CachedElement>,
     stable_references: BTreeMap<ElementIdentity, String>,
+    walker: UITreeWalker,
+    automation: UIAutomation,
+    _com_apartment: ComMtaGuard,
     next_reference: u64,
 }
 
 impl WorkerState {
     fn new_with_transient_retry() -> Result<Self, CapabilityError> {
         const RETRY_DELAYS_MS: [u64; 2] = [25, 50];
-        match Self::new() {
-            Ok(state) => Ok(state),
-            Err(first_error) => {
-                for delay_ms in RETRY_DELAYS_MS {
-                    thread::sleep(Duration::from_millis(delay_ms));
-                    if let Ok(state) = Self::new() {
-                        return Ok(state);
-                    }
-                }
-                Err(first_error)
-            }
-        }
+        let client = initialize_no_focus_client_with_retry(
+            &RETRY_DELAYS_MS,
+            NoFocusUiaClient::new_mta,
+            |delay_ms| thread::sleep(Duration::from_millis(delay_ms)),
+        )?;
+        Self::from_verified_client(client)
     }
 
-    fn new() -> Result<Self, CapabilityError> {
-        let automation = UIAutomation::new().map_err(|error| uia_provider_error(&error))?;
+    fn from_verified_client(client: NoFocusUiaClient) -> Result<Self, CapabilityError> {
+        // Local variables drop in reverse declaration order on `?` returns, so
+        // `automation` and `walker` always drop before `com_apartment` runs `CoUninitialize`.
+        let parts = client.into_parts();
+        let com_apartment = parts.1;
+        let automation = UIAutomation::from(parts.0);
+        verify_uia_auto_set_focus_disabled(query_auto_set_focus(automation.as_ref()))?;
         let walker = automation
             .get_control_view_walker()
             .map_err(|error| uia_provider_error(&error))?;
         Ok(Self {
-            automation,
-            walker,
             references: HashMap::new(),
             stable_references: BTreeMap::new(),
+            walker,
+            automation,
+            _com_apartment: com_apartment,
             next_reference: 1,
         })
     }
@@ -133,6 +139,12 @@ impl WorkerState {
     fn run(&mut self, requests: &Receiver<WorkerRequest>) {
         while let Ok(request) = requests.recv() {
             match request {
+                WorkerRequest::AutoSetFocusEnabled(response) => {
+                    let _ = response.send(
+                        query_auto_set_focus(self.automation.as_ref())
+                            .map_err(|error| map_uia2_init_error(&error)),
+                    );
+                }
                 WorkerRequest::Snapshot(response) => {
                     let _ = response.send(self.snapshot());
                 }
@@ -1196,11 +1208,14 @@ pub struct WindowsUiaBackend {
 }
 
 impl WindowsUiaBackend {
-    /// Starts a dedicated Windows UI Automation worker thread.
+    /// Starts a dedicated Windows UI Automation worker thread backed by a verified
+    /// `CUIAutomation8` client with `IUIAutomation2::AutoSetFocus=false`.
     ///
     /// # Errors
     ///
-    /// Returns a provider error if UI Automation cannot initialize on the worker thread.
+    /// Returns `CapabilityUnavailable` or `ProviderFailure` if `CUIAutomation8` cannot be
+    /// initialized on the worker thread or if `IUIAutomation2::AutoSetFocus=false` cannot be
+    /// enforced and verified via readback.
     pub fn new() -> Result<Self, CapabilityError> {
         let (request_tx, request_rx) = channel::<WorkerRequest>();
         let (init_tx, init_rx) = channel::<Result<(), CapabilityError>>();
@@ -1250,6 +1265,20 @@ impl WindowsUiaBackend {
                 ))
             }
         }
+    }
+
+    /// Queries `IUIAutomation2::AutoSetFocus` directly on the live worker thread's COM client.
+    ///
+    /// # Errors
+    ///
+    /// Returns `Disconnected` if the worker thread has stopped, or a mapped UIA2 capability error
+    /// if querying `IUIAutomation2::AutoSetFocus` fails.
+    pub fn auto_set_focus_enabled(&self) -> Result<bool, CapabilityError> {
+        let (response_tx, response_rx) = channel();
+        self.sender()
+            .send(WorkerRequest::AutoSetFocusEnabled(response_tx))
+            .map_err(|_| disconnected_worker())?;
+        response_rx.recv().map_err(|_| disconnected_worker())?
     }
 
     fn sender(&self) -> std::sync::MutexGuard<'_, Sender<WorkerRequest>> {

@@ -12,6 +12,7 @@ import {
   createBoundedOutputCollector,
   evaluateFocusCoexistence,
   extractToolPayload,
+  formatTapSafeDiagnosticLine,
   hasFixtureHeartbeatAdvanced,
   isFixtureRenderedReady,
   selectHumanInvokeTarget,
@@ -1007,7 +1008,9 @@ async function runDesktopCoexistenceTest(framework: "WinForms" | "Wpf") {
       stdout: humanStdout.read(),
       stderr: humanStderr.read(),
     };
-    console.error("G4_FIXTURE_FAILURE_CONTEXT=" + JSON.stringify(detail));
+    console.error(
+      formatTapSafeDiagnosticLine("G4_FIXTURE_FAILURE_CONTEXT=", detail),
+    );
     throw error;
   } finally {
     const telemetry = {
@@ -1041,7 +1044,9 @@ async function runDesktopCoexistenceTest(framework: "WinForms" | "Wpf") {
         ]),
       ),
     };
-    console.log("G4_COEXISTENCE_TELEMETRY=" + JSON.stringify(telemetry));
+    console.log(
+      formatTapSafeDiagnosticLine("G4_COEXISTENCE_TELEMETRY=", telemetry),
+    );
 
     const cleanupErrors: string[] = [];
     let ownedStopped = ownedHandle === undefined;

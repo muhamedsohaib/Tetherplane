@@ -2,6 +2,7 @@ use std::collections::BTreeSet;
 
 use serde_json::json;
 use tether_core::{CapabilityError, ErrorCode};
+use win_uia2_nofocus::{Uia2Error, validate_auto_set_focus_readback};
 
 use crate::{DesktopAction, DesktopActionKind, DesktopPattern};
 
@@ -734,6 +735,120 @@ pub fn check_focus_preserved(
         });
     }
     Ok(())
+}
+
+/// Maps a fail-closed `CUIAutomation8` / `IUIAutomation2::AutoSetFocus=false` initialization or
+/// readback failure into a structured Tetherplane [`CapabilityError`].
+#[must_use]
+pub fn map_uia2_init_error(error: &Uia2Error) -> CapabilityError {
+    let stage = match error {
+        Uia2Error::ComInitFailed { .. } => "com_init",
+        Uia2Error::CreateClientFailed { .. } => "create_client",
+        Uia2Error::InterfaceQueryFailed { .. } => "interface_query",
+        Uia2Error::DisableAutoSetFocusFailed { .. } => "disable_auto_set_focus",
+        Uia2Error::VerifyAutoSetFocusFailed { .. } => "verify_auto_set_focus",
+        Uia2Error::AutoSetFocusStillEnabled => "auto_set_focus_readback",
+    };
+
+    let code = match error {
+        Uia2Error::ComInitFailed { .. } => ErrorCode::ProviderFailure,
+        Uia2Error::CreateClientFailed { .. } if error.is_transient_init_error() => {
+            ErrorCode::ProviderFailure
+        }
+        Uia2Error::CreateClientFailed { .. }
+        | Uia2Error::InterfaceQueryFailed { .. }
+        | Uia2Error::DisableAutoSetFocusFailed { .. }
+        | Uia2Error::VerifyAutoSetFocusFailed { .. }
+        | Uia2Error::AutoSetFocusStillEnabled => ErrorCode::CapabilityUnavailable,
+    };
+
+    let (message, recovery_hint) = match code {
+        ErrorCode::CapabilityUnavailable => (
+            format!(
+                "Windows UI Automation background focus protection (IUIAutomation2::AutoSetFocus=false) is unavailable: {error}"
+            ),
+            "Windows desktop semantic actions require CUIAutomation8 with IUIAutomation2::AutoSetFocus=false; Tetherplane will not fall back to focus-stealing UI Automation.",
+        ),
+        _ => (
+            format!(
+                "Windows UI Automation provider initialization failed while enforcing IUIAutomation2::AutoSetFocus=false: {error}"
+            ),
+            "Retry or restart the local agent inside an interactive Windows desktop session where CUIAutomation8 can initialize in an MTA apartment.",
+        ),
+    };
+
+    let hresult = error
+        .hresult()
+        .map(|hr| format!("0x{:08X}", u32::from_ne_bytes(hr.to_ne_bytes())));
+
+    CapabilityError {
+        code,
+        message,
+        recovery_hint: Some(recovery_hint.into()),
+        details: json!({
+            "auto_set_focus_required": false,
+            "stage": stage,
+            "hresult": hresult,
+            "transient": error.is_transient_init_error(),
+        }),
+    }
+}
+
+/// Verifies an `IUIAutomation2::AutoSetFocus` readback result, failing closed unless the observed
+/// setting is explicitly `false`.
+///
+/// # Errors
+///
+/// Returns `CapabilityUnavailable` (or `ProviderFailure` for transient COM faults) if reading
+/// `AutoSetFocus` failed or if it remains `true`.
+pub fn verify_uia_auto_set_focus_disabled(
+    readback: Result<bool, Uia2Error>,
+) -> Result<(), CapabilityError> {
+    let observed = readback.map_err(|error| map_uia2_init_error(&error))?;
+    validate_auto_set_focus_readback(observed).map_err(|error| map_uia2_init_error(&error))
+}
+
+/// Executes a focus-safe `CUIAutomation8` client initializer, retrying ONLY bounded transient COM
+/// initialization races (`E_FAIL`, `RPC_E_CALL_REJECTED`, `RPC_E_SERVERCALL_RETRYLATER`).
+///
+/// Permanent compatibility or `AutoSetFocus` enforcement errors fail closed immediately without
+/// retrying or falling back to legacy UI Automation.
+///
+/// # Errors
+///
+/// Returns a mapped [`CapabilityError`] when initialization fails permanently or exhausts all
+/// transient retries.
+pub fn initialize_no_focus_client_with_retry<T, F, S>(
+    retry_delays_ms: &[u64],
+    mut init: F,
+    mut sleep_ms: S,
+) -> Result<T, CapabilityError>
+where
+    F: FnMut() -> Result<T, Uia2Error>,
+    S: FnMut(u64),
+{
+    let mut last_error = match init() {
+        Ok(client) => return Ok(client),
+        Err(error) if !error.is_transient_init_error() => {
+            return Err(map_uia2_init_error(&error));
+        }
+        Err(error) => error,
+    };
+
+    for &delay_ms in retry_delays_ms {
+        sleep_ms(delay_ms);
+        match init() {
+            Ok(client) => return Ok(client),
+            Err(error) if !error.is_transient_init_error() => {
+                return Err(map_uia2_init_error(&error));
+            }
+            Err(error) => {
+                last_error = error;
+            }
+        }
+    }
+
+    Err(map_uia2_init_error(&last_error))
 }
 
 fn capability_unavailable(reference: &str, required: DesktopPattern) -> CapabilityError {

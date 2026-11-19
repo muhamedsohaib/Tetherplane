@@ -449,3 +449,116 @@ export function evaluateFocusCoexistence(params: {
     discrepancy: null,
   };
 }
+
+function sanitizeTapDiagnosticString(input: string): string {
+  let out = "";
+  for (let i = 0; i < input.length; i += 1) {
+    const code = input.charCodeAt(i);
+    if (code >= 0xd800 && code <= 0xdbff) {
+      const next = i + 1 < input.length ? input.charCodeAt(i + 1) : 0;
+      if (next >= 0xdc00 && next <= 0xdfff) {
+        out += input.slice(i, i + 2);
+        i += 1;
+      } else {
+        out += "\uFFFD";
+      }
+      continue;
+    }
+    if (code >= 0xdc00 && code <= 0xdfff) {
+      out += "\uFFFD";
+      continue;
+    }
+    if (code === 0x0d || code === 0x0a || code === 0x09) {
+      out += " ";
+      continue;
+    }
+    if (code < 0x20 || code === 0x7f) {
+      continue;
+    }
+    if (code === 0x5c) {
+      // Replace '\' with '/' so JSON.stringify emits no '\\' escapes that
+      // Node's TAP reporter doubles via tapEscape().
+      out += "/";
+      continue;
+    }
+    if (code === 0x22) {
+      // Replace '"' with "'" so JSON.stringify emits no '\"' escapes that
+      // Node's TAP reporter turns into '\\"', terminating JSON strings early.
+      out += "'";
+      continue;
+    }
+    if (code === 0x23) {
+      // Replace '#' so Node's TAP reporter never emits an illegal '\#' escape.
+      out += "(hash)";
+      continue;
+    }
+    out += input.charAt(i);
+  }
+  return out;
+}
+
+export function sanitizeTapDiagnosticValue(
+  value: unknown,
+  seen = new WeakSet<object>(),
+  depth = 0,
+): unknown {
+  if (depth > 20) {
+    return "[max-depth]";
+  }
+  if (value === null || value === undefined) {
+    return null;
+  }
+  if (typeof value === "string") {
+    return sanitizeTapDiagnosticString(value);
+  }
+  if (typeof value === "number") {
+    return Number.isFinite(value) ? value : null;
+  }
+  if (typeof value === "boolean") {
+    return value;
+  }
+  if (typeof value === "bigint") {
+    return value.toString();
+  }
+  if (value instanceof Error) {
+    return sanitizeTapDiagnosticValue(
+      {
+        name: value.name,
+        message: value.message,
+      },
+      seen,
+      depth + 1,
+    );
+  }
+  if (typeof value === "object") {
+    if (seen.has(value)) {
+      return "[circular]";
+    }
+    seen.add(value);
+    if (Array.isArray(value)) {
+      return value.map((item) =>
+        sanitizeTapDiagnosticValue(item, seen, depth + 1),
+      );
+    }
+    const result: Record<string, unknown> = {};
+    for (const [key, entry] of Object.entries(value as Record<string, unknown>)) {
+      if (entry === undefined) continue;
+      result[sanitizeTapDiagnosticString(key)] = sanitizeTapDiagnosticValue(
+        entry,
+        seen,
+        depth + 1,
+      );
+    }
+    return result;
+  }
+  return sanitizeTapDiagnosticString(String(value));
+}
+
+export function formatTapSafeDiagnosticLine(
+  prefix: string,
+  payload: unknown,
+): string {
+  const sanitized = sanitizeTapDiagnosticValue(payload);
+  const serialized = JSON.stringify(sanitized);
+  return `${prefix}${serialized}`;
+}
