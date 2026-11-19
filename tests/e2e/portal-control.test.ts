@@ -617,9 +617,34 @@ test(
       });
       assert.equal(helperWrite.isError, true);
 
+      // Revoke an ACTIVE operator grant and require an actual device acknowledgment
+      await browser.eval(
+        `document.querySelector('[data-action="remove-operator"][data-principal="operator:helper"]').click()`,
+      );
+      await until(
+        () =>
+          browser!.eval<boolean>(
+            `!document.querySelector('[data-action="remove-operator"][data-principal="operator:helper"]')`,
+          ),
+        8_000,
+        "operator:helper removed from UI",
+      );
+      const helperAfterRemove = await helperClient.callTool({
+        name: "files",
+        arguments: { op: "read", device: "Leno", args: { path: targetFile } },
+      });
+      assert.equal(helperAfterRemove.isError, true);
+      await until(
+        () => browser!.eval<boolean>(
+          `Boolean(document.querySelector('#toast-stack .toast[data-kind="policy-confirmed"]')?.textContent?.includes('Revoke operator access confirmed by device'))`,
+        ),
+        8_000,
+        "operator access removal confirmed by Leno device",
+      );
+
       // Clear selection and create extra revisions on Leno (>11 total) to verify Snapshot Filter + Pagination + Rollback
       await browser.eval(`document.getElementById("clear-selected-devices-btn").click()`);
-      for (let i = 0; i < 10; i += 1) {
+      for (let i = 0; i < 9; i += 1) {
         const res = await fetch(`${address.httpUrl}/portal/api/devices/Leno/policy`, {
           method: "POST",
           headers: {
@@ -742,31 +767,6 @@ test(
       assert.equal(
         await browser.eval<string>(`document.querySelector('[data-sync-badge="Leno"]')?.textContent`),
         "Confirmed Active (v16)",
-      );
-
-      // Remove operator:helper from UI button & verify MCP denial
-      await browser.eval(
-        `document.querySelector('[data-action="remove-operator"][data-principal="operator:helper"]').click()`,
-      );
-      await until(
-        () =>
-          browser!.eval<boolean>(
-            `!document.querySelector('[data-action="remove-operator"][data-principal="operator:helper"]')`,
-          ),
-        8_000,
-        "operator:helper removed from UI",
-      );
-      const helperAfterRemove = await helperClient.callTool({
-        name: "files",
-        arguments: { op: "read", device: "Leno", args: { path: targetFile } },
-      });
-      assert.equal(helperAfterRemove.isError, true);
-      await until(
-        () => browser!.eval<boolean>(
-          `Boolean(document.querySelector('#toast-stack .toast[data-kind="policy-confirmed"]')?.textContent?.includes('Revoke operator access confirmed by device'))`,
-        ),
-        8_000,
-        "operator access removal confirmed by Leno device",
       );
 
       // Switch to mobile viewport (390x844) and test offline update -> tetherd reconnect resync + layout

@@ -939,8 +939,16 @@ const PORTAL_SCRIPT = `
           : response && Array.isArray(response.revisions)
             ? response.revisions : [];
         if (revisions.length === 0) {
-          showToast(label + " accepted by relay. Check device sync badges before assuming access changed.",
-            "pending", "policy-pending");
+          if (response && typeof response.removed === "string" &&
+              Array.isArray(response.revisions)) {
+            // Directory-only removal needs no device ACK; never invent one.
+            showToast("Operator " + response.removed +
+              " removed from owner directory. No active device grants to revoke.",
+              "info", "operator-directory-removed");
+          } else {
+            showToast(label + " accepted with no device policy revisions. Review current access state.",
+              "info", "policy-no-change");
+          }
           return;
         }
         revisions.forEach(function (item) {
