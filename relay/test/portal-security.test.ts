@@ -61,10 +61,23 @@ test("GET /portal sets strict CSP & security headers and avoids innerHTML/sessio
     assert.ok(csp.length > 0, "expected Content-Security-Policy header");
     assert.doesNotMatch(csp, /unsafe-inline/);
     assert.match(csp, /script-src\s+'sha256-/);
+    assert.match(csp, /manifest-src\s+'self'/);
     assert.match(csp, /object-src\s+'none'/);
     assert.match(csp, /frame-ancestors\s+'none'/);
 
     const html = await res.text();
+    assert.match(html, /rel="manifest" href="\/portal\/manifest\.webmanifest"/);
+    const manifestRes = await fetch(`${address.httpUrl}/portal/manifest.webmanifest`);
+    assert.equal(manifestRes.status, 200);
+    assert.match(manifestRes.headers.get("content-type") || "", /application\/manifest\+json/);
+    assert.match(manifestRes.headers.get("cache-control") || "", /no-store/);
+    assert.equal(manifestRes.headers.get("x-content-type-options"), "nosniff");
+    const manifest = await manifestRes.json();
+    assert.deepEqual({
+      id: manifest.id, start_url: manifest.start_url, scope: manifest.scope,
+      display: manifest.display,
+    }, { id: "/portal", start_url: "/portal", scope: "/portal", display: "standalone" });
+    assert.doesNotMatch(JSON.stringify(manifest), /token|secret|bearer|session/i);
     assert.doesNotMatch(html, /\.innerHTML\b/);
     assert.doesNotMatch(html, /\binsertAdjacentHTML\b/);
     assert.doesNotMatch(html, /\bdocument\.write\b/);

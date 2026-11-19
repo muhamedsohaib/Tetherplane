@@ -19,7 +19,10 @@ import {
   type PolicyStore,
   type ToolFamily,
 } from "../policy/policy-store.ts";
-import { renderControlPortalPage } from "../portal/portal-ui.ts";
+import {
+  renderControlPortalPage,
+  renderControlPortalManifest,
+} from "../portal/portal-ui.ts";
 import { PairingCapacityError, type DeviceRegistry } from "./registry.ts";
 
 const PORTAL_SESSION_COOKIE = "tetherplane_portal_session";
@@ -177,6 +180,18 @@ export class RelayControlHttpGateway {
               "bearer tokens are not accepted in URL query parameters; submit owner credentials via POST /portal/api/session",
           },
         });
+        return;
+      }
+
+      if (request.method === "GET" && url.pathname === "/portal/manifest.webmanifest") {
+        // Static Home Screen metadata only. Never embed bearer credentials,
+        // pairing codes, or account/device identities in public app metadata.
+        response.statusCode = 200;
+        response.setHeader("content-type", "application/manifest+json; charset=utf-8");
+        response.setHeader("cache-control", "no-store");
+        response.setHeader("x-content-type-options", "nosniff");
+        response.setHeader("referrer-policy", "no-referrer");
+        response.end(renderControlPortalManifest());
         return;
       }
 

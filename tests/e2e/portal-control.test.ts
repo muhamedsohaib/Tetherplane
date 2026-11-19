@@ -678,6 +678,13 @@ test(
         arguments: { op: "run", device: "Leno", args: platformEchoArgs("rolled-back") },
       });
       assert.equal(restoredProc.isError, undefined);
+      await until(
+        () => browser!.eval<boolean>(
+          `Boolean(document.querySelector('#toast-stack .toast[data-kind="policy-confirmed"]')?.textContent?.includes('Rollback to revision 1 confirmed by device'))`,
+        ),
+        8_000,
+        "grant recovery rollback shows confirmed device notification",
+      );
 
       // Emergency Access Revocation -> Lift Lockdown button recovers Leno!
       await browser.eval(`(() => {

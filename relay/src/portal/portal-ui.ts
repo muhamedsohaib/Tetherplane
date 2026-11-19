@@ -1101,8 +1101,8 @@ const PORTAL_SCRIPT = `
             if (!authenticatedOwner) return;
             currentOverview = data;
             renderOverview(data);
-            reconcileAccessChanges(data.devices || []);
             observeExternalChanges(data.devices || []);
+            reconcileAccessChanges(data.devices || []);
             syncPendingFallback(data.devices || []);
           } while (overviewQueued && authenticatedOwner);
         } catch (err) {
@@ -1884,12 +1884,30 @@ export const PORTAL_CONTENT_SECURITY_POLICY = [
   `script-src 'sha256-${SCRIPT_SHA256}'`,
   `style-src 'sha256-${STYLE_SHA256}'`,
   "connect-src 'self'",
+  "manifest-src 'self'",
   "img-src 'self' data:",
   "form-action 'self'",
   "frame-ancestors 'none'",
   "base-uri 'none'",
   "object-src 'none'",
 ].join("; ");
+
+
+// Installable, minimally privileged Home Screen entry point.
+// This is not Web Push: it registers no service worker or subscription.
+export function renderControlPortalManifest(): string {
+  return JSON.stringify({
+    id: "/portal",
+    name: "Tetherplane Control Portal",
+    short_name: "Tetherplane",
+    description: "Owner-authorized permissions for connected devices",
+    start_url: "/portal",
+    scope: "/portal",
+    display: "standalone",
+    background_color: "#0b0f17",
+    theme_color: "#0b0f17",
+  });
+}
 
 export function renderControlPortalPage(): {
   html: string;
@@ -1908,6 +1926,8 @@ export function renderControlPortalHtml(): string {
   <meta charset="utf-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1" />
   <title>Tetherplane Control Portal</title>
+  <meta name="theme-color" content="#0b0f17" />
+  <link rel="manifest" href="/portal/manifest.webmanifest" />
   <style>${PORTAL_STYLE}</style>
 </head>
 <body>
