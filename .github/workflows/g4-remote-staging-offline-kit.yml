@@ -73,7 +73,7 @@ jobs:
             throw 'Standalone relay SDK runtime dependency closure incomplete'
           }
           $bundlerTool=Join-Path $env:RUNNER_TEMP 'g4-remote-bundler'
-          npm install --prefix $bundlerTool --no-package-lock --no-audit --no-fund 'esbuild@0.25.12'
+          npm install --prefix $bundlerTool --no-package-lock --no-audit --no-fund 'esbuild@0.25.12' 'playwright@1.57.0'
           if($LASTEXITCODE -ne 0){throw 'esbuild install failed'}
           $bundler=Join-Path $bundlerTool 'node_modules/esbuild/bin/esbuild'
           $banner="--banner:js=import { createRequire as __tpRequire } from 'node:module'; var require = __tpRequire(import.meta.url);"
@@ -84,6 +84,91 @@ jobs:
           foreach($p in @('manifest.json','pair.html')){Copy-Item (Join-Path 'extension/browser' $p) (Join-Path $ext $p)}
           Copy-Item 'extension/browser/dist/*' (Join-Path $ext 'dist') -Recurse
           if(-not(Test-Path (Join-Path $ext 'dist/background.js'))){throw 'extension missing'}
+          # Headed Chromium is required to exercise MV3 extension and portal in the
+          # network-disabled disposable guest; it is never installed on a host.
+          $env:PLAYWRIGHT_BROWSERS_PATH=Join-Path $env:RUNNER_TEMP 'g4-test-browser-cache'
+          & node (Join-Path $bundlerTool 'node_modules/playwright/cli.js') install --no-shell chromium
+          if($LASTEXITCODE -ne 0){throw 'Pinned Chromium download failed'}
+          $chromiumDirs=@(Get-ChildItem -LiteralPath $env:PLAYWRIGHT_BROWSERS_PATH -Directory|
+            Where-Object {$_.Name -match '^chromium-[0-9]+ This runtime is disposable-VM-only, not a product artifact.
+          $opensslCandidates = @(
+            'C:/Program Files/Git/mingw64/bin/openssl.exe',
+            'C:/Program Files/Git/usr/bin/openssl.exe',
+            'C:/Program Files/OpenSSL-Win64/bin/openssl.exe',
+            (Get-Command openssl.exe -ErrorAction SilentlyContinue | Select-Object -First 1 -ExpandProperty Source)
+          ) | Where-Object { $_ -and (Test-Path -LiteralPath $_) }
+          $openssl = $opensslCandidates | Select-Object -First 1
+          if(-not $openssl){throw 'No licensed local OpenSSL runtime found on Windows runner'}
+          $sourceBin=Split-Path $openssl -Parent
+          Write-Output ('STAGING_OPENSSL_SOURCE='+ $sourceBin)
+          Copy-Item $openssl (Join-Path $out 'tools/openssl.exe')
+          foreach($dll in @(
+            'libcrypto-3-x64.dll','libssl-3-x64.dll','zlib1.dll','libzstd.dll',
+            'msys-2.0.dll','msys-crypto-3.dll','msys-ssl-3.dll','msys-z.dll',
+            'msys-gcc_s-seh-1.dll','msys-iconv-2.dll','msys-bz2-1.dll'
+          )){
+            $candidate=Join-Path $sourceBin $dll
+            if(Test-Path -LiteralPath $candidate){Copy-Item $candidate (Join-Path $out "tools/$dll")}
+          }
+          & (Join-Path $out 'tools/openssl.exe') version
+          if($LASTEXITCODE -ne 0){throw 'bundled OpenSSL dependencies unavailable'}
+          Copy-Item LICENSE-APACHE (Join-Path $out 'tools/LICENSE-APACHE')
+          [IO.File]::WriteAllText((Join-Path $out 'tools/OPENSSL-NOTICE.txt'),'Staging-only OpenSSL from Git for Windows; license Apache-2.0; https://www.openssl.org/source/license.html',[Text.UTF8Encoding]::new($false))
+          $manifest=[ordered]@{
+            source_provider_commit=$env:GITHUB_SHA
+            packaging_commit=$env:GITHUB_SHA
+            scope='disposable VM: remote-relay G1-G5/G7 and G6 emulation only'
+            production_install=$false
+            guest_networking_required=$false
+            interactive_remote_g4='PENDING'
+            physical_g6='PENDING'
+            chromium_binary_sha256=$browserHash
+            chromium_source='playwright@1.57.0 headed Chromium'
+          }
+          [IO.File]::WriteAllText((Join-Path $out 'manifest.json'),($manifest|ConvertTo-Json -Depth 5),[Text.UTF8Encoding]::new($false))
+          Write-Output 'REMOTE_G4_PACKAGE_ASSEMBLY=PASS'
+      - name: Portable staging describe smoke (NOT interactive acceptance)
+        shell: pwsh
+        run: |
+          $ErrorActionPreference='Stop'
+          $out=Join-Path $env:RUNNER_TEMP 'g4-remote-stage'
+          $env:PATH=(Join-Path $out 'tools')+[IO.Path]::PathSeparator+$env:PATH
+          & (Join-Path $out 'node.exe') (Join-Path $out 'relay/dist/cli.js') --help | Out-Null
+          if($LASTEXITCODE -ne 0){throw 'relay CLI failed'}
+          $env:TETHERPLANE_CHROMIUM=Join-Path $out 'browser/chromium/chrome.exe'
+          $expected=(Get-Content -LiteralPath (Join-Path $out 'manifest.json') -Raw|ConvertFrom-Json).chromium_binary_sha256
+          $observed=(Get-FileHash -LiteralPath $env:TETHERPLANE_CHROMIUM -Algorithm SHA256).Hash.ToLowerInvariant()
+          if($expected -ne $observed){throw 'Bundled Chromium SHA256 mismatch'}
+          $raw=& (Join-Path $out 'node.exe') (Join-Path $out 'scripts/staging-acceptance.mjs') --describe
+          if($LASTEXITCODE -ne 0){throw 'staging describe failed'}
+          $plan=($raw -join [Environment]::NewLine)|ConvertFrom-Json
+          if(-not $plan.environment.builtReady){throw 'offline staging package incomplete'}
+          if(-not $plan.environment.opensslPath){throw 'OpenSSL unavailable'}
+          if(-not $plan.environment.chromiumPath){throw 'No Chromium-based browser on runner'}
+          if($plan.environment.interactiveDesktopAvailable){throw 'CI must not certify interactive G4'}
+          Write-Output 'REMOTE_G4_OFFLINE_PREFLIGHT=PASS'
+          Write-Output 'REMOTE_G4_INTERACTIVE_CI=SKIPPED_INTENTIONALLY'
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        with:
+          name: tetherplane-g4-remote-stage
+          path: ${{ runner.temp }}/g4-remote-stage/
+          if-no-files-found: error
+          retention-days: 3
+}|Select-Object -First 1)
+          if($chromiumDirs.Count -ne 1){throw 'Pinned Chromium browser directory missing'}
+          $chromeCandidates=@(Get-ChildItem -LiteralPath $chromiumDirs[0].FullName -Recurse -File -Filter chrome.exe|
+            Select-Object -First 1)
+          if($chromeCandidates.Count -ne 1){throw 'Pinned Chromium executable missing'}
+          $browserDst=Join-Path $out 'browser/chromium'
+          New-Item -ItemType Directory -Path (Split-Path $browserDst -Parent) -Force|Out-Null
+          Copy-Item -LiteralPath (Split-Path $chromeCandidates[0].FullName -Parent) -Destination $browserDst -Recurse
+          $browserExe=Join-Path $browserDst 'chrome.exe'
+          if(-not(Test-Path -LiteralPath $browserExe)){throw 'Bundled Chromium exe missing'}
+          $browserHash=(Get-FileHash -LiteralPath $browserExe -Algorithm SHA256).Hash.ToLowerInvariant()
+          [IO.File]::WriteAllText((Join-Path $out 'browser/CHROMIUM-PROVENANCE.txt'),
+            "Test-only headed Chromium downloaded using Playwright 1.57.0 ($($chromiumDirs[0].Name)); https://playwright.dev/docs/browsers; chrome.exe SHA256=$browserHash",
+            [Text.UTF8Encoding]::new($false))
+          Write-Output ('OFFLINE_CHROMIUM_PACKAGED=PASS SOURCE='+$chromiumDirs[0].Name+' SHA256='+$browserHash)
           # OpenSSL is Apache-2.0. This runtime is disposable-VM-only, not a product artifact.
           $opensslCandidates = @(
             'C:/Program Files/Git/mingw64/bin/openssl.exe',
