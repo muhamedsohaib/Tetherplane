@@ -50,3 +50,44 @@ test("passive alerts require opt-in; no misleading iOS push claims", () => {
   assert.doesNotMatch(html, /Notification\.requestPermission\(|new Notification\(/);
   assert.doesNotMatch(html, /localStorage\.setItem|sessionStorage\.setItem/);
 });
+
+test("signed-in header hides token input and connect button while tracking live stream state", () => {
+  const html = renderControlPortalHtml();
+  assert.match(html, /tokenInput\.classList\.add\("hidden"\)/);
+  assert.match(html, /connectBtn\.classList\.add\("hidden"\)/);
+  assert.match(html, /document\.body\.dataset\.auth\s*=\s*"signed-in"/);
+  assert.match(html, /document\.body\.dataset\.auth\s*=\s*"signed-out"/);
+  assert.match(html, /id="live-stream-badge"/);
+});
+
+test("device cards clearly separate relay acceptance, offline queueing, device confirmation, and rejection", () => {
+  const html = renderControlPortalHtml();
+  assert.match(html, /syncDetail:\s*dev\.deviceId/);
+  assert.match(html, /Relay accepted v/);
+  assert.match(html, /Relay queued v/);
+  assert.match(html, /Device confirmed v/);
+  assert.match(html, /Device rejected v/);
+});
+
+test("portal exposes partial family status, one-tap denied-op allow chips, canonical autocomplete, and fleet filters", () => {
+  const html = renderControlPortalHtml();
+  assert.match(html, /PARTIAL/);
+  assert.match(html, /allow-denied-op/);
+  assert.match(html, /id="canonical-ops-list"/);
+  assert.match(html, /id="fleet-filter-bar"/);
+  assert.match(html, /Confirmed by device/);
+  assert.match(html, /Queued \(offline\)/);
+  assert.match(html, /Pending device ACK/);
+});
+
+test("modal supports Escape/backdrop dismissal and mobile enforces 44px touch targets without img or svg tags", () => {
+  const html = renderControlPortalHtml();
+  assert.match(html, /e\.key === "Escape"/);
+  const mobileCssIndex = html.indexOf("@media (max-width: 600px)");
+  assert.ok(mobileCssIndex > 0);
+  assert.ok(
+    html.indexOf("min-height: 44px", mobileCssIndex) > mobileCssIndex,
+    "mobile controls should enforce 44px touch targets",
+  );
+  assert.doesNotMatch(html, /<img\b|<svg\b/i);
+});
