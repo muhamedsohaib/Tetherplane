@@ -75,6 +75,9 @@ export class RelayControlHttpGateway {
   readonly #secureCookies: boolean;
   readonly #publicOriginUrl: URL | null;
   readonly #trustProxyHeaders: boolean;
+  readonly #portalEnabled: boolean;
+  readonly #portalOnly: boolean;
+  readonly #portalReadOnly: boolean;
   readonly #pairStartLimiter: SlidingWindowRateLimiter;
   readonly #pairApproveIpLimiter: SlidingWindowRateLimiter;
   readonly #pairApproveAccountLimiter: SlidingWindowRateLimiter;
@@ -94,6 +97,9 @@ export class RelayControlHttpGateway {
     secureCookies?: boolean;
     publicOrigin?: string;
     trustProxyHeaders?: boolean;
+    portalEnabled?: boolean;
+    portalOnly?: boolean;
+    portalReadOnly?: boolean;
     rateLimits?: RelayRateLimitConfig;
   }) {
     const normalizedPublicOrigin =
@@ -112,6 +118,9 @@ export class RelayControlHttpGateway {
       ? new URL(normalizedPublicOrigin)
       : null;
     this.#trustProxyHeaders = trustProxyHeaders;
+    this.#portalEnabled = options.portalEnabled ?? true;
+    this.#portalOnly = options.portalOnly ?? false;
+    this.#portalReadOnly = options.portalReadOnly ?? false;
     this.#secureCookies =
       options.secureCookies ??
       (this.#publicOriginUrl?.protocol === "https:");
@@ -166,10 +175,22 @@ export class RelayControlHttpGateway {
     );
 
     try {
-      if (
-        (url.pathname === "/portal" || url.pathname.startsWith("/portal/")) &&
-        hasQueryTokenParameter(url)
-      ) {
+      const isPortalPath =
+        url.pathname === "/portal" || url.pathname.startsWith("/portal/");
+      if (isPortalPath && !this.#portalEnabled) {
+        response.setHeader("cache-control", "no-store");
+        response.setHeader("x-content-type-options", "nosniff");
+        writeJson(response, 404, { error: "not_found" });
+        return;
+      }
+      if (!isPortalPath && this.#portalOnly) {
+        response.setHeader("cache-control", "no-store");
+        response.setHeader("x-content-type-options", "nosniff");
+        writeJson(response, 404, { error: "not_found" });
+        return;
+      }
+
+      if (isPortalPath && hasQueryTokenParameter(url)) {
         response.setHeader("cache-control", "no-store");
         response.setHeader("x-content-type-options", "nosniff");
         response.setHeader("referrer-policy", "no-referrer");
@@ -436,6 +457,21 @@ export class RelayControlHttpGateway {
     if (request.method === "GET" && pathname === "/portal/api/audit") {
       writeJson(response, 200, {
         auditHistory: this.#policyStore.listAuditEvents(identity.accountId),
+      });
+      return;
+    }
+
+    if (
+      this.#portalReadOnly &&
+      request.method !== "GET" &&
+      request.method !== "HEAD"
+    ) {
+      writeJson(response, 403, {
+        error: {
+          code: "permission_denied",
+          message:
+            "portal is running in read-only pilot mode; policy mutations are disabled",
+        },
       });
       return;
     }

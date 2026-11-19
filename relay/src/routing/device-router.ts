@@ -78,6 +78,7 @@ type PendingRoute = {
 export class DeviceRouter {
   readonly #registry: DeviceRegistry;
   readonly #policyStore: PolicyStore | null;
+  readonly #enforcePolicy: boolean;
   readonly #timeoutMs: number;
   readonly #connections = new Map<string, ActiveConnection>();
   readonly #pending = new Map<string, PendingRoute>();
@@ -85,10 +86,12 @@ export class DeviceRouter {
   constructor(options: {
     registry: DeviceRegistry;
     policyStore?: PolicyStore;
+    enforcePolicy?: boolean;
     timeoutMs?: number;
   }) {
     this.#registry = options.registry;
     this.#policyStore = options.policyStore ?? null;
+    this.#enforcePolicy = options.enforcePolicy ?? true;
     this.#timeoutMs = options.timeoutMs ?? 30_000;
 
     if (this.#policyStore) {
@@ -151,6 +154,7 @@ export class DeviceRouter {
     deviceId: string,
     policy: SynchronizedDevicePolicy,
   ): Promise<boolean> {
+    if (!this.#enforcePolicy) return false;
     const connection = this.#connections.get(deviceId);
     if (!connection) return false;
     try {
@@ -182,7 +186,7 @@ export class DeviceRouter {
     }
     const connection = resolved.connection;
 
-    if (this.#policyStore) {
+    if (this.#policyStore && this.#enforcePolicy) {
       const evaluation =
         this.#policyStore.evaluateAndRecordInvocation({
           identity,

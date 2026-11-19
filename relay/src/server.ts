@@ -46,6 +46,8 @@ export type RelayListenAddress = {
   mcpUrl: string;
   deviceWsUrl: string;
   portalUrl?: string;
+  portalListenPort?: number;
+  portalListenUrl?: string;
 };
 
 export class RelayServer {
@@ -55,17 +57,22 @@ export class RelayServer {
   readonly deviceGateway: DeviceWebSocketGateway;
   readonly mcpGateway: RemoteMcpHttpGateway;
   readonly controlGateway: RelayControlHttpGateway;
+  readonly portalGateway: RelayControlHttpGateway | null;
   readonly healthGateway: RelayHealthHttpGateway;
   readonly authLoginGateway: AuthLoginProofHttpGateway | null;
   readonly isSecure: boolean;
 
   readonly #server: NodeRelayServer;
+  readonly #portalServer: HttpServer | null;
+  readonly #portalPort: number | undefined;
   readonly #allowInsecureLocalhost: boolean;
   readonly #publicOrigin: string | null;
   #closed = false;
 
   private constructor(options: {
     server: NodeRelayServer;
+    portalServer: HttpServer | null;
+    portalPort: number | undefined;
     secure: boolean;
     allowInsecureLocalhost: boolean;
     publicOrigin: string | null;
@@ -75,10 +82,13 @@ export class RelayServer {
     deviceGateway: DeviceWebSocketGateway;
     mcpGateway: RemoteMcpHttpGateway;
     controlGateway: RelayControlHttpGateway;
+    portalGateway: RelayControlHttpGateway | null;
     healthGateway: RelayHealthHttpGateway;
     authLoginGateway: AuthLoginProofHttpGateway | null;
   }) {
     this.#server = options.server;
+    this.#portalServer = options.portalServer;
+    this.#portalPort = options.portalPort;
     this.isSecure = options.secure;
     this.#allowInsecureLocalhost =
       options.allowInsecureLocalhost;
@@ -89,6 +99,7 @@ export class RelayServer {
     this.deviceGateway = options.deviceGateway;
     this.mcpGateway = options.mcpGateway;
     this.controlGateway = options.controlGateway;
+    this.portalGateway = options.portalGateway;
     this.healthGateway = options.healthGateway;
     this.authLoginGateway = options.authLoginGateway;
   }
@@ -101,6 +112,8 @@ export class RelayServer {
     allowInsecureLocalhost?: boolean;
     publicOrigin?: string;
     trustProxyHeaders?: boolean;
+    portalPort?: number;
+    portalReadOnly?: boolean;
     routeTimeoutMs?: number;
     authLoginBridgeToken?: string;
     maxPendingPairings?: number;
@@ -116,6 +129,14 @@ export class RelayServer {
     if (trustProxyHeaders && !publicOrigin) {
       throw new Error("trustProxyHeaders requires explicit publicOrigin");
     }
+    const portalPort = options.portalPort;
+    if (
+      portalPort !== undefined &&
+      (!Number.isInteger(portalPort) || portalPort < 0 || portalPort > 65_535)
+    ) {
+      throw new Error("portalPort must be an integer between 0 and 65535");
+    }
+    const portalReadOnly = options.portalReadOnly ?? false;
 
     const registry = await DeviceRegistry.open({
       ...(options.stateFile ? { stateFile: options.stateFile } : {}),
@@ -137,6 +158,7 @@ export class RelayServer {
     const router = new DeviceRouter({
       registry,
       policyStore,
+      enforcePolicy: !portalReadOnly,
       ...(options.routeTimeoutMs === undefined
         ? {}
         : { timeoutMs: options.routeTimeoutMs }),
@@ -154,6 +176,7 @@ export class RelayServer {
     const secure = options.tls !== undefined;
     const secureCookies =
       secure || (publicOrigin?.startsWith("https:") ?? false);
+    const splitPortal = portalPort !== undefined;
     const controlGateway = new RelayControlHttpGateway({
       registry,
       policyStore,
@@ -161,10 +184,28 @@ export class RelayServer {
       secureCookies,
       ...(publicOrigin ? { publicOrigin } : {}),
       trustProxyHeaders,
+      portalEnabled: !splitPortal,
+      portalReadOnly,
       ...(options.rateLimits ? { rateLimits: options.rateLimits } : {}),
       disconnectDevice: (deviceId) =>
         deviceGateway.disconnectDevice(deviceId),
     });
+    const portalGateway = splitPortal
+      ? new RelayControlHttpGateway({
+          registry,
+          policyStore,
+          authenticator: options.authenticator,
+          secureCookies,
+          ...(publicOrigin ? { publicOrigin } : {}),
+          trustProxyHeaders,
+          portalEnabled: true,
+          portalOnly: true,
+          portalReadOnly,
+          ...(options.rateLimits ? { rateLimits: options.rateLimits } : {}),
+          disconnectDevice: (deviceId) =>
+            deviceGateway.disconnectDevice(deviceId),
+        })
+      : null;
     const authLoginGateway =
       options.authLoginBridgeToken === undefined
         ? null
@@ -177,6 +218,9 @@ export class RelayServer {
       options.tls === undefined
         ? createHttpServer()
         : createHttpsServer(options.tls);
+    const portalServer: HttpServer | null = splitPortal
+      ? createHttpServer()
+      : null;
 
     const httpCompatible = server as unknown as HttpServer;
     healthGateway.attach(httpCompatible);
@@ -184,9 +228,14 @@ export class RelayServer {
     mcpGateway.attach(httpCompatible, "/mcp");
     controlGateway.attach(httpCompatible);
     authLoginGateway?.attach(httpCompatible);
+    if (portalServer && portalGateway) {
+      portalGateway.attach(portalServer);
+    }
 
     return new RelayServer({
       server,
+      portalServer,
+      portalPort,
       secure,
       allowInsecureLocalhost:
         options.allowInsecureLocalhost ?? false,
@@ -197,6 +246,7 @@ export class RelayServer {
       deviceGateway,
       mcpGateway,
       controlGateway,
+      portalGateway,
       healthGateway,
       authLoginGateway,
     });
@@ -241,7 +291,35 @@ export class RelayServer {
       throw new Error("relay server did not expose a TCP address");
     }
 
-    return this.#formatAddress(address, options.host);
+    let portalListenPort: number | undefined;
+    if (this.#portalServer && this.#portalPort !== undefined) {
+      try {
+        await new Promise<void>((resolve, reject) => {
+          const onError = (error: Error) => {
+            this.#portalServer!.off("listening", onListening);
+            reject(error);
+          };
+          const onListening = () => {
+            this.#portalServer!.off("error", onError);
+            resolve();
+          };
+          this.#portalServer!.once("error", onError);
+          this.#portalServer!.once("listening", onListening);
+          // Dedicated portal server is strictly restricted to loopback.
+          this.#portalServer!.listen(this.#portalPort, "127.0.0.1");
+        });
+        const portalAddress = this.#portalServer.address();
+        if (!portalAddress || typeof portalAddress === "string") {
+          throw new Error("portal server did not expose a TCP address");
+        }
+        portalListenPort = portalAddress.port;
+      } catch (error) {
+        await this.close().catch(() => undefined);
+        throw error;
+      }
+    }
+
+    return this.#formatAddress(address, options.host, portalListenPort);
   }
 
   async close(): Promise<void> {
@@ -250,9 +328,20 @@ export class RelayServer {
 
     this.healthGateway.close();
     this.controlGateway.close();
+    this.portalGateway?.close();
     this.authLoginGateway?.close();
     await this.mcpGateway.close();
     await this.deviceGateway.close();
+
+    if (this.#portalServer?.listening) {
+      this.#portalServer.closeIdleConnections?.();
+      await new Promise<void>((resolve, reject) => {
+        this.#portalServer!.close((error) => {
+          if (error) reject(error);
+          else resolve();
+        });
+      });
+    }
 
     if (!this.#server.listening) return;
     this.#server.closeIdleConnections?.();
@@ -267,6 +356,7 @@ export class RelayServer {
   #formatAddress(
     address: AddressInfo,
     requestedHost: string,
+    portalListenPort?: number,
   ): RelayListenAddress {
     const host = normalizeDisplayHost(
       requestedHost || address.address,
@@ -275,6 +365,10 @@ export class RelayServer {
     const wsScheme = this.isSecure ? "wss" : "ws";
     const authority = formatAuthority(host, address.port);
     const httpUrl = `${httpScheme}://${authority}`;
+    const portalListenUrl =
+      portalListenPort !== undefined
+        ? `http://127.0.0.1:${portalListenPort}`
+        : undefined;
 
     return {
       host,
@@ -285,6 +379,8 @@ export class RelayServer {
       ...(this.#publicOrigin
         ? { portalUrl: `${this.#publicOrigin}/portal` }
         : {}),
+      ...(portalListenPort !== undefined ? { portalListenPort } : {}),
+      ...(portalListenUrl ? { portalListenUrl } : {}),
     };
   }
 }

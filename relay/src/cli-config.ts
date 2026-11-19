@@ -25,6 +25,8 @@ export type RelayCliOptions = {
   allowInsecureLocalhost: boolean;
   publicOrigin?: string;
   trustProxyHeaders: boolean;
+  portalPort?: number;
+  portalReadOnly: boolean;
 };
 
 export function validatePublicOrigin(rawValue: string): string {
@@ -86,6 +88,8 @@ export function parseRelayArgs(
   let allowInsecureLocalhost = false;
   let publicOrigin: string | undefined;
   let trustProxyHeaders = false;
+  let portalPort: number | undefined;
+  let portalReadOnly = false;
 
   for (let index = 0; index < args.length; index += 1) {
     const argument = args[index]!;
@@ -108,6 +112,24 @@ export function parseRelayArgs(
         port = parsed;
         break;
       }
+      case "--portal-port": {
+        const raw = requiredValue(args, ++index, "--portal-port");
+        const parsed = Number(raw);
+        if (
+          !Number.isInteger(parsed) ||
+          parsed < 1 ||
+          parsed > 65_535
+        ) {
+          throw new Error(
+            "--portal-port must be an integer between 1 and 65535",
+          );
+        }
+        portalPort = parsed;
+        break;
+      }
+      case "--portal-read-only":
+        portalReadOnly = true;
+        break;
       case "--state-file":
         stateFile = requiredValue(
           args,
@@ -167,6 +189,9 @@ export function parseRelayArgs(
       "--trust-proxy-headers requires explicit --public-origin",
     );
   }
+  if (portalPort !== undefined && portalPort === port) {
+    throw new Error("--portal-port must differ from --port");
+  }
 
   return {
     host,
@@ -179,6 +204,8 @@ export function parseRelayArgs(
     allowInsecureLocalhost,
     ...(publicOrigin ? { publicOrigin } : {}),
     trustProxyHeaders,
+    ...(portalPort !== undefined ? { portalPort } : {}),
+    portalReadOnly,
   };
 }
 
