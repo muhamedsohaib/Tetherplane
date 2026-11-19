@@ -799,6 +799,9 @@ export class RelayControlHttpGateway {
 
     try {
       response.write(`event: ready\ndata: ${JSON.stringify({ type: "ready" })}\n\n`);
+      // A new subscriber needs an initial state notification even when its
+      // device update finished before the SSE connection was established.
+      scheduleOverviewPush();
     } catch {
       clientEntry.cleanup();
     }

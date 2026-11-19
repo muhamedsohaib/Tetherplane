@@ -11,7 +11,7 @@ import {
   type StaticClientCredential,
 } from "./auth/static-auth.ts";
 import type { OAuthResource } from "./auth/oauth-resource.ts";
-import { readFile } from "node:fs/promises";
+import { lstat, readFile } from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
 
@@ -206,6 +206,90 @@ export function parseRelayArgs(
     trustProxyHeaders,
     ...(portalPort !== undefined ? { portalPort } : {}),
     portalReadOnly,
+  };
+}
+
+/**
+ * Opt-in configuration for a pinned VAULTER-style launcher that cannot safely
+ * change its command-line arguments without breaking recovery hash checks.
+ * No file = original MCP/agent routing with an isolated, read-only ephemeral
+ * portal listener; malformed configuration fails closed before startup.
+ * The file contains no credentials and never enables policy mutations.
+ */
+export async function loadReadOnlyPortalPilotConfig(
+  options: RelayCliOptions,
+): Promise<RelayCliOptions> {
+  const filename = `${options.stateFile}.portal-pilot.json`;
+  let info;
+  try {
+    info = await lstat(filename);
+  } catch (error) {
+    if ((error as NodeJS.ErrnoException).code === "ENOENT") {
+      // A pinned legacy launcher has no portal flags. Keep the main Funnel
+      // listener portal-free and suppress policy sync for v0.1.0 agents.
+      if (
+        options.portalPort === undefined &&
+        !options.portalReadOnly &&
+        !options.publicOrigin &&
+        !options.trustProxyHeaders
+      ) {
+        return { ...options, portalPort: 0, portalReadOnly: true };
+      }
+      return options;
+    }
+    throw new Error("Unable to inspect read-only portal pilot configuration");
+  }
+  if (!info.isFile() || info.isSymbolicLink()) {
+    throw new Error("Read-only portal pilot configuration must be a regular file");
+  }
+
+  let parsed: unknown;
+  try {
+    // Windows PowerShell 5.1 writes UTF-8 JSON with a leading BOM.
+    parsed = JSON.parse((await readFile(filename, "utf8")).replace(/^\uFEFF/, ""));
+  } catch {
+    throw new Error("Invalid read-only portal pilot JSON");
+  }
+  const result = z
+    .object({
+      schema: z.literal(1),
+      portalPort: z.number().int().min(1).max(65_535),
+      publicOrigin: z.string().min(1),
+      readOnly: z.literal(true),
+    })
+    .strict()
+    .safeParse(parsed);
+  if (!result.success) {
+    throw new Error("Invalid read-only portal pilot configuration");
+  }
+  if (
+    options.portalPort !== undefined ||
+    options.portalReadOnly ||
+    options.publicOrigin ||
+    options.trustProxyHeaders
+  ) {
+    throw new Error("Read-only portal pilot configuration conflicts with CLI portal flags");
+  }
+  if (options.host !== "127.0.0.1") {
+    throw new Error("Read-only portal pilot requires main relay loopback binding");
+  }
+  if (result.data.portalPort === options.port) {
+    throw new Error("Read-only portal pilot port must differ from main relay port");
+  }
+  const publicOrigin = validatePublicOrigin(result.data.publicOrigin);
+  if (
+    !publicOrigin.startsWith("https://") ||
+    !new URL(publicOrigin).port
+  ) {
+    throw new Error("Read-only portal pilot requires an HTTPS origin with an explicit private port");
+  }
+
+  return {
+    ...options,
+    portalPort: result.data.portalPort,
+    portalReadOnly: true,
+    publicOrigin,
+    trustProxyHeaders: true,
   };
 }
 

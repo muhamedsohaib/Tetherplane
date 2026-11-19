@@ -4,6 +4,7 @@ import { readFile } from "node:fs/promises";
 
 import {
   loadClientAuth,
+  loadReadOnlyPortalPilotConfig,
   parseRelayArgs,
 } from "./cli-config.ts";
 import { RelayServer } from "./server.ts";
@@ -15,7 +16,7 @@ async function main(): Promise<void> {
     return;
   }
 
-  const options = parseRelayArgs(args);
+  const options = await loadReadOnlyPortalPilotConfig(parseRelayArgs(args));
   const {
     authenticator,
     oauth,
