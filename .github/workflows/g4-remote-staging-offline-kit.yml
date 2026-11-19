@@ -49,6 +49,29 @@ jobs:
           if($LASTEXITCODE -ne 0){throw 'relay deploy failed'}
           npm install --prefix (Join-Path $out 'tests/e2e') --no-package-lock --no-save --ignore-scripts --no-audit --no-fund '@modelcontextprotocol/sdk@1.30.0'
           if($LASTEXITCODE -ne 0){throw 'MCP SDK packaging failed'}
+          # pnpm deploy --legacy sometimes retains the SDK package but drops its
+          # runtime dependency closure. Bring over the locked 1.30.0 npm SDK
+          # dependency tree into the deploy's node_modules without overwriting
+          # any package already present in the deployed relay. Never rely on
+          # developer-machine or CI-runner global node_modules at runtime.
+          $sdkRuntime=Join-Path $out 'tests/e2e/node_modules'
+          $relayRuntime=Join-Path $out 'relay/node_modules'
+          foreach($entry in @(Get-ChildItem -LiteralPath $sdkRuntime -Directory -Force)){
+            $dest=Join-Path $relayRuntime $entry.Name
+            if(-not(Test-Path -LiteralPath $dest)){
+              Copy-Item -LiteralPath $entry.FullName -Destination $dest -Recurse
+            } elseif($entry.Name.StartsWith('@')){
+              foreach($scoped in @(Get-ChildItem -LiteralPath $entry.FullName -Directory -Force)){
+                $target=Join-Path $dest $scoped.Name
+                if(-not(Test-Path -LiteralPath $target)){
+                  Copy-Item -LiteralPath $scoped.FullName -Destination $target -Recurse
+                }
+              }
+            }
+          }
+          if(-not(Test-Path (Join-Path $relayRuntime '@hono/node-server/package.json'))){
+            throw 'Standalone relay SDK runtime dependency closure incomplete'
+          }
           $bundlerTool=Join-Path $env:RUNNER_TEMP 'g4-remote-bundler'
           npm install --prefix $bundlerTool --no-package-lock --no-audit --no-fund 'esbuild@0.25.12'
           if($LASTEXITCODE -ne 0){throw 'esbuild install failed'}
