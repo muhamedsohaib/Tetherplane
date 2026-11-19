@@ -1,4 +1,10 @@
 import { randomBytes, timingSafeEqual } from "node:crypto";
+import {
+  PortalOidcLogin,
+  clearPendingCookie,
+  readPendingCookie,
+  type PortalOidcLoginConfig,
+} from "../auth/portal-oidc-login.ts";
 import type {
   IncomingMessage,
   Server,
@@ -78,6 +84,7 @@ export class RelayControlHttpGateway {
   readonly #portalEnabled: boolean;
   readonly #portalOnly: boolean;
   readonly #portalReadOnly: boolean;
+  readonly #portalOidcLogin: PortalOidcLogin | null;
   readonly #pairStartLimiter: SlidingWindowRateLimiter;
   readonly #pairApproveIpLimiter: SlidingWindowRateLimiter;
   readonly #pairApproveAccountLimiter: SlidingWindowRateLimiter;
@@ -100,6 +107,7 @@ export class RelayControlHttpGateway {
     portalEnabled?: boolean;
     portalOnly?: boolean;
     portalReadOnly?: boolean;
+    portalOidcLogin?: PortalOidcLoginConfig;
     rateLimits?: RelayRateLimitConfig;
   }) {
     const normalizedPublicOrigin =
@@ -121,6 +129,9 @@ export class RelayControlHttpGateway {
     this.#portalEnabled = options.portalEnabled ?? true;
     this.#portalOnly = options.portalOnly ?? false;
     this.#portalReadOnly = options.portalReadOnly ?? false;
+    this.#portalOidcLogin = options.portalOidcLogin
+      ? new PortalOidcLogin(options.portalOidcLogin, options.authenticator)
+      : null;
     this.#secureCookies =
       options.secureCookies ??
       (this.#publicOriginUrl?.protocol === "https:");
@@ -163,6 +174,7 @@ export class RelayControlHttpGateway {
     this.#attachedServer = null;
     this.#requestHandler = null;
     this.#portalSessions.clear();
+    this.#portalOidcLogin?.close();
   }
 
   async #handleRequest(
@@ -204,6 +216,65 @@ export class RelayControlHttpGateway {
         return;
       }
 
+      if (request.method === "GET" && url.pathname === "/portal/auth/start") {
+        if (!this.#portalOidcLogin) {
+          writeJson(response, 404, { error: "not_found" });
+          return;
+        }
+        response.setHeader("cache-control", "no-store");
+        response.setHeader("referrer-policy", "no-referrer");
+        response.setHeader("x-content-type-options", "nosniff");
+        if (!this.#verifySameOriginHeaders(request, false)) {
+          writeJson(response, 403, { error: { code: "permission_denied" } });
+          return;
+        }
+        const { location, cookie } = this.#portalOidcLogin.begin();
+        response.setHeader("set-cookie", cookie);
+        response.setHeader("location", location);
+        response.statusCode = 303;
+        response.end();
+        return;
+      }
+
+      if (request.method === "GET" && url.pathname === "/portal/auth/callback") {
+        if (!this.#portalOidcLogin) {
+          writeJson(response, 404, { error: "not_found" });
+          return;
+        }
+        response.setHeader("cache-control", "no-store");
+        response.setHeader("referrer-policy", "no-referrer");
+        response.setHeader("x-frame-options", "DENY");
+        response.setHeader("x-content-type-options", "nosniff");
+        const clearedCookie = clearPendingCookie(this.#portalOidcLogin.secureCookies);
+        response.setHeader("set-cookie", clearedCookie);
+        try {
+          if (url.searchParams.has("error")) throw new Error("OAuth provider declined login");
+          // The cross-origin top-level OIDC redirect carries a Lax, HttpOnly
+          // state cookie; it must NOT require a same-origin fetch header.
+          const result = await this.#portalOidcLogin.finish({
+            code: url.searchParams.get("code"),
+            state: url.searchParams.get("state"),
+            cookie: readPendingCookie(request.headers.cookie),
+          });
+          const session = this.#createPortalSession(result.identity, result.sessionMaxAgeSeconds);
+          response.setHeader("set-cookie", [
+            clearedCookie,
+            formatSessionCookieHeader(
+              session.id,
+              result.sessionMaxAgeSeconds,
+              this.#secureCookies,
+            ),
+          ]);
+          response.setHeader("location", "/portal");
+        } catch {
+          // Do not reflect provider errors, codes, identities, tokens or state.
+          response.setHeader("location", "/portal?login_error=1");
+        }
+        response.statusCode = 303;
+        response.end();
+        return;
+      }
+
       if (request.method === "GET" && url.pathname === "/portal/manifest.webmanifest") {
         // Static Home Screen metadata only. Never embed bearer credentials,
         // pairing codes, or account/device identities in public app metadata.
@@ -220,7 +291,7 @@ export class RelayControlHttpGateway {
         request.method === "GET" &&
         url.pathname === "/portal"
       ) {
-        const page = renderControlPortalPage();
+        const page = renderControlPortalPage({ loginMode: this.#portalOidcLogin ? "oidc" : "token" });
         response.statusCode = 200;
         response.setHeader("content-type", "text/html; charset=utf-8");
         response.setHeader("cache-control", "no-store");
@@ -972,8 +1043,12 @@ export class RelayControlHttpGateway {
     return session.identity;
   }
 
-  #createPortalSession(identity: ClientIdentity): PortalSession {
+  #createPortalSession(
+    identity: ClientIdentity,
+    maxAgeSeconds = PORTAL_SESSION_TTL_SECONDS,
+  ): PortalSession {
     const now = Date.now();
+    const boundedAgeSeconds = Math.max(1, Math.min(PORTAL_SESSION_TTL_SECONDS, maxAgeSeconds));
     for (const [key, existing] of this.#portalSessions) {
       if (existing.expiresAtMs <= now) {
         this.#portalSessions.delete(key);
@@ -990,7 +1065,7 @@ export class RelayControlHttpGateway {
       id,
       identity: { ...identity },
       csrfToken,
-      expiresAtMs: now + PORTAL_SESSION_TTL_SECONDS * 1000,
+      expiresAtMs: now + boundedAgeSeconds * 1000,
     };
     this.#portalSessions.set(id, session);
     return session;

@@ -1,4 +1,5 @@
 import type { OAuthResource } from "./auth/oauth-resource.ts";
+import type { PortalOidcLoginConfig } from "./auth/portal-oidc-login.ts";
 import { AuthLoginProofHttpGateway } from "./auth/login-proof-http.ts";
 import { AuthLoginProofRegistry } from "./auth/login-proof-registry.ts";
 import {
@@ -115,6 +116,7 @@ export class RelayServer {
     trustProxyHeaders?: boolean;
     portalPort?: number;
     portalReadOnly?: boolean;
+    portalOidcLogin?: PortalOidcLoginConfig;
     routeTimeoutMs?: number;
     authLoginBridgeToken?: string;
     maxPendingPairings?: number;
@@ -138,6 +140,14 @@ export class RelayServer {
       throw new Error("portalPort must be an integer between 0 and 65535");
     }
     const portalReadOnly = options.portalReadOnly ?? false;
+    if (options.portalOidcLogin && (
+      !portalReadOnly ||
+      portalPort === undefined ||
+      !publicOrigin ||
+      options.portalOidcLogin.redirectUri !== publicOrigin + "/portal/auth/callback"
+    )) {
+      throw new Error("Portal OAuth requires a private read-only portal and an exact callback");
+    }
 
     const registry = await DeviceRegistry.open({
       ...(options.stateFile ? { stateFile: options.stateFile } : {}),
@@ -202,6 +212,7 @@ export class RelayServer {
           portalEnabled: true,
           portalOnly: true,
           portalReadOnly,
+          ...(options.portalOidcLogin ? { portalOidcLogin: options.portalOidcLogin } : {}),
           ...(options.rateLimits ? { rateLimits: options.rateLimits } : {}),
           disconnectDevice: (deviceId) =>
             deviceGateway.disconnectDevice(deviceId),

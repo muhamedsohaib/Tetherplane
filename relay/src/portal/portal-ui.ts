@@ -165,6 +165,26 @@ const PORTAL_STYLE = `
       background: var(--primary-hover);
     }
 
+    .oidc-signin-link {
+      display: inline-flex;
+      justify-content: center;
+      align-items: center;
+      padding: 10px 15px;
+      min-height: 44px;
+      border: 1px solid transparent;
+      border-radius: 8px;
+      background: var(--primary);
+      color: #06121f;
+      font-size: 0.84rem;
+      font-weight: 700;
+      text-decoration: none;
+    }
+    .oidc-signin-link:hover { background: var(--primary-hover); }
+    .oidc-signin-link:focus-visible {
+      outline: 2px solid var(--primary);
+      outline-offset: 2px;
+    }
+
     button.danger {
       background: var(--danger-bg);
       color: #fca5a5;
@@ -951,6 +971,8 @@ const PORTAL_SCRIPT = `
       const SNAPSHOT_PAGE_SIZE = 10;
       const tokenInput = document.getElementById("token-input");
       const connectBtn = document.getElementById("connect-btn");
+      const oidcLink = document.getElementById("oidc-signin-link");
+      const oidcMode = document.body.dataset.loginMode === "oidc";
       const refreshBtn = document.getElementById("refresh-btn");
       const logoutBtn = document.getElementById("logout-btn");
       const authStateBadge = document.getElementById("auth-state-badge");
@@ -1256,7 +1278,9 @@ const PORTAL_SCRIPT = `
           void loadOverview();
         });
         es.addEventListener("session_expired", function () {
-          setSignedOutUi("Portal session expired. Submit your owner token to connect.");
+          setSignedOutUi(oidcMode
+            ? "Session expired. Sign in again with TetherAuth."
+            : "Portal session expired. Submit your owner token to connect.");
         });
         es.addEventListener("error", function () {
           if (authenticatedOwner) {
@@ -1299,7 +1323,9 @@ const PORTAL_SCRIPT = `
           createEl("div", { className: "signed-out-card" }, [
             createEl("h2", { text: "Owner Sign-In Required" }),
             createEl("p", {
-              text: "Enter your owner bearer token above to start an authenticated control session for your paired Tetherplane devices.",
+              text: oidcMode
+                ? "Sign in with your existing TetherAuth account to view your authorized devices. No token copying is required."
+                : "Enter your owner bearer token above to start an authenticated control session for your paired Tetherplane devices.",
             }),
             createEl("ul", { className: "signed-out-points" }, [
               createEl("li", {
@@ -1340,8 +1366,9 @@ const PORTAL_SCRIPT = `
         authStateBadge.className = "pill offline";
         logoutBtn.classList.add("hidden");
         document.getElementById("global-lift-lockdown-btn").classList.add("hidden");
-        tokenInput.classList.remove("hidden");
-        connectBtn.classList.remove("hidden");
+        tokenInput.classList.toggle("hidden", oidcMode);
+        connectBtn.classList.toggle("hidden", oidcMode);
+        oidcLink.classList.toggle("hidden", !oidcMode);
         fleetFilterBar.replaceChildren();
 
         renderSignedOutWelcome();
@@ -1371,6 +1398,7 @@ const PORTAL_SCRIPT = `
         authStateBadge.className = "pill online";
         tokenInput.classList.add("hidden");
         connectBtn.classList.add("hidden");
+        oidcLink.classList.add("hidden");
         logoutBtn.classList.remove("hidden");
         startLiveUpdates();
       }
@@ -1393,7 +1421,9 @@ const PORTAL_SCRIPT = `
         const text = await res.text();
         const data = text ? JSON.parse(text) : {};
         if (res.status === 401) {
-          setSignedOutUi("Portal session is missing or expired. Submit your owner token to connect.");
+          setSignedOutUi(oidcMode
+            ? "Session is missing or expired. Sign in again with TetherAuth."
+            : "Portal session is missing or expired. Submit your owner token to connect.");
           throw new Error((data.error && data.error.message) || "HTTP 401");
         }
         if (!res.ok) {
@@ -2660,6 +2690,10 @@ const PORTAL_SCRIPT = `
       });
 
       renderSignedOutWelcome();
+      if (oidcMode && new URLSearchParams(location.search).has("login_error")) {
+        history.replaceState(null, "", "/portal");
+        showBanner("TetherAuth sign-in was not completed. Please try again.");
+      }
       void restoreSession();
     })();
 `;
@@ -2701,17 +2735,19 @@ export function renderControlPortalManifest(): string {
   });
 }
 
-export function renderControlPortalPage(): {
+export function renderControlPortalPage(
+  options: { loginMode?: "token" | "oidc" } = {},
+): {
   html: string;
   contentSecurityPolicy: string;
 } {
   return {
-    html: renderControlPortalHtml(),
+    html: renderControlPortalHtml(options.loginMode),
     contentSecurityPolicy: PORTAL_CONTENT_SECURITY_POLICY,
   };
 }
 
-export function renderControlPortalHtml(): string {
+export function renderControlPortalHtml(loginMode: "token" | "oidc" = "token"): string {
   return `<!DOCTYPE html>
 <html lang="en">
 <head>
@@ -2722,7 +2758,7 @@ export function renderControlPortalHtml(): string {
   <link rel="manifest" href="/portal/manifest.webmanifest" />
   <style>${PORTAL_STYLE}</style>
 </head>
-<body data-auth="signed-out">
+<body data-auth="signed-out" data-login-mode="${loginMode}">
   <div class="portal-shell">
     <header class="topbar">
       <div class="brand">
@@ -2735,8 +2771,9 @@ export function renderControlPortalHtml(): string {
       <div class="auth-bar">
         <span id="auth-state-badge" class="pill offline">Not Signed In</span>
         <span id="live-stream-badge" class="pill offline">Connecting</span>
-        <input id="token-input" type="password" placeholder="Owner Bearer Token" aria-label="Owner Bearer Token" autocomplete="off" />
-        <button id="connect-btn" class="primary" type="button">Connect</button>
+        <input id="token-input" class="${loginMode === "oidc" ? "hidden" : ""}" type="password" placeholder="Owner Bearer Token" aria-label="Owner Bearer Token" autocomplete="off" />
+        <button id="connect-btn" class="primary ${loginMode === "oidc" ? "hidden" : ""}" type="button">Connect</button>
+        <a id="oidc-signin-link" class="oidc-signin-link ${loginMode === "oidc" ? "" : "hidden"}" href="/portal/auth/start">Sign in with TetherAuth</a>
         <button id="refresh-btn" type="button">Refresh</button>
         <button id="live-alerts-btn" type="button" aria-pressed="false">Enable live page alerts</button>
         <button id="logout-btn" class="hidden" type="button">Sign Out</button>
@@ -2766,7 +2803,7 @@ export function renderControlPortalHtml(): string {
       <div id="status-banner" class="unavailable-banner status-banner-outer hidden"></div>
       <div id="fleet-filter-bar" class="fleet-toolbar" aria-label="Fleet filters"></div>
       <section class="devices-grid" id="devices-container" aria-label="Connected Devices">
-        <div class="signed-out-card">Enter your owner token above to load paired Tetherplane devices.</div>
+        <div class="signed-out-card">${loginMode === "oidc" ? "Sign in with TetherAuth to view your authorized devices." : "Enter your owner token above to load paired Tetherplane devices."}</div>
       </section>
 
       <p class="live-alerts-note">Notifications appear only while this portal page is open. iPhone background push is not yet configured.</p>
