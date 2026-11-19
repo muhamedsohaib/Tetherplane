@@ -201,6 +201,10 @@ export class DeviceRegistry {
       .map(publicBinding);
   }
 
+  async flush(): Promise<void> {
+    await this.#writer?.flush();
+  }
+
   #pruneExpiredPending(now = Date.now()): void {
     for (const [code, entry] of this.#pendingByCode) {
       if (entry.expiresAt <= now) {

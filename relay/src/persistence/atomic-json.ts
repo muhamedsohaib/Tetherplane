@@ -53,6 +53,32 @@ export async function renameWithWindowsRetry(
   }
 }
 
+export async function unlinkWithWindowsRetry(
+  unlinkFn: (filePath: string) => Promise<void>,
+  filePath: string,
+  delaysMs: readonly number[] = RENAME_RETRY_DELAYS_MS,
+): Promise<void> {
+  let attempt = 0;
+  for (;;) {
+    try {
+      await unlinkFn(filePath);
+      return;
+    } catch (error) {
+      const code = errorCodeOf(error);
+      if (
+        code === "ENOENT" ||
+        !code ||
+        !TRANSIENT_RENAME_ERROR_CODES.has(code) ||
+        attempt >= delaysMs.length
+      ) {
+        return;
+      }
+      const delayMs = delaysMs[attempt++]!;
+      await new Promise<void>((resolve) => setTimeout(resolve, delayMs));
+    }
+  }
+}
+
 export class SerializedJsonFileWriter {
   readonly #filePath: string;
   readonly #mkdirFn: (
@@ -91,6 +117,14 @@ export class SerializedJsonFileWriter {
     return run;
   }
 
+  async flush(): Promise<void> {
+    for (;;) {
+      const current = this.#tail;
+      await current;
+      if (this.#tail === current) return;
+    }
+  }
+
   async #flushIfNeeded(targetSeq: number): Promise<void> {
     if (this.#flushedSeq >= targetSeq) return;
     const serialize = this.#latestSerialize;
@@ -111,7 +145,7 @@ export class SerializedJsonFileWriter {
       );
       this.#flushedSeq = Math.max(this.#flushedSeq, capturedSeq);
     } catch (error) {
-      await this.#unlinkFn(temporary).catch(() => {});
+      await unlinkWithWindowsRetry(this.#unlinkFn, temporary);
       throw error;
     }
   }

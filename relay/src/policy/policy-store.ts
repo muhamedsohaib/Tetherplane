@@ -1570,6 +1570,10 @@ export class PolicyStore {
       .reverse();
   }
 
+  async flush(): Promise<void> {
+    await this.#writer?.flush();
+  }
+
   #isDeviceOnline(deviceId: string): boolean {
     return this.#isOnlineCallback ? this.#isOnlineCallback(deviceId) : false;
   }

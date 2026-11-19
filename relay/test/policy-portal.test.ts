@@ -2196,13 +2196,31 @@ test("Relay handles transient Windows rename errors (EPERM/EACCES/EBUSY) and con
     assert.equal(injectedCount, 3);
     assert.equal(maxConcurrentPolicyWrites, 1);
 
+    await closeSocketAndWaitOffline(ws, relay, "Leno");
+    await relay.close();
+
+    assert.equal(activePolicyWrites, 0);
     const entries = await readdir(dir);
     assert.deepEqual(
       entries.filter((name) => name.includes(".tmp-")),
       [],
     );
 
-    ws.close();
+    const diskPolicy = JSON.parse(
+      await readFile(`${stateFile}.policy.json`, "utf8"),
+    ) as {
+      records: Array<{
+        desiredRevision: number;
+        appliedRevision: number | null;
+        policy: { device_id: string };
+      }>;
+    };
+    const lenoDisk = diskPolicy.records.find(
+      (r) => r.policy.device_id === "Leno",
+    );
+    assert.ok(lenoDisk);
+    assert.equal(lenoDisk.desiredRevision, 11);
+    assert.equal(lenoDisk.appliedRevision, 11);
   } finally {
     await relay.close();
     await rm(dir, { recursive: true, force: true });
@@ -2246,6 +2264,189 @@ test("SerializedJsonFileWriter cleans up temp files on fatal errors without wedg
     assert.deepEqual(
       entries.filter((name) => name.includes(".tmp-")),
       [],
+    );
+  } finally {
+    await rm(dir, { recursive: true, force: true });
+  }
+});
+
+test("RelayServer.close drains in-flight WebSocket policy persistence before resolving without leaving temp files", async () => {
+  const dir = await mkdtemp(path.join(os.tmpdir(), "tether-close-drain-"));
+  const stateFile = path.join(dir, "devices.json");
+  const secret = "device-secret-leno-close-drain-32ch";
+
+  let activePolicyWrites = 0;
+  let slowPolicyWrites = false;
+
+  const persistOps: PersistFileOps = {
+    writeFile: async (filePath, data, opts) => {
+      const isPolicy = filePath.includes(".policy.json");
+      if (isPolicy) activePolicyWrites += 1;
+      try {
+        await fsWriteFile(filePath, data, opts);
+        if (isPolicy && slowPolicyWrites) {
+          await new Promise((resolve) => setTimeout(resolve, 35));
+        }
+      } finally {
+        if (isPolicy) activePolicyWrites -= 1;
+      }
+    },
+  };
+
+  const relay = await RelayServer.create({
+    authenticator: createTestAuthenticator(),
+    stateFile,
+    allowInsecureLocalhost: true,
+    persistOps,
+  });
+
+  try {
+    const address = await relay.listen({ host: "127.0.0.1", port: 0 });
+    await pairDevice(address.httpUrl, "Leno", secret);
+
+    const ws = new WebSocket(address.deviceWsUrl, {
+      headers: {
+        authorization: `Device ${secret}`,
+        "x-tetherplane-device-id": "Leno",
+      },
+    });
+    await new Promise<void>((resolve, reject) => {
+      ws.once("open", resolve);
+      ws.once("error", reject);
+    });
+
+    ws.on("message", (raw) => {
+      const msg = JSON.parse(String(raw)) as Record<string, any>;
+      if (msg.type === "policy_sync") {
+        ws.send(
+          JSON.stringify({
+            type: "policy_ack",
+            deviceId: "Leno",
+            revision: msg.policy.revision,
+            applied: true,
+            appliedAtMs: Date.now(),
+            capabilities: sampleCapabilities("Leno"),
+          }),
+        );
+        ws.send(
+          JSON.stringify({
+            type: "device_telemetry",
+            deviceId: "Leno",
+            status: { os: "windows", version: "0.1.0" },
+            capabilities: sampleCapabilities("Leno"),
+          }),
+        );
+      }
+    });
+
+    ws.send(
+      JSON.stringify({
+        type: "device_hello",
+        deviceId: "Leno",
+        appliedPolicyRevision: null,
+        capabilities: sampleCapabilities("Leno"),
+      }),
+    );
+
+    await waitForDevice(
+      address.httpUrl,
+      (d) => d.confirmedByDevice === true && d.appliedRevision === 1,
+      "rev 1 confirmation before slow close drain test",
+    );
+
+    slowPolicyWrites = true;
+    const updateRes = await jsonRequest(
+      address.httpUrl,
+      "/portal/api/devices/Leno/policy",
+      {
+        method: "POST",
+        token: "owner-token-a",
+        body: {
+          revokeFamilies: ["desktop"],
+          reason: "Slow persistence close drain test",
+        },
+      },
+    );
+    assert.equal(updateRes.status, 200);
+
+    await waitForDevice(
+      address.httpUrl,
+      (d) => d.desiredRevision === 2 && d.appliedRevision === 2,
+      "rev 2 ACK visible while persistence is still in flight",
+    );
+
+    ws.close();
+    // Concurrent close() callers must all await full control/persistence drain
+    await Promise.all([relay.close(), relay.close()]);
+
+    assert.equal(
+      activePolicyWrites,
+      0,
+      "RelayServer.close() must not resolve while policy persistence writes are still active",
+    );
+
+    const entries = await readdir(dir);
+    assert.deepEqual(
+      entries.filter((name) => name.includes(".tmp-")),
+      [],
+      "No temporary policy files may remain after RelayServer.close()",
+    );
+
+    const persisted = JSON.parse(
+      await readFile(`${stateFile}.policy.json`, "utf8"),
+    ) as {
+      records: Array<{
+        desiredRevision: number;
+        appliedRevision: number | null;
+        policy: { device_id: string };
+      }>;
+    };
+    const lenoDisk = persisted.records.find((r) => r.policy.device_id === "Leno");
+    assert.ok(lenoDisk);
+    assert.equal(lenoDisk.desiredRevision, 2);
+    assert.equal(lenoDisk.appliedRevision, 2);
+  } finally {
+    await relay.close();
+    await rm(dir, { recursive: true, force: true });
+  }
+});
+
+test("SerializedJsonFileWriter retries transient Windows unlink errors when cleaning up failed temp files", async () => {
+  const dir = await mkdtemp(path.join(os.tmpdir(), "tether-writer-unlink-retry-"));
+  const target = path.join(dir, "state.json");
+  const unlinkFaults = ["EPERM", "EBUSY", "EACCES"] as const;
+  let unlinkAttempts = 0;
+
+  const writer = new SerializedJsonFileWriter(target, {
+    rename: async () => {
+      throw Object.assign(new Error("simulated fatal rename failure"), {
+        code: "ENOSPC",
+      });
+    },
+    unlink: async (filePath) => {
+      const attempt = unlinkAttempts++;
+      if (attempt < unlinkFaults.length) {
+        const code = unlinkFaults[attempt]!;
+        throw Object.assign(new Error(`simulated Windows unlink ${code}`), {
+          code,
+        });
+      }
+      await rm(filePath, { force: true });
+    },
+  });
+
+  try {
+    await assert.rejects(
+      writer.write(() => JSON.stringify({ step: 1 })),
+      { code: "ENOSPC" },
+    );
+
+    assert.equal(unlinkAttempts, 4);
+    const entries = await readdir(dir);
+    assert.deepEqual(
+      entries.filter((name) => name.includes(".tmp-")),
+      [],
+      "Transient Windows unlink errors must be retried until the temporary file is removed",
     );
   } finally {
     await rm(dir, { recursive: true, force: true });

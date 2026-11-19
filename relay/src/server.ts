@@ -68,6 +68,7 @@ export class RelayServer {
   readonly #allowInsecureLocalhost: boolean;
   readonly #publicOrigin: string | null;
   #closed = false;
+  #closePromise: Promise<void> | null = null;
 
   private constructor(options: {
     server: NodeRelayServer;
@@ -322,10 +323,14 @@ export class RelayServer {
     return this.#formatAddress(address, options.host, portalListenPort);
   }
 
-  async close(): Promise<void> {
-    if (this.#closed) return;
+  close(): Promise<void> {
+    if (this.#closePromise) return this.#closePromise;
     this.#closed = true;
+    this.#closePromise = this.#closeInternal();
+    return this.#closePromise;
+  }
 
+  async #closeInternal(): Promise<void> {
     this.healthGateway.close();
     this.controlGateway.close();
     this.portalGateway?.close();
@@ -333,24 +338,33 @@ export class RelayServer {
     await this.mcpGateway.close();
     await this.deviceGateway.close();
 
-    if (this.#portalServer?.listening) {
-      this.#portalServer.closeIdleConnections?.();
-      await new Promise<void>((resolve, reject) => {
-        this.#portalServer!.close((error) => {
-          if (error) reject(error);
-          else resolve();
+    try {
+      if (this.#portalServer?.listening) {
+        this.#portalServer.closeIdleConnections?.();
+        await new Promise<void>((resolve, reject) => {
+          this.#portalServer!.close((error) => {
+            if (error) reject(error);
+            else resolve();
+          });
         });
-      });
-    }
+      }
 
-    if (!this.#server.listening) return;
-    this.#server.closeIdleConnections?.();
-    await new Promise<void>((resolve, reject) => {
-      this.#server.close((error) => {
-        if (error) reject(error);
-        else resolve();
-      });
-    });
+      if (this.#server.listening) {
+        this.#server.closeIdleConnections?.();
+        await new Promise<void>((resolve, reject) => {
+          this.#server.close((error) => {
+            if (error) reject(error);
+            else resolve();
+          });
+        });
+      }
+    } finally {
+      await this.router.drainControl();
+      await Promise.all([
+        this.registry.flush(),
+        this.policyStore.flush(),
+      ]);
+    }
   }
 
   #formatAddress(
