@@ -62,13 +62,24 @@ jobs:
           Copy-Item 'extension/browser/dist/*' (Join-Path $ext 'dist') -Recurse
           if(-not(Test-Path (Join-Path $ext 'dist/background.js'))){throw 'extension missing'}
           # OpenSSL is Apache-2.0. This runtime is disposable-VM-only, not a product artifact.
-          $openssl='C:/Program Files/Git/mingw64/bin/openssl.exe'
-          if(-not(Test-Path $openssl)){throw 'Git OpenSSL is unavailable on hosted runner'}
+          $opensslCandidates = @(
+            'C:/Program Files/Git/mingw64/bin/openssl.exe',
+            'C:/Program Files/Git/usr/bin/openssl.exe',
+            'C:/Program Files/OpenSSL-Win64/bin/openssl.exe',
+            (Get-Command openssl.exe -ErrorAction SilentlyContinue | Select-Object -First 1 -ExpandProperty Source)
+          ) | Where-Object { $_ -and (Test-Path -LiteralPath $_) }
+          $openssl = $opensslCandidates | Select-Object -First 1
+          if(-not $openssl){throw 'No licensed local OpenSSL runtime found on Windows runner'}
           $sourceBin=Split-Path $openssl -Parent
+          Write-Output ('STAGING_OPENSSL_SOURCE='+ $sourceBin)
           Copy-Item $openssl (Join-Path $out 'tools/openssl.exe')
-          foreach($dll in @('libcrypto-3-x64.dll','libssl-3-x64.dll','zlib1.dll','libzstd.dll')){
-            $f=Join-Path $sourceBin $dll
-            if(Test-Path $f){Copy-Item $f (Join-Path $out "tools/$dll")}
+          foreach($dll in @(
+            'libcrypto-3-x64.dll','libssl-3-x64.dll','zlib1.dll','libzstd.dll',
+            'msys-2.0.dll','msys-crypto-3.dll','msys-ssl-3.dll','msys-z.dll',
+            'msys-gcc_s-seh-1.dll','msys-iconv-2.dll','msys-bz2-1.dll'
+          )){
+            $candidate=Join-Path $sourceBin $dll
+            if(Test-Path -LiteralPath $candidate){Copy-Item $candidate (Join-Path $out "tools/$dll")}
           }
           & (Join-Path $out 'tools/openssl.exe') version
           if($LASTEXITCODE -ne 0){throw 'bundled OpenSSL dependencies unavailable'}
