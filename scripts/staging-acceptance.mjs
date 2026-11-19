@@ -693,13 +693,20 @@ async function until(predicate, timeoutMs = 15_000, label = "condition") {
   );
 }
 
-function createStagingPki(opensslPath, tlsDir, lanHost) {
+export function createStagingPki(opensslPath, tlsDir, lanHost) {
   const caKey = path.join(tlsDir, "relay-ca.key");
   const caCrt = path.join(tlsDir, "relay-ca.crt");
   const srvKey = path.join(tlsDir, "relay.key");
   const srvCsr = path.join(tlsDir, "relay.csr");
   const srvCrt = path.join(tlsDir, "relay.crt");
   const srvExt = path.join(tlsDir, "relay.ext");
+  // Git-for-Windows OpenSSL can default to /usr/ssl/openssl.cnf, which is
+  // absent in a clean, network-isolated Windows Sandbox. Never depend on
+  // the machine's OpenSSL configuration for ephemeral staging identity.
+  const reqConfig = path.join(tlsDir, "openssl.cnf");
+  writeFileSync(reqConfig,
+    "[req]\ndistinguished_name = req_distinguished_name\n[req_distinguished_name]\n",
+    "utf8");
 
   execFileSync(opensslPath, [
     "req",
@@ -713,6 +720,8 @@ function createStagingPki(opensslPath, tlsDir, lanHost) {
     caKey,
     "-out",
     caCrt,
+    "-config",
+    reqConfig,
     "-subj",
     "/CN=Tetherplane Staging Ephemeral CA",
     "-addext",
@@ -731,6 +740,8 @@ function createStagingPki(opensslPath, tlsDir, lanHost) {
     srvKey,
     "-out",
     srvCsr,
+    "-config",
+    reqConfig,
     "-subj",
     "/CN=127.0.0.1",
   ], { stdio: "pipe" });
