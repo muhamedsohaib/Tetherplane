@@ -28,6 +28,19 @@ test("directory-only operator removal does not claim a device acknowledgment", (
   assert.match(html, /"info", "policy-no-change"/);
 });
 
+test("private owner portal shows devices before fleet-wide actions on mobile", () => {
+  const html = renderControlPortalHtml();
+  const deviceIndex = html.indexOf('id="devices-container"');
+  const globalIndex = html.indexOf('class="global-panel"');
+  const mobileCssIndex = html.indexOf("@media (max-width: 600px)");
+  assert.ok(deviceIndex > 0 && globalIndex > deviceIndex, "device controls come before fleet-wide actions");
+  assert.ok(mobileCssIndex > 0, "mobile breakpoint exists");
+  assert.ok(
+    html.indexOf("grid-template-columns: repeat(2, minmax(0, 1fr))", mobileCssIndex) > mobileCssIndex,
+    "mobile summary uses compact two-column grid",
+  );
+});
+
 test("passive alerts require opt-in; no misleading iOS push claims", () => {
   const html = renderControlPortalHtml();
   assert.match(html, /id="live-alerts-btn"[^>]*aria-pressed="false"/);

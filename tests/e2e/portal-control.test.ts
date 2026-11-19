@@ -827,11 +827,30 @@ test(
       const mobileLayout = await browser.eval<{
         scrollWidth: number;
         innerWidth: number;
-      }>("({ scrollWidth: document.documentElement.scrollWidth, innerWidth: window.innerWidth })");
+        devicesTop: number;
+        globalControlsTop: number;
+        summaryColumns: number;
+      }>(`(() => {
+        const devices = document.getElementById("devices-container");
+        const globals = document.querySelector(".global-panel");
+        const summary = document.querySelector(".summary-strip");
+        return {
+          scrollWidth: document.documentElement.scrollWidth,
+          innerWidth: window.innerWidth,
+          devicesTop: devices.getBoundingClientRect().top,
+          globalControlsTop: globals.getBoundingClientRect().top,
+          summaryColumns: getComputedStyle(summary).gridTemplateColumns.split(" ").length,
+        };
+      })()`);
       assert.ok(
         mobileLayout.scrollWidth <= mobileLayout.innerWidth,
         `Mobile horizontal overflow: ${mobileLayout.scrollWidth} > ${mobileLayout.innerWidth}`,
       );
+      assert.ok(
+        mobileLayout.devicesTop < mobileLayout.globalControlsTop,
+        "Mobile layout should place everyday device controls before fleet-wide controls",
+      );
+      assert.equal(mobileLayout.summaryColumns, 2, "Mobile summary must use two columns");
 
       assert.deepEqual(browser.exceptions, []);
       assert.deepEqual(browser.consoleErrors, []);

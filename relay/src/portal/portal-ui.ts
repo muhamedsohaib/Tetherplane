@@ -653,6 +653,15 @@ const PORTAL_STYLE = `
     }
 
     @media (max-width: 600px) {
+      .portal-shell { padding: 12px 12px 48px; }
+      .summary-strip {
+        grid-template-columns: repeat(2, minmax(0, 1fr));
+        gap: 8px;
+        margin-bottom: 12px;
+      }
+      .stat-card { padding: 10px 12px; }
+      .stat-value { font-size: 1.2rem; }
+      .stat-value-compact { font-size: 0.875rem; }
       .family-grid {
         grid-template-columns: 1fr;
       }
@@ -1977,32 +1986,32 @@ export function renderControlPortalHtml(): string {
       </div>
     </section>
 
-    <section class="global-panel" aria-label="Global Permission Controls">
-      <div>
-        <strong>Global Controls</strong>
-        <div class="global-subtitle">
-          Apply a permission profile across selected devices (or all paired devices when none selected), or trigger emergency access revocation. Universal Access auto-approves allowed destructive operations while blocking human-origin process termination and protecting unshared human tabs/windows; Lift Emergency Lockdown restores baseline Universal Access (use Recoverable Snapshots &amp; Rollback below for prior custom restrictions).
-        </div>
-        <div class="global-scope-row">
-          <span id="global-target-badge" class="pill offline">Target: All paired devices</span>
-          <button id="select-all-devices-btn" type="button">Select All</button>
-          <button id="clear-selected-devices-btn" type="button">Clear</button>
-        </div>
-      </div>
-      <div class="global-actions">
-        <button id="global-universal-btn" type="button">Grant Universal</button>
-        <button id="global-readonly-btn" type="button">Set Read-Only</button>
-        <button id="global-revoke-btn" type="button">Revoke All Families</button>
-        <button id="global-lift-lockdown-btn" class="primary hidden" type="button">Lift Emergency Lockdown</button>
-        <button id="emergency-revoke-btn" class="danger" type="button">Emergency Access Revocation</button>
-      </div>
-    </section>
-
     <main>
       <div id="status-banner" class="unavailable-banner status-banner-outer hidden"></div>
-      <p class="live-alerts-note">Notifications appear only while this portal page is open. iPhone background push is not yet configured.</p>
       <section class="devices-grid" id="devices-container" aria-label="Connected Devices">
         <div class="panel-card">Enter your owner token above to load paired Tetherplane devices.</div>
+      </section>
+
+      <p class="live-alerts-note">Notifications appear only while this portal page is open. iPhone background push is not yet configured.</p>
+      <section class="global-panel" aria-label="Global Permission Controls">
+        <div>
+          <strong>Global Controls</strong>
+          <div class="global-subtitle">
+            Apply a permission profile across selected devices (or all paired devices when none selected), or trigger emergency access revocation. Universal Access auto-approves allowed destructive operations while blocking human-origin process termination and protecting unshared human tabs/windows; Lift Emergency Lockdown restores baseline Universal Access (use Recoverable Snapshots &amp; Rollback below for prior custom restrictions).
+          </div>
+          <div class="global-scope-row">
+            <span id="global-target-badge" class="pill offline">Target: All paired devices</span>
+            <button id="select-all-devices-btn" type="button">Select All</button>
+            <button id="clear-selected-devices-btn" type="button">Clear</button>
+          </div>
+        </div>
+        <div class="global-actions">
+          <button id="global-universal-btn" type="button">Grant Universal</button>
+          <button id="global-readonly-btn" type="button">Set Read-Only</button>
+          <button id="global-revoke-btn" type="button">Revoke All Families</button>
+          <button id="global-lift-lockdown-btn" class="primary hidden" type="button">Lift Emergency Lockdown</button>
+          <button id="emergency-revoke-btn" class="danger" type="button">Emergency Access Revocation</button>
+        </div>
       </section>
 
       <div class="section-grid">
