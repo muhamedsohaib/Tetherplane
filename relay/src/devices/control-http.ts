@@ -482,6 +482,10 @@ export class RelayControlHttpGateway {
       writeJson(response, 200, {
         updatedDevices: updated.map((r) => r.policy.device_id),
         count: updated.length,
+        revisions: updated.map((r) => ({
+          deviceId: r.policy.device_id,
+          desiredRevision: r.desiredRevision,
+        })),
       });
       return;
     }
@@ -532,6 +536,10 @@ export class RelayControlHttpGateway {
       writeJson(response, 200, {
         emergencyLockdown: !restore,
         updatedDevices: updated.map((r) => r.policy.device_id),
+        revisions: updated.map((r) => ({
+          deviceId: r.policy.device_id,
+          desiredRevision: r.desiredRevision,
+        })),
       });
       return;
     }
@@ -556,6 +564,10 @@ export class RelayControlHttpGateway {
       writeJson(response, 200, {
         principalId: operatorPrincipalId,
         updatedDevices: updated.map((r) => r.policy.device_id),
+        revisions: updated.map((r) => ({
+          deviceId: r.policy.device_id,
+          desiredRevision: r.desiredRevision,
+        })),
       });
       return;
     }

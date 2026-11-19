@@ -385,6 +385,49 @@ const PORTAL_STYLE = `
       color: var(--text-muted);
     }
 
+    .toast-stack {
+      position: fixed;
+      right: calc(16px + env(safe-area-inset-right, 0px));
+      top: calc(16px + env(safe-area-inset-top, 0px));
+      z-index: 90;
+      width: min(360px, calc(100vw - 32px));
+      display: grid;
+      gap: 8px;
+      pointer-events: none;
+    }
+    .toast {
+      display: flex;
+      align-items: flex-start;
+      gap: 8px;
+      color: var(--text);
+      background: var(--surface-elevated);
+      border: 1px solid var(--border);
+      border-left: 3px solid var(--primary);
+      border-radius: 10px;
+      padding: 12px;
+      box-shadow: 0 12px 30px rgba(0,0,0,0.35);
+      pointer-events: auto;
+      overflow-wrap: anywhere;
+      font-size: 0.85rem;
+    }
+    .toast[data-level="confirmed"] { border-left-color: var(--success); }
+    .toast[data-level="pending"] { border-left-color: var(--warning); }
+    .toast[data-level="error"] { border-left-color: var(--danger); }
+    .toast-message { flex: 1; min-width: 0; }
+    .toast-dismiss { padding: 0 4px; min-width: 30px; min-height: 30px; }
+    .live-alerts-note { font-size: 0.72rem; color: var(--text-muted); }
+    @media (max-width: 600px) {
+      .toast-stack {
+        left: 12px;
+        right: 12px;
+        width: auto;
+        top: auto;
+        bottom: calc(12px + env(safe-area-inset-bottom, 0px));
+        max-height: 45vh;
+        overflow-y: auto;
+      }
+    }
+
     .unavailable-banner {
       background: var(--warning-bg);
       border: 1px solid rgba(245, 158, 11, 0.35);
@@ -636,6 +679,8 @@ const PORTAL_SCRIPT = `
       const logoutBtn = document.getElementById("logout-btn");
       const authStateBadge = document.getElementById("auth-state-badge");
       const statusBanner = document.getElementById("status-banner");
+      const toastStack = document.getElementById("toast-stack");
+      const liveAlertsBtn = document.getElementById("live-alerts-btn");
 
       let csrfToken = null;
       let authenticatedOwner = null;
@@ -650,6 +695,9 @@ const PORTAL_SCRIPT = `
       let snapshotLimit = SNAPSHOT_PAGE_SIZE;
       const openAdvancedDevices = new Set();
       const selectedDeviceIds = new Set();
+      const trackedAccessUpdates = new Map();
+      const lastDeviceState = new Map();
+      let livePageAlerts = false;
 
       function createEl(tag, options, children) {
         const node = document.createElement(tag);
@@ -774,6 +822,12 @@ const PORTAL_SCRIPT = `
 
       function setSignedOutUi(notice) {
         stopLiveUpdates();
+        trackedAccessUpdates.clear();
+        lastDeviceState.clear();
+        toastStack.replaceChildren();
+        livePageAlerts = false;
+        liveAlertsBtn.textContent = "Enable live page alerts";
+        liveAlertsBtn.setAttribute("aria-pressed", "false");
         csrfToken = null;
         authenticatedOwner = null;
         currentOverview = null;
@@ -850,6 +904,119 @@ const PORTAL_SCRIPT = `
         }
         return data;
       }
+
+      // Never mistake relay acceptance for agent-enforced permissions.
+      // All feedback is in-page; background mobile push is NOT provided here.
+      function showToast(message, level, kind) {
+        const toast = createEl("div", {
+          className: "toast",
+          attrs: {
+            "data-level": level || "info",
+            "data-kind": kind || "general",
+            role: level === "error" ? "alert" : "status",
+          },
+        }, [createEl("span", { className: "toast-message", text: message })]);
+        const dismiss = createEl("button", {
+          type: "button",
+          className: "toast-dismiss",
+          text: "×",
+          attrs: { "aria-label": "Dismiss notification" },
+        });
+        toast.appendChild(dismiss);
+        dismiss.addEventListener("click", function () { toast.remove(); });
+        while (toastStack.childElementCount >= 3) toastStack.firstElementChild.remove();
+        toastStack.appendChild(toast);
+        setTimeout(function () { toast.remove(); },
+          level === "error" ? 10000 : level === "confirmed" ? 8000 : 6000);
+      }
+
+      // Revision numbers are supplied by the authenticated relay mutation
+      // response, never guessed from a possibly stale SSE overview.
+      function trackAccessChange(label, response) {
+        const revisions = response && response.device
+          ? [{ deviceId: response.device.deviceId,
+               desiredRevision: response.device.desiredRevision }]
+          : response && Array.isArray(response.revisions)
+            ? response.revisions : [];
+        if (revisions.length === 0) {
+          showToast(label + " accepted by relay. Check device sync badges before assuming access changed.",
+            "pending", "policy-pending");
+          return;
+        }
+        revisions.forEach(function (item) {
+          const revision = Number(item.desiredRevision);
+          if (!item.deviceId || !Number.isInteger(revision) || revision <= 0) return;
+          trackedAccessUpdates.set(item.deviceId, { revision: revision, label: label });
+        });
+        showToast(label + " submitted for " + revisions.length +
+          " device(s). Waiting for device confirmation.", "pending", "policy-pending");
+        if (currentOverview) reconcileAccessChanges(currentOverview.devices || []);
+      }
+
+      function reconcileAccessChanges(devices) {
+        trackedAccessUpdates.forEach(function (change, id) {
+          const d = devices.find(function (item) { return item.deviceId === id; });
+          if (!d) return;
+          if (d.syncStatus === "failed" && Number(d.desiredRevision) >= change.revision) {
+            trackedAccessUpdates.delete(id);
+            showToast(id + ": access change rejected by device. Review sync error.",
+              "error", "policy-rejected");
+          } else if (Number(d.desiredRevision) > change.revision) {
+            trackedAccessUpdates.delete(id);
+            showToast(id + ": another update superseded this change; review current permissions.",
+              "pending", "policy-superseded");
+          } else if (d.online && d.confirmedByDevice === true &&
+                     d.syncStatus === "applied" &&
+                     Number(d.appliedRevision) === change.revision) {
+            trackedAccessUpdates.delete(id);
+            showToast(id + ": " + change.label +
+              " confirmed by device (v" + change.revision + ").",
+              "confirmed", "policy-confirmed");
+          }
+        });
+      }
+
+      // Optional passive alerts for changes made from another session.
+      // Permission-change action feedback remains enabled regardless.
+      function observeExternalChanges(devices) {
+        const seen = new Set();
+        devices.forEach(function (d) {
+          seen.add(d.deviceId);
+          const now = { desired: Number(d.desiredRevision), status: d.syncStatus };
+          const prior = lastDeviceState.get(d.deviceId);
+          lastDeviceState.set(d.deviceId, now);
+          if (!livePageAlerts || !prior || trackedAccessUpdates.has(d.deviceId)) return;
+          if (now.desired > prior.desired) {
+            showToast(d.deviceId + ": permission policy changed; awaiting device sync.",
+              "pending", "external-policy");
+          } else if (now.status === "failed" && prior.status !== "failed") {
+            showToast(d.deviceId + ": permission synchronization rejected.",
+              "error", "external-policy");
+          } else if (now.status === "applied" && prior.status !== "applied" &&
+                     d.online && d.confirmedByDevice) {
+            showToast(d.deviceId + ": permission update confirmed.",
+              "confirmed", "external-policy");
+          }
+        });
+        Array.from(lastDeviceState.keys()).forEach(function (id) {
+          if (!seen.has(id)) lastDeviceState.delete(id);
+        });
+      }
+
+      liveAlertsBtn.addEventListener("click", function () {
+        if (!authenticatedOwner) {
+          showToast("Sign in first to enable passive live page alerts.", "error", "alert-settings");
+          return;
+        }
+        livePageAlerts = !livePageAlerts;
+        liveAlertsBtn.textContent = livePageAlerts
+          ? "Mute live page alerts" : "Enable live page alerts";
+        liveAlertsBtn.setAttribute("aria-pressed", livePageAlerts ? "true" : "false");
+        showToast(livePageAlerts
+          ? "Live page alerts enabled. This does not enable iPhone background push."
+          : "Passive live page alerts muted. Action confirmations remain on.",
+          "info", "alert-settings");
+      });
 
       function showBanner(msg) {
         if (!msg) {
@@ -934,6 +1101,8 @@ const PORTAL_SCRIPT = `
             if (!authenticatedOwner) return;
             currentOverview = data;
             renderOverview(data);
+            reconcileAccessChanges(data.devices || []);
+            observeExternalChanges(data.devices || []);
             syncPendingFallback(data.devices || []);
           } while (overviewQueued && authenticatedOwner);
         } catch (err) {
@@ -1436,45 +1605,55 @@ const PORTAL_SCRIPT = `
           if (action === "toggle-family") {
             const family = btn.dataset.family;
             const currentlyOn = btn.dataset.currentlyOn === "1";
-            await apiCall("/portal/api/devices/" + encodeURIComponent(deviceId) + "/policy", "POST", {
+            btn.disabled = true;
+            const result = await apiCall("/portal/api/devices/" + encodeURIComponent(deviceId) + "/policy", "POST", {
               grantFamilies: currentlyOn ? [] : [family],
               revokeFamilies: currentlyOn ? [family] : [],
               reason: (currentlyOn ? "Revoke " : "Grant ") + family + " family via Portal toggle",
             });
+            trackAccessChange((currentlyOn ? "Revoke " : "Grant ") + family + " access", result);
             await loadOverview();
           } else if (action === "device-profile") {
             const profileId = btn.dataset.profile;
-            await apiCall("/portal/api/devices/" + encodeURIComponent(deviceId) + "/policy", "POST", {
+            btn.disabled = true;
+            const result = await apiCall("/portal/api/devices/" + encodeURIComponent(deviceId) + "/policy", "POST", {
               profileId: profileId,
               emergencyLockdown: false,
               reason: "Apply " + profileId + " profile via Portal",
             });
+            trackAccessChange("Set " + profileId + " access profile", result);
             await loadOverview();
           } else if (action === "lift-lockdown") {
-            await apiCall("/portal/api/devices/" + encodeURIComponent(deviceId) + "/policy", "POST", {
+            btn.disabled = true;
+            const result = await apiCall("/portal/api/devices/" + encodeURIComponent(deviceId) + "/policy", "POST", {
               emergencyLockdown: false,
               profileId: "universal",
               reason: "Lift emergency lockdown on " + deviceId + " via Portal",
             });
+            trackAccessChange("Lift device lockdown", result);
             await loadOverview();
           } else if (action === "deny-op" || action === "allow-op") {
             const card = btn.closest(".device-card");
             const input = card ? card.querySelector("[data-role='op-rule-input']") : null;
             const cap = input ? input.value.trim() : "";
             if (!cap) return;
-            await apiCall("/portal/api/devices/" + encodeURIComponent(deviceId) + "/policy", "POST", {
+            btn.disabled = true;
+            const result = await apiCall("/portal/api/devices/" + encodeURIComponent(deviceId) + "/policy", "POST", {
               grantCapabilities: action === "allow-op" ? [cap] : [],
               revokeCapabilities: action === "deny-op" ? [cap] : [],
               reason: (action === "deny-op" ? "Explicitly deny " : "Grant ") + cap,
             });
+            trackAccessChange((action === "deny-op" ? "Deny " : "Grant ") + cap, result);
             await loadOverview();
           } else if (action === "rollback") {
             const rev = Number(btn.dataset.rev);
-            await apiCall("/portal/api/rollback", "POST", {
+            btn.disabled = true;
+            const result = await apiCall("/portal/api/rollback", "POST", {
               deviceId: deviceId,
               targetRevision: rev,
               reason: "Rollback to revision " + rev + " from Portal",
             });
+            trackAccessChange("Rollback to revision " + rev, result);
             await loadOverview();
           } else if (action === "snapshots-more") {
             snapshotLimit += SNAPSHOT_PAGE_SIZE;
@@ -1526,11 +1705,17 @@ const PORTAL_SCRIPT = `
           } else if (action === "remove-operator") {
             const principalId = btn.dataset.principal || "";
             if (!principalId) return;
+            btn.disabled = true;
             await apiCall("/portal/api/operators/" + encodeURIComponent(principalId), "DELETE");
             await loadOverview();
+            showToast("Operator revoked at relay. Review device sync before assuming revocation applied.",
+              "pending", "operator-revoked");
           }
         } catch (err) {
           showBanner("Action failed: " + err.message);
+          showToast("Access change rejected: " + err.message, "error", "policy-error");
+        } finally {
+          btn.disabled = false;
         }
       });
 
@@ -1557,14 +1742,17 @@ const PORTAL_SCRIPT = `
       document.getElementById("modal-confirm-btn").addEventListener("click", async function () {
         if (!pendingModalAction) return;
         const reason = document.getElementById("modal-reason").value.trim();
+        const title = document.getElementById("modal-title").textContent || "Global permissions";
         const fn = pendingModalAction;
         pendingModalAction = null;
         document.getElementById("confirm-modal").classList.remove("active");
         try {
-          await fn(reason);
+          const result = await fn(reason);
+          trackAccessChange(title, result);
           await loadOverview();
         } catch (err) {
           showBanner("Global action failed: " + err.message);
+          showToast("Security change rejected: " + err.message, "error", "policy-error");
         }
       });
 
@@ -1655,16 +1843,18 @@ const PORTAL_SCRIPT = `
         if (!principalId) return;
         const scopeIds = Array.from(selectedDeviceIds);
         try {
-          await apiCall("/portal/api/operators", "POST", {
+          const result = await apiCall("/portal/api/operators", "POST", {
             principalId: principalId,
             displayName: displayName || principalId,
             profileId: profileId,
             ...(scopeIds.length > 0 ? { deviceIds: scopeIds } : {}),
             reason: "Configured operator " + principalId + " (" + profileId + ")",
           });
+          trackAccessChange("Operator access policy", result);
           await loadOverview();
         } catch (err) {
           showBanner("Operator update failed: " + err.message);
+          showToast("Operator update rejected: " + err.message, "error", "policy-error");
         }
       });
 
@@ -1735,6 +1925,7 @@ export function renderControlPortalHtml(): string {
         <input id="token-input" type="password" placeholder="Owner Bearer Token" aria-label="Owner Bearer Token" autocomplete="off" />
         <button id="connect-btn" class="primary" type="button">Connect</button>
         <button id="refresh-btn" type="button">Refresh</button>
+        <button id="live-alerts-btn" type="button" aria-pressed="false">Enable live page alerts</button>
         <button id="logout-btn" class="hidden" type="button">Sign Out</button>
       </div>
     </header>
@@ -1781,6 +1972,7 @@ export function renderControlPortalHtml(): string {
 
     <main>
       <div id="status-banner" class="unavailable-banner status-banner-outer hidden"></div>
+      <p class="live-alerts-note">Notifications appear only while this portal page is open. iPhone background push is not yet configured.</p>
       <section class="devices-grid" id="devices-container" aria-label="Connected Devices">
         <div class="panel-card">Enter your owner token above to load paired Tetherplane devices.</div>
       </section>
@@ -1830,6 +2022,7 @@ export function renderControlPortalHtml(): string {
     </main>
   </div>
 
+  <div id="toast-stack" class="toast-stack" role="region" aria-label="Access and security notifications" aria-live="polite" aria-relevant="additions"></div>
   <div class="modal-backdrop" id="confirm-modal" role="dialog" aria-modal="true">
     <div class="modal">
       <h3 id="modal-title">Confirm Global Security Change</h3>

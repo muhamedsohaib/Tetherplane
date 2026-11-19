@@ -532,6 +532,13 @@ test(
         arguments: { op: "run", device: "Leno", args: platformEchoArgs("no") },
       });
       assert.equal(deniedProc.isError, true);
+      await until(
+        () => browser!.eval<boolean>(
+          `Boolean(document.querySelector('#toast-stack .toast[data-kind="policy-confirmed"]')?.textContent?.includes('confirmed by device'))`,
+        ),
+        8_000,
+        "permission revoke shows device-confirmed notification",
+      );
 
       // Select ONLY Leno via per-device checkbox and assign operator:helper read_only -> scoped ONLY to Leno!
       await browser.eval(`(() => {
