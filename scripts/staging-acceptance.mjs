@@ -235,12 +235,44 @@ function findOnPath(names) {
   return null;
 }
 
+// A real Windows Sandbox input desktop may omit SESSIONNAME entirely.
+// For that case, verify a positive user session and an actual Win32
+// foreground window; never probe or enable interactive G4 in CI.
+function probeWindowsInputDesktop() {
+  const native = 'using System; using System.Runtime.InteropServices; public static class G4DesktopProbe { [DllImport("user32.dll")] public static extern IntPtr GetForegroundWindow(); }';
+  const ps = [
+    "$ErrorActionPreference='Stop'",
+    "if ([Diagnostics.Process]::GetCurrentProcess().SessionId -le 0) { exit 1 }",
+    "$native='" + native + "'",
+    "Add-Type -TypeDefinition $native",
+    "for($i=0;$i -lt 5;$i++){ if([G4DesktopProbe]::GetForegroundWindow() -ne [IntPtr]::Zero) { 'G4_INPUT_DESKTOP_PRESENT'; exit 0 }; Start-Sleep -Milliseconds 100 }",
+    "exit 2",
+  ].join("; ");
+  try {
+    return execFileSync("powershell.exe",
+      ["-NoProfile","-NonInteractive","-Command",ps],{
+        encoding:"utf8",timeout:8_000,windowsHide:true,
+        stdio:["ignore","pipe","ignore"],
+      }).trim() === "G4_INPUT_DESKTOP_PRESENT";
+  } catch {
+    return false;
+  }
+}
+export function detectInteractiveWindowsDesktop({
+  platform=process.platform,
+  githubActions=process.env.GITHUB_ACTIONS,
+  sessionName=process.env.SESSIONNAME,
+  probe=probeWindowsInputDesktop,
+}={}) {
+  if(platform!=="win32" || githubActions==="true" ||
+      sessionName==="Services")return false;
+  if(typeof sessionName==="string" && sessionName.trim())return true;
+  try{return probe()===true}catch{return false}
+}
+
 export function detectPrerequisites(explicitTetherd) {
   const platform = process.platform;
-  const interactiveDesktopAvailable =
-    platform === "win32" &&
-    process.env.GITHUB_ACTIONS !== "true" &&
-    Boolean(process.env.SESSIONNAME && process.env.SESSIONNAME !== "Services");
+  const interactiveDesktopAvailable = detectInteractiveWindowsDesktop();
 
   const chromiumCandidates = [
     process.env.TETHERPLANE_CHROMIUM,

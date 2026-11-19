@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import test from "node:test";
-import { selectStagingG4FixtureTargets } from "../../scripts/staging-acceptance.mjs";
+import { selectStagingG4FixtureTargets, detectInteractiveWindowsDesktop } from "../../scripts/staging-acceptance.mjs";
 
 const node = (automation_id, name, patterns, role = "edit") => ({
   automation_id,
@@ -74,4 +74,19 @@ test("remote G4 fails closed on ambiguous identity or missing human-owned contro
     ]),
     /HumanInvoke must resolve uniquely/,
   );
+});
+
+test("Sandbox with missing SESSIONNAME verifies real input desktop",()=>{
+  let calls=0;
+  assert.equal(detectInteractiveWindowsDesktop({platform:"win32",githubActions:undefined,sessionName:undefined,probe:()=>{calls++;return true}}),true);
+  assert.equal(calls,1);
+});
+test("G4 desktop check fails closed on CI, services, Linux or probe denial",()=>{
+  const base={platform:"win32",githubActions:undefined,sessionName:undefined,probe:()=>true};
+  assert.equal(detectInteractiveWindowsDesktop({...base,githubActions:"true"}),false);
+  assert.equal(detectInteractiveWindowsDesktop({...base,sessionName:"Services"}),false);
+  assert.equal(detectInteractiveWindowsDesktop({...base,platform:"linux"}),false);
+  assert.equal(detectInteractiveWindowsDesktop({...base,probe:()=>false}),false);
+  assert.equal(detectInteractiveWindowsDesktop({...base,probe:()=>{throw Error("denied")}}),false);
+  assert.equal(detectInteractiveWindowsDesktop({...base,sessionName:"Console",probe:()=>{throw Error("no call")}}),true);
 });
