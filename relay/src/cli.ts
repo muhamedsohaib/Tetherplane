@@ -4,6 +4,7 @@ import { readFile } from "node:fs/promises";
 
 import {
   loadClientAuth,
+  loadReadOnlyPortalPilotConfig,
   parseRelayArgs,
 } from "./cli-config.ts";
 import { RelayServer } from "./server.ts";
@@ -15,7 +16,7 @@ async function main(): Promise<void> {
     return;
   }
 
-  const options = parseRelayArgs(args);
+  const options = await loadReadOnlyPortalPilotConfig(parseRelayArgs(args));
   const {
     authenticator,
     oauth,
@@ -44,6 +45,10 @@ async function main(): Promise<void> {
       ? { publicOrigin: options.publicOrigin }
       : {}),
     trustProxyHeaders: options.trustProxyHeaders,
+    ...(options.portalPort !== undefined
+      ? { portalPort: options.portalPort }
+      : {}),
+    portalReadOnly: options.portalReadOnly,
   });
 
   let closing = false;
@@ -70,7 +75,13 @@ async function main(): Promise<void> {
         `tether-relay listening on ${address.httpUrl}`,
         `MCP: ${address.mcpUrl}`,
         `Device: ${address.deviceWsUrl}`,
+        ...(address.portalListenUrl
+          ? [`Portal (loopback-only): ${address.portalListenUrl}/portal`]
+          : []),
         ...(address.portalUrl ? [`Portal: ${address.portalUrl}`] : []),
+        ...(options.portalReadOnly
+          ? ["Portal mode: read-only pilot (policy mutations disabled)"]
+          : []),
       ].join("\n") + "\n",
     );
   } catch (error) {
@@ -98,6 +109,8 @@ Options:
   --state-file <path>       Device registry state file.
   --host <host>             Bind host. Default: 127.0.0.1.
   --port <port>             Bind port. Default: 8788.
+  --portal-port <port>      Serve /portal* ONLY on this loopback-only port (main port returns 404).
+  --portal-read-only        Allow read-only portal visibility; reject all policy mutations (403).
   --tls-cert <path>         PEM certificate.
   --tls-key <path>          PEM private key.
   --allow-insecure-localhost

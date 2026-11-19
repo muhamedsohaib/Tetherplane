@@ -532,6 +532,13 @@ test(
         arguments: { op: "run", device: "Leno", args: platformEchoArgs("no") },
       });
       assert.equal(deniedProc.isError, true);
+      await until(
+        () => browser!.eval<boolean>(
+          `Boolean(document.querySelector('#toast-stack .toast[data-kind="policy-confirmed"]')?.textContent?.includes('confirmed by device'))`,
+        ),
+        8_000,
+        "permission revoke shows device-confirmed notification",
+      );
 
       // Select ONLY Leno via per-device checkbox and assign operator:helper read_only -> scoped ONLY to Leno!
       await browser.eval(`(() => {
@@ -610,9 +617,36 @@ test(
       });
       assert.equal(helperWrite.isError, true);
 
+      // Revoke an ACTIVE operator grant and require an actual device acknowledgment
+      await browser.eval(
+        `document.querySelector('[data-action="remove-operator"][data-principal="operator:helper"]').click()`,
+      );
+      await until(
+        () =>
+          browser!.eval<boolean>(
+            `!document.querySelector('[data-action="remove-operator"][data-principal="operator:helper"]')`,
+          ),
+        8_000,
+        "operator:helper removed from UI",
+      );
+      // Observe the ephemeral confirmation before performing another
+      // potentially slow MCP call; keep the independent denial assertion.
+      await until(
+        () => browser!.eval<boolean>(
+          `Boolean(document.querySelector('#toast-stack .toast[data-kind="policy-confirmed"]')?.textContent?.includes('Revoke operator access confirmed by device'))`,
+        ),
+        8_000,
+        "operator access removal confirmed by Leno device",
+      );
+      const helperAfterRemove = await helperClient.callTool({
+        name: "files",
+        arguments: { op: "read", device: "Leno", args: { path: targetFile } },
+      });
+      assert.equal(helperAfterRemove.isError, true);
+
       // Clear selection and create extra revisions on Leno (>11 total) to verify Snapshot Filter + Pagination + Rollback
       await browser.eval(`document.getElementById("clear-selected-devices-btn").click()`);
-      for (let i = 0; i < 10; i += 1) {
+      for (let i = 0; i < 9; i += 1) {
         const res = await fetch(`${address.httpUrl}/portal/api/devices/Leno/policy`, {
           method: "POST",
           headers: {
@@ -671,6 +705,13 @@ test(
         arguments: { op: "run", device: "Leno", args: platformEchoArgs("rolled-back") },
       });
       assert.equal(restoredProc.isError, undefined);
+      await until(
+        () => browser!.eval<boolean>(
+          `Boolean(document.querySelector('#toast-stack .toast[data-kind="policy-confirmed"]')?.textContent?.includes('Rollback to revision 1 confirmed by device'))`,
+        ),
+        8_000,
+        "grant recovery rollback shows confirmed device notification",
+      );
 
       // Emergency Access Revocation -> Lift Lockdown button recovers Leno!
       await browser.eval(`(() => {
@@ -730,24 +771,6 @@ test(
         "Confirmed Active (v16)",
       );
 
-      // Remove operator:helper from UI button & verify MCP denial
-      await browser.eval(
-        `document.querySelector('[data-action="remove-operator"][data-principal="operator:helper"]').click()`,
-      );
-      await until(
-        () =>
-          browser!.eval<boolean>(
-            `!document.querySelector('[data-action="remove-operator"][data-principal="operator:helper"]')`,
-          ),
-        8_000,
-        "operator:helper removed from UI",
-      );
-      const helperAfterRemove = await helperClient.callTool({
-        name: "files",
-        arguments: { op: "read", device: "Leno", args: { path: targetFile } },
-      });
-      assert.equal(helperAfterRemove.isError, true);
-
       // Switch to mobile viewport (390x844) and test offline update -> tetherd reconnect resync + layout
       await browser.setViewport(390, 844, true);
       tetherdProc.child.kill();
@@ -806,11 +829,30 @@ test(
       const mobileLayout = await browser.eval<{
         scrollWidth: number;
         innerWidth: number;
-      }>("({ scrollWidth: document.documentElement.scrollWidth, innerWidth: window.innerWidth })");
+        devicesTop: number;
+        globalControlsTop: number;
+        summaryColumns: number;
+      }>(`(() => {
+        const devices = document.getElementById("devices-container");
+        const globals = document.querySelector(".global-panel");
+        const summary = document.querySelector(".summary-strip");
+        return {
+          scrollWidth: document.documentElement.scrollWidth,
+          innerWidth: window.innerWidth,
+          devicesTop: devices.getBoundingClientRect().top,
+          globalControlsTop: globals.getBoundingClientRect().top,
+          summaryColumns: getComputedStyle(summary).gridTemplateColumns.split(" ").length,
+        };
+      })()`);
       assert.ok(
         mobileLayout.scrollWidth <= mobileLayout.innerWidth,
         `Mobile horizontal overflow: ${mobileLayout.scrollWidth} > ${mobileLayout.innerWidth}`,
       );
+      assert.ok(
+        mobileLayout.devicesTop < mobileLayout.globalControlsTop,
+        "Mobile layout should place everyday device controls before fleet-wide controls",
+      );
+      assert.equal(mobileLayout.summaryColumns, 2, "Mobile summary must use two columns");
 
       assert.deepEqual(browser.exceptions, []);
       assert.deepEqual(browser.consoleErrors, []);

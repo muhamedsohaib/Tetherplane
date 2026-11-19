@@ -19,7 +19,10 @@ import {
   type PolicyStore,
   type ToolFamily,
 } from "../policy/policy-store.ts";
-import { renderControlPortalPage } from "../portal/portal-ui.ts";
+import {
+  renderControlPortalPage,
+  renderControlPortalManifest,
+} from "../portal/portal-ui.ts";
 import { PairingCapacityError, type DeviceRegistry } from "./registry.ts";
 
 const PORTAL_SESSION_COOKIE = "tetherplane_portal_session";
@@ -72,6 +75,9 @@ export class RelayControlHttpGateway {
   readonly #secureCookies: boolean;
   readonly #publicOriginUrl: URL | null;
   readonly #trustProxyHeaders: boolean;
+  readonly #portalEnabled: boolean;
+  readonly #portalOnly: boolean;
+  readonly #portalReadOnly: boolean;
   readonly #pairStartLimiter: SlidingWindowRateLimiter;
   readonly #pairApproveIpLimiter: SlidingWindowRateLimiter;
   readonly #pairApproveAccountLimiter: SlidingWindowRateLimiter;
@@ -91,6 +97,9 @@ export class RelayControlHttpGateway {
     secureCookies?: boolean;
     publicOrigin?: string;
     trustProxyHeaders?: boolean;
+    portalEnabled?: boolean;
+    portalOnly?: boolean;
+    portalReadOnly?: boolean;
     rateLimits?: RelayRateLimitConfig;
   }) {
     const normalizedPublicOrigin =
@@ -109,6 +118,9 @@ export class RelayControlHttpGateway {
       ? new URL(normalizedPublicOrigin)
       : null;
     this.#trustProxyHeaders = trustProxyHeaders;
+    this.#portalEnabled = options.portalEnabled ?? true;
+    this.#portalOnly = options.portalOnly ?? false;
+    this.#portalReadOnly = options.portalReadOnly ?? false;
     this.#secureCookies =
       options.secureCookies ??
       (this.#publicOriginUrl?.protocol === "https:");
@@ -163,10 +175,22 @@ export class RelayControlHttpGateway {
     );
 
     try {
-      if (
-        (url.pathname === "/portal" || url.pathname.startsWith("/portal/")) &&
-        hasQueryTokenParameter(url)
-      ) {
+      const isPortalPath =
+        url.pathname === "/portal" || url.pathname.startsWith("/portal/");
+      if (isPortalPath && !this.#portalEnabled) {
+        response.setHeader("cache-control", "no-store");
+        response.setHeader("x-content-type-options", "nosniff");
+        writeJson(response, 404, { error: "not_found" });
+        return;
+      }
+      if (!isPortalPath && this.#portalOnly) {
+        response.setHeader("cache-control", "no-store");
+        response.setHeader("x-content-type-options", "nosniff");
+        writeJson(response, 404, { error: "not_found" });
+        return;
+      }
+
+      if (isPortalPath && hasQueryTokenParameter(url)) {
         response.setHeader("cache-control", "no-store");
         response.setHeader("x-content-type-options", "nosniff");
         response.setHeader("referrer-policy", "no-referrer");
@@ -177,6 +201,18 @@ export class RelayControlHttpGateway {
               "bearer tokens are not accepted in URL query parameters; submit owner credentials via POST /portal/api/session",
           },
         });
+        return;
+      }
+
+      if (request.method === "GET" && url.pathname === "/portal/manifest.webmanifest") {
+        // Static Home Screen metadata only. Never embed bearer credentials,
+        // pairing codes, or account/device identities in public app metadata.
+        response.statusCode = 200;
+        response.setHeader("content-type", "application/manifest+json; charset=utf-8");
+        response.setHeader("cache-control", "no-store");
+        response.setHeader("x-content-type-options", "nosniff");
+        response.setHeader("referrer-policy", "no-referrer");
+        response.end(renderControlPortalManifest());
         return;
       }
 
@@ -425,6 +461,21 @@ export class RelayControlHttpGateway {
       return;
     }
 
+    if (
+      this.#portalReadOnly &&
+      request.method !== "GET" &&
+      request.method !== "HEAD"
+    ) {
+      writeJson(response, 403, {
+        error: {
+          code: "permission_denied",
+          message:
+            "portal is running in read-only pilot mode; policy mutations are disabled",
+        },
+      });
+      return;
+    }
+
     const devicePolicyMatch = /^\/portal\/api\/devices\/([^/]+)\/policy$/.exec(
       pathname,
     );
@@ -482,6 +533,10 @@ export class RelayControlHttpGateway {
       writeJson(response, 200, {
         updatedDevices: updated.map((r) => r.policy.device_id),
         count: updated.length,
+        revisions: updated.map((r) => ({
+          deviceId: r.policy.device_id,
+          desiredRevision: r.desiredRevision,
+        })),
       });
       return;
     }
@@ -532,6 +587,10 @@ export class RelayControlHttpGateway {
       writeJson(response, 200, {
         emergencyLockdown: !restore,
         updatedDevices: updated.map((r) => r.policy.device_id),
+        revisions: updated.map((r) => ({
+          deviceId: r.policy.device_id,
+          desiredRevision: r.desiredRevision,
+        })),
       });
       return;
     }
@@ -556,6 +615,10 @@ export class RelayControlHttpGateway {
       writeJson(response, 200, {
         principalId: operatorPrincipalId,
         updatedDevices: updated.map((r) => r.policy.device_id),
+        revisions: updated.map((r) => ({
+          deviceId: r.policy.device_id,
+          desiredRevision: r.desiredRevision,
+        })),
       });
       return;
     }
@@ -565,12 +628,18 @@ export class RelayControlHttpGateway {
     );
     if (request.method === "DELETE" && deleteOperatorMatch) {
       const operatorPrincipalId = decodeURIComponent(deleteOperatorMatch[1]!);
-      await this.#policyStore.removeOperatorPolicy({
+      const updated = await this.#policyStore.removeOperatorPolicy({
         accountId: identity.accountId,
         actorPrincipalId: identity.principalId,
         operatorPrincipalId,
       });
-      writeJson(response, 200, { removed: operatorPrincipalId });
+      writeJson(response, 200, {
+        removed: operatorPrincipalId,
+        revisions: updated.map((r) => ({
+          deviceId: r.policy.device_id,
+          desiredRevision: r.desiredRevision,
+        })),
+      });
       return;
     }
 
@@ -730,6 +799,9 @@ export class RelayControlHttpGateway {
 
     try {
       response.write(`event: ready\ndata: ${JSON.stringify({ type: "ready" })}\n\n`);
+      // A new subscriber needs an initial state notification even when its
+      // device update finished before the SSE connection was established.
+      scheduleOverviewPush();
     } catch {
       clientEntry.cleanup();
     }
