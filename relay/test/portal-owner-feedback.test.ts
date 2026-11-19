@@ -22,7 +22,7 @@ test("portal never reports access granted merely from relay HTTP acceptance", ()
 });
 test("directory-only operator removal does not claim a device acknowledgment", () => {
   const html = renderControlPortalHtml();
-  assert.match(html, /typeof response\\.removed === "string"/);
+  assert.match(html, /typeof response\.removed === "string"/);
   assert.match(html, /No active device grants to revoke/);
   assert.match(html, /"info", "operator-directory-removed"/);
   assert.match(html, /"info", "policy-no-change"/);
