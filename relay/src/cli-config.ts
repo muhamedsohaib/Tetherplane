@@ -11,6 +11,7 @@ import {
   type StaticClientCredential,
 } from "./auth/static-auth.ts";
 import type { OAuthResource } from "./auth/oauth-resource.ts";
+import type { PortalOidcLoginConfig } from "./auth/portal-oidc-login.ts";
 import { lstat, readFile } from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
@@ -290,6 +291,70 @@ export async function loadReadOnlyPortalPilotConfig(
     portalReadOnly: true,
     publicOrigin,
     trustProxyHeaders: true,
+  };
+}
+
+/**
+ * An optional nonsecret sidecar for an *already registered* OAuth public
+ * client. Absence preserves the existing pinned launcher and token login.
+ * The sidecar must not register clients or change the production provider.
+ */
+export async function loadPortalOidcLoginConfig(
+  options: RelayCliOptions,
+  oauth?: OAuthResource,
+): Promise<PortalOidcLoginConfig | undefined> {
+  const filename = options.stateFile + ".portal-oidc-login.json";
+  let info;
+  try {
+    info = await lstat(filename);
+  } catch (error) {
+    if ((error as NodeJS.ErrnoException).code === "ENOENT") {
+      return undefined;
+    }
+    throw new Error("Unable to inspect portal OAuth login configuration");
+  }
+  if (!info.isFile() || info.isSymbolicLink()) {
+    throw new Error("Portal OAuth login configuration must be a regular file");
+  }
+  let data: unknown;
+  try {
+    data = JSON.parse((await readFile(filename, "utf8")).replace(/^\uFEFF/, ""));
+  } catch {
+    throw new Error("Invalid portal OAuth login configuration JSON");
+  }
+  const result = z.object({
+    schema: z.literal(1),
+    clientId: z.string().min(8).max(256).regex(/^[\x21-\x7E]+$/),
+  }).strict().safeParse(data);
+  if (!result.success) {
+    throw new Error("Invalid portal OAuth login configuration");
+  }
+  // Never allow OAuth callbacks to be attached to the public MCP listener.
+  if (
+    !oauth ||
+    options.portalPort === undefined ||
+    options.portalPort === 0 ||
+    !options.portalReadOnly ||
+    !options.publicOrigin ||
+    !options.publicOrigin.startsWith("https://") ||
+    !new URL(options.publicOrigin).port ||
+    !options.trustProxyHeaders ||
+    options.host !== "127.0.0.1"
+  ) {
+    throw new Error("Portal OAuth login requires a separate read-only private HTTPS portal");
+  }
+  const issuer = new URL(oauth.issuer);
+  if (issuer.protocol !== "https:" || issuer.pathname !== "/") {
+    throw new Error("Portal OAuth issuer must use the approved HTTPS TetherAuth origin");
+  }
+  return {
+    issuer: issuer.href,
+    authorizationEndpoint: new URL("/auth", issuer).href,
+    tokenEndpoint: new URL("/token", issuer).href,
+    redirectUri: options.publicOrigin + "/portal/auth/callback",
+    clientId: result.data.clientId,
+    resource: oauth.resource,
+    scopes: [...new Set(["openid", ...oauth.scopes])],
   };
 }
 

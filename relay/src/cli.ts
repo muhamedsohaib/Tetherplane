@@ -4,6 +4,7 @@ import { readFile } from "node:fs/promises";
 
 import {
   loadClientAuth,
+  loadPortalOidcLoginConfig,
   loadReadOnlyPortalPilotConfig,
   parseRelayArgs,
 } from "./cli-config.ts";
@@ -22,6 +23,7 @@ async function main(): Promise<void> {
     oauth,
     authLoginBridgeToken,
   } = await loadClientAuth(options.authConfig);
+  const portalOidcLogin = await loadPortalOidcLoginConfig(options, oauth);
 
   const tls =
     options.tlsCert && options.tlsKey
@@ -49,6 +51,7 @@ async function main(): Promise<void> {
       ? { portalPort: options.portalPort }
       : {}),
     portalReadOnly: options.portalReadOnly,
+    ...(portalOidcLogin ? { portalOidcLogin } : {}),
   });
 
   let closing = false;
