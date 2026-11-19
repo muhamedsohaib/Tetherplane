@@ -1,0 +1,110 @@
+name: G4 Remote Relay Disposable Windows Staging Kit
+on:
+  push:
+    branches: [experiment/g4-remote-staging-hardening-20261119]
+permissions:
+  contents: read
+jobs:
+  build-kit:
+    runs-on: windows-latest
+    timeout-minutes: 50
+    steps:
+      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
+        with:
+          persist-credentials: false
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4.4.0
+        with:
+          node-version: '22'
+      - name: Build locked agent, relay and extension
+        shell: pwsh
+        run: |
+          $ErrorActionPreference='Stop'
+          $env:RUSTFLAGS='-C target-feature=+crt-static'
+          cargo build -p tetherd --release --locked
+          if($LASTEXITCODE -ne 0){throw 'agent build failed'}
+          corepack enable
+          corepack prepare pnpm@10.34.5 --activate
+          pnpm install --frozen-lockfile
+          if($LASTEXITCODE -ne 0){throw 'locked install failed'}
+          pnpm -r build
+          if($LASTEXITCODE -ne 0){throw 'workspace build failed'}
+          pnpm --filter @tetherplane/browser-extension build
+          if($LASTEXITCODE -ne 0){throw 'extension build failed'}
+      - name: Package dependencies for disposable offline guest
+        shell: pwsh
+        run: |
+          $ErrorActionPreference='Stop'
+          $out=Join-Path $env:RUNNER_TEMP 'g4-remote-stage'
+          foreach($p in @($out,(Join-Path $out 'scripts'),(Join-Path $out 'tests/e2e/fixtures'),(Join-Path $out 'target/release'),(Join-Path $out 'tools'))){
+            New-Item -ItemType Directory -Path $p -Force | Out-Null
+          }
+          Copy-Item 'target/release/tetherd.exe' (Join-Path $out 'target/release/tetherd.exe')
+          Copy-Item (Get-Command node.exe).Source (Join-Path $out 'node.exe')
+          Copy-Item 'scripts/staging-acceptance.mjs' (Join-Path $out 'scripts/staging-acceptance.mjs')
+          Copy-Item 'tests/e2e/fixtures/windows-desktop-fixture.ps1' (Join-Path $out 'tests/e2e/fixtures/windows-desktop-fixture.ps1')
+          [IO.File]::WriteAllText((Join-Path $out 'package.json'),'{"private":true,"type":"module"}',[Text.UTF8Encoding]::new($false))
+          [IO.File]::WriteAllText((Join-Path $out 'tests/e2e/package.json'),'{"private":true,"type":"module"}',[Text.UTF8Encoding]::new($false))
+          pnpm --filter @tetherplane/relay deploy --legacy (Join-Path $out 'relay')
+          if($LASTEXITCODE -ne 0){throw 'relay deploy failed'}
+          npm install --prefix (Join-Path $out 'tests/e2e') --no-package-lock --no-save --ignore-scripts --no-audit --no-fund '@modelcontextprotocol/sdk@1.30.0'
+          if($LASTEXITCODE -ne 0){throw 'MCP SDK packaging failed'}
+          $bundlerTool=Join-Path $env:RUNNER_TEMP 'g4-remote-bundler'
+          npm install --prefix $bundlerTool --no-package-lock --no-audit --no-fund 'esbuild@0.25.12'
+          if($LASTEXITCODE -ne 0){throw 'esbuild install failed'}
+          $bundler=Join-Path $bundlerTool 'node_modules/esbuild/bin/esbuild'
+          $banner="--banner:js=import { createRequire as __tpRequire } from 'node:module'; var require = __tpRequire(import.meta.url);"
+          & node $bundler 'scripts/browser-extension-host.ts' '--bundle' '--platform=node' '--target=node22' '--format=esm' $banner "--outfile=$(Join-Path $out 'scripts/browser-extension-host.ts')"
+          if($LASTEXITCODE -ne 0){throw 'bridge host bundle failed'}
+          $ext=Join-Path $out 'extension/browser'
+          New-Item -ItemType Directory -Path (Join-Path $ext 'dist') -Force | Out-Null
+          foreach($p in @('manifest.json','pair.html')){Copy-Item (Join-Path 'extension/browser' $p) (Join-Path $ext $p)}
+          Copy-Item 'extension/browser/dist/*' (Join-Path $ext 'dist') -Recurse
+          if(-not(Test-Path (Join-Path $ext 'dist/background.js'))){throw 'extension missing'}
+          # OpenSSL is Apache-2.0. This runtime is disposable-VM-only, not a product artifact.
+          $openssl='C:/Program Files/Git/mingw64/bin/openssl.exe'
+          if(-not(Test-Path $openssl)){throw 'Git OpenSSL is unavailable on hosted runner'}
+          $sourceBin=Split-Path $openssl -Parent
+          Copy-Item $openssl (Join-Path $out 'tools/openssl.exe')
+          foreach($dll in @('libcrypto-3-x64.dll','libssl-3-x64.dll','zlib1.dll','libzstd.dll')){
+            $f=Join-Path $sourceBin $dll
+            if(Test-Path $f){Copy-Item $f (Join-Path $out "tools/$dll")}
+          }
+          & (Join-Path $out 'tools/openssl.exe') version
+          if($LASTEXITCODE -ne 0){throw 'bundled OpenSSL dependencies unavailable'}
+          Copy-Item LICENSE-APACHE (Join-Path $out 'tools/LICENSE-APACHE')
+          [IO.File]::WriteAllText((Join-Path $out 'tools/OPENSSL-NOTICE.txt'),'Staging-only OpenSSL from Git for Windows; license Apache-2.0; https://www.openssl.org/source/license.html',[Text.UTF8Encoding]::new($false))
+          $manifest=[ordered]@{
+            source_provider_commit=$env:GITHUB_SHA
+            packaging_commit=$env:GITHUB_SHA
+            scope='disposable VM: remote-relay G1-G5/G7 and G6 emulation only'
+            production_install=$false
+            guest_networking_required=$false
+            interactive_remote_g4='PENDING'
+            physical_g6='PENDING'
+          }
+          [IO.File]::WriteAllText((Join-Path $out 'manifest.json'),($manifest|ConvertTo-Json -Depth 5),[Text.UTF8Encoding]::new($false))
+          Write-Output 'REMOTE_G4_PACKAGE_ASSEMBLY=PASS'
+      - name: Portable staging describe smoke (NOT interactive acceptance)
+        shell: pwsh
+        run: |
+          $ErrorActionPreference='Stop'
+          $out=Join-Path $env:RUNNER_TEMP 'g4-remote-stage'
+          $env:PATH=(Join-Path $out 'tools')+[IO.Path]::PathSeparator+$env:PATH
+          & (Join-Path $out 'node.exe') (Join-Path $out 'relay/dist/cli.js') --help | Out-Null
+          if($LASTEXITCODE -ne 0){throw 'relay CLI failed'}
+          $raw=& (Join-Path $out 'node.exe') (Join-Path $out 'scripts/staging-acceptance.mjs') --describe
+          if($LASTEXITCODE -ne 0){throw 'staging describe failed'}
+          $plan=($raw -join [Environment]::NewLine)|ConvertFrom-Json
+          if(-not $plan.environment.builtReady){throw 'offline staging package incomplete'}
+          if(-not $plan.environment.opensslPath){throw 'OpenSSL unavailable'}
+          if(-not $plan.environment.chromiumPath){throw 'No Chromium-based browser on runner'}
+          if($plan.environment.interactiveDesktopAvailable){throw 'CI must not certify interactive G4'}
+          Write-Output 'REMOTE_G4_OFFLINE_PREFLIGHT=PASS'
+          Write-Output 'REMOTE_G4_INTERACTIVE_CI=SKIPPED_INTENTIONALLY'
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        with:
+          name: tetherplane-g4-remote-stage
+          path: ${{ runner.temp }}/g4-remote-stage/
+          if-no-files-found: error
+          retention-days: 3
