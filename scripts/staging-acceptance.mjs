@@ -178,12 +178,16 @@ export function evaluateOverallOutcome({ allowPartial, gates }) {
   const blocked = entries
     .filter(([, result]) => result.status === "BLOCKED")
     .map(([id]) => id);
-
-  if (failed.length > 0) {
+  // --allow-partial permits explicit BLOCKED checks, never unexecuted gates.
+  const pending = entries
+    .filter(([, result]) => result.status === "PENDING")
+    .map(([id]) => id);
+  const failedOrUnexecuted = [...new Set([...failed, ...pending])];
+  if (failedOrUnexecuted.length > 0) {
     return {
       ok: false,
-      summary: `FAIL (${failed.join(", ")})`,
-      failed,
+      summary: `FAIL (${failedOrUnexecuted.join(", ")})`,
+      failed: failedOrUnexecuted,
       blocked,
     };
   }
@@ -268,6 +272,38 @@ export function detectInteractiveWindowsDesktop({
       sessionName==="Services")return false;
   if(typeof sessionName==="string" && sessionName.trim())return true;
   try{return probe()===true}catch{return false}
+}
+
+// Isolated Windows guest only. Clear the test canary without synthetic input
+// or foreground activation. A bounded, verified STA clipboard reset is required.
+export function resetStagingGuestClipboard(run = execFileSync) {
+  const script = [
+    "$ErrorActionPreference='Stop'",
+    "Add-Type -AssemblyName System.Windows.Forms",
+    "$last='clipboard reset not confirmed'",
+    "for($attempt=0;$attempt -lt 5;$attempt++){",
+    " try {",
+    "  [System.Windows.Forms.Clipboard]::Clear()",
+    "  if([System.Windows.Forms.Clipboard]::ContainsText()){throw 'clipboard still contains text'}",
+    "  Write-Output 'G4_GUEST_CLIPBOARD_CLEAR=PASS'",
+    "  exit 0",
+    " } catch { $last=$_.Exception.Message; Start-Sleep -Milliseconds 120 }",
+    "}",
+    "throw ('G4_GUEST_CLIPBOARD_CLEAR=FAIL '+$last)",
+  ].join("\n");
+  try {
+    const output = run("powershell.exe",
+      ["-NoProfile", "-Sta", "-Command", script], {
+        encoding: "utf8", timeout: 12_000, windowsHide: true,
+      });
+    if (!String(output ?? "").includes("G4_GUEST_CLIPBOARD_CLEAR=PASS")) {
+      throw new Error("Clipboard reset produced no verified success marker");
+    }
+  } catch (err) {
+    const detail = err?.stderr ? String(err.stderr).slice(0, 1000)
+      : String(err instanceof Error ? err.message : err).slice(0, 1000);
+    throw new Error(`Isolated G4 clipboard cleanup not verified: ${detail}`);
+  }
 }
 
 export function detectPrerequisites(explicitTetherd) {
@@ -1525,6 +1561,8 @@ async function runStagingAcceptance(opts) {
   let humanDesktopChild = null;
   let ownedDesktopHandle = null;
   let clipboardCanarySet = false;
+  let originalStagingError = null;
+  let clipboardCleanupError = null;
 
   const relayLogs = [];
   const extHostLogs = [];
@@ -2586,16 +2624,7 @@ async function runStagingAcceptance(opts) {
           humanDesktopChild = null;
         }
 
-        execFileSync(
-          "powershell.exe",
-          [
-            "-NoProfile",
-            "-Sta",
-            "-Command",
-            "Add-Type -AssemblyName System.Windows.Forms; Set-Clipboard -Value ''",
-          ],
-          { stdio: "ignore" },
-        );
+        resetStagingGuestClipboard();
         clipboardCanarySet = false;
 
         gates.G4 = {
@@ -3248,6 +3277,10 @@ async function runStagingAcceptance(opts) {
       gates.G6 = { status: "FAIL", details: [String(err)], mobileChecks: mChecks };
       throw err;
     }
+  } catch (err) {
+    // Retain the first failure and emit an inspectable report after teardown.
+    originalStagingError = err;
+    process.stderr.write(`[staging acceptance failure] ${String(err)}\n`);
   } finally {
     // Teardown all clients, servers, child processes & staging dirs cleanly
     if (ownedDesktopHandle !== null && ownerMcp) {
@@ -3265,18 +3298,10 @@ async function runStagingAcceptance(opts) {
     }
     if (clipboardCanarySet && process.platform === "win32") {
       try {
-        execFileSync(
-          "powershell.exe",
-          [
-            "-NoProfile",
-            "-Sta",
-            "-Command",
-            "Add-Type -AssemblyName System.Windows.Forms; Set-Clipboard -Value ''",
-          ],
-          { stdio: "ignore" },
-        );
-      } catch {
-        // ignore clipboard cleanup failure
+        resetStagingGuestClipboard();
+      } catch (err) {
+        clipboardCleanupError = err;
+        process.stderr.write(`[staging guest clipboard teardown] ${String(err)}\n`);
       }
       clipboardCanarySet = false;
     }
@@ -3347,7 +3372,8 @@ async function runStagingAcceptance(opts) {
     const gitAfter = getRepoGitPorcelain();
     const gitUnchanged = gitBefore === gitAfter;
 
-    if (busyPorts.length === 0 && stagingDirGone && gitUnchanged) {
+    if (busyPorts.length === 0 && stagingDirGone && gitUnchanged &&
+        clipboardCleanupError === null) {
       gates.G7 = {
         status: "PASS",
         details: [
@@ -3358,7 +3384,7 @@ async function runStagingAcceptance(opts) {
       gates.G7 = {
         status: "FAIL",
         details: [
-          `Teardown incomplete: busyPorts=${JSON.stringify(busyPorts)}, stagingDirGone=${stagingDirGone}, gitUnchanged=${gitUnchanged}`,
+          `Teardown incomplete: busyPorts=${JSON.stringify(busyPorts)}, stagingDirGone=${stagingDirGone}, gitUnchanged=${gitUnchanged}, clipboardCleanup=${clipboardCleanupError ? String(clipboardCleanupError) : "ok"}`,
         ],
       };
     }
@@ -3375,6 +3401,10 @@ async function runStagingAcceptance(opts) {
     allowPartial: opts.allowPartial,
     outcome,
     screenshotDir: opts.screenshotDir ?? null,
+    executionError: originalStagingError
+      ? String(originalStagingError instanceof Error ? originalStagingError.message
+        : originalStagingError).slice(0, 3000)
+      : null,
     gates,
   };
   if (opts.reportFile) {
