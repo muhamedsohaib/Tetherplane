@@ -162,31 +162,13 @@ jobs:
           if(-not $plan.environment.opensslPath){throw 'OpenSSL unavailable'}
           if(-not $plan.environment.chromiumPath){throw 'No Chromium-based browser on runner'}
           if($plan.environment.interactiveDesktopAvailable){throw 'CI must not certify interactive G4'}
-          # Test actual bundled OpenSSL via the same staging PKI source, with a
-          # deliberately invalid machine config. No trust stores are modified.
+          # Assert the bundled OpenSSL can create ephemeral relay certificates
+          # without a machine-global openssl.cnf or touching Windows trust stores.
           $pkiTap=& (Join-Path $out 'node.exe') --test (Join-Path $out 'tests/e2e/staging-openssl-config.test.mjs')
           if($LASTEXITCODE -ne 0){throw 'Bundled ephemeral PKI test failed'}
-          $pkiSummary=($pkiTap -join [Environment]::NewLine)
-          if($pkiSummary -notmatch '(?m)^# pass 1\s*
-          Write-Output 'REMOTE_G4_OFFLINE_PREFLIGHT=PASS'
-          Write-Output 'REMOTE_G4_INTERACTIVE_CI=SKIPPED_INTENTIONALLY'
-      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
-        with:
-          name: tetherplane-g4-remote-stage
-          path: ${{ runner.temp }}/g4-remote-stage/
-          if-no-files-found: error
-          retention-days: 3
- -or $pkiSummary -notmatch '(?m)^# skipped 0\s*
-          Write-Output 'REMOTE_G4_OFFLINE_PREFLIGHT=PASS'
-          Write-Output 'REMOTE_G4_INTERACTIVE_CI=SKIPPED_INTENTIONALLY'
-      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
-        with:
-          name: tetherplane-g4-remote-stage
-          path: ${{ runner.temp }}/g4-remote-stage/
-          if-no-files-found: error
-          retention-days: 3
-){
-            throw 'Bundled ephemeral PKI test was not fully executed'
+          $pkiText=($pkiTap -join [Environment]::NewLine)
+          if(-not $pkiText.Contains('# pass 1') -or -not $pkiText.Contains('# skipped 0')){
+            throw 'Bundled ephemeral PKI test did not complete one passing and zero skipped tests'
           }
           Write-Output 'G4_STAGING_EPHEMERAL_PKI=PASS'
           Write-Output 'REMOTE_G4_OFFLINE_PREFLIGHT=PASS'
