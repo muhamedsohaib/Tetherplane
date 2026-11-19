@@ -97,6 +97,39 @@ export const MOBILE_CHECKS = Object.freeze([
   { id: "M10", name: "Sign Out Session Termination & Console Hygiene" },
 ]);
 
+// Remote-relay G4 must target explicit fixture controls, not arbitrary
+// UI Automation value/invoke patterns on window chrome (e.g. Close/Minimise).
+// Deterministic selection keeps negative authorization assertions meaningful.
+export function selectStagingG4FixtureTargets(ownedNodes, humanNodes) {
+  const fixtureNode = (nodes, id, name, pattern, required = true) => {
+    const candidates = nodes.filter(
+      (node) =>
+        (node.automation_id === id || node.name === name) &&
+        (!pattern || (node.patterns ?? []).includes(pattern)),
+    );
+    if (candidates.length === 0 && !required) return null;
+    assert.equal(
+      candidates.length,
+      1,
+      `G4 fixture target ${id} must resolve uniquely, got ${candidates.length}`,
+    );
+    return candidates[0];
+  };
+  return {
+    valueNode: fixtureNode(ownedNodes, "OwnedValue", "Owned Value", "value"),
+    invokeNode: fixtureNode(ownedNodes, "OwnedInvoke", "Owned Invoke", "invoke"),
+    selectionNode: fixtureNode(
+      ownedNodes, "OwnedBeta", "Owned Beta", "selection", false,
+    ),
+    listBoxNode: fixtureNode(
+      ownedNodes, "OwnedSelection", "Owned Selection", null, false,
+    ),
+    humanInvokeNode: fixtureNode(
+      humanNodes, "HumanInvoke", "Human Invoke", "invoke",
+    ),
+  };
+}
+
 export function assertAllowedHostname(hostname) {
   const normalized = String(hostname || "").trim().toUpperCase();
   if (!normalized) {
@@ -2306,6 +2339,7 @@ async function runStagingAcceptance(opts) {
                     "Owned",
                     "-Framework",
                     framework,
+                    ...(framework === "Wpf" ? ["-NoActivate"] : []),
                   ],
                   wait_ms: 0,
                   pty: false,
@@ -2319,7 +2353,7 @@ async function runStagingAcceptance(opts) {
             if (!existsSync(ownedStateFile)) return false;
             const s = JSON.parse(readFileSync(ownedStateFile, "utf8"));
             return s.ready === true && s.framework === framework;
-          }, 10_000, `Windows owned ${framework} fixture ready`);
+          }, 45_000, `Windows owned ${framework} fixture ready`);
 
           humanDesktopChild = spawn(
             "powershell.exe",
@@ -2347,12 +2381,12 @@ async function runStagingAcceptance(opts) {
             if (!existsSync(humanStateFile)) return false;
             const s = JSON.parse(readFileSync(humanStateFile, "utf8"));
             return s.ready === true && s.focused === true && s.framework === framework;
-          }, 10_000, `Windows human ${framework} fixture focused`);
+          }, 45_000, `Windows human ${framework} fixture focused`);
 
           await until(() => {
             const s = JSON.parse(readFileSync(ownedStateFile, "utf8"));
             return s.ready === true && s.focused === false;
-          }, 10_000, `Windows owned ${framework} fixture unfocused behind human window`);
+          }, 45_000, `Windows owned ${framework} fixture unfocused behind human window`);
 
           const snap = parseToolResult(
             await ownerMcp.callTool({
@@ -2377,19 +2411,13 @@ async function runStagingAcceptance(opts) {
           assert.ok(ownedNodes.every((n) => n.origin === "tetherplane"));
           assert.ok(humanNodes.every((n) => n.origin === "human_or_external"));
 
-          const valNode = ownedNodes.find((n) => (n.patterns ?? []).includes("value"));
-          const invNode = ownedNodes.find((n) => (n.patterns ?? []).includes("invoke"));
-          const selNode =
-            ownedNodes.find(
-              (n) => (n.patterns ?? []).includes("selection") && String(n.name).includes("Beta"),
-            ) ?? ownedNodes.find((n) => (n.patterns ?? []).includes("selection"));
-          const listBoxNode = ownedNodes.find(
-            (n) =>
-              n.automation_id === "OwnedSelection" ||
-              String(n.name ?? "").includes("Owned Selection") ||
-              String(n.class_name ?? "").toLowerCase().includes("listbox"),
-          );
-          assert.ok(valNode && invNode, `${framework} value/invoke nodes missing`);
+          const {
+            valueNode: valNode,
+            invokeNode: invNode,
+            selectionNode: selNode,
+            listBoxNode,
+            humanInvokeNode: humanInv,
+          } = selectStagingG4FixtureTargets(ownedNodes, humanNodes);
 
           for (const callArgs of [
             { reference: valNode.reference, action: "set_value", value: expectedText },
@@ -2436,8 +2464,6 @@ async function runStagingAcceptance(opts) {
             selectionMode = "degraded_sandbox_capability_unavailable";
           }
 
-          const humanInv = humanNodes.find((n) => (n.patterns ?? []).includes("invoke"));
-          assert.ok(humanInv, `${framework} human invoke node missing`);
           const deniedHuman = await ownerMcp.callTool({
             name: "desktop",
             arguments: {
