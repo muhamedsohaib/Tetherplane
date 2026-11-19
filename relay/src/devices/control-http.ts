@@ -592,12 +592,18 @@ export class RelayControlHttpGateway {
     );
     if (request.method === "DELETE" && deleteOperatorMatch) {
       const operatorPrincipalId = decodeURIComponent(deleteOperatorMatch[1]!);
-      await this.#policyStore.removeOperatorPolicy({
+      const updated = await this.#policyStore.removeOperatorPolicy({
         accountId: identity.accountId,
         actorPrincipalId: identity.principalId,
         operatorPrincipalId,
       });
-      writeJson(response, 200, { removed: operatorPrincipalId });
+      writeJson(response, 200, {
+        removed: operatorPrincipalId,
+        revisions: updated.map((r) => ({
+          deviceId: r.policy.device_id,
+          desiredRevision: r.desiredRevision,
+        })),
+      });
       return;
     }
 

@@ -1022,7 +1022,7 @@ export class PolicyStore {
     actorPrincipalId: string;
     operatorPrincipalId: string;
     reason?: string;
-  }): Promise<void> {
+  }): Promise<DevicePolicyRecord[]> {
     const operatorId = input.operatorPrincipalId.trim();
     this.#operators.delete(`${input.accountId}::${operatorId}`);
     const paired = this.#registry
@@ -1030,6 +1030,7 @@ export class PolicyStore {
       .filter((d) => d.revokedAt === null);
 
     let modifiedAnyDevice = false;
+    const updated: DevicePolicyRecord[] = [];
     for (const binding of paired) {
       const record = await this.ensureDevicePolicy(binding);
       if (!(operatorId in record.policy.operator_policies)) continue;
@@ -1066,6 +1067,7 @@ export class PolicyStore {
         details: { operatorPrincipalId: operatorId },
       });
       await this.#pushToDeviceIfOnline(binding.deviceId, nextPolicy);
+      updated.push(record);
     }
     if (!modifiedAnyDevice) {
       this.#appendAudit({
@@ -1081,6 +1083,7 @@ export class PolicyStore {
     }
     await this.#persist();
     this.notifyChange(input.accountId);
+    return updated;
   }
 
   async rollbackDevicePolicy(input: {

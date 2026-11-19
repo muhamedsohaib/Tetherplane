@@ -970,7 +970,8 @@ const PORTAL_SCRIPT = `
                      Number(d.appliedRevision) === change.revision) {
             trackedAccessUpdates.delete(id);
             showToast(id + ": " + change.label +
-              " confirmed by device (v" + change.revision + ").",
+              " confirmed by device (policy v" + change.revision +
+              "). Other local provider restrictions may still apply.",
               "confirmed", "policy-confirmed");
           }
         });
@@ -1706,10 +1707,9 @@ const PORTAL_SCRIPT = `
             const principalId = btn.dataset.principal || "";
             if (!principalId) return;
             btn.disabled = true;
-            await apiCall("/portal/api/operators/" + encodeURIComponent(principalId), "DELETE");
+            const result = await apiCall("/portal/api/operators/" + encodeURIComponent(principalId), "DELETE");
+            trackAccessChange("Revoke operator access", result);
             await loadOverview();
-            showToast("Operator revoked at relay. Review device sync before assuming revocation applied.",
-              "pending", "operator-revoked");
           }
         } catch (err) {
           showBanner("Action failed: " + err.message);

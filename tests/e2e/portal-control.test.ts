@@ -761,6 +761,13 @@ test(
         arguments: { op: "read", device: "Leno", args: { path: targetFile } },
       });
       assert.equal(helperAfterRemove.isError, true);
+      await until(
+        () => browser!.eval<boolean>(
+          `Boolean(document.querySelector('#toast-stack .toast[data-kind="policy-confirmed"]')?.textContent?.includes('Revoke operator access confirmed by device'))`,
+        ),
+        8_000,
+        "operator access removal confirmed by Leno device",
+      );
 
       // Switch to mobile viewport (390x844) and test offline update -> tetherd reconnect resync + layout
       await browser.setViewport(390, 844, true);
