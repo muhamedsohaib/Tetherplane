@@ -10,6 +10,7 @@ serde = { version = "1", features = ["derive"] }
 serde_json = "1"
 tether-core = { path = "../../tether-core" }
 uuid = { version = "1", features = ["v4"] }
+win-uia2-nofocus = { git = "https://github.com/muhamedsohaib/win-uia2-nofocus.git", rev = "393d4c04b42090e9bb1541315445883f4b3c6a67" }
 
 [target.'cfg(windows)'.dependencies]
 # uiautomation 0.25.1 imports its input module from core even with defaults disabled.

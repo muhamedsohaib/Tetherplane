@@ -1203,6 +1203,7 @@ dependencies = [
  "tokio",
  "uiautomation",
  "uuid",
+ "win-uia2-nofocus",
  "windows",
  "windows-win",
  "winsafe",
@@ -1544,6 +1545,14 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "7dcd9d09a39985f5344844e66b0c530a33843579125f23e21e9f0f220850f22a"
 dependencies = [
  "rustls-pki-types",
+]
+
+[[package]]
+name = "win-uia2-nofocus"
+version = "0.1.0"
+source = "git+https://github.com/muhamedsohaib/win-uia2-nofocus.git?rev=393d4c04b42090e9bb1541315445883f4b3c6a67#393d4c04b42090e9bb1541315445883f4b3c6a67"
+dependencies = [
+ "windows",
 ]
 
 [[package]]
