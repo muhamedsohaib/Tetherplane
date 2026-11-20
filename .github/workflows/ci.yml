@@ -94,3 +94,16 @@ jobs:
         if: runner.os == 'Windows'
         shell: pwsh
         run: ./tests/release/windows-package-smoke.ps1
+
+      # Temporary CI-delivered pilot executable. The artifact is published
+      # only after all Windows quality and package checks have succeeded.
+      # Keep the active RTX binary unchanged until the owner-authorized pilot.
+      - name: Export Windows RTX heartbeat pilot binary
+        if: runner.os == 'Windows'
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        with:
+          name: tetherd-heartbeat-rtx-${{ github.sha }}
+          path: target/release/tetherd.exe
+          if-no-files-found: error
+          retention-days: 3
+          compression-level: 0
