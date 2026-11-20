@@ -456,7 +456,7 @@ mod tests {
             "wrong or absent Pong must force retry, not an indefinite socket wait"
         );
 
-        heartbeat.observe_pong(&payload);
+        heartbeat.observe_pong(payload);
         let second = heartbeat
             .next_ping()
             .expect("matching Pong clears deadline");
