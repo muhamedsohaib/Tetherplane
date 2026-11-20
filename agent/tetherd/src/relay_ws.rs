@@ -23,6 +23,12 @@ use crate::runtime::AgentRuntime;
 
 const DEVICE_ID_HEADER: HeaderName = HeaderName::from_static("x-tetherplane-device-id");
 
+// A disconnected but half-open TCP socket can otherwise wait forever for
+// inbound WebSocket frames. A missing Pong forces reconnect independently
+// of browser probing, with normal reconnect delay applied by serve().
+const RELAY_HEARTBEAT_INTERVAL: Duration = Duration::from_secs(10);
+const RELAY_PING_SEND_TIMEOUT: Duration = Duration::from_secs(5);
+
 pub(crate) struct RelayConfig {
     pub url: String,
     pub device_id: String,
@@ -37,6 +43,34 @@ pub(crate) struct RelayConfig {
 enum RelayFailure {
     Fatal(String),
     Retryable(String),
+}
+
+#[derive(Default)]
+struct RelayHeartbeat {
+    sequence: u64,
+    awaiting_pong: Option<u64>,
+}
+
+impl RelayHeartbeat {
+    fn next_ping(&mut self) -> Result<Message, RelayFailure> {
+        if self.awaiting_pong.is_some() {
+            return Err(RelayFailure::Retryable(
+                "relay heartbeat timed out waiting for Pong".to_owned(),
+            ));
+        }
+        self.sequence = self.sequence.wrapping_add(1);
+        self.awaiting_pong = Some(self.sequence);
+        Ok(Message::Ping(self.sequence.to_be_bytes().to_vec().into()))
+    }
+
+    fn observe_pong(&mut self, payload: &[u8]) {
+        if self
+            .awaiting_pong
+            .is_some_and(|sequence| payload == sequence.to_be_bytes().as_slice())
+        {
+            self.awaiting_pong = None;
+        }
+    }
 }
 
 #[derive(Debug, Deserialize)]
@@ -151,6 +185,14 @@ async fn connect_and_run(
     runtime: Arc<AgentRuntime>,
     config: &RelayConfig,
 ) -> Result<(), RelayFailure> {
+    connect_and_run_with_heartbeat(runtime, config, RELAY_HEARTBEAT_INTERVAL).await
+}
+
+async fn connect_and_run_with_heartbeat(
+    runtime: Arc<AgentRuntime>,
+    config: &RelayConfig,
+    heartbeat_interval: Duration,
+) -> Result<(), RelayFailure> {
     let mut request = config
         .url
         .as_str()
@@ -191,6 +233,11 @@ async fn connect_and_run(
     probe_tick.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Skip);
     let _ = probe_tick.tick().await;
 
+    let mut heartbeat_tick = tokio::time::interval(heartbeat_interval);
+    heartbeat_tick.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Skip);
+    let _ = heartbeat_tick.tick().await;
+    let mut heartbeat = RelayHeartbeat::default();
+
     loop {
         tokio::select! {
             next = socket.next() => {
@@ -200,6 +247,9 @@ async fn connect_and_run(
                 let message = next.map_err(|error| {
                     RelayFailure::Retryable(format!("websocket receive failed: {error}"))
                 })?;
+                if let Message::Pong(payload) = &message {
+                    heartbeat.observe_pong(payload);
+                }
                 if handle_ws_frame(&mut socket, &runtime, config, message).await? {
                     return Ok(());
                 }
@@ -208,6 +258,13 @@ async fn connect_and_run(
                 if runtime.refresh_browser_availability().await {
                     send_device_telemetry(&mut socket, &runtime, &config.device_id).await?;
                 }
+            }
+            _ = heartbeat_tick.tick() => {
+                let ping = heartbeat.next_ping()?;
+                tokio::time::timeout(RELAY_PING_SEND_TIMEOUT, socket.send(ping))
+                    .await
+                    .map_err(|_| RelayFailure::Retryable("relay heartbeat Ping send timed out".into()))?
+                    .map_err(|error| RelayFailure::Retryable(format!("relay heartbeat Ping failed: {error}")))?;
             }
         }
     }
@@ -381,6 +438,137 @@ fn wrong_device_result(invocation: &InvocationEnvelope, local_device_id: &str) -
 mod tests {
     use super::{RelayInbound, validate_relay_url};
     use serde_json::json;
+
+    #[test]
+    fn relay_heartbeat_requires_matching_pong_and_rejects_missing_ack() {
+        use super::{RelayFailure, RelayHeartbeat};
+        use tokio_tungstenite::tungstenite::Message;
+
+        let mut heartbeat = RelayHeartbeat::default();
+        let first = heartbeat.next_ping().expect("initial ping");
+        let Message::Ping(ref payload) = first else {
+            panic!("heartbeat must use a WebSocket Ping frame");
+        };
+        assert_eq!(payload.len(), 8, "ping payload is a per-session nonce");
+        heartbeat.observe_pong(&[1, 2, 3]);
+        assert!(
+            matches!(heartbeat.next_ping(), Err(RelayFailure::Retryable(_))),
+            "wrong or absent Pong must force retry, not an indefinite socket wait"
+        );
+
+        heartbeat.observe_pong(&payload);
+        let second = heartbeat
+            .next_ping()
+            .expect("matching Pong clears deadline");
+        assert_ne!(first, second, "each ping must have a fresh sequence");
+        assert!(
+            matches!(heartbeat.next_ping(), Err(RelayFailure::Retryable(_))),
+            "new Ping also requires a matching Pong"
+        );
+    }
+
+    #[tokio::test]
+    async fn silent_relay_socket_is_detected_without_relying_on_browser_probe() {
+        use super::{RelayConfig, RelayFailure, connect_and_run_with_heartbeat};
+        use crate::runtime::AgentRuntime;
+        use futures_util::StreamExt;
+        use std::sync::Arc;
+        use std::time::Duration;
+        use tokio::net::TcpListener;
+
+        let server = TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let port = server.local_addr().unwrap().port();
+        let remote = tokio::spawn(async move {
+            let (stream, _) = server.accept().await.unwrap();
+            let mut websocket = tokio_tungstenite::accept_async(stream).await.unwrap();
+            let hello = websocket.next().await.unwrap().unwrap();
+            assert!(matches!(
+                hello,
+                tokio_tungstenite::tungstenite::Message::Text(_)
+            ));
+            // Simulate a blackholed relay: keep the TCP/WebSocket open but do
+            // not poll it, so no Pong can be returned to the client.
+            tokio::time::sleep(Duration::from_secs(5)).await;
+        });
+        let runtime =
+            Arc::new(AgentRuntime::new(vec![std::env::temp_dir()], None, None, None).unwrap());
+        let config = RelayConfig {
+            url: format!("ws://127.0.0.1:{port}/device"),
+            device_id: "heartbeat-stall-test".into(),
+            credential: "a-test-only-local-device-credential".into(),
+            allow_insecure_localhost: true,
+            tls_connector: None,
+            reconnect_delay: Duration::from_secs(1),
+            probe_interval: Duration::from_secs(5),
+        };
+        let result = tokio::time::timeout(
+            Duration::from_secs(3),
+            connect_and_run_with_heartbeat(runtime, &config, Duration::from_millis(120)),
+        )
+        .await
+        .expect("stalled WebSocket must be detected within test deadline");
+        assert!(
+            matches!(result, Err(RelayFailure::Retryable(ref error)) if error.contains("heartbeat timed out")),
+            "lack of Pong must trigger retryable reconnect, got: {result:?}"
+        );
+        remote.abort();
+    }
+
+    #[tokio::test]
+    async fn healthy_relay_pong_does_not_trigger_false_reconnect() {
+        use super::{RelayConfig, connect_and_run_with_heartbeat};
+        use crate::runtime::AgentRuntime;
+        use futures_util::{SinkExt, StreamExt};
+        use std::sync::Arc;
+        use std::time::Duration;
+        use tokio::net::TcpListener;
+        use tokio_tungstenite::tungstenite::Message;
+
+        let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let port = listener.local_addr().unwrap().port();
+        let peer = tokio::spawn(async move {
+            let (stream, _) = listener.accept().await.unwrap();
+            let mut ws = tokio_tungstenite::accept_async(stream).await.unwrap();
+            assert!(matches!(
+                ws.next().await.unwrap().unwrap(),
+                Message::Text(_)
+            ));
+            for _ in 0..3 {
+                let next = tokio::time::timeout(Duration::from_secs(2), ws.next())
+                    .await
+                    .expect("expected Ping")
+                    .expect("socket ended")
+                    .expect("socket frame error");
+                let Message::Ping(payload) = next else {
+                    panic!("expected heartbeat Ping from agent, got: {next:?}");
+                };
+                ws.send(Message::Pong(payload)).await.unwrap();
+            }
+            ws.close(None).await.unwrap();
+        });
+        let runtime =
+            Arc::new(AgentRuntime::new(vec![std::env::temp_dir()], None, None, None).unwrap());
+        let config = RelayConfig {
+            url: format!("ws://127.0.0.1:{port}/device"),
+            device_id: "heartbeat-healthy-test".into(),
+            credential: "a-test-only-local-device-credential".into(),
+            allow_insecure_localhost: true,
+            tls_connector: None,
+            reconnect_delay: Duration::from_secs(1),
+            probe_interval: Duration::from_secs(5),
+        };
+        let result = tokio::time::timeout(
+            Duration::from_secs(3),
+            connect_and_run_with_heartbeat(runtime, &config, Duration::from_millis(120)),
+        )
+        .await
+        .expect("healthy WebSocket must finish within test deadline");
+        assert!(
+            result.is_ok(),
+            "correct Pongs must avoid false reconnect: {result:?}"
+        );
+        peer.await.unwrap();
+    }
 
     #[test]
     fn relay_url_requires_wss_except_explicit_loopback_test_mode() {
