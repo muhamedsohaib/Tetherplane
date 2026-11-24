@@ -138,13 +138,16 @@ export function buildRelayAuthConfig() {
 }
 
 export function evaluateOverallOutcome({ allowPartial, gates }) {
-  const entries = Object.entries(gates);
-  const failed = entries
-    .filter(([, result]) => result.status === "FAIL")
-    .map(([id]) => id);
-  const blocked = entries
-    .filter(([, result]) => result.status === "BLOCKED")
-    .map(([id]) => id);
+  const required = ["G1", "G2", "G3", "G4", "G5", "G6", "G7"];
+  const failed = required.filter((id) =>
+    !["PASS", "BLOCKED"].includes(gates?.[id]?.status),
+  );
+  const blocked = required.filter((id) => gates?.[id]?.status === "BLOCKED");
+  // Only environment-dependent interactive desktop and physical mobile gates
+  // may be blocked in a partial rehearsal. All other gates must execute.
+  for (const id of blocked) {
+    if (id !== "G4" && id !== "G6") failed.push(id);
+  }
 
   if (failed.length > 0) {
     return {
@@ -1281,6 +1284,9 @@ function getRepoGitPorcelain() {
 
 async function runStagingAcceptance(opts) {
   assertAllowedHostname(opts.hostname);
+  // A caller-supplied diagnostic label must never bypass the real host guard.
+  // Preflight creates no runtime resources and is explicitly not acceptance.
+  if (!opts.preflightOnly) assertAllowedHostname(os.hostname());
   const plan = buildStagingPlan(opts);
   const envInfo = plan.environment;
 
@@ -1327,7 +1333,8 @@ async function runStagingAcceptance(opts) {
       allowPartial: opts.allowPartial,
       gates,
     });
-    const out = { plan, outcome, gates };
+    const out = { execution: "preflight_only", acceptance_verified: false, plan,
+      outcome: { ...outcome, summary: "PREFLIGHT ONLY - no acceptance verified" }, gates };
     process.stdout.write(JSON.stringify(out, null, 2) + "\n");
     process.exit(outcome.ok ? 0 : 1);
   }
@@ -3300,6 +3307,8 @@ async function runStagingAcceptance(opts) {
     gates,
   });
   const report = {
+    execution: "staging_acceptance",
+    acceptance_verified: outcome.ok && !opts.allowPartial && outcome.blocked.length === 0,
     runAt: new Date().toISOString(),
     hostname: opts.hostname,
     platform: process.platform,

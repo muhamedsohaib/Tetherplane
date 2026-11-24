@@ -78,6 +78,26 @@ jobs:
           command -v google-chrome || command -v chromium || command -v chromium-browser
           node --test tests/e2e/portal-control.test.ts
 
+      - name: Actual isolated staging rehearsal (G4 and physical G6 excluded)
+        if: runner.os == 'Linux'
+        timeout-minutes: 12
+        shell: bash
+        run: |
+          set -euo pipefail
+          cargo build --locked -p tetherd
+          node --test tests/release/staging-acceptance.test.mjs
+          node scripts/staging-acceptance.mjs --mode auto --allow-partial --report-file "$RUNNER_TEMP/tetherplane-staging-report.json" > "$RUNNER_TEMP/tetherplane-staging.log"
+          node scripts/verify-staging-ci-evidence.mjs "$RUNNER_TEMP/tetherplane-staging-report.json" "$RUNNER_TEMP/tetherplane-staging-evidence.json"
+
+      - name: Retain sanitized exact-candidate staging evidence
+        if: runner.os == 'Linux'
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
+        with:
+          name: staging-rehearsal-evidence-${{ github.sha }}
+          path: ${{ runner.temp }}/tetherplane-staging-evidence.json
+          if-no-files-found: error
+          retention-days: 14
+
       - name: Relay production container
         if: runner.os == 'Linux'
         run: docker build --file Dockerfile.relay --tag tetherplane-relay:ci .

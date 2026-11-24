@@ -294,3 +294,29 @@ test("staging harness --preflight-only rejects strict exit on non-interactive Li
     `expected --preflight-only --allow-partial to pass cleanly, stderr=${partialRes.stderr}`,
   );
 });
+
+
+test("missing, pending, unknown and mandatory blocked gates cannot pass", async () => {
+  const { evaluateOverallOutcome } = await import(pathToFileURL(scriptPath).href);
+  const valid = Object.fromEntries(["G1","G2","G3","G4","G5","G6","G7"].map(id => [id, {status:"PASS"}]));
+  assert.equal(evaluateOverallOutcome({allowPartial:true,gates:{}}).ok,false);
+  for (const id of Object.keys(valid)) {
+    const missing = {...valid}; delete missing[id];
+    assert.equal(evaluateOverallOutcome({allowPartial:true,gates:missing}).ok,false);
+    for (const status of ["PENDING","UNKNOWN",null]) {
+      assert.equal(evaluateOverallOutcome({allowPartial:true,gates:{...valid,[id]:{status}}}).ok,false);
+    }
+    if (!["G4","G6"].includes(id)) {
+      assert.equal(evaluateOverallOutcome({allowPartial:true,gates:{...valid,[id]:{status:"BLOCKED"}}}).ok,false);
+    }
+  }
+});
+
+test("preflight cannot be represented as completed staging acceptance", () => {
+  const res = runHarness(["--preflight-only","--allow-partial","--hostname","cloud-staging-test"]);
+  assert.equal(res.status,0);
+  const report=JSON.parse(res.stdout);
+  assert.equal(report.execution,"preflight_only");
+  assert.equal(report.acceptance_verified,false);
+  assert.match(report.outcome.summary,/PREFLIGHT ONLY/);
+});
