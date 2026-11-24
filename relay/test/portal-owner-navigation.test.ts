@@ -11,7 +11,7 @@ test("owner dashboard has desktop and mobile section navigation", () => {
       ["#global-controls", "Access"],
       ["#owner-identities", "Operators"],
       ["#security-audit", "Audit"],
-    ];
+    ] as const;
     for (const [target, label] of targets) {
       assert.ok(html.includes('<a href="' + target + '">' + label + '</a>'), "missing " + label + " navigation");
       assert.ok(html.includes('id="' + target.slice(1) + '"'), "missing " + label + " target");
