@@ -320,3 +320,22 @@ test("preflight cannot be represented as completed staging acceptance", () => {
   assert.equal(report.acceptance_verified,false);
   assert.match(report.outcome.summary,/PREFLIGHT ONLY/);
 });
+
+test("staging relay explicitly declares HTTPS origin instead of falling into legacy private pilot defaults", async () => {
+  const mod = await import(pathToFileURL(scriptPath).href);
+  const { parseRelayArgs, loadReadOnlyPortalPilotConfig } = await import("../../relay/src/cli-config.ts");
+  const dir = mkdtempSync(path.join(os.tmpdir(), "tp-stage-origin-"));
+  try {
+    const topology = mod.resolveRelayTlsTopology({lanHost: null, publicOrigin: null}, 18788);
+    const common = ["--auth-config", path.join(dir,"auth.json"), "--state-file", path.join(dir,"devices.json"), "--host", "127.0.0.1", "--port", "18788", "--tls-cert", path.join(dir,"test.crt"), "--tls-key", path.join(dir,"test.key")];
+    const legacy = await loadReadOnlyPortalPilotConfig(parseRelayArgs(common));
+    assert.equal(legacy.portalPort, 0);
+    assert.equal(legacy.portalReadOnly, true);
+    const configured = await loadReadOnlyPortalPilotConfig(parseRelayArgs([...common, ...mod.stagingRelayOriginArgs(topology)]));
+    assert.equal(configured.publicOrigin, "https://127.0.0.1:18788");
+    assert.equal(configured.portalPort, undefined);
+    assert.equal(configured.portalReadOnly, false);
+    assert.deepEqual(mod.stagingRelayOriginArgs({publicHttpBase:"https://staging.example.com"}, true), ["--public-origin","https://staging.example.com","--trust-proxy-headers"]);
+    assert.throws(() => mod.stagingRelayOriginArgs({publicHttpBase:"http://127.0.0.1:18788"}), /HTTPS origin/);
+  } finally { rmSync(dir,{recursive:true,force:true}); }
+});

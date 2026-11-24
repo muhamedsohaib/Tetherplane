@@ -1271,6 +1271,21 @@ function startLocalFixturesServer() {
   });
 }
 
+// The disposable mutable staging relay deliberately exercises the combined
+// control-plane topology. Never let the pinned legacy-launcher fallback
+// silently substitute the private read-only pilot topology. Production
+// listener isolation is independently exercised by portal-private-pilot tests.
+export function stagingRelayOriginArgs(topology, trustProxyHeaders = false) {
+  const origin = new URL(topology.publicHttpBase);
+  if (origin.origin !== topology.publicHttpBase || origin.protocol !== "https:") {
+    throw new Error("Staging relay requires its explicit HTTPS origin");
+  }
+  return [
+    "--public-origin", origin.origin,
+    ...(trustProxyHeaders ? ["--trust-proxy-headers"] : []),
+  ];
+}
+
 function getRepoGitPorcelain() {
   try {
     return execFileSync("git", ["status", "--porcelain"], {
@@ -1539,8 +1554,7 @@ async function runStagingAcceptance(opts) {
             "--tls-key",
             topology.mode === "direct-trusted-tls" ? opts.tlsKey : pki.srvKey,
           ]),
-      ...(opts.publicOrigin ? ["--public-origin", opts.publicOrigin] : []),
-      ...(opts.trustProxyHeaders ? ["--trust-proxy-headers"] : []),
+      ...stagingRelayOriginArgs(topology, opts.trustProxyHeaders),
     ];
     relayChild = spawn(process.execPath, relayArgs, {
       cwd: repoRoot,
@@ -3308,6 +3322,7 @@ async function runStagingAcceptance(opts) {
   });
   const report = {
     execution: "staging_acceptance",
+    portal_test_topology: "disposable_combined_mutable",
     acceptance_verified: outcome.ok && !opts.allowPartial && outcome.blocked.length === 0,
     runAt: new Date().toISOString(),
     hostname: opts.hostname,

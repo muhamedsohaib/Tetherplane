@@ -7,8 +7,8 @@ use tether_desktop_provider::windows_compat::{
     MSAA_STATE_READONLY, MSAA_STATE_UNAVAILABLE, NativeHwndMeta, NativeListParentMeta,
     NativeWindowKind, PlannedAction, SemanticControlType, WS_DISABLED, check_focus_preserved,
     check_semantic_dispatch_precondition, classify_native_window_class, finish_semantic_dispatch,
-    infer_supported_patterns, is_background_safe_uia_framework, plan_action, verify_select_readback,
-    verify_set_value_readback,
+    infer_supported_patterns, is_background_safe_uia_framework, plan_action,
+    verify_select_readback, verify_set_value_readback,
 };
 use tether_desktop_provider::{DesktopAction, DesktopActionKind, DesktopPattern};
 
@@ -806,22 +806,23 @@ fn failed_dispatch_does_not_skip_foreground_verification() {
         details: serde_json::json!({}),
     };
 
-    let err =
-        finish_semantic_dispatch::<()>(Err(failure()), 4242, false, Some(9001), Some(4242))
-            .unwrap_err();
+    let err = finish_semantic_dispatch::<()>(Err(failure()), 4242, false, Some(9001), Some(4242))
+        .unwrap_err();
     assert_eq!(err.code, ErrorCode::ActionUnverified);
     assert!(err.message.contains("altered foreground focus"));
     assert_eq!(err.details["dispatch_returned_error"], true);
     assert_eq!(err.details["outcome_uncertain"], true);
-    assert!(err.recovery_hint.unwrap().contains("do not automatically replay"));
+    assert!(
+        err.recovery_hint
+            .unwrap()
+            .contains("do not automatically replay")
+    );
 
-    let err =
-        finish_semantic_dispatch::<()>(Err(failure()), 4242, false, Some(9001), Some(9001))
-            .unwrap_err();
+    let err = finish_semantic_dispatch::<()>(Err(failure()), 4242, false, Some(9001), Some(9001))
+        .unwrap_err();
     assert_eq!(err.message, "provider response was lost");
 
-    let err =
-        finish_semantic_dispatch(Ok(()), 4242, false, Some(9001), Some(4242)).unwrap_err();
+    let err = finish_semantic_dispatch(Ok(()), 4242, false, Some(9001), Some(4242)).unwrap_err();
     assert_eq!(err.details["dispatch_returned_error"], false);
     assert_eq!(err.details["outcome_uncertain"], true);
 
