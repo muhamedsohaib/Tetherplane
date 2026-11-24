@@ -768,7 +768,7 @@ mod tests {
         device: &str,
         route: &str,
         capability: &str,
-        arguments: serde_json::Value,
+        arguments: &serde_json::Value,
     ) -> tokio_tungstenite::tungstenite::Message {
         tokio_tungstenite::tungstenite::Message::Text(
             json!({
@@ -856,7 +856,7 @@ mod tests {
                 "heartbeat-work-test",
                 "slow-route",
                 "process.run",
-                slow_work_args(),
+                &slow_work_args(),
             ))
             .await
             .unwrap();
@@ -893,6 +893,18 @@ mod tests {
         peer.await.unwrap();
     }
 
+    async fn acknowledge_test_ping(
+        ws: &mut tokio_tungstenite::WebSocketStream<tokio::net::TcpStream>,
+    ) {
+        use futures_util::{SinkExt, StreamExt};
+        use tokio_tungstenite::tungstenite::Message;
+
+        let Message::Ping(payload) = ws.next().await.unwrap().unwrap() else {
+            panic!("expected heartbeat while old work runs");
+        };
+        ws.send(Message::Pong(payload)).await.unwrap();
+    }
+
     #[tokio::test]
     async fn reconnect_discards_undispatched_work_and_never_replays_old_result() {
         use super::{RelayConfig, RelayTasks, connect_session};
@@ -921,27 +933,21 @@ mod tests {
                     "heartbeat-reconnect-test",
                     "old-active",
                     "process.run",
-                    slow_work_args(),
+                    &slow_work_args(),
                 ))
                 .await
                 .unwrap();
-            let Message::Ping(payload) = first.next().await.unwrap().unwrap() else {
-                panic!("expected heartbeat while old work runs");
-            };
-            first.send(Message::Pong(payload)).await.unwrap();
+            acknowledge_test_ping(&mut first).await;
             first
                 .send(relay_test_invocation(
                     "heartbeat-reconnect-test",
                     "old-queued",
                     "filesystem.append",
-                    json!({"path": peer_path, "content": "must not run"}),
+                    &json!({"path": peer_path, "content": "must not run"}),
                 ))
                 .await
                 .unwrap();
-            let Message::Ping(payload) = first.next().await.unwrap().unwrap() else {
-                panic!("expected heartbeat while queued work waits");
-            };
-            first.send(Message::Pong(payload)).await.unwrap();
+            acknowledge_test_ping(&mut first).await;
             first.close(None).await.unwrap();
             drop(first);
 
@@ -959,7 +965,7 @@ mod tests {
                     "heartbeat-reconnect-test",
                     "new-route",
                     "device.status",
-                    json!({}),
+                    &json!({}),
                 ))
                 .await
                 .unwrap();
@@ -1015,7 +1021,7 @@ mod tests {
         for index in 0..=RELAY_PENDING_LIMIT {
             let route = format!("queue-{index}");
             let Message::Text(raw) =
-                relay_test_invocation("queue-test", &route, "device.status", json!({}))
+                relay_test_invocation("queue-test", &route, "device.status", &json!({}))
             else {
                 unreachable!()
             };

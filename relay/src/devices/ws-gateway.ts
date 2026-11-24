@@ -1,3 +1,4 @@
+import { randomBytes, randomUUID } from "node:crypto";
 import type { IncomingMessage, Server } from "node:http";
 
 import {
@@ -15,17 +16,56 @@ import type {
 } from "../routing/device-router.ts";
 
 const DEVICE_ID_HEADER = "x-tetherplane-device-id";
+const DEFAULT_HEARTBEAT_INTERVAL_MS = 30_000;
+const DEFAULT_HEARTBEAT_TIMEOUT_MS = 60_000;
+
+type DisconnectReason =
+  | "peer_closed"
+  | "socket_error"
+  | "heartbeat_timeout"
+  | "heartbeat_send_failed"
+  | "superseded"
+  | "explicit_disconnect"
+  | "gateway_shutdown";
+
+export type DeviceConnectionEvent = {
+  component: "device_websocket";
+  event: "connected" | "disconnected";
+  device_id: string;
+  session_id: string;
+  at: string;
+  session_ms: number;
+  last_pong_age_ms: number | null;
+  reason?: DisconnectReason;
+  close_code?: number;
+};
 
 type LiveDevice = {
   socket: WebSocket;
   connection: DeviceConnectionHandle;
+  sessionId: string;
+  startedAt: number;
+  lastPongAt: number | null;
+  pendingPing: Buffer | null;
+  heartbeatTimer: NodeJS.Timeout | null;
 };
+
+function validateHeartbeatMs(value: number): number {
+  if (!Number.isSafeInteger(value) || value <= 0 || value > 2_147_483_647) {
+    throw new Error("device heartbeat interval and timeout must be positive timer values");
+  }
+  return value;
+}
 
 export class DeviceWebSocketGateway {
   readonly #registry: DeviceRegistry;
   readonly #router: DeviceRouter;
   readonly #server = new WebSocketServer({ noServer: true });
   readonly #live = new Map<string, LiveDevice>();
+  readonly #heartbeatIntervalMs: number;
+  readonly #heartbeatTimeoutMs: number;
+  readonly #onConnectionEvent: (event: DeviceConnectionEvent) => void;
+  #closed = false;
   #attachedServer: Server | null = null;
   #upgradeHandler:
     | ((request: IncomingMessage, socket: any, head: Buffer) => void)
@@ -34,12 +74,27 @@ export class DeviceWebSocketGateway {
   constructor(options: {
     registry: DeviceRegistry;
     router: DeviceRouter;
+    heartbeatIntervalMs?: number;
+    heartbeatTimeoutMs?: number;
+    onConnectionEvent?: (event: DeviceConnectionEvent) => void;
   }) {
     this.#registry = options.registry;
     this.#router = options.router;
+    this.#heartbeatIntervalMs = validateHeartbeatMs(
+      options.heartbeatIntervalMs ?? DEFAULT_HEARTBEAT_INTERVAL_MS,
+    );
+    this.#heartbeatTimeoutMs = validateHeartbeatMs(
+      options.heartbeatTimeoutMs ?? DEFAULT_HEARTBEAT_TIMEOUT_MS,
+    );
+    this.#onConnectionEvent = options.onConnectionEvent ?? (
+      (event) => console.error(JSON.stringify(event))
+    );
   }
 
   attach(server: Server, pathname = "/device"): void {
+    if (this.#closed) {
+      throw new Error("device websocket gateway is closed");
+    }
     if (this.#attachedServer) {
       throw new Error("device websocket gateway is already attached");
     }
@@ -57,20 +112,26 @@ export class DeviceWebSocketGateway {
       this.#router.disconnectDevice(deviceId);
       return;
     }
-    this.#live.delete(deviceId);
-    live.connection.disconnect();
-    live.socket.close(4001, "device revoked or disconnected by relay");
+    if (this.#retire(deviceId, live, "explicit_disconnect", 4001)) {
+      live.socket.close(4001, "device revoked or disconnected by relay");
+    }
   }
 
   async close(): Promise<void> {
+    this.#closed = true;
     if (this.#attachedServer && this.#upgradeHandler) {
       this.#attachedServer.off("upgrade", this.#upgradeHandler);
     }
     this.#attachedServer = null;
     this.#upgradeHandler = null;
 
-    for (const deviceId of [...this.#live.keys()]) {
-      this.disconnectDevice(deviceId);
+    for (const [deviceId, live] of this.#live) {
+      this.#retire(deviceId, live, "gateway_shutdown");
+    }
+    // Include superseded sockets still completing their close handshake.
+    // This gateway owns these sockets; no external client is terminated.
+    for (const socket of this.#server.clients) {
+      socket.terminate();
     }
 
     await new Promise<void>((resolve) => {
@@ -115,6 +176,12 @@ export class DeviceWebSocketGateway {
       return;
     }
 
+    // Authentication is asynchronous. Do not accept a session after teardown.
+    if (this.#closed || !this.#attachedServer) {
+      socket.destroy();
+      return;
+    }
+
     this.#server.handleUpgrade(request, socket as never, head, (ws) => {
       this.#acceptSocket({
         socket: ws,
@@ -130,9 +197,7 @@ export class DeviceWebSocketGateway {
     deviceId: string;
   }): void {
     const previous = this.#live.get(input.deviceId);
-    if (previous) {
-      this.#live.delete(input.deviceId);
-      previous.connection.disconnect();
+    if (previous && this.#retire(input.deviceId, previous, "superseded", 4000)) {
       previous.socket.close(4000, "superseded by newer device connection");
     }
 
@@ -146,29 +211,131 @@ export class DeviceWebSocketGateway {
         await sendJson(input.socket, message);
       },
     });
-    this.#live.set(input.deviceId, {
+    const live: LiveDevice = {
       socket: input.socket,
       connection,
-    });
+      sessionId: randomUUID(),
+      startedAt: performance.now(),
+      lastPongAt: null,
+      pendingPing: null,
+      heartbeatTimer: null,
+    };
+    this.#live.set(input.deviceId, live);
 
     input.socket.on("message", (raw: RawData) => {
       const message = parseDeviceMessage(raw);
       if (message) connection.receive(message);
     });
 
-    input.socket.once("close", () => {
-      const current = this.#live.get(input.deviceId);
-      if (current?.socket !== input.socket) return;
-      this.#live.delete(input.deviceId);
-      connection.disconnect();
+    input.socket.on("pong", (payload: Buffer) => {
+      if (this.#live.get(input.deviceId) !== live) return;
+      if (!live.pendingPing || !live.pendingPing.equals(payload)) return;
+      live.lastPongAt = performance.now();
+      live.pendingPing = null;
+      this.#schedulePing(input.deviceId, live);
     });
 
-    input.socket.once("error", () => {
-      const current = this.#live.get(input.deviceId);
-      if (current?.socket !== input.socket) return;
-      this.#live.delete(input.deviceId);
-      connection.disconnect();
+    input.socket.once("close", (code: number) => {
+      this.#retire(input.deviceId, live, "peer_closed", code);
     });
+
+    input.socket.on("error", () => {
+      if (this.#retire(input.deviceId, live, "socket_error")) {
+        input.socket.terminate();
+      }
+    });
+
+    this.#emit(input.deviceId, live, "connected");
+    this.#schedulePing(input.deviceId, live);
+  }
+
+  #schedulePing(deviceId: string, live: LiveDevice): void {
+    this.#clearHeartbeat(live);
+    if (this.#live.get(deviceId) !== live) return;
+    live.heartbeatTimer = setTimeout(() => {
+      if (this.#live.get(deviceId) !== live) return;
+      if (live.socket.readyState !== WebSocket.OPEN) {
+        this.#retire(deviceId, live, "heartbeat_send_failed");
+        live.socket.terminate();
+        return;
+      }
+      const nonce = randomBytes(16);
+      live.pendingPing = nonce;
+      live.heartbeatTimer = setTimeout(() => {
+        if (
+          this.#live.get(deviceId) === live &&
+          live.pendingPing === nonce
+        ) {
+          this.#retire(deviceId, live, "heartbeat_timeout");
+          live.socket.terminate();
+        }
+      }, this.#heartbeatTimeoutMs);
+      live.heartbeatTimer.unref();
+
+      const failed = () => {
+        if (this.#retire(deviceId, live, "heartbeat_send_failed")) {
+          live.socket.terminate();
+        }
+      };
+      try {
+        live.socket.ping(nonce, false, (error) => {
+          if (error) failed();
+        });
+      } catch {
+        failed();
+      }
+    }, this.#heartbeatIntervalMs);
+    live.heartbeatTimer.unref();
+  }
+
+  #clearHeartbeat(live: LiveDevice): void {
+    if (live.heartbeatTimer) {
+      clearTimeout(live.heartbeatTimer);
+      live.heartbeatTimer = null;
+    }
+  }
+
+  #retire(
+    deviceId: string,
+    live: LiveDevice,
+    reason: DisconnectReason,
+    closeCode?: number,
+  ): boolean {
+    // Never let an expired timer or a late close retire a replacement socket.
+    if (this.#live.get(deviceId) !== live) return false;
+    this.#live.delete(deviceId);
+    this.#clearHeartbeat(live);
+    live.pendingPing = null;
+    live.connection.disconnect();
+    this.#emit(deviceId, live, "disconnected", reason, closeCode);
+    return true;
+  }
+
+  #emit(
+    deviceId: string,
+    live: LiveDevice,
+    event: DeviceConnectionEvent["event"],
+    reason?: DisconnectReason,
+    closeCode?: number,
+  ): void {
+    const now = performance.now();
+    try {
+      this.#onConnectionEvent({
+        component: "device_websocket",
+        event,
+        device_id: deviceId,
+        session_id: live.sessionId,
+        at: new Date().toISOString(),
+        session_ms: Math.round(now - live.startedAt),
+        last_pong_age_ms: live.lastPongAt === null
+          ? null
+          : Math.round(now - live.lastPongAt),
+        ...(reason === undefined ? {} : { reason }),
+        ...(closeCode === undefined ? {} : { close_code: closeCode }),
+      });
+    } catch {
+      // Logging must not interfere with connection lifecycle.
+    }
   }
 }
 
