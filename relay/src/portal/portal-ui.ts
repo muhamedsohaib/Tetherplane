@@ -43,6 +43,7 @@ const PORTAL_STYLE = `
 
     body[data-auth="signed-out"] .summary-strip,
     body[data-auth="signed-out"] .fleet-toolbar,
+    body[data-auth="signed-out"] .owner-nav,
     body[data-auth="signed-out"] .live-alerts-note,
     body[data-auth="signed-out"] .global-panel,
     body[data-auth="signed-out"] .section-grid,
@@ -273,6 +274,48 @@ const PORTAL_STYLE = `
 
     .security-lockdown {
       color: var(--danger);
+    }
+
+    .owner-nav {
+      display: flex;
+      align-items: center;
+      gap: 8px;
+      background: var(--surface-subtle);
+      border: 1px solid var(--border);
+      border-radius: var(--radius);
+      padding: 8px;
+      margin: 0 0 16px;
+    }
+
+    .owner-nav a {
+      display: inline-flex;
+      flex: 1 1 0;
+      justify-content: center;
+      align-items: center;
+      min-height: 44px;
+      min-width: 0;
+      border-radius: 8px;
+      padding: 8px 12px;
+      color: var(--text-muted);
+      text-align: center;
+      text-decoration: none;
+      font-size: 0.86rem;
+      font-weight: 600;
+    }
+
+    .owner-nav a:hover {
+      background: var(--surface-elevated);
+      color: var(--text);
+    }
+
+    .owner-nav a:focus-visible {
+      outline: 2px solid var(--primary);
+      outline-offset: 2px;
+      color: var(--text);
+    }
+
+    #devices-container, #global-controls, #owner-identities, #security-audit {
+      scroll-margin-top: 16px;
     }
 
     .fleet-toolbar {
@@ -569,6 +612,20 @@ const PORTAL_STYLE = `
     .switch-btn.off {
       background: rgba(148, 163, 184, 0.16);
       color: var(--text-muted);
+    }
+
+    /* Configured policy is not the same as live, device-confirmed enforcement. */
+    .switch-btn.configured {
+      background: rgba(245, 158, 11, 0.14);
+      color: #fcd34d;
+      border-color: rgba(245, 158, 11, 0.55);
+    }
+
+    .family-toggle.configured {
+      border-color: rgba(245, 158, 11, 0.45);
+    }
+    .family-toggle.configured .family-sub {
+      color: #fcd34d;
     }
 
     .toast-stack {
@@ -873,13 +930,36 @@ const PORTAL_STYLE = `
     }
 
     @media (max-width: 600px) {
-      .portal-shell { padding: 12px 12px 56px; }
+      .portal-shell { padding: 12px 12px calc(96px + env(safe-area-inset-bottom, 0px)); }
       .topbar {
         flex-direction: column;
         align-items: stretch;
         gap: 10px;
         padding-bottom: 12px;
         margin-bottom: 12px;
+      }
+      .owner-nav {
+        position: fixed;
+        left: 0;
+        right: 0;
+        bottom: 0;
+        z-index: 40;
+        display: grid;
+        grid-template-columns: repeat(4, minmax(0, 1fr));
+        gap: 4px;
+        margin: 0;
+        padding: 8px 10px calc(8px + env(safe-area-inset-bottom, 0px));
+        border-width: 1px 0 0;
+        border-radius: 0;
+        background: rgba(13, 20, 34, 0.98);
+      }
+      .owner-nav a {
+        padding: 7px 4px;
+        min-height: 44px;
+        font-size: 0.8rem;
+      }
+      body[data-auth="signed-in"] .toast-stack {
+        bottom: calc(72px + env(safe-area-inset-bottom, 0px));
       }
       .brand-badge {
         width: 32px;
@@ -1101,6 +1181,7 @@ const PORTAL_SCRIPT = `
 
       function deviceNeedsAttention(dev) {
         return (
+          !dev.online ||
           Boolean(dev.emergencyLockdown) ||
           dev.syncStatus === "pending" ||
           dev.syncStatus === "failed" ||
@@ -1959,17 +2040,29 @@ const PORTAL_SCRIPT = `
               : fam.grantedOperations.length;
             const isPartial = !isOn && policyCount > 0;
             const isDegraded = Boolean(dev.online) && !fam.providerAvailable;
+            const livePolicyConfirmed =
+              Boolean(dev.online) && Boolean(dev.confirmedByDevice) &&
+              dev.syncStatus === "applied" && Boolean(fam.providerAvailable);
+            const configuredWithoutLiveConfirmation = policyCount > 0 && !livePolicyConfirmed;
             const subText =
               !dev.online
-                ? "Offline (" + policyCount + " policy-granted)"
+                ? "Offline (" + policyCount + " policy-granted; not currently active)"
                 : !fam.providerAvailable
-                  ? "Unavailable (" + policyCount + " policy-granted)"
-                  : fam.grantedOperations.length + "/" + fam.availableOperations.length + " ops active";
-            const switchLabel = isOn ? "ON" : isPartial ? "PARTIAL" : "OFF";
-            const switchClass = isOn ? "on" : isPartial ? "partial" : "off";
+                  ? "Unavailable (" + policyCount + " policy-granted; not currently active)"
+                  : !livePolicyConfirmed && policyCount > 0
+                    ? "Awaiting device confirmation (" + policyCount + " configured)"
+                    : fam.grantedOperations.length + "/" + fam.availableOperations.length + " ops active";
+            const switchLabel = configuredWithoutLiveConfirmation
+              ? (isOn ? "CONFIGURED" : "PARTIAL SET")
+              : isOn ? "ON" : isPartial ? "PARTIAL" : "OFF";
+            const switchClass = configuredWithoutLiveConfirmation
+              ? "configured"
+              : isOn ? "on" : isPartial ? "partial" : "off";
+            // Keep aria-pressed bound to desired policy, not instantaneous device availability.
             const switchPressed = isOn ? "true" : isPartial ? "mixed" : "false";
             const tileClasses = ["family-toggle"];
-            if (isOn) tileClasses.push("granted");
+            if (configuredWithoutLiveConfirmation) tileClasses.push("configured");
+            else if (isOn) tileClasses.push("granted");
             else if (isPartial) tileClasses.push("partial");
             if (isDegraded) tileClasses.push("degraded");
 
@@ -1990,11 +2083,15 @@ const PORTAL_SCRIPT = `
                   text: switchLabel,
                   attrs: {
                     "aria-pressed": switchPressed,
-                    title: isPartial
-                      ? "Partial access (" + policyCount + " ops granted). Click to grant full family."
-                      : isOn
-                        ? "Full family granted. Click to revoke family."
-                        : "Family revoked. Click to grant full family.",
+                    title: configuredWithoutLiveConfirmation
+                      ? "Policy configured, but not confirmed active " +
+                        (!dev.online ? "(device offline). " : !fam.providerAvailable ? "(provider unavailable). " : "(awaiting device ACK). ") +
+                        (isOn ? "Click to revoke the family." : "Click to grant the full family.")
+                      : isPartial
+                        ? "Partial access (" + policyCount + " ops granted). Click to grant full family."
+                        : isOn
+                          ? "Full family granted and device-confirmed. Click to revoke family."
+                          : "Family revoked. Click to grant full family.",
                   },
                   dataset: {
                     action: "toggle-family",
@@ -2799,6 +2896,13 @@ export function renderControlPortalHtml(loginMode: "token" | "oidc" = "token"): 
       </div>
     </section>
 
+    <nav class="owner-nav" aria-label="Dashboard sections">
+      <a href="#devices-container">Devices</a>
+      <a href="#global-controls">Access</a>
+      <a href="#owner-identities">Operators</a>
+      <a href="#security-audit">Audit</a>
+    </nav>
+
     <main>
       <div id="status-banner" class="unavailable-banner status-banner-outer hidden"></div>
       <div id="fleet-filter-bar" class="fleet-toolbar" aria-label="Fleet filters"></div>
@@ -2807,7 +2911,7 @@ export function renderControlPortalHtml(loginMode: "token" | "oidc" = "token"): 
       </section>
 
       <p class="live-alerts-note">Notifications appear only while this portal page is open. iPhone background push is not yet configured.</p>
-      <section class="global-panel" aria-label="Global Permission Controls">
+      <section id="global-controls" class="global-panel" aria-label="Global Permission Controls">
         <div>
           <strong>Global Controls</strong>
           <div class="global-subtitle">
@@ -2829,7 +2933,7 @@ export function renderControlPortalHtml(loginMode: "token" | "oidc" = "token"): 
       </section>
 
       <div class="section-grid">
-        <section class="panel-card" aria-label="Owner and Operator Identities">
+        <section id="owner-identities" class="panel-card" aria-label="Owner and Operator Identities">
           <h2>Owner &amp; Operator Identities</h2>
           <div id="identities-container" class="identities-list">
             No active identity telemetry yet.
@@ -2852,7 +2956,7 @@ export function renderControlPortalHtml(loginMode: "token" | "oidc" = "token"): 
           </details>
         </section>
 
-        <section class="panel-card" aria-label="Security Audit and Rollback">
+        <section id="security-audit" class="panel-card" aria-label="Security Audit and Rollback">
           <h2>Security Audit &amp; Safe Rollback</h2>
           <div id="audit-container" class="audit-scroll">
             <div class="muted-note">No audit events loaded.</div>

@@ -402,14 +402,17 @@ test("owner portal usability: clean signed-in header, relay-pending vs device-co
       authAttr: string;
       tokenVisible: boolean;
       connectVisible: boolean;
+      navHidden: boolean;
     }>(`(() => ({
       authAttr: document.body.dataset.auth || "",
       tokenVisible: getComputedStyle(document.getElementById("token-input")).display !== "none",
       connectVisible: getComputedStyle(document.getElementById("connect-btn")).display !== "none",
+      navHidden: getComputedStyle(document.querySelector(".owner-nav")).display === "none",
     }))()`);
     assert.equal(signedOutUi.authAttr, "signed-out");
     assert.equal(signedOutUi.tokenVisible, true);
     assert.equal(signedOutUi.connectVisible, true);
+    assert.equal(signedOutUi.navHidden, true, "signed-out owner navigation must be hidden");
 
     // Sign in
     await browser.eval(`(() => {
@@ -431,11 +434,17 @@ test("owner portal usability: clean signed-in header, relay-pending vs device-co
       roFilesSwitchText: string;
       roProcessSwitchText: string;
       offlineSyncDetail: string;
+      offlineBrowserLabel: string;
+      offlineBrowserClass: string;
+      offlineBrowserSubtitle: string;
+      navTargets: string[];
+      navVisible: boolean;
     }>(`(() => {
       const roCard = document.querySelector('.device-card[data-device-id="Node-ReadOnly"]');
       const roFilesBtn = roCard.querySelector('[data-action="toggle-family"][data-family="files"]');
       const roProcBtn = roCard.querySelector('[data-action="toggle-family"][data-family="process"]');
       const offDetail = document.querySelector('[data-sync-detail="Node-Offline"]')?.textContent || "";
+      const offBrowser = document.querySelector('.device-card[data-device-id="Node-Offline"] [data-action="toggle-family"][data-family="browser"]');
       return {
         authAttr: document.body.dataset.auth || "",
         tokenHidden: getComputedStyle(document.getElementById("token-input")).display === "none",
@@ -444,15 +453,25 @@ test("owner portal usability: clean signed-in header, relay-pending vs device-co
         roFilesSwitchText: roFilesBtn?.textContent || "",
         roProcessSwitchText: roProcBtn?.textContent || "",
         offlineSyncDetail: offDetail,
+        offlineBrowserLabel: offBrowser?.textContent || "",
+        offlineBrowserClass: offBrowser?.className || "",
+        offlineBrowserSubtitle: offBrowser?.closest(".family-toggle")?.querySelector(".family-sub")?.textContent || "",
+        navTargets: Array.from(document.querySelectorAll(".owner-nav a")).map((link) => link.getAttribute("href")),
+        navVisible: getComputedStyle(document.querySelector(".owner-nav")).display !== "none",
       };
     })()`);
     assert.equal(signedInUi.authAttr, "signed-in");
     assert.equal(signedInUi.tokenHidden, true);
     assert.equal(signedInUi.connectHidden, true);
+    assert.equal(signedInUi.navVisible, true);
+    assert.deepEqual(signedInUi.navTargets, ["#devices-container", "#global-controls", "#owner-identities", "#security-audit"]);
     assert.ok(signedInUi.datalistCount >= 30, "expected canonical ops datalist options");
     assert.equal(signedInUi.roFilesSwitchText, "PARTIAL");
     assert.equal(signedInUi.roProcessSwitchText, "OFF");
     assert.match(signedInUi.offlineSyncDetail, /Relay queued v1.*offline/i);
+    assert.equal(signedInUi.offlineBrowserLabel, "CONFIGURED", "offline policy must not appear live ON");
+    assert.match(signedInUi.offlineBrowserClass, /configured/);
+    assert.match(signedInUi.offlineBrowserSubtitle, /not currently active/i);
 
     // Relay-accepted Pending vs Device-Confirmed Enforcement transition on Node-Online
     await browser.eval(`(() => {
@@ -612,6 +631,10 @@ test("owner portal usability: clean signed-in header, relay-pending vs device-co
       globalTop: number;
       imgOrSvgCount: number;
       auditText: string;
+      navPosition: string;
+      navLinkHeight: number;
+      navLeft: number;
+      navRight: number;
     }>(`(() => ({
       scrollWidth: document.documentElement.scrollWidth,
       innerWidth: window.innerWidth,
@@ -621,8 +644,15 @@ test("owner portal usability: clean signed-in header, relay-pending vs device-co
       globalTop: Math.round(document.querySelector(".global-panel").getBoundingClientRect().top),
       imgOrSvgCount: document.querySelectorAll("img, svg").length,
       auditText: document.getElementById("audit-container")?.textContent || "",
+      navPosition: getComputedStyle(document.querySelector(".owner-nav")).position,
+      navLinkHeight: Math.round(document.querySelector(".owner-nav a").getBoundingClientRect().height),
+      navLeft: Math.round(document.querySelector(".owner-nav").getBoundingClientRect().left),
+      navRight: Math.round(document.querySelector(".owner-nav").getBoundingClientRect().right),
     }))()`);
     assert.ok(mobileAudit.scrollWidth <= mobileAudit.innerWidth, "mobile 390 overflow");
+    assert.equal(mobileAudit.navPosition, "fixed", "mobile should have accessible persistent navigation");
+    assert.ok(mobileAudit.navLinkHeight >= 44, "mobile nav touch targets must be at least 44px");
+    assert.ok(mobileAudit.navLeft >= 0 && mobileAudit.navRight <= mobileAudit.innerWidth, "mobile navigation must fit viewport");
     assert.ok(mobileAudit.topbarHeight < 175, `expected compact signed-in mobile header, got ${mobileAudit.topbarHeight}px`);
     assert.ok(mobileAudit.switchHeight >= 44, `expected >=44px mobile switch height, got ${mobileAudit.switchHeight}px`);
     assert.ok(mobileAudit.devicesTop < mobileAudit.globalTop);
