@@ -339,3 +339,61 @@ test("staging relay explicitly declares HTTPS origin instead of falling into leg
     assert.throws(() => mod.stagingRelayOriginArgs({publicHttpBase:"http://127.0.0.1:18788"}), /HTTPS origin/);
   } finally { rmSync(dir,{recursive:true,force:true}); }
 });
+
+test("staging CDP uses a real loopback WebSocket and rejects nonlocal endpoints", async () => {
+  const { connectStagingCdp } = await import(pathToFileURL(scriptPath).href);
+  const { createRequire } = await import("node:module");
+  const require = createRequire(path.join(repoRoot, "browser", "bridge", "package.json"));
+  const { WebSocketServer } = require("ws");
+  await assert.rejects(connectStagingCdp("ws://192.0.2.1:9222/devtools/browser/test"), /loopback/);
+  await assert.rejects(connectStagingCdp("ws://127.0.0.1:9222/devtools/browser/test?secret=foo"), /loopback/);
+  const server = new WebSocketServer({ host: "127.0.0.1", port: 0 });
+  let ws;
+  try {
+    await new Promise((resolve, reject) => {
+      server.once("listening", resolve);
+      server.once("error", reject);
+    });
+    server.on("connection", peer => peer.on("message", data => peer.send(data.toString())));
+    ws = await connectStagingCdp("ws://127.0.0.1:" + server.address().port + "/devtools/browser/test", 1000);
+    const echo = new Promise((resolve, reject) => {
+      const timer = setTimeout(() => reject(new Error("echo deadline")), 1000);
+      ws.once("message", data => { clearTimeout(timer); resolve(data.toString()); });
+    });
+    ws.send("fixture-cdp");
+    assert.equal(await echo, "fixture-cdp");
+  } finally {
+    ws?.terminate();
+    for (const peer of server.clients) peer.terminate();
+    await new Promise(resolve => server.close(resolve));
+  }
+});
+
+test("staging CDP bounds stalled upgrades and closes the attempted socket", async () => {
+  const { connectStagingCdp } = await import(pathToFileURL(scriptPath).href);
+  const net = await import("node:net");
+  const sockets = new Set();
+  const server = net.createServer(socket => {
+    sockets.add(socket);
+    socket.on("error", () => {});
+    socket.on("close", () => sockets.delete(socket));
+    socket.resume();
+  });
+  await new Promise(resolve => server.listen(0, "127.0.0.1", resolve));
+  try {
+    const start = performance.now();
+    await assert.rejects(
+      connectStagingCdp("ws://127.0.0.1:" + server.address().port + "/devtools/browser/stall", 150),
+      /timeout|timed out/i,
+    );
+    assert.ok(performance.now() - start < 2000);
+    const deadline = performance.now() + 1000;
+    while (sockets.size && performance.now() < deadline) {
+      await new Promise(resolve => setTimeout(resolve, 20));
+    }
+    assert.equal(sockets.size, 0, "timed-out handshake must release its socket");
+  } finally {
+    for (const socket of sockets) socket.destroy();
+    await new Promise(resolve => server.close(resolve));
+  }
+});

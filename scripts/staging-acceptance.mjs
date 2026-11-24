@@ -239,20 +239,20 @@ export function detectPrerequisites(explicitTetherd) {
           ),
         ]
       : [
-          "/usr/bin/chromium",
-          "/usr/bin/chromium-browser",
           "/usr/bin/google-chrome",
           "/usr/bin/google-chrome-stable",
+          "/usr/bin/chromium",
+          "/usr/bin/chromium-browser",
         ]),
   ].filter(Boolean);
   const chromiumPath =
     chromiumCandidates.find(isExecutableFile) ??
     (platform !== "win32"
       ? findOnPath([
-          "chromium",
-          "chromium-browser",
           "google-chrome",
           "google-chrome-stable",
+          "chromium",
+          "chromium-browser",
         ])
       : findOnPath(["chrome.exe", "msedge.exe"]));
 
@@ -808,33 +808,43 @@ function createCaFetch(caPem = null) {
   };
 }
 
-function connectWebSocket(url, timeoutMs = 2_000) {
+// Use the browser bridge's pinned WebSocket implementation for disposable
+// staging CDP. No proxies, redirects, remote endpoints, or origin bypasses.
+export async function connectStagingCdp(url, timeoutMs = 4_000) {
+  const target = new URL(url);
+  if (target.protocol !== "ws:" || target.hostname !== "127.0.0.1" ||
+      !target.port || target.username || target.password || target.search ||
+      target.hash || !/^\/devtools\/browser\/[A-Za-z0-9-]+$/.test(target.pathname)) {
+    throw new Error("Staging CDP requires its disposable loopback browser endpoint");
+  }
+  if (!Number.isInteger(timeoutMs) || timeoutMs < 1 || timeoutMs > 10_000) {
+    throw new Error("Invalid staging CDP handshake deadline");
+  }
+  const bridgeRequire = createRequire(path.join(repoRoot, "browser", "bridge", "package.json"));
+  const Ws = bridgeRequire("ws");
   return new Promise((resolve, reject) => {
-    const ws = new WebSocket(url);
-    const cleanup = () => {
+    const ws = new Ws(target, {
+      handshakeTimeout: timeoutMs,
+      followRedirects: false,
+      perMessageDeflate: false,
+    });
+    let settled = false;
+    const finish = (error) => {
+      if (settled) return;
+      settled = true;
       clearTimeout(timer);
-      ws.removeEventListener("open", onOpen);
-      ws.removeEventListener("error", onError);
-    };
-    const timer = setTimeout(() => {
-      cleanup();
-      try {
-        ws.close();
-      } catch {
-        // ignore
+      if (error) {
+        ws.terminate();
+        reject(error);
+      } else {
+        resolve(ws);
       }
-      reject(new Error(`CDP WS connect timeout (${url})`));
-    }, timeoutMs);
-    const onOpen = () => {
-      cleanup();
-      resolve(ws);
     };
-    const onError = () => {
-      cleanup();
-      reject(new Error(`CDP WS connect failed (${url})`));
-    };
-    ws.addEventListener("open", onOpen, { once: true });
-    ws.addEventListener("error", onError, { once: true });
+    const timer = setTimeout(() => finish(new Error("Staging CDP handshake timed out")), timeoutMs);
+    // Retain the listener to consume a late transport error during teardown.
+    ws.on("error", error => finish(new Error(`Staging CDP handshake failed: ${error.message}`)));
+    ws.once("open", () => finish());
+    ws.once("close", () => finish(new Error("Staging CDP closed before handshake")));
   });
 }
 
@@ -874,6 +884,7 @@ class StagingBrowser {
       ...(process.platform === "linux" ? ["--no-sandbox", "--disable-gpu"] : []),
       "--no-first-run",
       "--no-default-browser-check",
+      "--remote-debugging-address=127.0.0.1",
       "--remote-debugging-port=0",
       `--user-data-dir=${profileDir}`,
       ...(spkiPin ? [`--ignore-certificate-errors-spki-list=${spkiPin}`] : []),
@@ -890,29 +901,59 @@ class StagingBrowser {
       windowsHide: headless,
     });
 
-    const ws = await until(async () => {
-      if (child.exitCode !== null) {
-        throw new Error(`Browser exited early with code ${child.exitCode}`);
+    let spawnError;
+    child.once("error", error => { spawnError = error; });
+    let ws;
+    try {
+      const deadline = performance.now() + 30_000;
+      let lastError;
+      while (performance.now() < deadline) {
+        if (spawnError) throw new Error(`Staging browser failed to spawn: ${spawnError.message}`);
+        if (child.exitCode !== null || child.signalCode !== null) {
+          throw new Error(`Staging browser exited early: ${child.exitCode ?? child.signalCode}`);
+        }
+        if (existsSync(portFile)) {
+          try {
+            const lines = readFileSync(portFile, "utf8")
+              .split(/\r?\n/)
+              .map(s => s.trim())
+              .filter(Boolean);
+            const port = Number(lines[0]);
+            const remaining = Math.floor(deadline - performance.now());
+            if (remaining > 0 && Number.isInteger(port) && port > 0 &&
+                port <= 65535 && lines[1]?.startsWith("/devtools/browser/")) {
+              ws = await connectStagingCdp(
+                `ws://127.0.0.1:${port}${lines[1]}`,
+                Math.min(4_000, remaining),
+              );
+              break;
+            }
+          } catch (error) {
+            lastError = error;
+          }
+        }
+        await new Promise(resolve => setTimeout(resolve, 50));
       }
-      if (!existsSync(portFile)) return null;
-      const lines = readFileSync(portFile, "utf8")
-        .split(/\r?\n/)
-        .map((s) => s.trim())
-        .filter(Boolean);
-      const port = Number(lines[0]);
-      if (port > 0 && lines[1]?.startsWith("/devtools/browser/")) {
-        const wsUrl = `ws://127.0.0.1:${port}${lines[1]}`;
-        return await connectWebSocket(wsUrl);
+      if (!ws) {
+        throw new Error(`Staging browser CDP startup timed out (${path.basename(executablePath)}): ${lastError?.message ?? "no DevToolsActivePort"}`);
       }
-      return null;
-    }, 15_000, "DevToolsActivePort and CDP WebSocket");
-
-    const browser = new StagingBrowser(child, ws);
-    await browser.#init(initialUrl);
-    return browser;
+      const browser = new StagingBrowser(child, ws);
+      await browser.#init(initialUrl);
+      return browser;
+    } catch (error) {
+      ws?.terminate();
+      await stopChildProcess(child);
+      throw error;
+    }
   }
 
   async #init(initialUrl) {
+    const rejectPending = error => {
+      for (const entry of this.#pending.values()) entry.reject(error);
+      this.#pending.clear();
+    };
+    this.#ws.on("error", error => rejectPending(error));
+    this.#ws.once("close", () => rejectPending(new Error("Staging CDP transport closed")));
     this.#ws.addEventListener("message", (event) => {
       const msg = JSON.parse(String(event.data));
       if (msg.id && this.#pending.has(msg.id)) {
@@ -951,9 +992,24 @@ class StagingBrowser {
   send(method, params = {}, sessionId) {
     const id = this.#nextId++;
     const payload = sessionId ? { id, method, params, sessionId } : { id, method, params };
-    this.#ws.send(JSON.stringify(payload));
     return new Promise((resolve, reject) => {
-      this.#pending.set(id, { resolve, reject });
+      const timer = setTimeout(() => {
+        this.#pending.delete(id);
+        reject(new Error(`Staging CDP command deadline: ${method}`));
+      }, 15_000);
+      const entry = {
+        resolve(value) { clearTimeout(timer); resolve(value); },
+        reject(error) { clearTimeout(timer); reject(error); },
+      };
+      this.#pending.set(id, entry);
+      try {
+        this.#ws.send(JSON.stringify(payload), error => {
+          if (error && this.#pending.delete(id)) entry.reject(error);
+        });
+      } catch (error) {
+        this.#pending.delete(id);
+        entry.reject(error);
+      }
     });
   }
 
@@ -1139,7 +1195,7 @@ class StagingBrowser {
 }
 
 async function stopChildProcess(child) {
-  if (!child || child.exitCode !== null) {
+  if (!child || !child.pid || child.exitCode !== null || child.signalCode !== null) {
     return;
   }
   if (process.platform === "win32" && typeof child.pid === "number") {
