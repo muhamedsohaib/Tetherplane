@@ -196,3 +196,47 @@ test("HotSwappableBrowserBackend keeps RPC server listening across extension sta
     await server.close();
   }
 });
+
+
+test("one native connection dispatches a delayed mutation at most once", {timeout: 3000}, async () => {
+  class DelayedBackend extends FakeBackend {
+    override async createTab(url: string) {
+      this.performed.push({ kind: "create_tab" });
+      await new Promise(resolve => setTimeout(resolve, 100));
+      return super.createTab(url);
+    }
+  }
+  const backend = new DelayedBackend();
+  const server = await startBrowserRpcServer({ service: new BrowserBridgeService({ backend }), token: "test-token" });
+  try {
+    const response = await new Promise<Record<string, unknown>>((resolve, reject) => {
+      const socket = net.createConnection(Number(server.address.split(":").at(-1)), "127.0.0.1");
+      let data = "";
+      socket.setEncoding("utf8");
+      socket.on("error", reject);
+      socket.on("data", chunk => { data += chunk; });
+      socket.on("end", () => { try { resolve(JSON.parse(data)); } catch (error) { reject(error); } });
+      socket.on("connect", () => {
+        const frame = JSON.stringify({type:"invoke",request_id:"create-once",token:"test-token",capability:"browser.create_tab",arguments:{url:"https://fixture.example/"}}) + "\n";
+        socket.write(frame);
+        setTimeout(() => socket.write(frame), 25);
+      });
+    });
+    assert.equal(response.status, "success");
+    assert.equal(backend.performed.length, 1);
+  } finally { await server.close(); }
+});
+
+test("malformed native request shape fails closed without stopping the bridge", async () => {
+  const backend = new FakeBackend();
+  const server = await startBrowserRpcServer({service: new BrowserBridgeService({backend}), token: "test-token"});
+  try {
+    for (const value of [null, [], 42, {type:"invoke",request_id:"bad",token:"test-token",capability:"browser.create_tab",arguments:[]}]) {
+      const response = await rpc(server.address, value as Record<string, unknown>);
+      assert.equal(response.status, "error");
+      assert.equal((response.error as Record<string, unknown>).code, "invalid_arguments");
+    }
+    assert.equal(backend.performed.length, 0);
+    assert.equal((await rpc(server.address, {type:"handshake",request_id:"ok",token:"test-token"})).status, "success");
+  } finally { await server.close(); }
+});

@@ -233,7 +233,8 @@ export class BrowserBridgeService {
       return {
         data: result,
         verification:
-          result.state === "verified" ? "verified" : "failed",
+          result.state === "verified" ? "verified" :
+            result.state === "executed_unverified" ? "executed_unverified" : "failed",
       };
     }
 
@@ -342,26 +343,39 @@ export async function startBrowserRpcServer(options: {
   }
 
   const server = net.createServer((socket) => {
-    socket.setEncoding("utf8");
+    // The native protocol uses exactly one request per TCP connection.
+    // Bound incomplete frames without consuming an unbounded buffer.
+    const chunks: Buffer[] = [];
+    let bytes = 0;
+    let accepted = false;
+    const readDeadline = setTimeout(() => socket.destroy(), 6_500);
+    socket.once("close", () => clearTimeout(readDeadline));
     socket.on("error", () => {
       // client closed or reset connection
     });
-    let buffer = "";
-
-
-    socket.on("data", (chunk) => {
-      buffer += chunk;
-      const newline = buffer.indexOf("\n");
-      if (newline < 0) {
-        if (buffer.length > 1_048_576) {
-          socket.destroy();
-        }
+    socket.on("data", (chunk: Buffer) => {
+      if (accepted) return;
+      bytes += chunk.length;
+      if (bytes > 1_048_576) {
+        accepted = true;
+        clearTimeout(readDeadline);
+        socket.destroy();
         return;
       }
-
-      const line = buffer.slice(0, newline);
+      chunks.push(chunk);
+      if (!chunk.includes(10)) return;
+      accepted = true;
+      clearTimeout(readDeadline);
+      const buffer = Buffer.concat(chunks, bytes);
+      const line = buffer.subarray(0, buffer.indexOf(10)).toString("utf8");
+      // Mark the frame accepted BEFORE asynchronous dispatch. Additional
+      // bytes must never dispatch the same mutation a second time.
       void handleLine(line, options).then((response) => {
-        socket.end(JSON.stringify(response) + "\n");
+        if (!socket.destroyed) socket.end(JSON.stringify(response) + "\n");
+      }).catch(() => {
+        if (!socket.destroyed) socket.end(JSON.stringify(errorResponse(
+          "unknown", "provider_failure", "browser RPC response could not be confirmed",
+        )) + "\n");
       });
     });
   });
@@ -402,7 +416,11 @@ async function handleLine(
 ): Promise<RpcResponse> {
   let request: RpcRequest;
   try {
-    request = JSON.parse(line) as RpcRequest;
+    const value: unknown = JSON.parse(line);
+    if (value === null || typeof value !== "object" || Array.isArray(value)) {
+      return errorResponse("unknown", "invalid_arguments", "browser RPC request must be an object");
+    }
+    request = value as RpcRequest;
   } catch {
     return errorResponse(
       "unknown",
@@ -442,7 +460,9 @@ async function handleLine(
 
   if (
     request.type !== "invoke" ||
-    typeof request.capability !== "string"
+    typeof request.capability !== "string" ||
+    (request.arguments !== undefined &&
+      (request.arguments === null || typeof request.arguments !== "object" || Array.isArray(request.arguments)))
   ) {
     return errorResponse(
       requestId,

@@ -39,6 +39,7 @@ export class ExtensionBackendError extends Error {
 }
 
 type PendingCommand = {
+  mutation: boolean;
   resolve(value: unknown): void;
   reject(error: ExtensionBackendError): void;
 };
@@ -48,17 +49,23 @@ export class ExtensionBrowserBackend
 {
   readonly #transport: ExtensionCommandTransport;
   readonly #pollIntervalMs: number;
+  readonly #commandTimeoutMs: number;
   readonly #pending = new Map<string, PendingCommand>();
   #pumpRunning = false;
 
   constructor(options: {
     transport: ExtensionCommandTransport;
     pollIntervalMs?: number;
+    commandTimeoutMs?: number;
   }) {
     this.#transport = options.transport;
     this.#pollIntervalMs = normalizePollInterval(
       options.pollIntervalMs,
     );
+    this.#commandTimeoutMs = options.commandTimeoutMs ?? 5_000;
+    if (!Number.isInteger(this.#commandTimeoutMs) || this.#commandTimeoutMs < 25 || this.#commandTimeoutMs > 5_000) {
+      throw new TypeError("commandTimeoutMs must be between 25 and 5000");
+    }
   }
 
   capabilities(): Record<string, unknown> {
@@ -246,7 +253,19 @@ export class ExtensionBrowserBackend
     const requestId = randomUUID();
 
     return new Promise((resolve, reject) => {
-      this.#pending.set(requestId, { resolve, reject });
+      const mutation = ["perform", "create_tab", "navigate", "close", "upload"].includes(operation);
+      const deadline = setTimeout(() => {
+        if (!this.#pending.delete(requestId)) return;
+        reject(new ExtensionBackendError(
+          mutation ? "action_outcome_unknown" : "timeout",
+          mutation ? "Extension mutation may have executed; inspect before retrying" : "Extension command deadline exceeded",
+        ));
+      }, this.#commandTimeoutMs);
+      this.#pending.set(requestId, {
+        mutation,
+        resolve(value) { clearTimeout(deadline); resolve(value); },
+        reject(error) { clearTimeout(deadline); reject(error); },
+      });
       try {
         this.#transport.send({
           type: "command",
@@ -257,6 +276,7 @@ export class ExtensionBrowserBackend
         this.#ensurePump();
       } catch (error) {
         this.#pending.delete(requestId);
+        clearTimeout(deadline);
         reject(
           normalizeTransportError(
             error,
@@ -317,7 +337,9 @@ export class ExtensionBrowserBackend
         "extension command channel disconnected",
       );
       for (const pending of this.#pending.values()) {
-        pending.reject(normalized);
+        pending.reject(pending.mutation
+          ? new ExtensionBackendError("action_outcome_unknown", "Extension transport disconnected; mutation may have executed; inspect before retrying")
+          : normalized);
       }
       this.#pending.clear();
     } finally {

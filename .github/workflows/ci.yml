@@ -62,6 +62,9 @@ jobs:
       - name: TypeScript tests
         run: pnpm -r test
 
+      - name: Browser semantic context regression
+        run: node --test tests/release/browser-semantic-context.test.mjs
+
       - name: TypeScript builds
         run: pnpm -r build
 

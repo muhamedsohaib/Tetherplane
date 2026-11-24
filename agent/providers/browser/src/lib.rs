@@ -13,7 +13,7 @@ use tether_core::{
 };
 use tokio::io::{AsyncBufReadExt, AsyncWriteExt, BufReader};
 use tokio::net::TcpStream;
-use tokio::time::{sleep, timeout};
+use tokio::time::{Instant, sleep, timeout_at};
 
 static PROBE_SEQ: AtomicU64 = AtomicU64::new(1);
 
@@ -224,8 +224,19 @@ impl CapabilityProvider for BrowserProvider {
         if let Some(object) = arguments.as_object_mut() {
             object.remove("ownership");
         }
+        // Allow a 12-second action budget plus one bounded 5-second observation
+        // to return before the default 30-second relay deadline. Health checks
+        // retain their shorter configured timeout.
+        let mut request_config = self.config.clone();
+        if invocation.capability == "browser.act" || invocation.capability == "browser.wait" {
+            request_config.timeout_ms = request_config.timeout_ms.max(20_000);
+        } else if invocation.capability == "browser.snapshot"
+            || browser_mutation(&invocation.capability)
+        {
+            request_config.timeout_ms = request_config.timeout_ms.max(8_000);
+        }
         let response = match rpc_call(
-            &self.config,
+            &request_config,
             json!({
                 "type": "invoke",
                 "request_id": invocation.request_id.to_string(),
@@ -250,6 +261,15 @@ impl CapabilityProvider for BrowserProvider {
                 ) {
                     self.set_availability(false, Some(error.message.clone()));
                 }
+                // A lost or malformed acknowledgement is not proof a mutation did not run.
+                if browser_mutation(&invocation.capability)
+                    && matches!(
+                        error.code,
+                        ErrorCode::Timeout | ErrorCode::Disconnected | ErrorCode::ProviderFailure
+                    )
+                {
+                    return Err(uncertain_mutation(&error));
+                }
                 return Err(error);
             }
         };
@@ -261,6 +281,11 @@ impl CapabilityProvider for BrowserProvider {
                 ErrorCode::CapabilityUnavailable | ErrorCode::Disconnected | ErrorCode::Timeout
             ) {
                 self.set_availability(false, Some(error.message.clone()));
+            }
+            if browser_mutation(&invocation.capability)
+                && matches!(error.code, ErrorCode::Timeout | ErrorCode::Disconnected | ErrorCode::ProviderFailure)
+            {
+                return Err(uncertain_mutation(&error));
             }
             return Err(error);
         }
@@ -312,16 +337,30 @@ fn availability_from_status_data(data: &Value) -> (bool, Option<String>) {
     (true, None)
 }
 
+fn browser_mutation(capability: &str) -> bool {
+    matches!(capability, "browser.act" | "browser.navigate" | "browser.create_tab" | "browser.close" | "browser.upload")
+}
+
+fn uncertain_mutation(error: &CapabilityError) -> CapabilityError {
+    CapabilityError {
+        code: ErrorCode::ActionUnverified,
+        message: "Browser mutation outcome was not confirmed; it may have executed".into(),
+        recovery_hint: Some("Inspect the authorized page or resulting resource before retrying; do not replay automatically.".into()),
+        details: json!({"transport_error": error.message}),
+    }
+}
+
 async fn rpc_call(config: &BrowserBridgeConfig, request: Value) -> Result<Value, CapabilityError> {
     let duration = Duration::from_millis(config.timeout_ms.clamp(100, 60_000));
-    let stream = timeout(duration, TcpStream::connect(&config.address))
+    let deadline = Instant::now() + duration;
+    let stream = timeout_at(deadline, TcpStream::connect(&config.address))
         .await
         .map_err(|_| timeout_error("timed out connecting to browser bridge"))?
         .map_err(|_| disconnected("browser bridge is unavailable"))?;
     let (read, mut write) = stream.into_split();
     let encoded = serde_json::to_vec(&request)
         .map_err(|_| provider_failure("failed to serialize browser bridge request"))?;
-    timeout(duration, async {
+    timeout_at(deadline, async {
         write.write_all(&encoded).await?;
         write.write_all(b"\n").await?;
         write.flush().await
@@ -331,13 +370,19 @@ async fn rpc_call(config: &BrowserBridgeConfig, request: Value) -> Result<Value,
     .map_err(|_| disconnected("browser bridge disconnected during request"))?;
 
     let mut lines = BufReader::new(read).lines();
-    let line = timeout(duration, lines.next_line())
+    let line = timeout_at(deadline, lines.next_line())
         .await
         .map_err(|_| timeout_error("timed out waiting for browser bridge"))?
         .map_err(|_| disconnected("browser bridge disconnected during response"))?
         .ok_or_else(|| disconnected("browser bridge closed without a response"))?;
-    serde_json::from_str(&line)
-        .map_err(|_| provider_failure("browser bridge returned invalid JSON"))
+    let response: Value = serde_json::from_str(&line)
+        .map_err(|_| provider_failure("browser bridge returned invalid JSON"))?;
+    if response["request_id"] != request["request_id"]
+        || !matches!(response["status"].as_str(), Some("success" | "error"))
+    {
+        return Err(provider_failure("browser bridge response does not match the request"));
+    }
+    Ok(response)
 }
 
 fn response_error(response: &Value) -> CapabilityError {
@@ -372,7 +417,7 @@ fn map_error_code(code: &str) -> ErrorCode {
         "stale_reference" => ErrorCode::StaleReference,
         "resource_conflict" => ErrorCode::ResourceConflict,
         "precondition_failed" => ErrorCode::PreconditionFailed,
-        "action_unverified" | "validation_failed" | "semantic_wait_timeout" => {
+        "action_unverified" | "action_outcome_unknown" | "validation_failed" | "semantic_wait_timeout" => {
             ErrorCode::ActionUnverified
         }
         "timeout" => ErrorCode::Timeout,

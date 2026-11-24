@@ -174,6 +174,7 @@ export class VerifiedActionEngine {
     timeout_ms?: number;
   }): Promise<VerifiedActionResult> {
     const timeoutMs = normalizeTimeout(request.timeout_ms);
+    const actionDeadline = performance.now() + 12_000;
     const before = await this.#backend.observe(request.page_id);
     let current = before;
 
@@ -201,8 +202,16 @@ export class VerifiedActionEngine {
       return this.#semanticFailure(before, current, error);
     }
 
+    let dispatchedCount = 0;
     for (const action of request.actions) {
+      let dispatched = false;
       try {
+        if (performance.now() >= actionDeadline) {
+          return result(dispatchedCount > 0 ? "executed_unverified" : "failed", before, current, {
+            code: dispatchedCount > 0 ? "action_outcome_unknown" : "timeout",
+            message: "Action batch deadline reached; inspect current state before continuing",
+          });
+        }
         this.#ownership.authorize({
           page_id: request.page_id,
           operation: action.kind === "navigate" ? "navigate" : "act",
@@ -210,14 +219,29 @@ export class VerifiedActionEngine {
         });
 
         const resolved = this.#resolveAction(action, current.nodes);
+        dispatched = true;
         await this.#backend.perform(request.page_id, resolved);
+        dispatchedCount += 1;
         current = await this.#backend.waitForSettled(
           request.page_id,
           current.semantic_revision,
-          timeoutMs,
+          Math.max(1, Math.floor(Math.min(timeoutMs, actionDeadline - performance.now()))),
         );
       } catch (error) {
-        return this.#semanticFailure(before, current, error);
+        const failure = this.#semanticFailure(before, current, error);
+        if (dispatched && ["timeout", "disconnected", "provider_failure", "action_outcome_unknown"].includes(failure.error?.code ?? "")) {
+          return result("executed_unverified", before, current, {
+            code: "action_outcome_unknown",
+            message: "One or more browser actions may have executed; inspect the authorized page before retrying",
+          });
+        }
+        if (dispatchedCount > 0 && failure.error) {
+          return result("executed_unverified", before, current, {
+            code: failure.error.code,
+            message: failure.error.message + "; earlier actions were dispatched; inspect before retrying",
+          });
+        }
+        return failure;
       }
     }
 
@@ -251,7 +275,8 @@ export class VerifiedActionEngine {
     expectations: BrowserExpectation[];
     timeout_ms?: number;
   }): Promise<VerifiedActionResult> {
-    const timeoutMs = normalizeTimeout(request.timeout_ms);
+    const timeoutMs = Math.min(normalizeTimeout(request.timeout_ms), 12_000);
+    const deadline = performance.now() + timeoutMs;
     const before = await this.#backend.observe(request.page_id);
     let current = before;
 
@@ -264,10 +289,12 @@ export class VerifiedActionEngine {
         return this.#semanticFailure(before, current, error);
       }
 
+      const remaining = Math.floor(deadline - performance.now());
+      if (remaining <= 0) break;
       const next = await this.#backend.waitForSettled(
         request.page_id,
         current.semantic_revision,
-        timeoutMs,
+        remaining,
       );
       const unchanged =
         next.semantic_revision === current.semantic_revision &&

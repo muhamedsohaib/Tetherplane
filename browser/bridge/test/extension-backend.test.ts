@@ -286,3 +286,26 @@ test("extension backend advertises authenticated-profile capabilities", () => {
     human_tab_sharing: true,
   });
 });
+
+
+test("lost extension mutation acknowledgement is bounded and never replayed", {timeout: 2000}, async () => {
+  const transport = new FakeTransport();
+  const backend = new ExtensionBrowserBackend({transport,commandTimeoutMs:50});
+  const first = backend.perform("tab:1",{kind:"click",backend_id:"frame:0|css:#launch"});
+  const id = String(transport.sent[0]?.request_id);
+  await assert.rejects(first, (error: unknown) => error instanceof ExtensionBackendError && error.code === "action_outcome_unknown");
+  assert.equal(transport.sent.length,1);
+  const next = backend.pages();
+  const nextId = String(transport.sent[1]?.request_id);
+  transport.push(success(id,{}));
+  transport.push(success(nextId,{pages:[]}));
+  assert.deepEqual(await next,[]);
+  assert.equal(transport.sent.length,2);
+});
+
+test("stalled observation times out without being represented as a mutation", {timeout: 2000}, async () => {
+  const transport = new FakeTransport();
+  const backend = new ExtensionBrowserBackend({transport,commandTimeoutMs:50});
+  await assert.rejects(backend.pages(), (error: unknown) => error instanceof ExtensionBackendError && error.code === "timeout");
+  assert.equal(transport.sent.length,1);
+});

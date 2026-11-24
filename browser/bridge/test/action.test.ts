@@ -496,3 +496,59 @@ test("verified action verifies url expectation", async () => {
   assert.equal(result.state, "verified");
   assert.equal(backend.current.url, "https://fixture.local/step2");
 });
+
+
+test("lost browser acknowledgement stops the rest of a mutation batch", async () => {
+  class LostReply extends FakeBackend {
+    override async perform(pageId: string, action: ResolvedBrowserAction): Promise<void> {
+      await super.perform(pageId, action);
+      throw Object.assign(new Error("reply lost"), {code:"action_outcome_unknown"});
+    }
+  }
+  const semantics = new SemanticSnapshotEngine();
+  const before = state();
+  const ref = semantics.snapshot(before.nodes, {revision:1}).nodes[0]!.ref;
+  const backend = new LostReply(before);
+  const engine = new VerifiedActionEngine({backend,semantics,ownership:ownership()});
+  const result = await engine.execute({page_id:"page-owned",mode:"background_only",
+    actions:[{kind:"fill",target:ref,value:"first"},{kind:"fill",target:ref,value:"second"}]});
+  assert.equal(result.state,"executed_unverified");
+  assert.equal(result.error?.code,"action_outcome_unknown");
+  assert.equal(backend.performed.length,1);
+});
+
+test("100 synthetic commercial workflows select the contextual target and dispatch exactly one launch each", async () => {
+  for (let run = 0; run < 100; run += 1) {
+    const semantics = new SemanticSnapshotEngine();
+    const button = (id:string,label:string) => semanticNode({
+      backend_id:id,role:"button",accessible_name:"Create campaign",
+      ancestry:[{role:"section",accessible_name:label}],value:undefined,
+    });
+    const product=button("products","Sponsored Products");
+    const cards=[button("display","Display"),product,button("brands","Sponsored Brands")];
+    if(run % 2 === 0) cards.reverse();
+    const budget=semanticNode({backend_id:"budget",accessible_name:"Daily budget"});
+    const bid=semanticNode({backend_id:"bid",accessible_name:"Default bid"});
+    const launch=semanticNode({backend_id:"launch",role:"button",accessible_name:"Launch campaign",value:undefined});
+    const initial=state({nodes:[...cards,budget,bid,launch]});
+    const snapshot=semantics.snapshot(initial.nodes,{revision:1});
+    const ref=(id:string)=>snapshot.nodes[initial.nodes.findIndex(n=>n.backend_id===id)]!.ref;
+    const form=state({semantic_revision:2,nodes:[...cards.slice().reverse(),budget,bid,launch]});
+    const budgetSet=state({semantic_revision:3,nodes:[...cards,{...budget,value:"40"},bid,launch]});
+    const bidSet=state({semantic_revision:4,nodes:[...cards,{...budget,value:"40"},{...bid,value:"2"},launch]});
+    const done=state({semantic_revision:5,nodes:bidSet.nodes,toasts:["Campaign created"]});
+    const backend=new FakeBackend(initial,[form,budgetSet,bidSet,done]);
+    const engine=new VerifiedActionEngine({backend,semantics,ownership:ownership()});
+    const result=await engine.execute({page_id:"page-owned",mode:"background_only",
+      actions:[{kind:"click",target:ref("products")},{kind:"fill",target:ref("budget"),value:"40"},
+        {kind:"fill",target:ref("bid"),value:"2"},{kind:"click",target:ref("launch")}],
+      expectations:[{kind:"toast",includes:"Campaign created"}]});
+    assert.equal(result.state,"verified","run "+run);
+    assert.deepEqual(backend.performed,[
+      {kind:"click",backend_id:"products"},
+      {kind:"fill",backend_id:"budget",value:"40"},
+      {kind:"fill",backend_id:"bid",value:"2"},
+      {kind:"click",backend_id:"launch"},
+    ]);
+  }
+});

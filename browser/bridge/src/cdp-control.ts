@@ -1579,6 +1579,36 @@ function collectCdpFrameObservation() {
     return "";
   }
 
+  // Unlabelled card containers frequently contain several controls with the
+  // same name. Use a nearby, unique, visible heading as context, never an
+  // occurrence index or positional selector as evidence of semantic identity.
+  const headingContexts = new Map<Element, { count: number; label: string }>();
+  const headings = document.querySelectorAll("h1,h2,h3,h4,h5,h6,[role='heading']");
+  // Bound extra observation work. An incomplete scan must not imply uniqueness.
+  if (headings.length <= 1000) {
+    for (const heading of Array.from(headings)) {
+      if (heading.closest('[hidden],[aria-hidden="true"]') ||
+          heading.getClientRects().length === 0 ||
+          ["hidden", "collapse"].includes(getComputedStyle(heading).visibility)) {
+        continue;
+      }
+      const label = labelText(heading);
+      let ancestor = heading.parentElement;
+      for (let depth = 0; ancestor && depth < 8; depth += 1) {
+        if (ancestor === document.body || ancestor === document.documentElement ||
+            ["main", "nav", "header", "footer"].includes(roleFor(ancestor))) {
+          break;
+        }
+        const previous = headingContexts.get(ancestor);
+        headingContexts.set(ancestor, {
+          count: (previous?.count ?? 0) + 1,
+          label: previous?.label ?? label,
+        });
+        ancestor = ancestor.parentElement;
+      }
+    }
+  }
+
   function ancestryFor(
     element: Element,
   ): Array<{
@@ -1590,9 +1620,13 @@ function collectCdpFrameObservation() {
       accessible_name: string;
     }> = [];
     let current = element.parentElement;
+    let headingContextUsed = false;
     while (current && ancestry.length < 4) {
       const role = roleFor(current);
-      const name = stableAncestorName(current);
+      const explicitName = stableAncestorName(current);
+      const context = headingContextUsed ? undefined : headingContexts.get(current);
+      const name = explicitName || (context?.count === 1 ? context.label : "");
+      if (name) headingContextUsed = true;
       const tag = current.tagName.toLowerCase();
       const structural =
         tag === "main" ||
