@@ -424,7 +424,7 @@ fn successful_browser_handshake_registers_real_provider_and_capabilities() {
     let listener = TcpListener::bind("127.0.0.1:0").unwrap();
     let address = listener.local_addr().unwrap().to_string();
     let bridge = thread::spawn(move || {
-        for index in 0..2 {
+        for index in 0..3 {
             let (mut stream, _) = listener.accept().unwrap();
             let mut line = String::new();
             BufReader::new(stream.try_clone().unwrap())
@@ -437,7 +437,7 @@ fn successful_browser_handshake_registers_real_provider_and_capabilities() {
                     "status": "success",
                     "data": {
                         "protocol_version": "1.0",
-                        "operations": ["status", "pages", "snapshot"]
+                        "operations": ["status", "pages", "snapshot", "navigate"]
                     },
                     "verification": "not_applicable"
                 })
@@ -446,7 +446,11 @@ fn successful_browser_handshake_registers_real_provider_and_capabilities() {
                 json!({
                     "request_id": request["request_id"],
                     "status": "success",
-                    "data": {"available": true, "backend": "fake"},
+                    "data": {
+                        "available": true,
+                        "backend": "fake",
+                        "capabilities": {"operations": ["status", "pages", "snapshot"]}
+                    },
                     "verification": "not_applicable"
                 })
             };
@@ -488,10 +492,10 @@ fn successful_browser_handshake_registers_real_provider_and_capabilities() {
         .find(|provider| provider["namespace"] == "browser")
         .unwrap();
     assert_eq!(browser_provider["available"], true);
-    assert_eq!(
-        browser_provider["operations"],
-        json!(["status", "pages", "snapshot"])
-    );
+    let expected = json!(["pages", "snapshot", "status"]);
+    assert_eq!(browser_provider["operations"], expected);
+    assert_eq!(browser_provider["available_operations"], expected);
+    assert_eq!(browser_provider["granted_operations"], expected);
     assert_eq!(responses[BROWSER_ID]["status"], "success");
     assert_eq!(responses[BROWSER_ID]["data"]["backend"], "fake");
 

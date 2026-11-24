@@ -238,7 +238,15 @@ async fn init_browser_provider(
     )
     .await
     {
-        Ok(provider) => Ok(Some(Arc::new(provider))),
+        Ok(provider) => {
+            // The handshake advertises RPC methods, not attached-backend support.
+            // Relay mode probes before device_hello; stdio must obtain its own
+            // initial capability evidence before accepting discovery requests.
+            if !is_relay_mode {
+                let _ = provider.probe_status().await;
+            }
+            Ok(Some(Arc::new(provider)))
+        }
         Err(error)
             if is_relay_mode
                 && matches!(
