@@ -614,6 +614,20 @@ const PORTAL_STYLE = `
       color: var(--text-muted);
     }
 
+    /* Configured policy is not the same as live, device-confirmed enforcement. */
+    .switch-btn.configured {
+      background: rgba(245, 158, 11, 0.14);
+      color: #fcd34d;
+      border-color: rgba(245, 158, 11, 0.55);
+    }
+
+    .family-toggle.configured {
+      border-color: rgba(245, 158, 11, 0.45);
+    }
+    .family-toggle.configured .family-sub {
+      color: #fcd34d;
+    }
+
     .toast-stack {
       position: fixed;
       right: calc(16px + env(safe-area-inset-right, 0px));
@@ -2026,17 +2040,29 @@ const PORTAL_SCRIPT = `
               : fam.grantedOperations.length;
             const isPartial = !isOn && policyCount > 0;
             const isDegraded = Boolean(dev.online) && !fam.providerAvailable;
+            const livePolicyConfirmed =
+              Boolean(dev.online) && Boolean(dev.confirmedByDevice) &&
+              dev.syncStatus === "applied" && Boolean(fam.providerAvailable);
+            const configuredWithoutLiveConfirmation = policyCount > 0 && !livePolicyConfirmed;
             const subText =
               !dev.online
-                ? "Offline (" + policyCount + " policy-granted)"
+                ? "Offline (" + policyCount + " policy-granted; not currently active)"
                 : !fam.providerAvailable
-                  ? "Unavailable (" + policyCount + " policy-granted)"
-                  : fam.grantedOperations.length + "/" + fam.availableOperations.length + " ops active";
-            const switchLabel = isOn ? "ON" : isPartial ? "PARTIAL" : "OFF";
-            const switchClass = isOn ? "on" : isPartial ? "partial" : "off";
+                  ? "Unavailable (" + policyCount + " policy-granted; not currently active)"
+                  : !livePolicyConfirmed && policyCount > 0
+                    ? "Awaiting device confirmation (" + policyCount + " configured)"
+                    : fam.grantedOperations.length + "/" + fam.availableOperations.length + " ops active";
+            const switchLabel = configuredWithoutLiveConfirmation
+              ? (isOn ? "CONFIGURED" : "PARTIAL SET")
+              : isOn ? "ON" : isPartial ? "PARTIAL" : "OFF";
+            const switchClass = configuredWithoutLiveConfirmation
+              ? "configured"
+              : isOn ? "on" : isPartial ? "partial" : "off";
+            // Keep aria-pressed bound to desired policy, not instantaneous device availability.
             const switchPressed = isOn ? "true" : isPartial ? "mixed" : "false";
             const tileClasses = ["family-toggle"];
-            if (isOn) tileClasses.push("granted");
+            if (configuredWithoutLiveConfirmation) tileClasses.push("configured");
+            else if (isOn) tileClasses.push("granted");
             else if (isPartial) tileClasses.push("partial");
             if (isDegraded) tileClasses.push("degraded");
 
@@ -2057,11 +2083,15 @@ const PORTAL_SCRIPT = `
                   text: switchLabel,
                   attrs: {
                     "aria-pressed": switchPressed,
-                    title: isPartial
-                      ? "Partial access (" + policyCount + " ops granted). Click to grant full family."
-                      : isOn
-                        ? "Full family granted. Click to revoke family."
-                        : "Family revoked. Click to grant full family.",
+                    title: configuredWithoutLiveConfirmation
+                      ? "Policy configured, but not confirmed active " +
+                        (!dev.online ? "(device offline). " : !fam.providerAvailable ? "(provider unavailable). " : "(awaiting device ACK). ") +
+                        (isOn ? "Click to revoke the family." : "Click to grant the full family.")
+                      : isPartial
+                        ? "Partial access (" + policyCount + " ops granted). Click to grant full family."
+                        : isOn
+                          ? "Full family granted and device-confirmed. Click to revoke family."
+                          : "Family revoked. Click to grant full family.",
                   },
                   dataset: {
                     action: "toggle-family",

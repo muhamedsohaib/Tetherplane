@@ -434,6 +434,9 @@ test("owner portal usability: clean signed-in header, relay-pending vs device-co
       roFilesSwitchText: string;
       roProcessSwitchText: string;
       offlineSyncDetail: string;
+      offlineBrowserLabel: string;
+      offlineBrowserClass: string;
+      offlineBrowserSubtitle: string;
       navTargets: string[];
       navVisible: boolean;
     }>(`(() => {
@@ -441,6 +444,7 @@ test("owner portal usability: clean signed-in header, relay-pending vs device-co
       const roFilesBtn = roCard.querySelector('[data-action="toggle-family"][data-family="files"]');
       const roProcBtn = roCard.querySelector('[data-action="toggle-family"][data-family="process"]');
       const offDetail = document.querySelector('[data-sync-detail="Node-Offline"]')?.textContent || "";
+      const offBrowser = document.querySelector('.device-card[data-device-id="Node-Offline"] [data-action="toggle-family"][data-family="browser"]');
       return {
         authAttr: document.body.dataset.auth || "",
         tokenHidden: getComputedStyle(document.getElementById("token-input")).display === "none",
@@ -449,6 +453,9 @@ test("owner portal usability: clean signed-in header, relay-pending vs device-co
         roFilesSwitchText: roFilesBtn?.textContent || "",
         roProcessSwitchText: roProcBtn?.textContent || "",
         offlineSyncDetail: offDetail,
+        offlineBrowserLabel: offBrowser?.textContent || "",
+        offlineBrowserClass: offBrowser?.className || "",
+        offlineBrowserSubtitle: offBrowser?.closest(".family-toggle")?.querySelector(".family-sub")?.textContent || "",
         navTargets: Array.from(document.querySelectorAll(".owner-nav a")).map((link) => link.getAttribute("href")),
         navVisible: getComputedStyle(document.querySelector(".owner-nav")).display !== "none",
       };
@@ -462,6 +469,9 @@ test("owner portal usability: clean signed-in header, relay-pending vs device-co
     assert.equal(signedInUi.roFilesSwitchText, "PARTIAL");
     assert.equal(signedInUi.roProcessSwitchText, "OFF");
     assert.match(signedInUi.offlineSyncDetail, /Relay queued v1.*offline/i);
+    assert.equal(signedInUi.offlineBrowserLabel, "CONFIGURED", "offline policy must not appear live ON");
+    assert.match(signedInUi.offlineBrowserClass, /configured/);
+    assert.match(signedInUi.offlineBrowserSubtitle, /not currently active/i);
 
     // Relay-accepted Pending vs Device-Confirmed Enforcement transition on Node-Online
     await browser.eval(`(() => {

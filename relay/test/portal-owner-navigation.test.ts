@@ -36,6 +36,18 @@ test("attention filter includes offline devices regardless of last policy ACK", 
   assert.match(html, /if \(activeFleetFilter === "attention"\) return deviceNeedsAttention\(dev\)/);
 });
 
+test("configured permissions are distinct from confirmed live permissions", () => {
+  const html = renderControlPortalHtml("token");
+  assert.match(html, /const livePolicyConfirmed\s*=/);
+  assert.match(html, /Boolean\(dev\.confirmedByDevice\)/);
+  assert.match(html, /dev\.syncStatus === "applied"/);
+  assert.match(html, /const configuredWithoutLiveConfirmation = policyCount > 0 && !livePolicyConfirmed/);
+  assert.match(html, /isOn \? "CONFIGURED" : "PARTIAL SET"/);
+  assert.match(html, /\.switch-btn\.configured\s*\{/);
+  assert.match(html, /policy-granted; not currently active/);
+  assert.match(html, /Keep aria-pressed bound to desired policy/);
+});
+
 test("navigation does not introduce browser token storage or new privileged operations", () => {
   const html = renderControlPortalHtml("oidc");
   assert.doesNotMatch(html, /\.innerHTML\s*=/);
