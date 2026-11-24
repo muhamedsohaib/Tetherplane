@@ -475,6 +475,9 @@ test(
         `Desktop overflow: ${desktopInitial.scrollWidth} > ${desktopInitial.innerWidth}`,
       );
       assert.match(desktopInitial.lenoBrowserSub, /Unavailable/);
+      assert.equal(await browser.eval<string>(
+        `document.querySelector('.device-card[data-device-id="Leno"] [data-capability-family="browser"]').dataset.capabilityState`,
+      ), "unavailable");
 
       // Unregistered operator is denied even on files.read
       const rogueRes = await rogueClient.callTool({
@@ -497,16 +500,41 @@ test(
 
       // Attach live browser backend -> tetherd probes & emits device_telemetry -> SSE updates UI live without Refresh
       swappable.attach(new LiveFakeBrowserBackend());
-      await until(
-        () =>
-          browser!.eval<boolean>(`(() => {
-            const leno = document.querySelector('.device-card[data-device-id="Leno"]');
-            const sub = leno?.querySelector('[data-action="toggle-family"][data-family="browser"]')?.closest('.family-toggle')?.querySelector('.family-sub')?.textContent || "";
-            return sub.includes("ops active") && !sub.startsWith("0/");
-          })()`),
-        10_000,
-        "live browser recovery reflected via device_telemetry + SSE",
-      );
+      // Assert the current-connection telemetry contract, not incidental copy.
+      // The live bridge intentionally reports a subset of canonical browser
+      // operations, so recovery must be shown as partial, never as full.
+      const recoveredBrowser = await until(async () => {
+        const response = await fetch(address.httpUrl + "/portal/api/overview", {
+          headers: { authorization: "Bearer " + ownerToken },
+        });
+        assert.equal(response.status, 200);
+        const overview = (await response.json()) as {
+          devices: Array<{
+            deviceId: string;
+            online: boolean;
+            confirmedByDevice: boolean;
+            familySummaries: Array<{
+              family: string; providerState: string; activeOperations: string[];
+              canonicalOperationCount: number; fullyLive: boolean;
+            }>;
+          }>;
+        };
+        const leno = overview.devices.find((d) => d.deviceId === "Leno");
+        const reported = leno?.familySummaries.find((family) => family.family === "browser");
+        if (!leno?.online || !leno.confirmedByDevice ||
+            reported?.providerState !== "available" ||
+            !reported.activeOperations.includes("browser.pages")) return null;
+        const dialState = await browser!.eval<string>(
+          `document.querySelector('.device-card[data-device-id="Leno"] [data-capability-family="browser"]')?.dataset.capabilityState || ""`,
+        );
+        return dialState === "partial" ? reported : null;
+      }, 10_000, "current browser telemetry and partial capability dial recover via SSE");
+      assert.equal(recoveredBrowser.fullyLive, false);
+      assert.ok(recoveredBrowser.activeOperations.length > 0);
+      assert.ok(recoveredBrowser.activeOperations.length < recoveredBrowser.canonicalOperationCount);
+      assert.deepEqual([...recoveredBrowser.activeOperations].sort(), [
+        "browser.create_tab", "browser.pages", "browser.snapshot", "browser.status",
+      ]);
 
       const pagesRes = await ownerClient.callTool({
         name: "browser",
@@ -785,6 +813,10 @@ test(
         "Leno Offline pill in mobile view via SSE",
       );
 
+      assert.equal(await browser.eval<number>(
+        `document.querySelectorAll(\'.device-card[data-device-id="Leno"] [data-capability-state="full"],.device-card[data-device-id="Leno"] [data-capability-state="partial"]\').length`,
+      ), 0, "disconnected agent must not retain active capability segments");
+
       // Toggle process OFF while Leno is offline -> stays Pending Device Ack
       await browser.eval(
         `document.querySelector('.device-card[data-device-id="Leno"] [data-action="toggle-family"][data-family="process"]').click()`,
@@ -818,6 +850,10 @@ test(
         12_000,
         "Leno reconnect sync Confirmed Active (v17) in mobile viewport",
       );
+
+      assert.equal(await browser.eval<string>(
+        `document.querySelector(\'.device-card[data-device-id="Leno"] [data-capability-family="process"]\').dataset.capabilityState`,
+      ), "off", "reconnected agent must retain the confirmed process revocation");
 
       // Verify offline revocation synced to reconnected tetherd
       const procAfterReconnect = await ownerClient.callTool({

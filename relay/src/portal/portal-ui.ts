@@ -2,26 +2,26 @@ import { createHash } from "node:crypto";
 
 const PORTAL_STYLE = `
     :root {
-      --bg: #090d14;
-      --surface: #111827;
-      --surface-elevated: #172033;
-      --surface-subtle: #0d1422;
-      --border: #24324a;
-      --border-strong: #334766;
-      --text: #f1f5f9;
-      --text-muted: #94a3b8;
-      --primary: #38bdf8;
-      --primary-hover: #0ea5e9;
-      --primary-bg: rgba(56, 189, 248, 0.14);
-      --success: #22c55e;
-      --success-bg: rgba(34, 197, 94, 0.14);
-      --warning: #f59e0b;
-      --warning-bg: rgba(245, 158, 11, 0.15);
-      --danger: #ef4444;
-      --danger-bg: rgba(239, 68, 68, 0.16);
-      --radius: 12px;
+      --bg: #111110;
+      --surface: #191918;
+      --surface-elevated: #232321;
+      --surface-subtle: #151514;
+      --border: #353532;
+      --border-strong: #585850;
+      --text: #f4f2eb;
+      --text-muted: #b3b1a8;
+      --primary: #e9e5d9;
+      --primary-hover: #ffffff;
+      --primary-bg: #30302d;
+      --success: #99d6a9;
+      --success-bg: #21352a;
+      --warning: #efc676;
+      --warning-bg: #372d20;
+      --danger: #f18c8c;
+      --danger-bg: #3a2424;
+      --radius: 10px;
       --font: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Inter, sans-serif;
-      --mono: "JetBrains Mono", "SFMono-Regular", Consolas, monospace;
+      --mono: ui-monospace, "SFMono-Regular", Consolas, "Liberation Mono", monospace;
     }
 
     * {
@@ -81,12 +81,12 @@ const PORTAL_STYLE = `
       width: 38px;
       height: 38px;
       border-radius: 10px;
-      background: linear-gradient(135deg, #38bdf8, #0284c7);
+      background: var(--text);
       display: flex;
       align-items: center;
       justify-content: center;
       font-weight: 800;
-      color: #06121f;
+      color: #111110;
       font-size: 18px;
       flex-shrink: 0;
       letter-spacing: -0.04em;
@@ -144,7 +144,7 @@ const PORTAL_STYLE = `
       border-radius: 8px;
       font-size: 0.84rem;
       font-weight: 600;
-      transition: background 0.15s ease, border-color 0.15s ease, opacity 0.15s ease;
+      transition: none;
     }
 
     button:hover:not(:disabled) {
@@ -158,7 +158,7 @@ const PORTAL_STYLE = `
 
     button.primary {
       background: var(--primary);
-      color: #06121f;
+      color: #111110;
       border-color: transparent;
     }
 
@@ -175,7 +175,7 @@ const PORTAL_STYLE = `
       border: 1px solid transparent;
       border-radius: 8px;
       background: var(--primary);
-      color: #06121f;
+      color: #111110;
       font-size: 0.84rem;
       font-weight: 700;
       text-decoration: none;
@@ -199,8 +199,8 @@ const PORTAL_STYLE = `
 
     button.active-profile {
       background: var(--primary-bg);
-      border-color: rgba(56, 189, 248, 0.65);
-      color: #bae6fd;
+      border-color: var(--border-strong);
+      color: var(--text);
     }
 
     .signed-out-card {
@@ -346,8 +346,8 @@ const PORTAL_STYLE = `
 
     .filter-pill[aria-pressed="true"] {
       background: var(--primary-bg);
-      border-color: rgba(56, 189, 248, 0.65);
-      color: #e0f2fe;
+      border-color: var(--border-strong);
+      color: var(--text);
     }
 
     .fleet-meta {
@@ -420,7 +420,7 @@ const PORTAL_STYLE = `
     }
 
     .device-card.is-selected {
-      box-shadow: 0 0 0 1px var(--primary);
+      outline: 1px solid var(--primary);
       border-color: var(--primary);
     }
 
@@ -563,7 +563,7 @@ const PORTAL_STYLE = `
     }
 
     .family-toggle.partial {
-      border-color: rgba(56, 189, 248, 0.45);
+      border-color: var(--border-strong);
     }
 
     .family-toggle.degraded {
@@ -605,8 +605,8 @@ const PORTAL_STYLE = `
 
     .switch-btn.partial {
       background: var(--primary-bg);
-      color: #7dd3fc;
-      border-color: rgba(56, 189, 248, 0.55);
+      color: var(--text);
+      border-color: var(--border-strong);
     }
 
     .switch-btn.off {
@@ -648,7 +648,7 @@ const PORTAL_STYLE = `
       border-left: 3px solid var(--primary);
       border-radius: 10px;
       padding: 12px;
-      box-shadow: 0 12px 30px rgba(0, 0, 0, 0.45);
+      box-shadow: none;
       pointer-events: auto;
       overflow-wrap: anywhere;
       font-size: 0.85rem;
@@ -892,7 +892,7 @@ const PORTAL_STYLE = `
       max-width: 440px;
       width: 100%;
       padding: 20px;
-      box-shadow: 0 20px 50px rgba(0, 0, 0, 0.55);
+      box-shadow: none;
     }
 
     .modal h3 {
@@ -951,7 +951,7 @@ const PORTAL_STYLE = `
         padding: 8px 10px calc(8px + env(safe-area-inset-bottom, 0px));
         border-width: 1px 0 0;
         border-radius: 0;
-        background: rgba(13, 20, 34, 0.98);
+        background: var(--surface-subtle);
       }
       .owner-nav a {
         padding: 7px 4px;
@@ -1044,6 +1044,324 @@ const PORTAL_STYLE = `
         min-height: 40px;
       }
     }
+    /* Instrument UI: native layout, system fonts, no raster/SVG assets, animation,
+       canvas, filters, or compositor-heavy decorative effects. */
+    .portal-shell { max-width: 1200px; padding-top: 24px; }
+    .topbar { margin-bottom: 16px; }
+    .brand-badge { border-radius: 6px; font-family: var(--mono); }
+    .brand h1 { font-weight: 650; letter-spacing: -0.035em; }
+    .brand p, .stat-label, .fleet-meta, .card-meta-row, .sync-detail,
+    .pill, .audit-meta, .owner-nav a {
+      font-family: var(--mono);
+      font-variant-numeric: tabular-nums;
+    }
+    .brand p { font-size: 0.72rem; letter-spacing: 0.015em; }
+    .summary-strip {
+      gap: 0;
+      border: 1px solid var(--border);
+      border-radius: var(--radius);
+      overflow: hidden;
+      background: var(--surface);
+    }
+    .stat-card {
+      min-height: 96px;
+      border: 0;
+      border-radius: 0;
+      border-right: 1px solid var(--border);
+      display: flex;
+      flex-direction: column;
+      justify-content: center;
+      padding: 12px 16px;
+    }
+    .stat-card:last-child { border-right: 0; }
+    .stat-label { font-size: 0.66rem; letter-spacing: 0.065em; }
+    .stat-value {
+      font-family: var(--mono);
+      font-variant-numeric: tabular-nums;
+      font-weight: 600;
+      font-size: clamp(1.45rem, 3.2vw, 2.05rem);
+      letter-spacing: -0.05em;
+      line-height: 1.25;
+    }
+    .stat-value-compact { font-size: 0.95rem; letter-spacing: 0; }
+    .stat-card.confirmed-readout {
+      flex-direction: row;
+      justify-content: space-between;
+      align-items: center;
+      gap: 8px;
+    }
+    .confirmed-readout .stat-value {
+      flex: 0 0 auto;
+      display: grid;
+      place-items: center;
+      min-width: 56px;
+      min-height: 56px;
+      padding: 4px;
+      margin: 0;
+      border: 1px solid var(--border-strong);
+      outline: 1px solid var(--border);
+      outline-offset: 3px;
+      border-radius: 50%;
+      font-size: 1.25rem;
+      letter-spacing: -0.055em;
+    }
+    .owner-nav {
+      gap: 2px;
+      padding: 4px;
+      background: var(--surface-subtle);
+      border-radius: var(--radius);
+      margin-bottom: 18px;
+    }
+    .owner-nav a {
+      border-radius: 5px;
+      font-size: 0.75rem;
+      letter-spacing: 0.035em;
+      text-transform: uppercase;
+    }
+    .owner-nav a:hover, .owner-nav a:focus-visible {
+      background: var(--surface-elevated);
+    }
+    .fleet-heading {
+      display: flex;
+      align-items: baseline;
+      gap: 12px;
+      justify-content: space-between;
+      margin: 4px 0 10px;
+      border-bottom: 1px solid var(--border);
+      padding-bottom: 10px;
+    }
+    .fleet-heading h2 { font-size: 1.15rem; margin: 0; font-weight: 600; letter-spacing: -0.025em; }
+    .fleet-heading span {
+      font-family: var(--mono);
+      font-size: 0.68rem;
+      color: var(--text-muted);
+      text-transform: uppercase;
+      letter-spacing: 0.07em;
+    }
+    body[data-auth="signed-out"] .fleet-heading { display: none; }
+    .filter-pill {
+      border-radius: 5px;
+      min-height: 36px;
+      font-size: 0.75rem;
+    }
+    .device-card { padding: 16px; gap: 10px; }
+    .device-header { padding-bottom: 10px; border-bottom: 1px solid var(--border); }
+    .device-title h3 { font-weight: 650; font-size: 1.08rem; }
+    .card-meta-row, .sync-detail { font-size: 0.73rem; }
+    .sync-detail { border-radius: 5px; padding: 8px; }
+    .pill {
+      border-radius: 4px;
+      font-size: 0.68rem;
+      padding: 4px 7px;
+      font-weight: 600;
+    }
+    .pill.online::before, .pill.offline::before, .pill.applied::before,
+    .pill.pending::before, .pill.failed::before, .pill.lockdown::before {
+      content: "";
+      width: 6px;
+      height: 6px;
+      flex: 0 0 6px;
+      background: currentColor;
+    }
+    .pill.online, .pill.applied { color: var(--success); }
+    .pill.pending { color: var(--warning); }
+    .pill.failed, .pill.lockdown { color: var(--danger); }
+    .family-grid {
+      gap: 0;
+      border: 1px solid var(--border);
+      border-radius: 7px;
+      overflow: hidden;
+      background: var(--surface-subtle);
+    }
+    .family-toggle {
+      background: transparent;
+      border: 0;
+      border-radius: 0;
+      border-bottom: 1px solid var(--border);
+      padding: 10px;
+    }
+    .family-toggle:nth-child(odd) { border-right: 1px solid var(--border); }
+    .family-toggle.granted, .family-toggle.partial, .family-toggle.degraded,
+    .family-toggle.configured { border-color: var(--border); }
+    .family-name { font-size: 0.82rem; font-weight: 650; }
+    .family-sub { font-size: 0.71rem; }
+    .switch-btn {
+      border-radius: 5px;
+      font-family: var(--mono);
+      font-size: 0.68rem;
+      min-width: 60px;
+      letter-spacing: 0.01em;
+    }
+    .switch-btn.on {
+      background: var(--success-bg);
+      color: var(--success);
+      border-color: #496e53;
+    }
+    .switch-btn.partial { background: var(--primary-bg); }
+    .switch-btn.configured { background: var(--warning-bg); color: var(--warning); }
+    .device-actions-row { gap: 6px; }
+    .device-actions-row button { font-size: 0.75rem; }
+    .global-panel { align-items: flex-start; }
+    .global-panel > div:first-child { flex: 1 1 100%; min-width: 0; }
+    .global-actions { width: 100%; }
+    .policy-explainer { margin-top: 8px; }
+    .policy-explainer summary { cursor: pointer; color: var(--text-muted); font-size: 0.78rem; padding: 5px 0; }
+    .policy-explainer .global-subtitle { max-width: 72ch; }
+    .panel-card h2 { font-weight: 650; letter-spacing: -0.015em; }
+    .modal { max-height: calc(100dvh - 32px); overflow-y: auto; }
+    button.danger:hover:not(:disabled) { color: #111110; }
+    @media (max-width: 860px) {
+      .stat-card:nth-child(2) { border-right: 0; }
+      .stat-card:nth-child(-n+2) { border-bottom: 1px solid var(--border); }
+    }
+    @media (max-width: 600px) {
+      .portal-shell { padding-top: 12px; }
+      .topbar { margin-bottom: 10px; }
+      .brand h1 { font-size: 1rem; }
+      .stat-card { min-height: 76px; padding: 9px 10px; }
+      .stat-label { font-size: 0.62rem; letter-spacing: 0.025em; }
+      .stat-value { font-size: 1.55rem; }
+      .stat-value-compact { font-size: 0.81rem; letter-spacing: 0; }
+      .confirmed-readout .stat-value { min-width: 44px; min-height: 44px; font-size: 1rem; outline-offset: 2px; }
+      .owner-nav { gap: 2px; padding: 6px 8px calc(6px + env(safe-area-inset-bottom, 0px)); border-radius: 0; margin: 0; }
+      .owner-nav a { font-size: 0.67rem; }
+      .fleet-heading { margin-top: 2px; }
+      .fleet-heading h2 { font-size: 1rem; }
+      .fleet-heading span { font-size: 0.62rem; }
+      .device-card { padding: 12px; }
+      .family-toggle:nth-child(odd) { border-right: 0; }
+      .family-toggle:last-child { border-bottom: 0; }
+      .filter-pill { min-height: 44px; }
+      .global-actions button { flex: 1 1 130px; }
+      .global-actions .danger { flex: 1 1 100%; }
+      .policy-explainer summary, details.advanced-box summary { min-height: 44px; display: list-item; padding: 12px 0; }
+    }
+
+    /* Compact instrument controls. The dial is a read-only indicator, not a grant button.
+       Six static CSS shapes, no timers, canvas, external assets, or animated effects. */
+    .session-menu { position: relative; margin-left: auto; }
+    .session-menu > summary {
+      display: flex; align-items: center; justify-content: center; gap: 7px;
+      min-height: 34px; padding: 7px 12px; cursor: pointer;
+      border: 1px solid var(--border); border-radius: 6px;
+      background: var(--surface-elevated); font-size: 0.8rem; font-weight: 600;
+      list-style: none;
+    }
+    .session-menu > summary::-webkit-details-marker,
+    .device-controls > summary::-webkit-details-marker { display: none; }
+    .session-menu > summary::after { content: "+"; font-family: var(--mono); color: var(--text-muted); }
+    .session-menu[open] > summary::after { content: "−"; }
+    .session-menu[open] > summary { border-color: var(--border-strong); }
+    .session-actions {
+      position: absolute; right: 0; top: calc(100% + 6px); z-index: 50;
+      width: min(220px, calc(100vw - 32px)); padding: 6px;
+      display: grid; gap: 6px; background: var(--surface);
+      border: 1px solid var(--border-strong); border-radius: 7px;
+    }
+    .session-actions button { width: 100%; text-align: left; min-height: 40px; }
+    body[data-auth="signed-out"] .session-menu { display: none; }
+    .session-menu > summary:focus-visible, .device-controls > summary:focus-visible,
+    details.advanced-box > summary:focus-visible, .policy-explainer > summary:focus-visible {
+      outline: 2px solid var(--primary); outline-offset: 2px;
+    }
+    .auth-bar { min-width: 0; }
+    #auth-state-badge { overflow-wrap: anywhere; max-width: 100%; }
+    .devices-grid { align-items: start; }
+    .device-controls { border: 1px solid var(--border); border-radius: 8px; min-width: 0; background: var(--surface-subtle); }
+    .device-controls > summary {
+      display: grid; grid-template-columns: 72px minmax(0, 1fr) 30px;
+      align-items: center; gap: 12px; min-height: 88px; padding: 9px 10px;
+      cursor: pointer; list-style: none; border-radius: 7px;
+    }
+    .device-controls > summary:hover { background: var(--surface-elevated); }
+    .device-controls[open] > summary { border-bottom: 1px solid var(--border); border-radius: 7px 7px 0 0; }
+    .capability-dial {
+      position: relative; display: block; width: 72px; height: 72px;
+      flex: 0 0 72px; border-radius: 50%;
+    }
+    .capability-segment { position: absolute; inset: 0; background: #55554f; }
+    .capability-segment:nth-child(1) { clip-path: polygon(52.14% 1.05%, 57.98% 1.65%, 63.71% 2.96%, 69.24% 4.94%, 74.50% 7.56%, 79.40% 10.80%, 83.88% 14.60%, 87.88% 18.91%, 91.33% 23.67%, 72.77% 35.49%, 70.87% 32.87%, 68.67% 30.50%, 66.20% 28.40%, 63.50% 26.62%, 60.60% 25.17%, 57.56% 24.08%, 54.40% 23.36%, 51.18% 23.03%); }
+    .capability-segment:nth-child(2) { clip-path: polygon(93.46% 27.37%, 95.86% 32.74%, 97.60% 38.35%, 98.65% 44.13%, 99.00% 50.00%, 98.65% 55.87%, 97.60% 61.65%, 95.86% 67.26%, 93.46% 72.63%, 73.95% 62.47%, 75.27% 59.51%, 76.23% 56.42%, 76.81% 53.23%, 77.00% 50.00%, 76.81% 46.77%, 76.23% 43.58%, 75.27% 40.49%, 73.95% 37.53%); }
+    .capability-segment:nth-child(3) { clip-path: polygon(91.33% 76.33%, 87.88% 81.09%, 83.88% 85.40%, 79.40% 89.20%, 74.50% 92.44%, 69.24% 95.06%, 63.71% 97.04%, 57.98% 98.35%, 52.14% 98.95%, 51.18% 76.97%, 54.40% 76.64%, 57.56% 75.92%, 60.60% 74.83%, 63.50% 73.38%, 66.20% 71.60%, 68.67% 69.50%, 70.87% 67.13%, 72.77% 64.51%); }
+    .capability-segment:nth-child(4) { clip-path: polygon(47.86% 98.95%, 42.02% 98.35%, 36.29% 97.04%, 30.76% 95.06%, 25.50% 92.44%, 20.60% 89.20%, 16.12% 85.40%, 12.12% 81.09%, 8.67% 76.33%, 27.23% 64.51%, 29.13% 67.13%, 31.33% 69.50%, 33.80% 71.60%, 36.50% 73.38%, 39.40% 74.83%, 42.44% 75.92%, 45.60% 76.64%, 48.82% 76.97%); }
+    .capability-segment:nth-child(5) { clip-path: polygon(6.54% 72.63%, 4.14% 67.26%, 2.40% 61.65%, 1.35% 55.87%, 1.00% 50.00%, 1.35% 44.13%, 2.40% 38.35%, 4.14% 32.74%, 6.54% 27.37%, 26.05% 37.53%, 24.73% 40.49%, 23.77% 43.58%, 23.19% 46.77%, 23.00% 50.00%, 23.19% 53.23%, 23.77% 56.42%, 24.73% 59.51%, 26.05% 62.47%); }
+    .capability-segment:nth-child(6) { clip-path: polygon(8.67% 23.67%, 12.12% 18.91%, 16.12% 14.60%, 20.60% 10.80%, 25.50% 7.56%, 30.76% 4.94%, 36.29% 2.96%, 42.02% 1.65%, 47.86% 1.05%, 48.82% 23.03%, 45.60% 23.36%, 42.44% 24.08%, 39.40% 25.17%, 36.50% 26.62%, 33.80% 28.40%, 31.33% 30.50%, 29.13% 32.87%, 27.23% 35.49%); }
+    .capability-segment[data-capability-state="full"] { background: var(--success); }
+    .capability-segment[data-capability-state="partial"] { background: var(--text); }
+    .capability-segment[data-capability-state="configured"],
+    .capability-segment[data-capability-state="unavailable"],
+    .capability-segment[data-capability-state="lockdown-pending"] { background: var(--warning); }
+    .capability-segment[data-capability-state="off"] { background: #55554f; }
+    .capability-segment[data-capability-state="unknown"] { background: #77776f; }
+    .capability-segment[data-capability-state="blocked"] { background: var(--danger); }
+    .capability-core {
+      position: absolute; inset: 28%; border-radius: 50%;
+      display: grid; place-items: center; border: 1px solid var(--border-strong);
+      color: var(--text); font-family: var(--mono); font-size: 0.73rem;
+      font-weight: 700; font-variant-numeric: tabular-nums;
+    }
+    .capability-copy { min-width: 0; display: grid; gap: 2px; }
+    .capability-kicker {
+      font-family: var(--mono); font-size: 0.65rem; text-transform: uppercase;
+      letter-spacing: 0.075em; color: var(--text-muted);
+    }
+    .capability-readout { font-size: 0.92rem; font-weight: 650; color: var(--text); }
+    .capability-breakdown {
+      font-family: var(--mono); font-size: 0.67rem; color: var(--text-muted); overflow-wrap: anywhere;
+    }
+    .capability-arrow {
+      display: grid; place-items: center; width: 30px; height: 30px;
+      color: var(--text); border: 1px solid var(--border-strong);
+      border-radius: 50%; font-size: 1.2rem; line-height: 1;
+    }
+    .capability-arrow::after { content: "+"; }
+    .device-controls[open] .capability-arrow::after { content: "−"; }
+    .device-control-content { display: grid; gap: 10px; padding: 10px; min-width: 0; }
+    .device-control-content .family-grid { background: var(--surface); }
+    .device-control-content .family-toggle { min-height: 60px; }
+    .device-control-content .family-toggle:nth-last-child(-n+2) { border-bottom: 0; }
+    .device-card .device-select-cb { margin: 0; }
+    .device-card .device-title { min-height: 28px; }
+    .device-card .sync-detail { margin: 0; }
+    @media (max-width: 600px) {
+      .session-menu > summary, .session-actions button { min-height: 44px; }
+      .auth-bar { gap: 6px; }
+      body[data-auth="signed-in"] .auth-bar { display: grid; grid-template-columns: minmax(0, 1fr) auto auto; }
+      body[data-auth="signed-in"] #auth-state-badge { grid-column: 1 / -1; justify-self: start; }
+      body[data-auth="signed-in"] #live-stream-badge { justify-self: start; min-width: 0; }
+      .device-controls > summary { grid-template-columns: 64px minmax(0, 1fr) 28px; gap: 9px; min-height: 80px; }
+      .capability-dial { width: 64px; height: 64px; }
+      .capability-arrow { width: 28px; height: 28px; }
+      .capability-readout { font-size: 0.86rem; }
+      .capability-breakdown { font-size: 0.65rem; }
+      .device-control-content { padding: 8px; }
+      .device-control-content .family-toggle:nth-last-child(2) { border-bottom: 1px solid var(--border); }
+      .device-control-content .family-toggle:last-child { border-bottom: 0; }
+      .device-card { gap: 8px; }
+    }
+
+    /* Non-actionable controls must not be presented as available. */
+    body[data-portal-read-only="true"] #global-controls,
+    body[data-portal-read-only="true"] .owner-nav a[href="#global-controls"],
+    body[data-portal-read-only="true"] #operator-advanced-box,
+    body[data-has-devices="false"] #global-controls,
+    body[data-has-devices="false"] .owner-nav a[href="#global-controls"],
+    body[data-has-devices="false"] #operator-advanced-box { display: none; }
+    .family-readout { font-family: var(--mono); font-size: 0.72rem; font-weight: 600; text-align: right; overflow-wrap: anywhere; }
+    .family-readout.on { color: var(--success); }
+    .family-readout.configured { color: var(--warning); }
+    .family-readout.off { color: var(--text-muted); }
+    .family-readout.partial { color: var(--text); }
+    .read-only-notice { display: none; }
+    body[data-auth="signed-in"][data-portal-read-only="true"] .read-only-notice {
+      display: block; font-size: 0.76rem; color: var(--text-muted);
+      padding: 9px 12px; border: 1px solid var(--border); border-radius: 6px; margin-bottom: 12px;
+    }
+    .snapshot-controls.hidden { display: none; }
+    @media (max-width: 600px) {
+      body[data-portal-read-only="true"] .owner-nav,
+      body[data-has-devices="false"] .owner-nav { grid-template-columns: repeat(3, minmax(0,1fr)); }
+    }
 `;
 
 const PORTAL_SCRIPT = `
@@ -1053,6 +1371,7 @@ const PORTAL_SCRIPT = `
       const connectBtn = document.getElementById("connect-btn");
       const oidcLink = document.getElementById("oidc-signin-link");
       const oidcMode = document.body.dataset.loginMode === "oidc";
+      const portalReadOnly = document.body.dataset.portalReadOnly === "true";
       const refreshBtn = document.getElementById("refresh-btn");
       const logoutBtn = document.getElementById("logout-btn");
       const authStateBadge = document.getElementById("auth-state-badge");
@@ -1079,10 +1398,13 @@ const PORTAL_SCRIPT = `
       let activeFleetFilter = "all";
       let lastUpdatedMs = null;
       const openAdvancedDevices = new Set();
+      const openControlDevices = new Set();
       const selectedDeviceIds = new Set();
       const trackedAccessUpdates = new Map();
       const lastDeviceState = new Map();
       let livePageAlerts = false;
+      let signingOut = false;
+      let savingOperator = false;
 
       function createEl(tag, options, children) {
         const node = document.createElement(tag);
@@ -1185,6 +1507,7 @@ const PORTAL_SCRIPT = `
           Boolean(dev.emergencyLockdown) ||
           dev.syncStatus === "pending" ||
           dev.syncStatus === "failed" ||
+          dev.agentHealth === "unknown" || dev.agentHealth === "degraded" ||
           (Array.isArray(dev.unavailableCapabilities) &&
             dev.unavailableCapabilities.length > 0)
         );
@@ -1239,7 +1562,7 @@ const PORTAL_SCRIPT = `
           };
         }
         if (dev.syncStatus === "applied") {
-          if (dev.online) {
+          if (dev.online && dev.confirmedByDevice) {
             return {
               cls: "applied",
               text: "Device confirmed v" + dev.appliedRevision + ackSuffix,
@@ -1251,7 +1574,7 @@ const PORTAL_SCRIPT = `
               "Device confirmed v" +
               dev.appliedRevision +
               ackSuffix +
-              " • Currently offline",
+              (dev.online ? " • Awaiting device confirmation" : " • Currently offline"),
           };
         }
         if (!dev.online) {
@@ -1290,6 +1613,11 @@ const PORTAL_SCRIPT = `
         }
       }
 
+      function targetDevices() {
+        const devices = (currentOverview && currentOverview.devices) || [];
+        return selectedDeviceIds.size === 0 ? devices : devices.filter(function (d) { return selectedDeviceIds.has(d.deviceId); });
+      }
+
       function updateSelectionIndicators() {
         const devices = (currentOverview && currentOverview.devices) || [];
         const knownIds = new Set(devices.map(function (d) { return d.deviceId; }));
@@ -1307,6 +1635,10 @@ const PORTAL_SCRIPT = `
           }
         });
         const selected = Array.from(selectedDeviceIds);
+        document.body.dataset.hasDevices = devices.length > 0 ? "true" : "false";
+        document.getElementById("select-all-devices-btn").classList.toggle("hidden", selected.length === devices.length);
+        document.getElementById("clear-selected-devices-btn").classList.toggle("hidden", selected.length === 0);
+        document.getElementById("global-lift-lockdown-btn").classList.toggle("hidden", !targetDevices().some(function(d) { return d.emergencyLockdown; }));
         const badge = document.getElementById("global-target-badge");
         if (badge) {
           if (selected.length === 0) {
@@ -1434,9 +1766,17 @@ const PORTAL_SCRIPT = `
         csrfToken = null;
         authenticatedOwner = null;
         currentOverview = null;
+        closeConfirmModal();
+        document.getElementById("operator-advanced-box").open = false;
+        document.getElementById("op-principal-id").value = "";
+        document.getElementById("op-display-name").value = "";
+        document.getElementById("op-profile-id").value = "";
+        document.getElementById("snapshots-advanced-box").open = false;
         activeFleetFilter = "all";
         lastUpdatedMs = null;
         openAdvancedDevices.clear();
+        openControlDevices.clear();
+        document.querySelector(".session-menu").open = false;
         selectedDeviceIds.clear();
         snapshotFilterDevice = "";
         snapshotLimit = SNAPSHOT_PAGE_SIZE;
@@ -1486,6 +1826,9 @@ const PORTAL_SCRIPT = `
 
       async function apiCall(path, method, body) {
         const effectiveMethod = method || "GET";
+        if (portalReadOnly && effectiveMethod !== "GET" && effectiveMethod !== "HEAD" && path !== "/portal/api/session/logout") {
+          throw new Error("This portal is read-only; permission changes are unavailable.");
+        }
         const headers = { Accept: "application/json" };
         if (body !== undefined) {
           headers["Content-Type"] = "application/json";
@@ -1721,12 +2064,18 @@ const PORTAL_SCRIPT = `
       }
 
       async function signOut() {
+        if (signingOut) return;
+        signingOut = true;
+        logoutBtn.disabled = true;
         try {
           await apiCall("/portal/api/session/logout", "POST", {});
-        } catch {
-          // Always transition UI cleanly to signed-out even if session already expired
+          setSignedOutUi("");
+        } catch (err) {
+          if (authenticatedOwner) showToast("Sign out could not be confirmed: " + err.message + ". Retry sign out.", "error", "logout-error");
+        } finally {
+          signingOut = false;
+          logoutBtn.disabled = false;
         }
-        setSignedOutUi("");
       }
 
       async function loadOverview() {
@@ -1837,20 +2186,27 @@ const PORTAL_SCRIPT = `
             ? status.os + "/" + status.arch
             : status.os
           : status.platform || "unknown";
-        const version = status.agent_version || status.version || "0.1.0";
+        const version = status.agent_version || status.version;
         const mode = status.policy_mode ? " • " + status.policy_mode : "";
-        return platform + " • v" + version + mode;
+        return platform + (version ? " • v" + version : " • version not reported") + mode;
       }
 
       function renderOverview(data) {
         const draftOpRules = {};
         let focusedOpDeviceId = null;
+        let focusedControlDeviceId = null;
         let focusedSelStart = null;
         let focusedSelEnd = null;
         const activeEl = document.activeElement;
 
         document.querySelectorAll(".device-card[data-device-id]").forEach(function (cardEl) {
           const id = cardEl.dataset.deviceId;
+          const controlsEl = cardEl.querySelector("details.device-controls");
+          if (id && controlsEl) {
+            if (controlsEl.open) openControlDevices.add(id);
+            else openControlDevices.delete(id);
+            if (controlsEl.querySelector("summary") === activeEl) focusedControlDeviceId = id;
+          }
           const detailsEl = cardEl.querySelector("details.advanced-box");
           if (id && detailsEl) {
             if (detailsEl.open) openAdvancedDevices.add(id);
@@ -1883,12 +2239,7 @@ const PORTAL_SCRIPT = `
           "stat-value stat-value-compact " +
           (anyLockdown ? "security-lockdown" : "security-active");
 
-        const globalLiftBtn = document.getElementById("global-lift-lockdown-btn");
-        if (anyLockdown) {
-          globalLiftBtn.classList.remove("hidden");
-        } else {
-          globalLiftBtn.classList.add("hidden");
-        }
+        // The lift action is shown only when the current target scope includes a locked device.
 
         renderFleetToolbar(devices);
 
@@ -1952,19 +2303,19 @@ const PORTAL_SCRIPT = `
             : dev.syncStatus === "failed"
               ? "Sync Rejected"
               : dev.syncStatus === "applied"
-                ? "Confirmed Active (v" + dev.appliedRevision + ")"
+                ? (dev.online && dev.confirmedByDevice ? "Confirmed Active (v" : "Last Confirmed (v") + dev.appliedRevision + ")"
                 : "Pending Device Ack (v" + dev.desiredRevision + ")";
           const syncClass = dev.emergencyLockdown
             ? "lockdown"
             : dev.syncStatus === "failed"
               ? "failed"
               : dev.syncStatus === "applied"
-                ? "applied"
+                ? (dev.online && dev.confirmedByDevice ? "applied" : "offline")
                 : "pending";
 
           const header = createEl("div", { className: "device-header" }, [
             createEl("div", { className: "device-title" }, [
-              createEl("input", {
+              portalReadOnly ? null : createEl("input", {
                 type: "checkbox",
                 className: "device-select-cb",
                 checked: selectedDeviceIds.has(dev.deviceId),
@@ -2033,33 +2384,54 @@ const PORTAL_SCRIPT = `
           }
 
           const familyGrid = createEl("div", { className: "family-grid" });
+          const capabilityStates = new Map();
           (dev.familySummaries || []).forEach(function (fam) {
             const isOn = Boolean(fam.granted);
             const policyCount = Array.isArray(fam.policyGrantedOperations)
               ? fam.policyGrantedOperations.length
               : fam.grantedOperations.length;
-            const isPartial = !isOn && policyCount > 0;
-            const isDegraded = Boolean(dev.online) && !fam.providerAvailable;
+            const canonicalCount = Number(fam.canonicalOperationCount) || 0;
+            const policyFull = canonicalCount > 0 && policyCount === canonicalCount;
+            const isPartial = policyCount > 0 && !policyFull;
+            const providerState = fam.providerState || "unknown";
+            const isDegraded = Boolean(dev.online) && providerState === "unavailable";
             const livePolicyConfirmed =
               Boolean(dev.online) && Boolean(dev.confirmedByDevice) &&
-              dev.syncStatus === "applied" && Boolean(fam.providerAvailable);
+              dev.syncStatus === "applied" && providerState === "available";
+            const activeCount = livePolicyConfirmed && Array.isArray(fam.activeOperations)
+              ? fam.activeOperations.length : 0;
+            const fullyLive = livePolicyConfirmed && fam.fullyLive === true && canonicalCount > 0 && activeCount === canonicalCount;
             const configuredWithoutLiveConfirmation = policyCount > 0 && !livePolicyConfirmed;
+            // Family policy and observed operation coverage are separate dimensions.
+            const dialState = dev.emergencyLockdown
+              ? (dev.online && dev.confirmedByDevice && dev.syncStatus === "applied" ? "blocked" : "lockdown-pending")
+              : policyCount === 0 ? "off"
+              : !dev.online ? "configured"
+              : providerState === "unknown" ? "unknown"
+              : providerState === "unavailable" ? "unavailable"
+              : !livePolicyConfirmed ? "configured"
+              : fullyLive ? "full"
+              : activeCount > 0 ? "partial" : "unavailable";
+            capabilityStates.set(fam.family, dialState);
             const subText =
               !dev.online
                 ? "Offline (" + policyCount + " policy-granted; not currently active)"
-                : !fam.providerAvailable
-                  ? "Unavailable (" + policyCount + " policy-granted; not currently active)"
-                  : !livePolicyConfirmed && policyCount > 0
-                    ? "Awaiting device confirmation (" + policyCount + " configured)"
-                    : fam.grantedOperations.length + "/" + fam.availableOperations.length + " ops active";
+                : providerState === "unknown"
+                  ? "Telemetry unknown (" + policyCount + " configured; no live access verified)"
+                  : providerState === "unavailable"
+                    ? "Unavailable (" + policyCount + " policy-granted; not currently active)"
+                    : !livePolicyConfirmed && policyCount > 0
+                      ? "Awaiting device confirmation (" + policyCount + " configured)"
+                      : activeCount + "/" + canonicalCount + " ops reported active";
             const switchLabel = configuredWithoutLiveConfirmation
-              ? (isOn ? "CONFIGURED" : "PARTIAL SET")
-              : isOn ? "ON" : isPartial ? "PARTIAL" : "OFF";
+              ? (policyFull ? "CONFIGURED" : "PARTIAL SET")
+              : policyCount === 0 ? "OFF" : fullyLive ? "ON" : activeCount > 0 ? "PARTIAL" : "UNAVAILABLE";
             const switchClass = configuredWithoutLiveConfirmation
               ? "configured"
-              : isOn ? "on" : isPartial ? "partial" : "off";
-            // Keep aria-pressed bound to desired policy, not instantaneous device availability.
-            const switchPressed = isOn ? "true" : isPartial ? "mixed" : "false";
+              : policyCount === 0 ? "off" : fullyLive ? "on" : activeCount > 0 ? "partial" : "configured";
+            // The action still changes the desired family grant; never silently
+            // remove explicit operation denies when toggling a family.
+            const switchPressed = policyFull ? "true" : policyCount > 0 ? "mixed" : "false";
             const tileClasses = ["family-toggle"];
             if (configuredWithoutLiveConfirmation) tileClasses.push("configured");
             else if (isOn) tileClasses.push("granted");
@@ -2077,21 +2449,15 @@ const PORTAL_SCRIPT = `
                   createEl("span", { className: "family-name", text: fam.family }),
                   createEl("span", { className: "family-sub", text: subText }),
                 ]),
-                createEl("button", {
+                portalReadOnly || dev.emergencyLockdown ? createEl("span", { className: "family-readout " + switchClass, text: dev.emergencyLockdown ? "LOCKDOWN" : switchLabel }) : createEl("button", {
                   type: "button",
                   className: "switch-btn " + switchClass,
                   text: switchLabel,
                   attrs: {
                     "aria-pressed": switchPressed,
-                    title: configuredWithoutLiveConfirmation
-                      ? "Policy configured, but not confirmed active " +
-                        (!dev.online ? "(device offline). " : !fam.providerAvailable ? "(provider unavailable). " : "(awaiting device ACK). ") +
-                        (isOn ? "Click to revoke the family." : "Click to grant the full family.")
-                      : isPartial
-                        ? "Partial access (" + policyCount + " ops granted). Click to grant full family."
-                        : isOn
-                          ? "Full family granted and device-confirmed. Click to revoke family."
-                          : "Family revoked. Click to grant full family.",
+                    title: subText + ". " +
+                      (isOn ? "Click to revoke the enabled family." : "Click to enable this family.") +
+                      " Explicit operation denies are preserved.",
                   },
                   dataset: {
                     action: "toggle-family",
@@ -2104,8 +2470,70 @@ const PORTAL_SCRIPT = `
             );
             familyGrid.appendChild(row);
           });
-          card.appendChild(familyGrid);
+          const families = ["device", "files", "process", "browser", "desktop", "batch"];
+          const stateLabels = {
+            full: "live", partial: "partial", configured: "configured",
+            unavailable: "unavailable", off: "off", unknown: "unknown",
+            blocked: "lockdown confirmed", "lockdown-pending": "lockdown pending",
+          };
+          const dialStates = families.map(function (family) {
+            return { family: family, state: capabilityStates.get(family) || "unknown" };
+          });
+          const fullCount = dialStates.filter(function (item) { return item.state === "full"; }).length;
+          const countState = function (state) {
+            return dialStates.filter(function (item) { return item.state === state; }).length;
+          };
+          const breakdown = ["partial", "configured", "unavailable", "off", "unknown", "blocked", "lockdown-pending"]
+            .map(function (state) {
+              const count = countState(state);
+              return count ? count + " " + stateLabels[state] : "";
+            }).filter(Boolean).join(" / ");
+          const dial = createEl("span", {
+            className: "capability-dial",
+            attrs: {
+              role: "img",
+              "aria-label": "Capability status: " + dialStates.map(function (item) {
+                return item.family + " " + stateLabels[item.state];
+              }).join("; "),
+            },
+          }, dialStates.map(function (item) {
+            return createEl("span", {
+              className: "capability-segment",
+              attrs: { "aria-hidden": "true" },
+              dataset: { capabilityFamily: item.family, capabilityState: item.state },
+            });
+          }).concat([createEl("span", {
+            className: "capability-core", attrs: { "aria-hidden": "true" },
+            text: fullCount + "/" + families.length,
+          })]));
+          const controlsBox = createEl("details", { className: "device-controls" });
+          const controlsSummary = createEl("summary", {
+            attrs: { title: "View permissions and controls for " + dev.deviceId },
+          }, [
+            dial,
+            createEl("span", { className: "capability-copy" }, [
+              createEl("span", { className: "capability-kicker", text: "Permissions & controls" }),
+              createEl("span", { className: "capability-readout", text: fullCount + "/" + families.length + " full families" }),
+              createEl("span", { className: "capability-breakdown", text: breakdown || "All canonical operations reported available and policy-confirmed" }),
+            ]),
+            createEl("span", { className: "capability-arrow", attrs: { "aria-hidden": "true" } }),
+          ]);
+          const controlContent = createEl("div", { className: "device-control-content" }, [familyGrid]);
+          controlsBox.appendChild(controlsSummary);
+          controlsBox.appendChild(controlContent);
+          if (openControlDevices.has(dev.deviceId)) controlsBox.open = true;
+          card.appendChild(controlsBox);
 
+          const deniedCaps =
+            (dev.policy && dev.policy.owner_policy && dev.policy.owner_policy.denied_capabilities) ||
+            [];
+          if (portalReadOnly) {
+            controlContent.appendChild(createEl("div", {
+              className: "muted-note",
+              text: "Explicit denies: " + (deniedCaps.length ? deniedCaps.join(", ") : "None"),
+            }));
+            return card;
+          }
           const actionButtons = [];
           if (dev.emergencyLockdown) {
             actionButtons.push(
@@ -2120,6 +2548,10 @@ const PORTAL_SCRIPT = `
                 dataset: { action: "lift-lockdown", device: dev.deviceId },
               }),
             );
+          }
+          if (dev.emergencyLockdown) {
+            controlContent.appendChild(createEl("div", { className: "device-actions-row" }, actionButtons));
+            return card;
           }
           [
             { id: "universal", label: "Grant All (Universal)" },
@@ -2141,16 +2573,15 @@ const PORTAL_SCRIPT = `
               }),
             );
           });
-          card.appendChild(createEl("div", { className: "device-actions-row" }, actionButtons));
+          controlContent.appendChild(createEl("div", { className: "device-actions-row" }, actionButtons));
 
-          const deniedCaps =
-            (dev.policy && dev.policy.owner_policy && dev.policy.owner_policy.denied_capabilities) ||
-            [];
           const ruleInput = createEl("input", {
             type: "text",
             className: "op-rule-input",
             attrs: {
               placeholder: "e.g. filesystem.write",
+              "aria-label": "Canonical operation on " + dev.deviceId,
+              required: "",
               list: "canonical-ops-list",
               autocomplete: "off",
             },
@@ -2215,11 +2646,17 @@ const PORTAL_SCRIPT = `
           if (openAdvancedDevices.has(dev.deviceId)) {
             detailsBox.open = true;
           }
-          card.appendChild(detailsBox);
+          controlContent.appendChild(detailsBox);
           return card;
         });
 
         container.replaceChildren.apply(container, cards);
+        if (focusedControlDeviceId) {
+          const summary = container.querySelector(
+            '.device-card[data-device-id="' + CSS.escape(focusedControlDeviceId) + '"] .device-controls > summary',
+          );
+          if (summary) summary.focus({ preventScroll: true });
+        }
         if (focusedOpDeviceId) {
           const restoredInput = container.querySelector(
             '.device-card[data-device-id="' +
@@ -2280,10 +2717,10 @@ const PORTAL_SCRIPT = `
                     "Device grants: " + (grants.length ? grants.join(", ") : "None active"),
                 }),
               ]),
-              createEl("div", { className: "identity-actions" }, [
-                createEl("button", {
+              portalReadOnly ? null : createEl("div", { className: "identity-actions" }, [
+                grants.length === 0 ? null : createEl("button", {
                   type: "button",
-                  text: "Edit",
+                  text: "Edit grants",
                   dataset: { action: "edit-operator", principal: op.principalId },
                 }),
                 createEl("button", {
@@ -2353,19 +2790,15 @@ const PORTAL_SCRIPT = `
         const filterSelect = document.getElementById("snapshot-device-filter");
         const deviceOptions = [];
         const seenFilterIds = new Set();
-        (data.devices || []).forEach(function (d) {
-          if (d.deviceId && !seenFilterIds.has(d.deviceId)) {
-            seenFilterIds.add(d.deviceId);
-            deviceOptions.push(d.deviceId);
-          }
-        });
+        const pairedIds = new Set((data.devices || []).map(function(d) { return d.deviceId; }));
         snaps.forEach(function (s) {
           if (s.deviceId && !seenFilterIds.has(s.deviceId)) {
             seenFilterIds.add(s.deviceId);
             deviceOptions.push(s.deviceId);
           }
         });
-        if (snapshotFilterDevice && !seenFilterIds.has(snapshotFilterDevice) && deviceOptions.length > 0) {
+        filterSelect.closest(".snapshot-controls").classList.toggle("hidden", deviceOptions.length < 2);
+        if (snapshotFilterDevice && (!seenFilterIds.has(snapshotFilterDevice) || deviceOptions.length < 2)) {
           snapshotFilterDevice = "";
           snapshotLimit = SNAPSHOT_PAGE_SIZE;
         }
@@ -2401,7 +2834,7 @@ const PORTAL_SCRIPT = `
                   ": " +
                   String(s.reason || ""),
               ]),
-              createEl("button", {
+              portalReadOnly || !pairedIds.has(s.deviceId) ? null : createEl("button", {
                 type: "button",
                 text: "Rollback",
                 dataset: { action: "rollback", device: s.deviceId, rev: String(s.revision) },
@@ -2430,6 +2863,10 @@ const PORTAL_SCRIPT = `
           pagEl.replaceChildren();
         }
       }
+
+      document.addEventListener("input", function (e) {
+        if (e.target.matches("[data-role=op-rule-input], #op-principal-id, #op-profile-id")) e.target.setCustomValidity("");
+      });
 
       document.addEventListener("change", function (e) {
         const cb = e.target.closest('input[data-action="select-device"]');
@@ -2507,7 +2944,13 @@ const PORTAL_SCRIPT = `
             const card = btn.closest(".device-card");
             const input = card ? card.querySelector("[data-role='op-rule-input']") : null;
             const cap = input ? input.value.trim() : "";
-            if (!cap) return;
+            const valid = cap && Array.from(canonicalOpsList.options).some(function(o) { return o.value === cap; });
+            if (!valid) {
+              if (input) { input.setCustomValidity("Choose a valid operation from the canonical operation list."); input.reportValidity(); input.focus(); }
+              showToast("Choose a valid operation before changing access.", "error", "input-validation");
+              return;
+            }
+            input.setCustomValidity("");
             btn.disabled = true;
             const result = await apiCall("/portal/api/devices/" + encodeURIComponent(deviceId) + "/policy", "POST", {
               grantCapabilities: action === "allow-op" ? [cap] : [],
@@ -2556,7 +2999,7 @@ const PORTAL_SCRIPT = `
             displayInput.value = (opMeta && opMeta.displayName) || principalId;
 
             const matchingDeviceIds = [];
-            let matchedProfile = null;
+            const matchedProfiles = new Set();
             (currentOverview.devices || []).forEach(function (dev) {
               const opPol =
                 dev.policy &&
@@ -2564,29 +3007,22 @@ const PORTAL_SCRIPT = `
                 dev.policy.operator_policies[principalId];
               if (opPol) {
                 matchingDeviceIds.push(dev.deviceId);
-                if (!matchedProfile && opPol.profile_id) {
-                  matchedProfile = opPol.profile_id;
-                }
+                matchedProfiles.add(opPol.profile_id || "custom");
               }
             });
             const profileSelect = document.getElementById("op-profile-id");
-            if (
-              matchedProfile &&
-              Array.from(profileSelect.options).some(function (o) {
-                return o.value === matchedProfile;
-              })
-            ) {
-              profileSelect.value = matchedProfile;
+            const matchedProfile = matchedProfiles.size === 1 ? Array.from(matchedProfiles)[0] : "";
+            profileSelect.value = Array.from(profileSelect.options).some(function(o) { return o.value === matchedProfile; }) ? matchedProfile : "";
+            if (!matchingDeviceIds.length) {
+              showToast("This operator has no device grants to edit. Select devices and use the authorization form.", "info", "operator-no-grants");
+              return;
             }
-            if (matchingDeviceIds.length > 0) {
-              selectedDeviceIds.clear();
-              matchingDeviceIds.forEach(function (id) {
-                selectedDeviceIds.add(id);
-              });
-              updateSelectionIndicators();
-            }
+            selectedDeviceIds.clear();
+            matchingDeviceIds.forEach(function (id) { selectedDeviceIds.add(id); });
+            updateSelectionIndicators();
+            if (!profileSelect.value) showToast("Mixed or custom profiles. Choose an explicit replacement profile for the selected devices.", "info", "operator-mixed-profile");
             if (detailsBox && typeof detailsBox.scrollIntoView === "function") {
-              detailsBox.scrollIntoView({ behavior: "smooth", block: "nearest" });
+              detailsBox.scrollIntoView({ block: "nearest" });
             }
             displayInput.focus();
           } else if (action === "remove-operator") {
@@ -2625,11 +3061,16 @@ const PORTAL_SCRIPT = `
         reasonInput.focus();
       }
 
-      function scopeDescriptionText() {
-        const selected = Array.from(selectedDeviceIds);
-        return selected.length > 0
-          ? "the " + selected.length + " selected device(s) (" + selected.join(", ") + ")"
-          : "every paired device";
+      function scopeDescriptionText(ids) {
+        return "the " + ids.length + " device(s) (" + ids.join(", ") + ")";
+      }
+      function capturedTargets(lockedOnly) {
+        return targetDevices().filter(function(d) { return !lockedOnly || d.emergencyLockdown; }).map(function(d) { return d.deviceId; });
+      }
+      function requireTargets(ids) {
+        if (ids.length > 0) return true;
+        showToast("No eligible paired devices in the current scope.", "error", "input-validation");
+        return false;
       }
 
       document.getElementById("modal-cancel-btn").addEventListener("click", closeConfirmModal);
@@ -2671,16 +3112,17 @@ const PORTAL_SCRIPT = `
       });
 
       document.getElementById("global-universal-btn").addEventListener("click", function () {
-        const scopeIds = Array.from(selectedDeviceIds);
+        const scopeIds = capturedTargets(false);
+        if (!requireTargets(scopeIds)) return;
         openConfirmModal(
           "Grant Universal Access",
-          "This will enable all six MCP tool families (auto-allowing destructive file replacements and AI-owned process termination, while human-origin process termination and unshared human tabs/windows remain blocked) on " + scopeDescriptionText() + ".",
+          "This will enable all six MCP tool families (auto-allowing destructive file replacements and AI-owned process termination, while human-origin process termination and unshared human tabs/windows remain blocked) on " + scopeDescriptionText(scopeIds) + ".",
           function (reason) {
             return apiCall("/portal/api/global/apply", "POST", {
               confirm: true,
               profileId: "universal",
               emergencyLockdown: false,
-              ...(scopeIds.length > 0 ? { deviceIds: scopeIds } : {}),
+              deviceIds: scopeIds,
               reason: reason || "Global grant universal access",
             });
           },
@@ -2688,15 +3130,16 @@ const PORTAL_SCRIPT = `
       });
 
       document.getElementById("global-readonly-btn").addEventListener("click", function () {
-        const scopeIds = Array.from(selectedDeviceIds);
+        const scopeIds = capturedTargets(false);
+        if (!requireTargets(scopeIds)) return;
         openConfirmModal(
           "Apply Read-Only Profile",
-          "This will restrict " + scopeDescriptionText() + " to non-destructive inspection operations.",
+          "This will restrict " + scopeDescriptionText(scopeIds) + " to non-destructive inspection operations.",
           function (reason) {
             return apiCall("/portal/api/global/apply", "POST", {
               confirm: true,
               profileId: "read_only",
-              ...(scopeIds.length > 0 ? { deviceIds: scopeIds } : {}),
+              deviceIds: scopeIds,
               reason: reason || "Global read-only profile",
             });
           },
@@ -2704,15 +3147,16 @@ const PORTAL_SCRIPT = `
       });
 
       document.getElementById("global-revoke-btn").addEventListener("click", function () {
-        const scopeIds = Array.from(selectedDeviceIds);
+        const scopeIds = capturedTargets(false);
+        if (!requireTargets(scopeIds)) return;
         openConfirmModal(
           "Revoke All Tool Families",
-          "This will disable all six MCP tool families on " + scopeDescriptionText() + " until re-enabled.",
+          "This will disable all six MCP tool families on " + scopeDescriptionText(scopeIds) + " until re-enabled.",
           function (reason) {
             return apiCall("/portal/api/global/apply", "POST", {
               confirm: true,
               profileId: "lockdown",
-              ...(scopeIds.length > 0 ? { deviceIds: scopeIds } : {}),
+              deviceIds: scopeIds,
               reason: reason || "Global revoke all tool families",
             });
           },
@@ -2720,15 +3164,16 @@ const PORTAL_SCRIPT = `
       });
 
       document.getElementById("global-lift-lockdown-btn").addEventListener("click", function () {
-        const scopeIds = Array.from(selectedDeviceIds);
+        const scopeIds = capturedTargets(true);
+        if (!requireTargets(scopeIds)) return;
         openConfirmModal(
           "Lift Emergency Access Lockdown",
-          "This will lift emergency lockdown and restore baseline Universal Access (all six MCP tool families, auto-allowing destructive operations subject to human-coexistence protections) on " + scopeDescriptionText() + ". To restore prior custom restrictions instead, use Recoverable Snapshots & Rollback below.",
+          "This will lift emergency lockdown and restore baseline Universal Access (all six MCP tool families, auto-allowing destructive operations subject to human-coexistence protections) on " + scopeDescriptionText(scopeIds) + ". To restore prior custom restrictions instead, use Recoverable Snapshots & Rollback below.",
           function (reason) {
             return apiCall("/portal/api/global/emergency-revoke", "POST", {
               confirm: true,
               restore: true,
-              ...(scopeIds.length > 0 ? { deviceIds: scopeIds } : {}),
+              deviceIds: scopeIds,
               reason: reason || "Lift emergency access lockdown from Portal",
             });
           },
@@ -2736,14 +3181,15 @@ const PORTAL_SCRIPT = `
       });
 
       document.getElementById("emergency-revoke-btn").addEventListener("click", function () {
-        const scopeIds = Array.from(selectedDeviceIds);
+        const scopeIds = capturedTargets(false);
+        if (!requireTargets(scopeIds)) return;
         openConfirmModal(
           "Emergency Access Revocation",
-          "Immediate lockdown on " + scopeDescriptionText() + ". All owner and operator capabilities will be blocked until lifted.",
+          "Immediate lockdown on " + scopeDescriptionText(scopeIds) + ". All owner and operator capabilities will be blocked until lifted.",
           function (reason) {
             return apiCall("/portal/api/global/emergency-revoke", "POST", {
               confirm: true,
-              ...(scopeIds.length > 0 ? { deviceIds: scopeIds } : {}),
+              deviceIds: scopeIds,
               reason: reason || "Emergency access revocation triggered from Portal",
             });
           },
@@ -2756,23 +3202,39 @@ const PORTAL_SCRIPT = `
         const principalId = principalInput.value.trim();
         const displayName = displayInput.value.trim();
         const profileId = document.getElementById("op-profile-id").value;
-        if (!principalId) return;
-        const scopeIds = Array.from(selectedDeviceIds);
+        if (savingOperator) return;
+        if (!principalId || !profileId) {
+          const field = !principalId ? principalInput : document.getElementById("op-profile-id");
+          field.setCustomValidity(!principalId ? "Enter an operator principal ID." : "Choose a permission profile.");
+          field.reportValidity();
+          showToast("An operator ID and explicit profile are required.", "error", "input-validation");
+          return;
+        }
+        principalInput.setCustomValidity("");
+        document.getElementById("op-profile-id").setCustomValidity("");
+        const scopeIds = capturedTargets(false);
+        if (!requireTargets(scopeIds)) return;
+        savingOperator = true;
+        document.getElementById("save-operator-btn").disabled = true;
         try {
           const result = await apiCall("/portal/api/operators", "POST", {
             principalId: principalId,
             displayName: displayName || principalId,
             profileId: profileId,
-            ...(scopeIds.length > 0 ? { deviceIds: scopeIds } : {}),
+            deviceIds: scopeIds,
             reason: "Configured operator " + principalId + " (" + profileId + ")",
           });
           principalInput.value = "";
           displayInput.value = "";
+          document.getElementById("op-profile-id").value = "";
           trackAccessChange("Operator access policy", result);
           await loadOverview();
         } catch (err) {
           showBanner("Operator update failed: " + err.message);
           showToast("Operator update rejected: " + err.message, "error", "policy-error");
+        } finally {
+          savingOperator = false;
+          document.getElementById("save-operator-btn").disabled = false;
         }
       });
 
@@ -2827,35 +3289,35 @@ export function renderControlPortalManifest(): string {
     start_url: "/portal",
     scope: "/portal",
     display: "standalone",
-    background_color: "#090d14",
-    theme_color: "#090d14",
+    background_color: "#111110",
+    theme_color: "#111110",
   });
 }
 
 export function renderControlPortalPage(
-  options: { loginMode?: "token" | "oidc" } = {},
+  options: { loginMode?: "token" | "oidc"; readOnly?: boolean } = {},
 ): {
   html: string;
   contentSecurityPolicy: string;
 } {
   return {
-    html: renderControlPortalHtml(options.loginMode),
+    html: renderControlPortalHtml(options.loginMode, options.readOnly),
     contentSecurityPolicy: PORTAL_CONTENT_SECURITY_POLICY,
   };
 }
 
-export function renderControlPortalHtml(loginMode: "token" | "oidc" = "token"): string {
+export function renderControlPortalHtml(loginMode: "token" | "oidc" = "token", readOnly = false): string {
   return `<!DOCTYPE html>
 <html lang="en">
 <head>
   <meta charset="utf-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1" />
   <title>Tetherplane Control Portal</title>
-  <meta name="theme-color" content="#090d14" />
+  <meta name="theme-color" content="#111110" />
   <link rel="manifest" href="/portal/manifest.webmanifest" />
   <style>${PORTAL_STYLE}</style>
 </head>
-<body data-auth="signed-out" data-login-mode="${loginMode}">
+<body data-auth="signed-out" data-login-mode="${loginMode}" data-portal-read-only="${readOnly}" data-has-devices="false">
   <div class="portal-shell">
     <header class="topbar">
       <div class="brand">
@@ -2872,8 +3334,13 @@ export function renderControlPortalHtml(loginMode: "token" | "oidc" = "token"): 
         <button id="connect-btn" class="primary ${loginMode === "oidc" ? "hidden" : ""}" type="button">Connect</button>
         <a id="oidc-signin-link" class="oidc-signin-link ${loginMode === "oidc" ? "" : "hidden"}" href="/portal/auth/start">Sign in with TetherAuth</a>
         <button id="refresh-btn" type="button">Refresh</button>
-        <button id="live-alerts-btn" type="button" aria-pressed="false">Enable live page alerts</button>
-        <button id="logout-btn" class="hidden" type="button">Sign Out</button>
+        <details class="session-menu">
+          <summary>Session</summary>
+          <div class="session-actions">
+            <button id="live-alerts-btn" type="button" aria-pressed="false">Enable live page alerts</button>
+            <button id="logout-btn" class="hidden" type="button">Sign Out</button>
+          </div>
+        </details>
       </div>
     </header>
 
@@ -2882,7 +3349,7 @@ export function renderControlPortalHtml(loginMode: "token" | "oidc" = "token"): 
         <div class="stat-label">Paired Devices</div>
         <div class="stat-value" id="stat-devices">0</div>
       </div>
-      <div class="stat-card">
+      <div class="stat-card confirmed-readout">
         <div class="stat-label">Online &amp; Confirmed</div>
         <div class="stat-value" id="stat-confirmed">0</div>
       </div>
@@ -2904,7 +3371,9 @@ export function renderControlPortalHtml(loginMode: "token" | "oidc" = "token"): 
     </nav>
 
     <main>
-      <div id="status-banner" class="unavailable-banner status-banner-outer hidden"></div>
+      <div id="status-banner" class="unavailable-banner status-banner-outer hidden" role="status" aria-live="polite"></div>
+      <p class="read-only-notice">Read-only pilot — device status and audit history are available; permission changes are not.</p>
+      <div class="fleet-heading"><h2>Connected devices</h2><span>Owner fleet</span></div>
       <div id="fleet-filter-bar" class="fleet-toolbar" aria-label="Fleet filters"></div>
       <section class="devices-grid" id="devices-container" aria-label="Connected Devices">
         <div class="signed-out-card">${loginMode === "oidc" ? "Sign in with TetherAuth to view your authorized devices." : "Enter your owner token above to load paired Tetherplane devices."}</div>
@@ -2915,8 +3384,12 @@ export function renderControlPortalHtml(loginMode: "token" | "oidc" = "token"): 
         <div>
           <strong>Global Controls</strong>
           <div class="global-subtitle">
-            Apply a permission profile across selected devices (or all paired devices when none selected), or trigger emergency access revocation. Universal Access auto-approves allowed destructive operations while blocking human-origin process termination and protecting unshared human tabs/windows; Lift Emergency Lockdown restores baseline Universal Access (use Recoverable Snapshots &amp; Rollback below for prior custom restrictions).
+            Apply permissions to selected devices, or all paired devices if none are selected. Universal Access auto-approves allowed destructive operations.
           </div>
+          <details class="policy-explainer">
+            <summary>Policy scope &amp; recovery details</summary>
+            <div class="global-subtitle">Universal Access blocks human-origin process termination and protects unshared human tabs/windows. Lift Emergency Lockdown restores baseline Universal Access (use Recoverable Snapshots &amp; Rollback below for prior custom restrictions).</div>
+          </details>
           <div class="global-scope-row">
             <span id="global-target-badge" class="pill offline">Target: All paired devices</span>
             <button id="select-all-devices-btn" type="button">Select All</button>
@@ -2942,9 +3415,10 @@ export function renderControlPortalHtml(loginMode: "token" | "oidc" = "token"): 
             <summary>Authorize / Update Scoped Operator Identity</summary>
             <div class="op-form-stack">
               <div id="op-target-scope-note" class="muted-note">Applies to: All paired devices (select checkboxes above to scope)</div>
-              <input id="op-principal-id" type="text" placeholder="operator:assistant-id" />
-              <input id="op-display-name" type="text" placeholder="Display Name (e.g. Build Agent)" />
-              <select id="op-profile-id">
+              <input id="op-principal-id" type="text" placeholder="operator:assistant-id" aria-label="Operator principal ID" required />
+              <input id="op-display-name" type="text" placeholder="Display Name (e.g. Build Agent)" aria-label="Operator display name" />
+              <select id="op-profile-id" aria-label="Operator permission profile" required>
+                <option value="" disabled selected>Choose a permission profile</option>
                 <option value="read_only">Read &amp; Inspect Only</option>
                 <option value="files_and_process">Files &amp; Process Only</option>
                 <option value="standard">Standard Automation</option>
@@ -2957,12 +3431,12 @@ export function renderControlPortalHtml(loginMode: "token" | "oidc" = "token"): 
         </section>
 
         <section id="security-audit" class="panel-card" aria-label="Security Audit and Rollback">
-          <h2>Security Audit &amp; Safe Rollback</h2>
+          <h2>${readOnly ? "Security Audit" : "Security Audit &amp; Safe Rollback"}</h2>
           <div id="audit-container" class="audit-scroll">
             <div class="muted-note">No audit events loaded.</div>
           </div>
           <details id="snapshots-advanced-box" class="advanced-box advanced-box-spaced">
-            <summary>Recoverable Snapshots &amp; Rollback</summary>
+            <summary>${readOnly ? "Recoverable Snapshots" : "Recoverable Snapshots &amp; Rollback"}</summary>
             <div class="snapshot-controls">
               <label class="muted-note" for="snapshot-device-filter">Filter device:</label>
               <select id="snapshot-device-filter">
@@ -2979,11 +3453,11 @@ export function renderControlPortalHtml(loginMode: "token" | "oidc" = "token"): 
 
   <datalist id="canonical-ops-list"></datalist>
   <div id="toast-stack" class="toast-stack" role="region" aria-label="Access and security notifications" aria-live="polite" aria-relevant="additions"></div>
-  <div class="modal-backdrop" id="confirm-modal" role="dialog" aria-modal="true">
+  <div class="modal-backdrop" id="confirm-modal" role="dialog" aria-modal="true" aria-labelledby="modal-title" aria-describedby="modal-desc">
     <div class="modal">
       <h3 id="modal-title">Confirm Global Security Change</h3>
       <p id="modal-desc" class="modal-desc"></p>
-      <input id="modal-reason" class="modal-reason-input" type="text" placeholder="Reason for audit history" />
+      <input id="modal-reason" class="modal-reason-input" type="text" placeholder="Reason for audit history" aria-label="Reason for audit history" />
       <div class="modal-actions">
         <button id="modal-cancel-btn" type="button">Cancel</button>
         <button id="modal-confirm-btn" class="danger" type="button">Confirm Change</button>

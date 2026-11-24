@@ -284,5 +284,19 @@ test("extension backend advertises authenticated-profile capabilities", () => {
     backend: "extension_authenticated_profile",
     authenticated_profile: true,
     human_tab_sharing: true,
+    operations: [
+      "status",
+      "pages",
+      "create_tab",
+      "snapshot",
+      "navigate",
+      "close",
+      "act",
+      "wait",
+      "upload",
+      "downloads",
+      "diagnostics",
+      "checkpoint",
+    ],
   });
 });

@@ -171,12 +171,13 @@ async fn connect_and_run(
             .map_err(|error| classify_connect_error(&error))?;
 
     let _ = runtime.refresh_browser_availability().await;
+    let mut last_reported_capabilities = runtime.device_capabilities(None, Some(&config.device_id));
     let hello_payload = json!({
         "type": "device_hello",
         "deviceId": config.device_id,
         "appliedPolicyRevision": runtime.applied_policy_revision(),
         "status": runtime.device_status(),
-        "capabilities": runtime.device_capabilities(None, Some(&config.device_id)),
+        "capabilities": last_reported_capabilities.clone(),
     });
     if let Ok(hello_text) = serde_json::to_string(&hello_payload) {
         socket
@@ -200,13 +201,18 @@ async fn connect_and_run(
                 let message = next.map_err(|error| {
                     RelayFailure::Retryable(format!("websocket receive failed: {error}"))
                 })?;
-                if handle_ws_frame(&mut socket, &runtime, config, message).await? {
+                if handle_ws_frame(&mut socket, &runtime, config, message, &mut last_reported_capabilities).await? {
                     return Ok(());
                 }
             }
             _ = probe_tick.tick(), if runtime.has_browser_provider() => {
-                if runtime.refresh_browser_availability().await {
-                    send_device_telemetry(&mut socket, &runtime, &config.device_id).await?;
+                runtime.refresh_browser_availability().await;
+                // Compare against what the relay actually received, including
+                // evidence changed by a foreground RPC between probe ticks.
+                let current = runtime.device_capabilities(None, Some(&config.device_id));
+                if current != last_reported_capabilities {
+                    send_device_telemetry(&mut socket, &runtime, &config.device_id, &current).await?;
+                    last_reported_capabilities = current;
                 }
             }
         }
@@ -218,19 +224,27 @@ async fn handle_ws_frame<S>(
     runtime: &Arc<AgentRuntime>,
     config: &RelayConfig,
     message: Message,
+    last_reported_capabilities: &mut Value,
 ) -> Result<bool, RelayFailure>
 where
     S: futures_util::Sink<Message, Error = WebSocketError> + Unpin,
 {
     match message {
         Message::Text(text) => {
-            let outbound = handle_inbound_text(runtime, config, text.as_str()).await?;
+            let (outbound, reported_capabilities) =
+                handle_inbound_text(runtime, config, text.as_str()).await?;
             socket
                 .send(Message::Text(outbound.into()))
                 .await
                 .map_err(|error| {
                     RelayFailure::Retryable(format!("websocket send failed: {error}"))
                 })?;
+            // Successful policy ACKs also publish capabilities. Remember the
+            // exact sent snapshot so a later provider change cannot be hidden
+            // by comparison against an older hello/telemetry message.
+            if let Some(capabilities) = reported_capabilities {
+                *last_reported_capabilities = capabilities;
+            }
         }
         Message::Ping(payload) => {
             socket.send(Message::Pong(payload)).await.map_err(|error| {
@@ -247,6 +261,7 @@ async fn send_device_telemetry<S>(
     socket: &mut S,
     runtime: &AgentRuntime,
     device_id: &str,
+    capabilities: &Value,
 ) -> Result<(), RelayFailure>
 where
     S: futures_util::Sink<Message, Error = WebSocketError> + Unpin,
@@ -255,7 +270,7 @@ where
         "type": "device_telemetry",
         "deviceId": device_id,
         "status": runtime.device_status(),
-        "capabilities": runtime.device_capabilities(None, Some(device_id)),
+        "capabilities": capabilities,
     });
     if let Ok(text) = serde_json::to_string(&payload) {
         socket
@@ -272,7 +287,7 @@ async fn handle_inbound_text(
     runtime: &Arc<AgentRuntime>,
     config: &RelayConfig,
     text: &str,
-) -> Result<String, RelayFailure> {
+) -> Result<(String, Option<Value>), RelayFailure> {
     let inbound = serde_json::from_str::<RelayInbound>(text)
         .map_err(|error| RelayFailure::Retryable(format!("relay sent invalid message: {error}")))?;
     match inbound {
@@ -293,6 +308,7 @@ async fn handle_inbound_text(
             .map_err(|error| {
                 RelayFailure::Fatal(format!("failed to serialize relay result: {error}"))
             })
+            .map(|text| (text, None))
         }
         RelayInbound::PolicySync { policy } => {
             let pushed_revision = policy.revision;
@@ -318,9 +334,15 @@ async fn handle_inbound_text(
                     "error": "policy_sync target device does not match local device_id",
                 })
             };
-            serde_json::to_string(&ack_payload).map_err(|error| {
-                RelayFailure::Fatal(format!("failed to serialize policy_ack: {error}"))
-            })
+            let capabilities = ack_payload
+                .get("capabilities")
+                .filter(|value| value.is_object())
+                .cloned();
+            serde_json::to_string(&ack_payload)
+                .map_err(|error| {
+                    RelayFailure::Fatal(format!("failed to serialize policy_ack: {error}"))
+                })
+                .map(|text| (text, capabilities))
         }
     }
 }
@@ -448,7 +470,7 @@ mod tests {
         rev2.owner_policy
             .denied_families
             .insert(ToolFamily::Process);
-        runtime.apply_synchronized_policy(rev2).unwrap();
+        runtime.apply_synchronized_policy(rev2.clone()).unwrap();
 
         let config = super::RelayConfig {
             url: "ws://127.0.0.1:1/device".into(),
@@ -464,9 +486,11 @@ mod tests {
             "policy": rev1,
         });
         let raw = serde_json::to_string(&stale_payload).unwrap();
-        let reply_text = super::handle_inbound_text(&runtime, &config, &raw)
-            .await
-            .expect("handle_inbound_text should return policy_ack JSON");
+        let (reply_text, reported_capabilities) =
+            super::handle_inbound_text(&runtime, &config, &raw)
+                .await
+                .expect("handle_inbound_text should return policy_ack JSON");
+        assert_eq!(reported_capabilities, None);
         let reply: serde_json::Value = serde_json::from_str(&reply_text).unwrap();
         assert_eq!(reply["type"], "policy_ack");
         assert_eq!(reply["deviceId"], "Leno");
@@ -474,6 +498,19 @@ mod tests {
         assert_eq!(reply["currentRevision"], 2);
         assert_eq!(reply["applied"], false);
         assert!(reply["error"].as_str().is_some());
+
+        // Re-delivery of the accepted revision must expose exactly the
+        // capability snapshot sent in its successful ACK.
+        let accepted = json!({"type": "policy_sync", "policy": rev2});
+        let raw = serde_json::to_string(&accepted).unwrap();
+        let (reply_text, reported_capabilities) =
+            super::handle_inbound_text(&runtime, &config, &raw)
+                .await
+                .unwrap();
+        let reply: serde_json::Value = serde_json::from_str(&reply_text).unwrap();
+        assert_eq!(reply["applied"], true);
+        assert_eq!(reported_capabilities, Some(reply["capabilities"].clone()));
+        assert!(reply["capabilities"].is_object());
     }
 
     // Ephemeral localhost test certificates (EC P-256, valid 2026-2126) for custom CA verification tests.

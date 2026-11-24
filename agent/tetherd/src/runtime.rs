@@ -181,9 +181,9 @@ impl AgentRuntime {
         let Some(browser) = &self.browser_provider else {
             return false;
         };
-        let previous = browser.current_availability();
-        let next = browser.probe_status().await;
-        previous != next
+        let previous = browser.current_capability_report();
+        browser.probe_status().await;
+        previous != browser.current_capability_report()
     }
 
     #[must_use]
@@ -756,20 +756,21 @@ impl DeviceProvider {
             "acquire_lease",
             "release_lease",
         ];
-        let (browser_available, browser_unavailable_reason, browser_ops): (
-            bool,
-            Option<String>,
-            &[String],
-        ) = if let Some(browser) = &self.browser_provider {
-            let (available, reason) = browser.current_availability();
-            (available, reason, browser.operations())
-        } else {
-            (
-                false,
-                Some("browser bridge is not configured or connected".to_owned()),
-                &[],
-            )
-        };
+        let (browser_available, browser_unavailable_reason, browser_ops) =
+            if let Some(browser) = &self.browser_provider {
+                let report = browser.current_capability_report();
+                (
+                    report.available,
+                    report.unavailable_reason,
+                    report.operations,
+                )
+            } else {
+                (
+                    false,
+                    Some("browser bridge is not configured or connected".to_owned()),
+                    Vec::new(),
+                )
+            };
         vec![
             self.provider_entry(
                 "device",
@@ -810,7 +811,7 @@ impl DeviceProvider {
                 "browser",
                 browser_available,
                 browser_unavailable_reason.as_deref(),
-                browser_ops,
+                &browser_ops,
                 principal_id,
                 device_id,
             ),
@@ -1240,7 +1241,7 @@ mod tests {
                 "data": {
                     "available": true,
                     "mode": "background_only",
-                    "capabilities": { "backend": "extension", "connected": true, "status": "ready" }
+                    "capabilities": { "backend": "extension", "connected": true, "status": "ready", "operations": ["status", "pages"] }
                 },
                 "verification": "not_applicable"
             });
@@ -1267,6 +1268,11 @@ mod tests {
             .expect("available_operations array");
         assert!(ops.contains(&json!("browser.status")));
         assert!(ops.contains(&json!("browser.pages")));
+        assert_eq!(
+            ops.len(),
+            2,
+            "a ready bridge must not imply every RPC operation"
+        );
     }
 
     fn platform_echo_invocation(device_id: &str) -> InvocationEnvelope {

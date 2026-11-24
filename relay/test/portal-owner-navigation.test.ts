@@ -42,10 +42,10 @@ test("configured permissions are distinct from confirmed live permissions", () =
   assert.match(html, /Boolean\(dev\.confirmedByDevice\)/);
   assert.match(html, /dev\.syncStatus === "applied"/);
   assert.match(html, /const configuredWithoutLiveConfirmation = policyCount > 0 && !livePolicyConfirmed/);
-  assert.match(html, /isOn \? "CONFIGURED" : "PARTIAL SET"/);
+  assert.match(html, /policyFull \? "CONFIGURED" : "PARTIAL SET"/);
   assert.match(html, /\.switch-btn\.configured\s*\{/);
   assert.match(html, /policy-granted; not currently active/);
-  assert.match(html, /Keep aria-pressed bound to desired policy/);
+  assert.match(html, /The action still changes the desired family grant/);
 });
 
 test("navigation does not introduce browser token storage or new privileged operations", () => {

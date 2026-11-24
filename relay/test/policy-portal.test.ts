@@ -1781,7 +1781,7 @@ test("device_telemetry WebSocket updates transition browser availability and str
       token: "owner-token-a",
     });
     const recoveredDev = recoveredOverview.body.devices[0];
-    assert.equal(recoveredDev.agentHealth, "healthy");
+    assert.equal(recoveredDev.agentHealth, "unknown", "unreported families must not be inferred healthy");
     const liveBrowser = recoveredDev.familySummaries.find((f: any) => f.family === "browser");
     assert.equal(liveBrowser.providerAvailable, true);
     assert.deepEqual(liveBrowser.availableOperations, [
@@ -2450,5 +2450,99 @@ test("SerializedJsonFileWriter retries transient Windows unlink errors when clea
     );
   } finally {
     await rm(dir, { recursive: true, force: true });
+  }
+});
+
+
+test("portal telemetry requires current-connection evidence and never inflates reported operation coverage", async () => {
+  const dir = await mkdtemp(path.join(os.tmpdir(), "tether-portal-evidence-"));
+  const relay = await RelayServer.create({
+    authenticator: createTestAuthenticator(),
+    stateFile: path.join(dir, "devices.json"),
+    allowInsecureLocalhost: true,
+  });
+  const address = await relay.listen({ host: "127.0.0.1", port: 0 });
+  const secret = "synthetic-evidence-secret-12345";
+  let ws: WebSocket | null = null;
+  const connect = async () => {
+    const socket = new WebSocket(address.deviceWsUrl, {
+      headers: { authorization: "Device " + secret, "x-tetherplane-device-id": "Evidence-Fixture" },
+    });
+    await new Promise<void>((resolve, reject) => { socket.once("open", resolve); socket.once("error", reject); });
+    return socket;
+  };
+  const family = (dev: Record<string, any>, id: string) => dev.familySummaries.find((f: any) => f.family === id);
+  const browserOps = ["browser.status", "browser.pages", "browser.snapshot"];
+  const caps = {
+    providers: [null, { namespace: "browser", tool_family: "browser", available: true, available_operations: ["status", "pages", "snapshot"] }],
+    tool_families: {
+      browser: { available: true, available_operations: [...browserOps, "browser.status", "browser.invented"] },
+      files: { available: true },
+      process: { available: true, provider_available: false, available_operations: ["process.run"] },
+    },
+  };
+  try {
+    await pairDevice(address.httpUrl, "Evidence-Fixture", secret);
+    ws = await connect();
+    const connected = await waitForDevice(address.httpUrl, d => d.online, "connected without evidence");
+    assert.equal(connected.agentHealth, "unknown");
+    assert.equal(connected.confirmedByDevice, false);
+    assert.equal(connected.capabilities, null);
+    assert.ok(connected.familySummaries.every((f: any) => f.providerState === "unknown" && f.providerAvailable === false && f.activeOperations.length === 0 && !f.fullyLive));
+
+    ws.send(JSON.stringify({ type: "device_hello", deviceId: "Evidence-Fixture", appliedPolicyRevision: 1 }));
+    const ackWithoutCaps = await waitForDevice(address.httpUrl, d => d.confirmedByDevice, "policy acknowledgement without capability evidence");
+    assert.equal(ackWithoutCaps.agentHealth, "unknown");
+    assert.ok(ackWithoutCaps.familySummaries.every((f: any) => f.activeOperations.length === 0 && !f.fullyLive));
+
+    ws.send(JSON.stringify({ type: "device_telemetry", deviceId: "Evidence-Fixture", capabilities: caps }));
+    const partial = await waitForDevice(address.httpUrl, d => family(d, "browser").providerAvailable, "partial capability evidence");
+    assert.deepEqual(family(partial, "browser").availableOperations, browserOps);
+    assert.deepEqual(family(partial, "browser").activeOperations, browserOps);
+    assert.equal(family(partial, "browser").fullyLive, false);
+    assert.equal(family(partial, "files").providerState, "unknown", "ready flag alone is insufficient");
+    assert.equal(family(partial, "process").providerState, "unavailable", "explicit negative evidence takes precedence");
+    assert.equal(family(partial, "device").providerState, "unknown");
+
+    const mutation = await jsonRequest(address.httpUrl, "/portal/api/devices/Evidence-Fixture/policy", {
+      method: "POST", token: "owner-token-a", body: { revokeCapabilities: ["browser.pages"], reason: "fixture explicit deny" },
+    });
+    assert.equal(mutation.status, 200);
+    const pending = await waitForDevice(address.httpUrl, d => d.desiredRevision === 2 && !d.confirmedByDevice, "pending desired revision");
+    assert.deepEqual(family(pending, "browser").activeOperations, []);
+    ws.send(JSON.stringify({ type: "policy_ack", deviceId: "Evidence-Fixture", revision: 2, currentRevision: 2, applied: true, capabilities: caps }));
+    const restricted = await waitForDevice(address.httpUrl, d => d.appliedRevision === 2 && d.confirmedByDevice, "explicit deny confirmed");
+    assert.equal(family(restricted, "browser").granted, true, "family remains enabled");
+    assert.deepEqual(family(restricted, "browser").activeOperations, ["browser.status", "browser.snapshot"]);
+    assert.equal(family(restricted, "browser").fullyLive, false);
+    assert.ok(family(restricted, "browser").deniedOperations.includes("browser.pages"));
+
+    // A reported agent-side restriction cannot be overwritten by relay-side grants.
+    ws.send(JSON.stringify({
+      type: "device_telemetry", deviceId: "Evidence-Fixture",
+      capabilities: { tool_families: { browser: { available: true, available_operations: browserOps, granted_operations: ["browser.status"], denied_operations: ["browser.snapshot"] } } },
+    }));
+    const agentRestricted = await waitForDevice(address.httpUrl, d => family(d, "browser").activeOperations.length === 1, "agent-side restriction");
+    assert.deepEqual(family(agentRestricted, "browser").activeOperations, ["browser.status"]);
+
+    await closeSocketAndWaitOffline(ws, relay, "Evidence-Fixture");
+    const offline = await waitForDevice(address.httpUrl, d => !d.online, "offline");
+    assert.ok(offline.familySummaries.every((f: any) => f.providerState === "offline" && f.activeOperations.length === 0));
+    ws = await connect();
+    const reconnect = await waitForDevice(address.httpUrl, d => d.online, "new connection");
+    assert.equal(reconnect.confirmedByDevice, false, "historical ACK is not current connection evidence");
+    assert.equal(reconnect.capabilities, null);
+    assert.ok(reconnect.familySummaries.every((f: any) => f.providerState === "unknown" && !f.fullyLive));
+    ws.send(JSON.stringify({ type: "device_hello", deviceId: "Evidence-Fixture", appliedPolicyRevision: 2 }));
+    const reconnectAck = await waitForDevice(address.httpUrl, d => d.confirmedByDevice, "new ACK with no telemetry");
+    assert.equal(reconnectAck.capabilities, null, "cached telemetry must not become current telemetry");
+    assert.ok(reconnectAck.familySummaries.every((f: any) => f.activeOperations.length === 0 && !f.fullyLive));
+    ws.send(JSON.stringify({ type: "device_telemetry", deviceId: "Evidence-Fixture", capabilities: caps }));
+    const recovered = await waitForDevice(address.httpUrl, d => family(d, "browser").activeOperations.length === 2, "fresh capability evidence recovers");
+    assert.deepEqual(family(recovered, "browser").activeOperations, ["browser.status", "browser.snapshot"]);
+  } finally {
+    ws?.close();
+    await relay.close();
+    await rm(dir, { recursive: true, force: true, maxRetries: 20, retryDelay: 50 });
   }
 });

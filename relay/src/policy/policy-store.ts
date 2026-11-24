@@ -458,6 +458,12 @@ export class PolicyStore {
     | ((deviceId: string, policy: SynchronizedDevicePolicy) => Promise<boolean>)
     | null = null;
   #isOnlineCallback: ((deviceId: string) => boolean) | null = null;
+  // Display evidence is scoped to a live router connection, never restored from disk.
+  #connectionEvidenceCallback: ((deviceId: string) => {
+    status: Record<string, unknown> | null;
+    capabilities: Record<string, unknown> | null;
+    appliedRevision: number | null;
+  } | null) | null = null;
   readonly #writer: SerializedJsonFileWriter | null;
 
   private constructor(options: {
@@ -526,9 +532,11 @@ export class PolicyStore {
       policy: SynchronizedDevicePolicy,
     ) => Promise<boolean>;
     isOnline: (deviceId: string) => boolean;
+    connectionEvidence: (deviceId: string) => { status: Record<string, unknown> | null; capabilities: Record<string, unknown> | null; appliedRevision: number | null } | null;
   }): void {
     this.#pushPolicyCallback = hooks.pushPolicy;
     this.#isOnlineCallback = hooks.isOnline;
+    this.#connectionEvidenceCallback = hooks.connectionEvidence;
   }
 
   async ensureDevicePolicy(
@@ -1391,26 +1399,34 @@ export class PolicyStore {
     record: DevicePolicyRecord,
   ): Record<string, unknown> {
     const online = this.#isDeviceOnline(binding.deviceId);
+    const evidence = online ? this.#connectionEvidenceCallback?.(binding.deviceId) ?? null : null;
+    const currentCapabilities = evidence?.capabilities ?? null;
     const confirmedByDevice =
       record.appliedRevision !== null &&
       record.appliedRevision === record.desiredRevision &&
-      record.lastAckError === null;
+      record.lastAckError === null &&
+      (!online || evidence?.appliedRevision === record.desiredRevision);
     const syncStatus: DeviceSyncStatus = record.lastAckError
       ? "failed"
       : confirmedByDevice
         ? "applied"
         : "pending";
 
-    const rawProviders = Array.isArray(record.capabilities?.providers)
-      ? (record.capabilities.providers as Array<Record<string, unknown>>)
+    const isRecord = (value: unknown): value is Record<string, unknown> =>
+      Boolean(value && typeof value === "object" && !Array.isArray(value));
+    const providerAvailability = (entry: Record<string, unknown>): boolean | null => {
+      // Explicit negative evidence wins over conflicting ready flags.
+      if (entry.available === false || entry.provider_available === false ||
+          (typeof entry.status === "string" && entry.status !== "ready")) return false;
+      if (entry.available === true || entry.provider_available === true || entry.status === "ready") return true;
+      return null;
+    };
+    const rawProviders = Array.isArray(currentCapabilities?.providers)
+      ? currentCapabilities.providers.filter(isRecord)
       : [];
 
     const unavailableCapabilities = rawProviders
-      .filter(
-        (p) =>
-          p.available === false ||
-          (typeof p.status === "string" && p.status !== "ready"),
-      )
+      .filter((p) => providerAvailability(p) === false)
       .map((p) => ({
         name: String(p.namespace ?? p.name ?? p.tool_family ?? "unknown"),
         toolFamily: String(p.tool_family ?? p.namespace ?? "device"),
@@ -1426,81 +1442,62 @@ export class PolicyStore {
             : "Provider reported unavailable",
       }));
 
-    const rawToolFamilies = record.capabilities?.tool_families;
+    const rawToolFamilies = currentCapabilities?.tool_families;
     const familySummaries = ALL_TOOL_FAMILIES.map((family) => {
       const canonicalOps = CANONICAL_OPERATIONS_BY_FAMILY[family] ?? [];
       let reportedFamily: Record<string, unknown> | undefined;
       if (Array.isArray(rawToolFamilies)) {
-        reportedFamily = (
-          rawToolFamilies as Array<Record<string, unknown>>
-        ).find((f) => f.family === family);
+        reportedFamily = rawToolFamilies.filter(isRecord).find((f) => f.family === family);
       } else if (rawToolFamilies && typeof rawToolFamilies === "object") {
         const candidate = (rawToolFamilies as Record<string, unknown>)[family];
-        if (candidate && typeof candidate === "object") {
-          reportedFamily = candidate as Record<string, unknown>;
+        if (isRecord(candidate)) {
+          reportedFamily = candidate;
         }
       }
 
       const matchingProviders = rawProviders.filter(
         (p) => p.tool_family === family,
       );
-      let providerAvailable: boolean;
-      if (reportedFamily) {
-        if (typeof reportedFamily.available === "boolean") {
-          providerAvailable = reportedFamily.available;
-        } else if (typeof reportedFamily.provider_available === "boolean") {
-          providerAvailable = reportedFamily.provider_available;
-        } else if (matchingProviders.length > 0) {
-          providerAvailable = matchingProviders.some(
-            (p) => p.available === true || p.status === "ready",
-          );
-        } else {
-          providerAvailable = false;
-        }
-      } else if (matchingProviders.length > 0) {
-        providerAvailable = matchingProviders.some(
-          (p) => p.available === true || p.status === "ready",
-        );
-      } else {
-        providerAvailable = online;
-      }
-
-      let availableOperations: string[];
-      if (!providerAvailable) {
-        availableOperations = [];
-      } else if (reportedFamily && Array.isArray(reportedFamily.available_operations)) {
-        availableOperations = reportedFamily.available_operations.filter(
-          (op): op is string => typeof op === "string",
-        );
-      } else if (matchingProviders.length > 0) {
-        const derivedOps: string[] = [];
-        for (const provider of matchingProviders) {
-          if (provider.available !== true && provider.status !== "ready") continue;
-          const ns =
-            typeof provider.namespace === "string"
-              ? provider.namespace
-              : typeof provider.name === "string"
-                ? provider.name
-                : "";
-          if (Array.isArray(provider.available_operations)) {
-            for (const op of provider.available_operations) {
-              if (typeof op === "string") {
-                derivedOps.push(ns ? `${ns}.${op}` : op);
-              }
-            }
-          }
-        }
-        availableOperations = providerAvailable ? derivedOps : [];
-      } else {
-        availableOperations = providerAvailable ? canonicalOps : [];
-      }
-
-      const unavailableReason = !providerAvailable
-        ? typeof reportedFamily?.unavailable_reason === "string"
-          ? reportedFamily.unavailable_reason
-          : (unavailableCapabilities.find((u) => u.toolFamily === family)
-              ?.reason ?? null)
-        : null;
+      const familyAvailability = reportedFamily ? providerAvailability(reportedFamily) : null;
+      const readyProviders = matchingProviders.filter((p) => providerAvailability(p) === true);
+      const allProvidersUnavailable = matchingProviders.length > 0 &&
+        matchingProviders.every((p) => providerAvailability(p) === false);
+      const explicitlyUnavailable = familyAvailability === false || allProvidersUnavailable;
+      const availabilityReported = !explicitlyUnavailable && (familyAvailability === true || readyProviders.length > 0);
+      const namespaceOf = (provider: Record<string, unknown>): string =>
+        typeof provider.namespace === "string" ? provider.namespace : typeof provider.name === "string" ? provider.name : "";
+      const canonical = new Set(canonicalOps);
+      const operationList = (value: unknown, namespace = ""): string[] | null => {
+        if (!Array.isArray(value) || value.some((op) => typeof op !== "string")) return null;
+        const names = (value as string[]).map((op) => namespace && !op.startsWith(namespace + ".") ? namespace + "." + op : op);
+        return [...new Set(names.filter((op) => canonical.has(op)))];
+      };
+      const familyOperations = operationList(reportedFamily?.available_operations);
+      const providerOperations = readyProviders.map((p) => operationList(p.available_operations, namespaceOf(p)));
+      const hasOperationEvidence = familyOperations !== null || providerOperations.some((ops) => ops !== null);
+      const unavailableNamespaces = matchingProviders.filter((p) => providerAvailability(p) === false).map(namespaceOf).filter(Boolean);
+      const availableOperations = availabilityReported && hasOperationEvidence
+        ? [...new Set(familyOperations ?? providerOperations.flatMap((ops) => ops ?? []))]
+            .filter((op) => !unavailableNamespaces.some((ns) => op.startsWith(ns + ".")))
+            // A provider's explicit operation list must also support its own namespace.
+            .filter((op) => readyProviders.every((p, i) => {
+              const ns = namespaceOf(p);
+              const ops = providerOperations[i];
+              return !ns || !op.startsWith(ns + ".") || ops == null || ops.includes(op);
+            }))
+        : [];
+      const providerState = !online ? "offline"
+        : explicitlyUnavailable ? "unavailable"
+        : !availabilityReported || !hasOperationEvidence ? "unknown"
+        : availableOperations.length === 0 ? "unavailable" : "available";
+      const providerAvailable = providerState === "available";
+      const unavailableReason = providerState === "unknown"
+        ? "Current connection has not reported usable capability evidence"
+        : providerState === "unavailable"
+          ? (typeof reportedFamily?.unavailable_reason === "string"
+            ? reportedFamily.unavailable_reason
+            : unavailableCapabilities.find((u) => u.toolFamily === family)?.reason ?? "No canonical operations reported available")
+          : null;
 
       const policyGrantedOperations = canonicalOps.filter(
         (op) =>
@@ -1520,6 +1517,26 @@ export class PolicyStore {
           !evaluatePermissionSet(record.policy.owner_policy, op).allowed,
       );
 
+      // Agent-reported restrictions can only reduce the relay's configured access.
+      // Missing optional grant lists do not override a current policy ACK and an
+      // explicitly reported availability list (older protocol-compatible agents).
+      const familyReportedGrants = operationList(reportedFamily?.granted_operations);
+      const familyReportedDenies = operationList(reportedFamily?.denied_operations) ?? [];
+      const activeOperations = online && confirmedByDevice && providerAvailable
+        ? grantedOperations.filter((op) => {
+            if (familyReportedGrants !== null && !familyReportedGrants.includes(op)) return false;
+            if (familyReportedDenies.includes(op)) return false;
+            return readyProviders.every((p) => {
+              const ns = namespaceOf(p);
+              if (!ns || !op.startsWith(ns + ".")) return true;
+              const grants = operationList(p.granted_operations, ns);
+              const denies = operationList(p.denied_operations, ns) ?? [];
+              return (grants === null || grants.includes(op)) && !denies.includes(op);
+            });
+          })
+        : [];
+      const fullyLive = canonicalOps.length > 0 && canonicalOps.every((op) => activeOperations.includes(op));
+
       const familyGranted =
         !record.policy.emergency_lockdown &&
         !record.policy.owner_policy.denied_families.includes(family) &&
@@ -1530,11 +1547,15 @@ export class PolicyStore {
         family,
         granted: familyGranted,
         providerAvailable,
+        providerState,
         unavailableReason,
         availableOperations,
         policyGrantedOperations,
         grantedOperations,
         deniedOperations,
+        activeOperations,
+        canonicalOperationCount: canonicalOps.length,
+        fullyLive,
       };
     });
 
@@ -1543,11 +1564,12 @@ export class PolicyStore {
       accountId: binding.accountId,
       pairedAt: binding.pairedAt,
       online,
-      agentHealth: online
-        ? unavailableCapabilities.length > 0
+      agentHealth: !online ? "offline"
+        : unavailableCapabilities.length > 0 || familySummaries.some((f) => f.providerState === "unavailable")
           ? "degraded"
-          : "healthy"
-        : "offline",
+          : familySummaries.some((f) => f.providerState === "unknown")
+            ? "unknown"
+            : "healthy",
       syncStatus,
       confirmedByDevice,
       desiredRevision: record.desiredRevision,
@@ -1555,8 +1577,8 @@ export class PolicyStore {
       lastAckAtMs: record.lastAckAtMs,
       lastAckError: record.lastAckError,
       emergencyLockdown: record.policy.emergency_lockdown,
-      status: record.status,
-      capabilities: record.capabilities,
+      status: evidence?.status ?? null,
+      capabilities: currentCapabilities,
       unavailableCapabilities,
       familySummaries,
       policy: record.policy,

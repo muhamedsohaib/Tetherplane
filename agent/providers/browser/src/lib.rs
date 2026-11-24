@@ -24,10 +24,18 @@ pub struct BrowserBridgeConfig {
     pub timeout_ms: u64,
 }
 
+/// Current backend evidence, separate from the static RPC operation catalog.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct BrowserCapabilityReport {
+    pub available: bool,
+    pub unavailable_reason: Option<String>,
+    pub operations: Vec<String>,
+}
+
 pub struct BrowserProvider {
     config: BrowserBridgeConfig,
     operations: Vec<String>,
-    availability: RwLock<(bool, Option<String>)>,
+    availability: RwLock<BrowserCapabilityReport>,
 }
 
 impl BrowserProvider {
@@ -71,7 +79,11 @@ impl BrowserProvider {
         Ok(Self {
             config,
             operations,
-            availability: RwLock::new((true, None)),
+            availability: RwLock::new(BrowserCapabilityReport {
+                available: true,
+                unavailable_reason: None,
+                operations: Vec::new(),
+            }),
         })
     }
 
@@ -153,10 +165,13 @@ impl BrowserProvider {
         Ok(Self {
             config,
             operations,
-            availability: RwLock::new((
-                false,
-                Some("browser bridge is in standby / not yet connected".to_owned()),
-            )),
+            availability: RwLock::new(BrowserCapabilityReport {
+                available: false,
+                unavailable_reason: Some(
+                    "browser bridge is in standby / not yet connected".to_owned(),
+                ),
+                operations: Vec::new(),
+            }),
         })
     }
 
@@ -166,16 +181,21 @@ impl BrowserProvider {
     }
 
     #[must_use]
-    pub fn current_availability(&self) -> (bool, Option<String>) {
+    pub fn current_capability_report(&self) -> BrowserCapabilityReport {
         self.availability.read().map_or_else(
-            |_| {
-                (
-                    false,
-                    Some("browser provider availability lock poisoned".to_owned()),
-                )
+            |_| BrowserCapabilityReport {
+                available: false,
+                unavailable_reason: Some("browser provider availability lock poisoned".to_owned()),
+                operations: Vec::new(),
             },
             |guard| guard.clone(),
         )
+    }
+
+    #[must_use]
+    pub fn current_availability(&self) -> (bool, Option<String>) {
+        let report = self.current_capability_report();
+        (report.available, report.unavailable_reason)
     }
 
     /// Probes the loopback browser bridge using `browser.status` and updates cached availability.
@@ -194,7 +214,7 @@ impl BrowserProvider {
         .await
         {
             Ok(response) if response["status"] == "success" => {
-                availability_from_status_data(&response["data"])
+                return self.set_status_report(&response["data"]);
             }
             Ok(response) => (false, Some(response_error(&response).message)),
             Err(error) => (false, Some(error.message)),
@@ -203,9 +223,54 @@ impl BrowserProvider {
         next
     }
 
+    fn set_status_report(&self, data: &Value) -> (bool, Option<String>) {
+        let (available, reason) = availability_from_status_data(data);
+        let advertised = data
+            .pointer("/capabilities/operations")
+            .and_then(Value::as_array);
+        let unavailable = data
+            .pointer("/capabilities/unavailable_operations")
+            .and_then(Value::as_array);
+        // The RPC handshake describes what the bridge understands, not what its
+        // currently attached backend can do. Only report observed support.
+        let mut operations = if available {
+            self.operations
+                .iter()
+                .filter(|op| {
+                    let name = op.as_str();
+                    let reported = name == "status"
+                        || advertised.is_some_and(|items| {
+                            items.iter().any(|item| item.as_str() == Some(name))
+                        });
+                    reported
+                        && !unavailable.is_some_and(|items| {
+                            items.iter().any(|item| item.as_str() == Some(name))
+                        })
+                })
+                .cloned()
+                .collect::<Vec<_>>()
+        } else {
+            Vec::new()
+        };
+        operations.sort();
+        operations.dedup();
+        if let Ok(mut guard) = self.availability.write() {
+            *guard = BrowserCapabilityReport {
+                available,
+                unavailable_reason: reason.clone(),
+                operations,
+            };
+        }
+        (available, reason)
+    }
+
     fn set_availability(&self, available: bool, reason: Option<String>) {
         if let Ok(mut guard) = self.availability.write() {
-            *guard = (available, reason);
+            guard.available = available;
+            guard.unavailable_reason = reason;
+            if !available {
+                guard.operations.clear();
+            }
         }
     }
 }
@@ -267,8 +332,7 @@ impl CapabilityProvider for BrowserProvider {
 
         let data = response.get("data").cloned().unwrap_or(Value::Null);
         if invocation.capability == "browser.status" {
-            let (available, reason) = availability_from_status_data(&data);
-            self.set_availability(available, reason);
+            self.set_status_report(&data);
         } else {
             self.set_availability(true, None);
         }

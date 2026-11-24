@@ -291,7 +291,7 @@ export class RelayControlHttpGateway {
         request.method === "GET" &&
         url.pathname === "/portal"
       ) {
-        const page = renderControlPortalPage({ loginMode: this.#portalOidcLogin ? "oidc" : "token" });
+        const page = renderControlPortalPage({ loginMode: this.#portalOidcLogin ? "oidc" : "token", readOnly: this.#portalReadOnly });
         response.statusCode = 200;
         response.setHeader("content-type", "text/html; charset=utf-8");
         response.setHeader("cache-control", "no-store");

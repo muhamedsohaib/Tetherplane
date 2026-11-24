@@ -65,6 +65,7 @@ type ActiveConnection = {
   generation: string;
   send(message: RelayToDeviceMessage): Promise<void>;
   controlQueue: Promise<void>;
+  evidence: { status: Record<string, unknown> | null; capabilities: Record<string, unknown> | null; appliedRevision: number | null };
 };
 
 type PendingRoute = {
@@ -100,6 +101,7 @@ export class DeviceRouter {
         pushPolicy: (deviceId, policy) =>
           this.pushPolicy(deviceId, policy),
         isOnline: (deviceId) => this.isOnline(deviceId),
+        connectionEvidence: (deviceId) => this.#connections.get(deviceId)?.evidence ?? null,
       });
     }
   }
@@ -126,6 +128,7 @@ export class DeviceRouter {
       generation: randomUUID(),
       send: input.send,
       controlQueue: Promise.resolve(),
+      evidence: { status: null, capabilities: null, appliedRevision: null },
     };
     this.#connections.set(input.deviceId, connection);
     this.#policyStore?.notifyChange(input.accountId);
@@ -295,6 +298,11 @@ export class DeviceRouter {
       const policyStore = this.#policyStore;
       if (!policyStore) return;
       this.#enqueueControl(connection, async () => {
+        connection.evidence = {
+          status: message.status ?? null,
+          capabilities: message.capabilities ?? null,
+          appliedRevision: typeof message.appliedPolicyRevision === "number" && message.appliedPolicyRevision >= 1 ? message.appliedPolicyRevision : null,
+        };
         const policy = await policyStore.handleDeviceHello({
           deviceId: connection.deviceId,
           accountId: connection.accountId,
@@ -312,8 +320,17 @@ export class DeviceRouter {
     if (message.type === "policy_ack") {
       const policyStore = this.#policyStore;
       if (!policyStore) return;
-      this.#enqueueControl(connection, () =>
-        policyStore.handlePolicyAck({
+      this.#enqueueControl(connection, () => {
+        if (message.status) connection.evidence.status = message.status;
+        if (message.capabilities) connection.evidence.capabilities = message.capabilities;
+        if (message.applied) {
+          connection.evidence.appliedRevision = Math.max(connection.evidence.appliedRevision ?? 0, message.revision);
+        } else if (typeof message.currentRevision === "number") {
+          connection.evidence.appliedRevision = message.currentRevision >= 1 ? message.currentRevision : null;
+        } else {
+          connection.evidence.appliedRevision = null;
+        }
+        return policyStore.handlePolicyAck({
           deviceId: connection.deviceId,
           accountId: connection.accountId,
           revision: message.revision,
@@ -327,8 +344,8 @@ export class DeviceRouter {
           status: message.status ?? null,
           capabilities: message.capabilities ?? null,
           error: message.error ?? null,
-        }),
-      );
+        });
+      });
       return;
     }
 
@@ -337,14 +354,16 @@ export class DeviceRouter {
       if (!policyStore || message.deviceId !== connection.deviceId) {
         return;
       }
-      this.#enqueueControl(connection, () =>
-        policyStore.handleDeviceTelemetry({
+      this.#enqueueControl(connection, () => {
+        if (message.status) connection.evidence.status = message.status;
+        if (message.capabilities) connection.evidence.capabilities = message.capabilities;
+        return policyStore.handleDeviceTelemetry({
           deviceId: connection.deviceId,
           accountId: connection.accountId,
           status: message.status ?? null,
           capabilities: message.capabilities ?? null,
-        }),
-      );
+        });
+      });
       return;
     }
 
