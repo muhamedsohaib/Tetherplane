@@ -435,7 +435,12 @@ where
                 invocation,
             } if item.received.elapsed() >= RELAY_PENDING_WAIT => {
                 let rejection = encode_result(&route_id, &queue_rejected_result(&invocation))?;
-                send_frame(socket, Message::Text(rejection.into()), "expired queue item").await?;
+                send_frame(
+                    socket,
+                    Message::Text(rejection.into()),
+                    "expired queue item",
+                )
+                .await?;
                 continue;
             }
             inbound => inbound,
@@ -450,11 +455,7 @@ where
     Ok(())
 }
 
-async fn send_frame<S>(
-    socket: &mut S,
-    message: Message,
-    label: &str,
-) -> Result<(), RelayFailure>
+async fn send_frame<S>(socket: &mut S, message: Message, label: &str) -> Result<(), RelayFailure>
 where
     S: futures_util::Sink<Message, Error = WebSocketError> + Unpin,
 {
@@ -763,7 +764,6 @@ mod tests {
         peer.await.unwrap();
     }
 
-
     fn relay_test_invocation(
         device: &str,
         route: &str,
@@ -988,7 +988,10 @@ mod tests {
             )
             .await
             .unwrap();
-            assert!(tasks.active.is_some(), "old invocation should still be running");
+            assert!(
+                tasks.active.is_some(),
+                "old invocation should still be running"
+            );
             connect_session(runtime, &config, Duration::from_millis(150), &mut tasks)
                 .await
                 .unwrap();
@@ -1029,8 +1032,7 @@ mod tests {
             if index < RELAY_PENDING_LIMIT {
                 assert!(result.is_none());
             } else {
-                let rejection: serde_json::Value =
-                    serde_json::from_str(&result.unwrap()).unwrap();
+                let rejection: serde_json::Value = serde_json::from_str(&result.unwrap()).unwrap();
                 assert_eq!(rejection["routeId"], route);
                 assert_eq!(rejection["result"]["error"]["code"], "resource_conflict");
                 assert_eq!(rejection["result"]["error"]["details"]["dispatched"], false);
