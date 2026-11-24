@@ -696,7 +696,7 @@ pub fn verify_select_readback(
 ///
 /// # Errors
 ///
-/// Returns `CapabilityUnavailable` before dispatch when Toggle or ExpandCollapse
+/// Returns `CapabilityUnavailable` before dispatch when Toggle or `ExpandCollapse`
 /// would execute against a target that is not already foreground and focused.
 pub fn check_semantic_dispatch_precondition(
     planned: &PlannedAction,
