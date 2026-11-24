@@ -2,26 +2,26 @@ import { createHash } from "node:crypto";
 
 const PORTAL_STYLE = `
     :root {
-      --bg: #090d14;
-      --surface: #111827;
-      --surface-elevated: #172033;
-      --surface-subtle: #0d1422;
-      --border: #24324a;
-      --border-strong: #334766;
-      --text: #f1f5f9;
-      --text-muted: #94a3b8;
-      --primary: #38bdf8;
-      --primary-hover: #0ea5e9;
-      --primary-bg: rgba(56, 189, 248, 0.14);
-      --success: #22c55e;
-      --success-bg: rgba(34, 197, 94, 0.14);
-      --warning: #f59e0b;
-      --warning-bg: rgba(245, 158, 11, 0.15);
-      --danger: #ef4444;
-      --danger-bg: rgba(239, 68, 68, 0.16);
-      --radius: 12px;
+      --bg: #111110;
+      --surface: #191918;
+      --surface-elevated: #232321;
+      --surface-subtle: #151514;
+      --border: #353532;
+      --border-strong: #585850;
+      --text: #f4f2eb;
+      --text-muted: #b3b1a8;
+      --primary: #e9e5d9;
+      --primary-hover: #ffffff;
+      --primary-bg: #30302d;
+      --success: #99d6a9;
+      --success-bg: #21352a;
+      --warning: #efc676;
+      --warning-bg: #372d20;
+      --danger: #f18c8c;
+      --danger-bg: #3a2424;
+      --radius: 10px;
       --font: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Inter, sans-serif;
-      --mono: "JetBrains Mono", "SFMono-Regular", Consolas, monospace;
+      --mono: ui-monospace, "SFMono-Regular", Consolas, "Liberation Mono", monospace;
     }
 
     * {
@@ -81,12 +81,12 @@ const PORTAL_STYLE = `
       width: 38px;
       height: 38px;
       border-radius: 10px;
-      background: linear-gradient(135deg, #38bdf8, #0284c7);
+      background: var(--text);
       display: flex;
       align-items: center;
       justify-content: center;
       font-weight: 800;
-      color: #06121f;
+      color: #111110;
       font-size: 18px;
       flex-shrink: 0;
       letter-spacing: -0.04em;
@@ -144,7 +144,7 @@ const PORTAL_STYLE = `
       border-radius: 8px;
       font-size: 0.84rem;
       font-weight: 600;
-      transition: background 0.15s ease, border-color 0.15s ease, opacity 0.15s ease;
+      transition: none;
     }
 
     button:hover:not(:disabled) {
@@ -158,7 +158,7 @@ const PORTAL_STYLE = `
 
     button.primary {
       background: var(--primary);
-      color: #06121f;
+      color: #111110;
       border-color: transparent;
     }
 
@@ -175,7 +175,7 @@ const PORTAL_STYLE = `
       border: 1px solid transparent;
       border-radius: 8px;
       background: var(--primary);
-      color: #06121f;
+      color: #111110;
       font-size: 0.84rem;
       font-weight: 700;
       text-decoration: none;
@@ -199,8 +199,8 @@ const PORTAL_STYLE = `
 
     button.active-profile {
       background: var(--primary-bg);
-      border-color: rgba(56, 189, 248, 0.65);
-      color: #bae6fd;
+      border-color: var(--border-strong);
+      color: var(--text);
     }
 
     .signed-out-card {
@@ -346,8 +346,8 @@ const PORTAL_STYLE = `
 
     .filter-pill[aria-pressed="true"] {
       background: var(--primary-bg);
-      border-color: rgba(56, 189, 248, 0.65);
-      color: #e0f2fe;
+      border-color: var(--border-strong);
+      color: var(--text);
     }
 
     .fleet-meta {
@@ -420,7 +420,7 @@ const PORTAL_STYLE = `
     }
 
     .device-card.is-selected {
-      box-shadow: 0 0 0 1px var(--primary);
+      outline: 1px solid var(--primary);
       border-color: var(--primary);
     }
 
@@ -563,7 +563,7 @@ const PORTAL_STYLE = `
     }
 
     .family-toggle.partial {
-      border-color: rgba(56, 189, 248, 0.45);
+      border-color: var(--border-strong);
     }
 
     .family-toggle.degraded {
@@ -605,8 +605,8 @@ const PORTAL_STYLE = `
 
     .switch-btn.partial {
       background: var(--primary-bg);
-      color: #7dd3fc;
-      border-color: rgba(56, 189, 248, 0.55);
+      color: var(--text);
+      border-color: var(--border-strong);
     }
 
     .switch-btn.off {
@@ -648,7 +648,7 @@ const PORTAL_STYLE = `
       border-left: 3px solid var(--primary);
       border-radius: 10px;
       padding: 12px;
-      box-shadow: 0 12px 30px rgba(0, 0, 0, 0.45);
+      box-shadow: none;
       pointer-events: auto;
       overflow-wrap: anywhere;
       font-size: 0.85rem;
@@ -892,7 +892,7 @@ const PORTAL_STYLE = `
       max-width: 440px;
       width: 100%;
       padding: 20px;
-      box-shadow: 0 20px 50px rgba(0, 0, 0, 0.55);
+      box-shadow: none;
     }
 
     .modal h3 {
@@ -951,7 +951,7 @@ const PORTAL_STYLE = `
         padding: 8px 10px calc(8px + env(safe-area-inset-bottom, 0px));
         border-width: 1px 0 0;
         border-radius: 0;
-        background: rgba(13, 20, 34, 0.98);
+        background: var(--surface-subtle);
       }
       .owner-nav a {
         padding: 7px 4px;
@@ -1044,6 +1044,199 @@ const PORTAL_STYLE = `
         min-height: 40px;
       }
     }
+    /* Instrument UI: native layout, system fonts, no raster/SVG assets, animation,
+       canvas, filters, or compositor-heavy decorative effects. */
+    .portal-shell { max-width: 1200px; padding-top: 24px; }
+    .topbar { margin-bottom: 16px; }
+    .brand-badge { border-radius: 6px; font-family: var(--mono); }
+    .brand h1 { font-weight: 650; letter-spacing: -0.035em; }
+    .brand p, .stat-label, .fleet-meta, .card-meta-row, .sync-detail,
+    .pill, .audit-meta, .owner-nav a {
+      font-family: var(--mono);
+      font-variant-numeric: tabular-nums;
+    }
+    .brand p { font-size: 0.72rem; letter-spacing: 0.015em; }
+    .summary-strip {
+      gap: 0;
+      border: 1px solid var(--border);
+      border-radius: var(--radius);
+      overflow: hidden;
+      background: var(--surface);
+    }
+    .stat-card {
+      min-height: 96px;
+      border: 0;
+      border-radius: 0;
+      border-right: 1px solid var(--border);
+      display: flex;
+      flex-direction: column;
+      justify-content: center;
+      padding: 12px 16px;
+    }
+    .stat-card:last-child { border-right: 0; }
+    .stat-label { font-size: 0.66rem; letter-spacing: 0.065em; }
+    .stat-value {
+      font-family: var(--mono);
+      font-variant-numeric: tabular-nums;
+      font-weight: 600;
+      font-size: clamp(1.45rem, 3.2vw, 2.05rem);
+      letter-spacing: -0.05em;
+      line-height: 1.25;
+    }
+    .stat-value-compact { font-size: 0.95rem; letter-spacing: 0; }
+    .stat-card.confirmed-readout {
+      flex-direction: row;
+      justify-content: space-between;
+      align-items: center;
+      gap: 8px;
+    }
+    .confirmed-readout .stat-value {
+      flex: 0 0 auto;
+      display: grid;
+      place-items: center;
+      min-width: 56px;
+      min-height: 56px;
+      padding: 4px;
+      margin: 0;
+      border: 1px solid var(--border-strong);
+      outline: 1px solid var(--border);
+      outline-offset: 3px;
+      border-radius: 50%;
+      font-size: 1.25rem;
+      letter-spacing: -0.055em;
+    }
+    .owner-nav {
+      gap: 2px;
+      padding: 4px;
+      background: var(--surface-subtle);
+      border-radius: var(--radius);
+      margin-bottom: 18px;
+    }
+    .owner-nav a {
+      border-radius: 5px;
+      font-size: 0.75rem;
+      letter-spacing: 0.035em;
+      text-transform: uppercase;
+    }
+    .owner-nav a:hover, .owner-nav a:focus-visible {
+      background: var(--surface-elevated);
+    }
+    .fleet-heading {
+      display: flex;
+      align-items: baseline;
+      gap: 12px;
+      justify-content: space-between;
+      margin: 4px 0 10px;
+      border-bottom: 1px solid var(--border);
+      padding-bottom: 10px;
+    }
+    .fleet-heading h2 { font-size: 1.15rem; margin: 0; font-weight: 600; letter-spacing: -0.025em; }
+    .fleet-heading span {
+      font-family: var(--mono);
+      font-size: 0.68rem;
+      color: var(--text-muted);
+      text-transform: uppercase;
+      letter-spacing: 0.07em;
+    }
+    body[data-auth="signed-out"] .fleet-heading { display: none; }
+    .filter-pill {
+      border-radius: 5px;
+      min-height: 36px;
+      font-size: 0.75rem;
+    }
+    .device-card { padding: 16px; gap: 10px; }
+    .device-header { padding-bottom: 10px; border-bottom: 1px solid var(--border); }
+    .device-title h3 { font-weight: 650; font-size: 1.08rem; }
+    .card-meta-row, .sync-detail { font-size: 0.73rem; }
+    .sync-detail { border-radius: 5px; padding: 8px; }
+    .pill {
+      border-radius: 4px;
+      font-size: 0.68rem;
+      padding: 4px 7px;
+      font-weight: 600;
+    }
+    .pill.online::before, .pill.offline::before, .pill.applied::before,
+    .pill.pending::before, .pill.failed::before, .pill.lockdown::before {
+      content: "";
+      width: 6px;
+      height: 6px;
+      flex: 0 0 6px;
+      background: currentColor;
+    }
+    .pill.online, .pill.applied { color: var(--success); }
+    .pill.pending { color: var(--warning); }
+    .pill.failed, .pill.lockdown { color: var(--danger); }
+    .family-grid {
+      gap: 0;
+      border: 1px solid var(--border);
+      border-radius: 7px;
+      overflow: hidden;
+      background: var(--surface-subtle);
+    }
+    .family-toggle {
+      background: transparent;
+      border: 0;
+      border-radius: 0;
+      border-bottom: 1px solid var(--border);
+      padding: 10px;
+    }
+    .family-toggle:nth-child(odd) { border-right: 1px solid var(--border); }
+    .family-toggle.granted, .family-toggle.partial, .family-toggle.degraded,
+    .family-toggle.configured { border-color: var(--border); }
+    .family-name { font-size: 0.82rem; font-weight: 650; }
+    .family-sub { font-size: 0.71rem; }
+    .switch-btn {
+      border-radius: 5px;
+      font-family: var(--mono);
+      font-size: 0.68rem;
+      min-width: 60px;
+      letter-spacing: 0.01em;
+    }
+    .switch-btn.on {
+      background: var(--success-bg);
+      color: var(--success);
+      border-color: #496e53;
+    }
+    .switch-btn.partial { background: var(--primary-bg); }
+    .switch-btn.configured { background: var(--warning-bg); color: var(--warning); }
+    .device-actions-row { gap: 6px; }
+    .device-actions-row button { font-size: 0.75rem; }
+    .global-panel { align-items: flex-start; }
+    .global-panel > div:first-child { flex: 1 1 100%; min-width: 0; }
+    .global-actions { width: 100%; }
+    .policy-explainer { margin-top: 8px; }
+    .policy-explainer summary { cursor: pointer; color: var(--text-muted); font-size: 0.78rem; padding: 5px 0; }
+    .policy-explainer .global-subtitle { max-width: 72ch; }
+    .panel-card h2 { font-weight: 650; letter-spacing: -0.015em; }
+    .modal { max-height: calc(100dvh - 32px); overflow-y: auto; }
+    button.danger:hover:not(:disabled) { color: #111110; }
+    @media (max-width: 860px) {
+      .stat-card:nth-child(2) { border-right: 0; }
+      .stat-card:nth-child(-n+2) { border-bottom: 1px solid var(--border); }
+    }
+    @media (max-width: 600px) {
+      .portal-shell { padding-top: 12px; }
+      .topbar { margin-bottom: 10px; }
+      .brand h1 { font-size: 1rem; }
+      .stat-card { min-height: 76px; padding: 9px 10px; }
+      .stat-label { font-size: 0.62rem; letter-spacing: 0.025em; }
+      .stat-value { font-size: 1.55rem; }
+      .stat-value-compact { font-size: 0.81rem; letter-spacing: 0; }
+      .confirmed-readout .stat-value { min-width: 44px; min-height: 44px; font-size: 1rem; outline-offset: 2px; }
+      .owner-nav { gap: 2px; padding: 6px 8px calc(6px + env(safe-area-inset-bottom, 0px)); border-radius: 0; margin: 0; }
+      .owner-nav a { font-size: 0.67rem; }
+      .fleet-heading { margin-top: 2px; }
+      .fleet-heading h2 { font-size: 1rem; }
+      .fleet-heading span { font-size: 0.62rem; }
+      .device-card { padding: 12px; }
+      .family-toggle:nth-child(odd) { border-right: 0; }
+      .family-toggle:last-child { border-bottom: 0; }
+      .filter-pill { min-height: 44px; }
+      .global-actions button { flex: 1 1 130px; }
+      .global-actions .danger { flex: 1 1 100%; }
+      .policy-explainer summary, details.advanced-box summary { min-height: 44px; display: list-item; padding: 12px 0; }
+    }
+
 `;
 
 const PORTAL_SCRIPT = `
@@ -2827,8 +3020,8 @@ export function renderControlPortalManifest(): string {
     start_url: "/portal",
     scope: "/portal",
     display: "standalone",
-    background_color: "#090d14",
-    theme_color: "#090d14",
+    background_color: "#111110",
+    theme_color: "#111110",
   });
 }
 
@@ -2851,7 +3044,7 @@ export function renderControlPortalHtml(loginMode: "token" | "oidc" = "token"): 
   <meta charset="utf-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1" />
   <title>Tetherplane Control Portal</title>
-  <meta name="theme-color" content="#090d14" />
+  <meta name="theme-color" content="#111110" />
   <link rel="manifest" href="/portal/manifest.webmanifest" />
   <style>${PORTAL_STYLE}</style>
 </head>
@@ -2882,7 +3075,7 @@ export function renderControlPortalHtml(loginMode: "token" | "oidc" = "token"): 
         <div class="stat-label">Paired Devices</div>
         <div class="stat-value" id="stat-devices">0</div>
       </div>
-      <div class="stat-card">
+      <div class="stat-card confirmed-readout">
         <div class="stat-label">Online &amp; Confirmed</div>
         <div class="stat-value" id="stat-confirmed">0</div>
       </div>
@@ -2905,6 +3098,7 @@ export function renderControlPortalHtml(loginMode: "token" | "oidc" = "token"): 
 
     <main>
       <div id="status-banner" class="unavailable-banner status-banner-outer hidden"></div>
+      <div class="fleet-heading"><h2>Connected devices</h2><span>Owner fleet</span></div>
       <div id="fleet-filter-bar" class="fleet-toolbar" aria-label="Fleet filters"></div>
       <section class="devices-grid" id="devices-container" aria-label="Connected Devices">
         <div class="signed-out-card">${loginMode === "oidc" ? "Sign in with TetherAuth to view your authorized devices." : "Enter your owner token above to load paired Tetherplane devices."}</div>
@@ -2915,8 +3109,12 @@ export function renderControlPortalHtml(loginMode: "token" | "oidc" = "token"): 
         <div>
           <strong>Global Controls</strong>
           <div class="global-subtitle">
-            Apply a permission profile across selected devices (or all paired devices when none selected), or trigger emergency access revocation. Universal Access auto-approves allowed destructive operations while blocking human-origin process termination and protecting unshared human tabs/windows; Lift Emergency Lockdown restores baseline Universal Access (use Recoverable Snapshots &amp; Rollback below for prior custom restrictions).
+            Apply permissions to selected devices, or all paired devices if none are selected. Universal Access auto-approves allowed destructive operations.
           </div>
+          <details class="policy-explainer">
+            <summary>Policy scope &amp; recovery details</summary>
+            <div class="global-subtitle">Universal Access blocks human-origin process termination and protects unshared human tabs/windows. Lift Emergency Lockdown restores baseline Universal Access (use Recoverable Snapshots &amp; Rollback below for prior custom restrictions).</div>
+          </details>
           <div class="global-scope-row">
             <span id="global-target-badge" class="pill offline">Target: All paired devices</span>
             <button id="select-all-devices-btn" type="button">Select All</button>
