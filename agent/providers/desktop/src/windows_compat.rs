@@ -691,6 +691,71 @@ pub fn verify_select_readback(
     })
 }
 
+/// Blocks focus-sensitive patterns whose background behavior has not passed
+/// independent coexistence acceptance.
+///
+/// # Errors
+///
+/// Returns `CapabilityUnavailable` before dispatch when Toggle or ExpandCollapse
+/// would execute against a target that is not already foreground and focused.
+pub fn check_semantic_dispatch_precondition(
+    planned: &PlannedAction,
+    target_was_foreground: bool,
+    element_focused: bool,
+) -> Result<(), CapabilityError> {
+    let focus_sensitive = matches!(
+        planned,
+        PlannedAction::UiaTogglePattern
+            | PlannedAction::UiaExpandPattern
+            | PlannedAction::UiaCollapsePattern
+    );
+    if focus_sensitive && !(target_was_foreground && element_focused) {
+        return Err(CapabilityError {
+            code: ErrorCode::CapabilityUnavailable,
+            message: "background coexistence is not verified for this UIA pattern".into(),
+            recovery_hint: Some(
+                "use an independently accepted background implementation or isolated authorized test desktop"
+                    .into(),
+            ),
+            details: json!({
+                "dispatch_started": false,
+                "target_was_foreground": target_was_foreground,
+                "element_focused": element_focused,
+            }),
+        });
+    }
+    Ok(())
+}
+
+/// Checks observed foreground state even when the semantic dispatch failed.
+///
+/// This endpoint check cannot prove that no transient activation occurred.
+/// Independent isolated acceptance must verify that property.
+///
+/// # Errors
+///
+/// Returns a focus violation in preference to a dispatch result if observed;
+/// otherwise preserves the original dispatch result.
+pub fn finish_semantic_dispatch<T>(
+    outcome: Result<T, CapabilityError>,
+    target_pid: u32,
+    target_was_foreground: bool,
+    foreground_pid_before: Option<u32>,
+    foreground_pid_after: Option<u32>,
+) -> Result<T, CapabilityError> {
+    if let Err(mut error) = check_focus_preserved(
+        target_pid,
+        target_was_foreground,
+        foreground_pid_before,
+        foreground_pid_after,
+    ) {
+        error.details["dispatch_returned_error"] = json!(outcome.is_err());
+        error.details["outcome_uncertain"] = json!(true);
+        return Err(error);
+    }
+    outcome
+}
+
 /// Verifies that background desktop interaction did not transfer OS foreground focus to `target_pid`.
 ///
 /// # Errors
@@ -709,7 +774,7 @@ pub fn check_focus_preserved(
             message: "semantic desktop action altered foreground focus in background_only mode"
                 .into(),
             recovery_hint: Some(
-                "restore human window focus and avoid actions that activate background windows"
+                "inspect foreground and target state; do not automatically replay the action"
                     .into(),
             ),
             details: json!({
@@ -738,7 +803,7 @@ fn action_unverified(message: &str) -> CapabilityError {
     CapabilityError {
         code: ErrorCode::ActionUnverified,
         message: message.to_owned(),
-        recovery_hint: Some("take a fresh desktop snapshot and retry semantically".into()),
+        recovery_hint: Some("inspect target state; do not replay automatically".into()),
         details: json!({}),
     }
 }

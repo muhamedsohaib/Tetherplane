@@ -6,8 +6,9 @@ use tether_desktop_provider::windows_compat::{
     MSAA_ROLE_GROUPING, MSAA_ROLE_LISTITEM, MSAA_ROLE_PUSHBUTTON, MSAA_ROLE_RADIOBUTTON,
     MSAA_STATE_READONLY, MSAA_STATE_UNAVAILABLE, NativeHwndMeta, NativeListParentMeta,
     NativeWindowKind, PlannedAction, SemanticControlType, WS_DISABLED, check_focus_preserved,
-    classify_native_window_class, infer_supported_patterns, is_background_safe_uia_framework,
-    plan_action, verify_select_readback, verify_set_value_readback,
+    check_semantic_dispatch_precondition, classify_native_window_class, finish_semantic_dispatch,
+    infer_supported_patterns, is_background_safe_uia_framework, plan_action, verify_select_readback,
+    verify_set_value_readback,
 };
 use tether_desktop_provider::{DesktopAction, DesktopActionKind, DesktopPattern};
 
@@ -767,4 +768,65 @@ fn windows_compat_and_uia_contain_no_physical_input_clipboard_or_unbounded_send_
         }
         check_bounded_send_calls(name, source);
     }
+}
+
+#[test]
+fn unaccepted_focus_sensitive_patterns_fail_before_background_dispatch() {
+    for planned in [
+        PlannedAction::UiaTogglePattern,
+        PlannedAction::UiaExpandPattern,
+        PlannedAction::UiaCollapsePattern,
+    ] {
+        for (foreground, focused) in [(false, false), (false, true), (true, false)] {
+            let error = check_semantic_dispatch_precondition(&planned, foreground, focused)
+                .expect_err("unaccepted focus-sensitive pattern must not dispatch");
+            assert_eq!(error.code, ErrorCode::CapabilityUnavailable);
+            assert_eq!(error.details["dispatch_started"], false);
+        }
+        check_semantic_dispatch_precondition(&planned, true, true)
+            .expect("already focused target is not newly activated by this precondition");
+    }
+    check_semantic_dispatch_precondition(
+        &PlannedAction::UiaValuePattern {
+            value: "fixture".into(),
+            background_unfocused: true,
+        },
+        false,
+        false,
+    )
+    .expect("existing accepted-path planning is not changed by the targeted containment");
+}
+
+#[test]
+fn failed_dispatch_does_not_skip_foreground_verification() {
+    let failure = || tether_core::CapabilityError {
+        code: ErrorCode::ActionUnverified,
+        message: "provider response was lost".into(),
+        recovery_hint: None,
+        details: serde_json::json!({}),
+    };
+
+    let err =
+        finish_semantic_dispatch::<()>(Err(failure()), 4242, false, Some(9001), Some(4242))
+            .unwrap_err();
+    assert_eq!(err.code, ErrorCode::ActionUnverified);
+    assert!(err.message.contains("altered foreground focus"));
+    assert_eq!(err.details["dispatch_returned_error"], true);
+    assert_eq!(err.details["outcome_uncertain"], true);
+    assert!(err.recovery_hint.unwrap().contains("do not automatically replay"));
+
+    let err =
+        finish_semantic_dispatch::<()>(Err(failure()), 4242, false, Some(9001), Some(9001))
+            .unwrap_err();
+    assert_eq!(err.message, "provider response was lost");
+
+    let err =
+        finish_semantic_dispatch(Ok(()), 4242, false, Some(9001), Some(4242)).unwrap_err();
+    assert_eq!(err.details["dispatch_returned_error"], false);
+    assert_eq!(err.details["outcome_uncertain"], true);
+
+    assert_eq!(
+        finish_semantic_dispatch(Ok(7), 4242, false, Some(9001), Some(9001)).unwrap(),
+        7
+    );
 }

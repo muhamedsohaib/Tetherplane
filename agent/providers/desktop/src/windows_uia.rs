@@ -19,8 +19,9 @@ use winsafe::{EnumWindows, HWND, co};
 use crate::windows_compat::{
     ElementCompatInput, MAX_NATIVE_READBACK_CHARS, NATIVE_MESSAGE_TIMEOUT_MS, NativeHwndMeta,
     NativeListParentMeta, NativeWindowKind, PlannedAction, SemanticControlType,
-    check_focus_preserved, classify_native_window_class, infer_supported_patterns, plan_action,
-    verify_select_readback, verify_set_value_readback,
+    check_focus_preserved, check_semantic_dispatch_precondition, classify_native_window_class,
+    finish_semantic_dispatch, infer_supported_patterns, plan_action, verify_select_readback,
+    verify_set_value_readback,
 };
 use crate::{DesktopAction, DesktopActionOutcome, DesktopBackend, DesktopNode, DesktopRect};
 
@@ -749,6 +750,11 @@ fn execute_semantic_action(
 
     let fg_before = foreground_process_id();
     let target_was_foreground = fg_before == Some(process_id);
+    check_semantic_dispatch_precondition(
+        &planned,
+        target_was_foreground,
+        element.has_keyboard_focus().unwrap_or(false),
+    )?;
 
     let outcome = dispatch_planned_action(
         element,
@@ -757,16 +763,15 @@ fn execute_semantic_action(
         value_pattern.as_ref(),
         target_was_foreground,
         fg_before,
-    )?;
+    );
 
-    check_focus_preserved(
+    finish_semantic_dispatch(
+        outcome,
         process_id,
         target_was_foreground,
         fg_before,
         foreground_process_id(),
-    )?;
-
-    Ok(outcome)
+    )
 }
 
 fn dispatch_planned_action(
@@ -1259,7 +1264,7 @@ fn action_unverified(message: impl Into<String>) -> CapabilityError {
     CapabilityError {
         code: ErrorCode::ActionUnverified,
         message: message.into(),
-        recovery_hint: Some("take a fresh desktop snapshot and retry semantically".into()),
+        recovery_hint: Some("inspect target state; do not replay automatically".into()),
         details: serde_json::json!({}),
     }
 }
