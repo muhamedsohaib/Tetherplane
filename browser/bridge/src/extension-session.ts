@@ -4,6 +4,18 @@ import { WebSocket, WebSocketServer } from "ws";
 
 export type ExtensionBridgeMessage = Record<string, unknown>;
 
+// The browser sends an application keepalive every 20 seconds. Allow
+// several missed intervals, including normal service-worker scheduling jitter.
+const DEFAULT_AUTH_TIMEOUT_MS = 10_000;
+const DEFAULT_IDLE_TIMEOUT_MS = 90_000;
+
+function deadlineMs(value: number): number {
+  if (!Number.isSafeInteger(value) || value <= 0 || value > 2_147_483_647) {
+    throw new Error("extension session deadline must be a positive timer value");
+  }
+  return value;
+}
+
 export type ExtensionIdResolver =
   | string
   | (() => string | null | undefined | Promise<string | null | undefined>);
@@ -45,6 +57,7 @@ class ExtensionClient implements AuthenticatedExtensionClient {
 
     socket.on("close", () => {
       this.#closed = true;
+      this.#messages.length = 0;
       const error = new Error("extension bridge client disconnected");
       for (const waiter of this.#waiters.splice(0)) {
         waiter.reject(error);
@@ -53,6 +66,7 @@ class ExtensionClient implements AuthenticatedExtensionClient {
   }
 
   push(message: ExtensionBridgeMessage): void {
+    if (this.#closed) return;
     const waiter = this.#waiters.shift();
     if (waiter) {
       waiter.resolve(message);
@@ -69,14 +83,14 @@ class ExtensionClient implements AuthenticatedExtensionClient {
   }
 
   nextMessage(): Promise<ExtensionBridgeMessage> {
-    const queued = this.#messages.shift();
-    if (queued) {
-      return Promise.resolve(queued);
-    }
     if (this.#closed) {
       return Promise.reject(
         new Error("extension bridge client is disconnected"),
       );
+    }
+    const queued = this.#messages.shift();
+    if (queued) {
+      return Promise.resolve(queued);
     }
     return new Promise((resolve, reject) => {
       this.#waiters.push({ resolve, reject });
@@ -92,7 +106,11 @@ export async function startExtensionBridgeServer(options: {
   launchToken: string;
   port?: number;
   expectedExtensionId?: ExtensionIdResolver;
+  authTimeoutMs?: number;
+  idleTimeoutMs?: number;
 }): Promise<ExtensionBridgeServer> {
+  const authTimeoutMs = deadlineMs(options.authTimeoutMs ?? DEFAULT_AUTH_TIMEOUT_MS);
+  const idleTimeoutMs = deadlineMs(options.idleTimeoutMs ?? DEFAULT_IDLE_TIMEOUT_MS);
   if (!options.launchToken.trim()) {
     throw new Error("extension launch token must be non-empty");
   }
@@ -106,6 +124,8 @@ export async function startExtensionBridgeServer(options: {
   });
   const wss = new WebSocketServer({ noServer: true });
   const verifiedOrigins = new WeakMap<WebSocket, string>();
+  let closing = false;
+  let closePromise: Promise<void> | undefined;
 
   httpServer.on("upgrade", (request, socket, head) => {
     void (async () => {
@@ -135,7 +155,8 @@ export async function startExtensionBridgeServer(options: {
         }
       }
 
-      if (socket.destroyed) {
+      if (socket.destroyed || closing) {
+        socket.destroy();
         return;
       }
 
@@ -163,21 +184,48 @@ export async function startExtensionBridgeServer(options: {
   }
 
   const clients = new Set<ExtensionClient>();
-  const waiters: Array<(client: ExtensionClient) => void> = [];
+  const waiters: Array<{
+    resolve(client: ExtensionClient): void;
+    reject(error: Error): void;
+  }> = [];
 
   wss.on("connection", (socket) => {
     const originExtensionId = verifiedOrigins.get(socket);
     let authenticatedClient: ExtensionClient | undefined;
     let authenticated = false;
+    let retired = false;
+    let timer: NodeJS.Timeout | undefined;
+
+    const clearDeadline = (): void => {
+      if (timer !== undefined) clearTimeout(timer);
+      timer = undefined;
+    };
+    const retire = (): void => {
+      retired = true;
+      clearDeadline();
+      if (authenticatedClient) clients.delete(authenticatedClient);
+    };
+    const armDeadline = (durationMs: number): void => {
+      clearDeadline();
+      timer = setTimeout(() => {
+        retire();
+        socket.terminate();
+      }, durationMs);
+      timer.unref();
+    };
+    armDeadline(authTimeoutMs);
+    socket.on("error", () => {
+      retire();
+      socket.terminate();
+    });
 
     const rejectConnection = (code: number, reason: string): void => {
-      if (authenticatedClient) {
-        clients.delete(authenticatedClient);
-      }
+      retire();
       socket.close(code, reason);
     };
 
     socket.on("message", (data) => {
+      if (retired || closing) return;
       const parsed = parseMessage(String(data));
       if (!parsed) {
         rejectConnection(4002, "invalid_json");
@@ -203,6 +251,7 @@ export async function startExtensionBridgeServer(options: {
           socket,
         );
         clients.add(authenticatedClient);
+        armDeadline(idleTimeoutMs);
         socket.send(
           JSON.stringify({
             type: "hello_ack",
@@ -212,12 +261,8 @@ export async function startExtensionBridgeServer(options: {
 
         const waiter = waiters.shift();
         if (waiter) {
-          waiter(authenticatedClient);
+          waiter.resolve(authenticatedClient);
         }
-        return;
-      }
-
-      if (parsed.type === "keepalive") {
         return;
       }
 
@@ -226,52 +271,56 @@ export async function startExtensionBridgeServer(options: {
         return;
       }
 
+      // An open TCP socket alone is not proof that the extension worker
+      // is alive. Only valid authenticated application traffic renews it.
+      if (parsed.type === "keepalive" || parsed.type === "event" || parsed.type === "result") {
+        armDeadline(idleTimeoutMs);
+      }
+      if (parsed.type === "keepalive") return;
+
       authenticatedClient?.push(parsed);
     });
 
-    socket.on("close", () => {
-      if (authenticatedClient) {
-        clients.delete(authenticatedClient);
-      }
-    });
+    socket.on("close", retire);
   });
 
   return {
     url: `ws://127.0.0.1:${address.port}`,
     waitForAuthenticatedClient() {
+      if (closing) return Promise.reject(new Error("extension bridge server is closed"));
       const existing = clients.values().next().value as
         | ExtensionClient
         | undefined;
       if (existing) {
         return Promise.resolve(existing);
       }
-      return new Promise<AuthenticatedExtensionClient>((resolve) => {
-        waiters.push(resolve);
+      return new Promise<AuthenticatedExtensionClient>((resolve, reject) => {
+        waiters.push({ resolve, reject });
       });
     },
     authenticatedClientCount() {
       return clients.size;
     },
-    async close() {
-      for (const client of [...clients]) {
-        client.close();
+    close() {
+      if (closePromise) return closePromise;
+      closing = true;
+      for (const waiter of waiters.splice(0)) {
+        waiter.reject(new Error("extension bridge server is closed"));
       }
-      await new Promise<void>((resolve) => {
-        wss.close(() => resolve());
-      });
-      if (!httpServer.listening) {
-        return;
-      }
-      httpServer.closeIdleConnections?.();
-      await new Promise<void>((resolve, reject) => {
-        httpServer.close((error) => {
-          if (error) {
-            reject(error);
-          } else {
-            resolve();
-          }
+      closePromise = (async () => {
+        // Include unauthenticated and half-open sessions, not just clients
+        // that completed hello. Shutdown must not wait for their consent.
+        for (const socket of wss.clients) socket.terminate();
+        await new Promise<void>((resolve) => {
+          wss.close(() => resolve());
         });
-      });
+        if (!httpServer.listening) return;
+        httpServer.closeIdleConnections?.();
+        await new Promise<void>((resolve, reject) => {
+          httpServer.close((error) => error ? reject(error) : resolve());
+        });
+      })();
+      return closePromise;
     },
   };
 }

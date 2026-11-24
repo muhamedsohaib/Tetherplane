@@ -52,6 +52,8 @@ export class ExtensionBridgeClient {
   readonly #socketFactory: ExtensionSocketFactory;
   readonly #scheduleHeartbeat: HeartbeatScheduler;
   readonly #cancelHeartbeat: HeartbeatCanceller;
+  readonly #connectTimeoutMs: number;
+  #cancelConnection: (() => void) | null = null;
 
   #socket: ExtensionSocket | null = null;
   #authenticated = false;
@@ -77,7 +79,12 @@ export class ExtensionBridgeClient {
 
     scheduleHeartbeat?: HeartbeatScheduler;
     cancelHeartbeat?: HeartbeatCanceller;
+    connectTimeoutMs?: number;
   }) {
+    this.#connectTimeoutMs = options.connectTimeoutMs ?? 12_000;
+    if (!Number.isSafeInteger(this.#connectTimeoutMs) || this.#connectTimeoutMs <= 0 || this.#connectTimeoutMs > 2_147_483_647) {
+      throw new Error("extension connect deadline must be a positive timer value");
+    }
     if (!options.url.trim()) {
       throw new Error(
         "bridge URL is required",
@@ -139,189 +146,97 @@ export class ExtensionBridgeClient {
   }
 
   connect(): Promise<void> {
-    if (this.#authenticated) {
-      return Promise.resolve();
-    }
+    if (this.#authenticated) return Promise.resolve();
+    if (this.#connecting) return this.#connecting;
 
-    if (this.#connecting) {
-      return this.#connecting;
-    }
-
-    const socket =
-      this.#socketFactory.create(
-        this.#url,
-      );
-
+    const socket = this.#socketFactory.create(this.#url);
     this.#socket = socket;
 
-    this.#connecting =
-      new Promise<void>(
-        (resolve, reject) => {
-          let settled = false;
+    this.#connecting = new Promise<void>((resolve, reject) => {
+      let settled = false;
+      const fail = (error: ExtensionSessionError, closeSocket = true): void => {
+        if (this.#socket !== socket) return;
+        globalThis.clearTimeout(deadline);
+        this.#stopHeartbeat();
+        this.#authenticated = false;
+        this.#socket = null;
+        this.#connecting = null;
+        this.#cancelConnection = null;
+        // Never execute a buffered command from a disconnected session.
+        this.#messages.length = 0;
+        this.#rejectMessageWaiters(error);
+        if (!settled) {
+          settled = true;
+          reject(error);
+        }
+        if (closeSocket) {
+          try {
+            socket.close();
+          } catch {
+            // The failed socket is already detached from this generation.
+          }
+        }
+      };
+      const disconnected = (message: string) =>
+        new ExtensionSessionError("disconnected", message);
+      const deadline = globalThis.setTimeout(() => {
+        fail(disconnected("extension bridge authentication deadline exceeded"));
+      }, this.#connectTimeoutMs);
+      this.#cancelConnection = () => fail(disconnected("extension bridge session closed"));
 
-          const fail = (
-            error:
-              ExtensionSessionError,
-          ) => {
-            this.#stopHeartbeat();
-
-            this.#authenticated =
-              false;
-
+      socket.addEventListener("open", () => {
+        if (this.#socket !== socket) return;
+        try {
+          socket.send(JSON.stringify({
+            type: "hello",
+            token: this.#launchToken,
+            extension_id: this.#extensionId,
+          }));
+        } catch {
+          fail(disconnected("extension bridge hello send failed"));
+        }
+      });
+      socket.addEventListener("message", (event) => {
+        if (this.#socket !== socket) return;
+        const parsed = parseSocketMessage(event);
+        if (!settled) {
+          if (parsed?.type === "hello_ack" && parsed.authenticated === true) {
+            settled = true;
+            globalThis.clearTimeout(deadline);
+            this.#authenticated = true;
             this.#connecting = null;
-
-            if (!settled) {
-              settled = true;
-              reject(error);
-            }
-          };
-
-          socket.addEventListener(
-            "open",
-            () => {
-              socket.send(
-                JSON.stringify({
-                  type: "hello",
-                  token:
-                    this.#launchToken,
-                  extension_id:
-                    this.#extensionId,
-                }),
-              );
-            },
-          );
-
-          socket.addEventListener(
-            "message",
-            (event) => {
-              const parsed =
-                parseSocketMessage(
-                  event,
-                );
-
-              if (!settled) {
-                if (
-                  parsed?.type ===
-                    "hello_ack" &&
-                  parsed.authenticated ===
-                    true
-                ) {
-                  settled = true;
-
-                  this.#authenticated =
-                    true;
-
-                  this.#connecting =
-                    null;
-
-                  this.#startHeartbeat();
-
-                  resolve();
-                  return;
-                }
-
-                fail(
-                  new ExtensionSessionError(
-                    "authentication_failed",
-                    "bridge did not acknowledge extension authentication",
-                  ),
-                );
-
-                return;
-              }
-
-              if (
-                !this.#authenticated ||
-                parsed === null
-              ) {
-                return;
-              }
-
-              if (
-                containsSensitiveBrowserState(
-                  parsed,
-                )
-              ) {
-                this.close();
-
-                this.#rejectMessageWaiters(
-                  new ExtensionSessionError(
-                    "sensitive_data_forbidden",
-                    "bridge sent forbidden browser credential state",
-                  ),
-                );
-
-                return;
-              }
-
-              this.#enqueueMessage(
-                parsed,
-              );
-            },
-          );
-
-          socket.addEventListener(
-            "close",
-            () => {
-              this.#stopHeartbeat();
-
-              this.#authenticated =
-                false;
-
-              this.#socket = null;
-              this.#connecting = null;
-
-              const error =
-                new ExtensionSessionError(
-                  "disconnected",
-                  "extension bridge socket closed",
-                );
-
-              this.#rejectMessageWaiters(
-                error,
-              );
-
-              if (!settled) {
-                settled = true;
-
-                reject(
-                  new ExtensionSessionError(
-                    "disconnected",
-                    "bridge closed before authentication completed",
-                  ),
-                );
-              }
-            },
-          );
-
-          socket.addEventListener(
-            "error",
-            () => {
-              fail(
-                new ExtensionSessionError(
-                  "disconnected",
-                  "bridge socket failed",
-                ),
-              );
-            },
-          );
-        },
-      );
-
+            this.#startHeartbeat();
+            resolve();
+          } else {
+            fail(new ExtensionSessionError(
+              "authentication_failed",
+              "bridge did not acknowledge extension authentication",
+            ));
+          }
+          return;
+        }
+        if (!this.#authenticated || parsed === null) return;
+        if (containsSensitiveBrowserState(parsed)) {
+          fail(new ExtensionSessionError(
+            "sensitive_data_forbidden",
+            "bridge sent forbidden browser credential state",
+          ));
+          return;
+        }
+        this.#enqueueMessage(parsed);
+      });
+      socket.addEventListener("close", () => {
+        fail(disconnected("extension bridge socket closed"), false);
+      });
+      socket.addEventListener("error", () => {
+        fail(disconnected("bridge socket failed"));
+      });
+    });
     return this.#connecting;
   }
 
   nextMessage():
     Promise<ExtensionBridgeOutboundMessage> {
-    const queued =
-      this.#messages.shift();
-
-    if (queued) {
-      return Promise.resolve(
-        queued,
-      );
-    }
-
     if (!this.#authenticated) {
       return Promise.reject(
         new ExtensionSessionError(
@@ -330,6 +245,9 @@ export class ExtensionBridgeClient {
         ),
       );
     }
+
+    const queued = this.#messages.shift();
+    if (queued) return Promise.resolve(queued);
 
     return new Promise(
       (resolve, reject) => {
@@ -373,20 +291,7 @@ export class ExtensionBridgeClient {
   }
 
   close(): void {
-    this.#stopHeartbeat();
-
-    this.#authenticated = false;
-    this.#connecting = null;
-
-    this.#socket?.close();
-    this.#socket = null;
-
-    this.#rejectMessageWaiters(
-      new ExtensionSessionError(
-        "disconnected",
-        "extension bridge session closed",
-      ),
-    );
+    this.#cancelConnection?.();
   }
 
   #startHeartbeat(): void {
@@ -403,11 +308,11 @@ export class ExtensionBridgeClient {
             return;
           }
 
-          this.#socket.send(
-            JSON.stringify({
-              type: "keepalive",
-            }),
-          );
+          try {
+            this.#socket.send(JSON.stringify({ type: "keepalive" }));
+          } catch {
+            this.close();
+          }
         },
         20_000,
       );

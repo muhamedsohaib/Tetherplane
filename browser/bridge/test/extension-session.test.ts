@@ -419,3 +419,80 @@ test("F-6: rejects hello extension_id mismatch and wrong-length tokens with 4001
     await bridge.close();
   }
 });
+
+test("silent extension worker is retired despite an open WebSocket and reconnects using the same pinned identity", { timeout: 5000 }, async () => {
+  const token = "synthetic-idle-test-token";
+  const bridge = await startExtensionBridgeServer({
+    launchToken: token,
+    expectedExtensionId: EXT_ID_A,
+    idleTimeoutMs: 250,
+  });
+  const first = new WebSocket(bridge.url, { headers: { origin: EXT_ORIGIN_A } });
+  let second: WebSocket | undefined;
+  let keepalive: NodeJS.Timeout | undefined;
+  try {
+    await onceOpen(first);
+    const ack = onceMessage(first);
+    first.send(JSON.stringify({ type: "hello", token, extension_id: EXT_ID_A }));
+    await ack;
+    const old = await bridge.waitForAuthenticatedClient();
+    const pending = assert.rejects(old.nextMessage(), /disconnected/);
+    await old.closed;
+    await pending;
+    assert.equal(bridge.authenticatedClientCount(), 0);
+    await assert.rejects(old.nextMessage(), /disconnected/);
+
+    const waiting = bridge.waitForAuthenticatedClient();
+    second = new WebSocket(bridge.url, { headers: { origin: EXT_ORIGIN_A } });
+    await onceOpen(second);
+    const secondAck = onceMessage(second);
+    second.send(JSON.stringify({ type: "hello", token, extension_id: EXT_ID_A }));
+    await secondAck;
+    const current = await waiting;
+    assert.notEqual(current, old);
+    assert.equal(current.extension_id, EXT_ID_A);
+    const socket = second;
+    keepalive = setInterval(() => {
+      socket.send(JSON.stringify({ type: "keepalive" }));
+    }, 40);
+    await new Promise(resolve => setTimeout(resolve, 650));
+    assert.equal(bridge.authenticatedClientCount(), 1);
+    const response = current.nextMessage();
+    second.send(JSON.stringify({ type: "result", request_id: "new-session", status: "success", data: { ok: true } }));
+    assert.equal((await response).request_id, "new-session");
+  } finally {
+    if (keepalive) clearInterval(keepalive);
+    first.terminate();
+    second?.terminate();
+    await bridge.close();
+  }
+});
+
+test("uncompleted hello is bounded and bridge shutdown closes unauthenticated peers and waiters", { timeout: 5000 }, async () => {
+  const bridge = await startExtensionBridgeServer({
+    launchToken: "synthetic-handshake-test",
+    expectedExtensionId: EXT_ID_A,
+    authTimeoutMs: 180,
+  });
+  const silent = new WebSocket(bridge.url, { headers: { origin: EXT_ORIGIN_A } });
+  let pendingSocket: WebSocket | undefined;
+  try {
+    await onceOpen(silent);
+    assert.equal(await expectClosedWithCode(silent), 1006);
+    assert.equal(bridge.authenticatedClientCount(), 0);
+
+    pendingSocket = new WebSocket(bridge.url, { headers: { origin: EXT_ORIGIN_A } });
+    await onceOpen(pendingSocket);
+    const waiting = assert.rejects(bridge.waitForAuthenticatedClient(), /closed/);
+    const closed = expectClosedWithCode(pendingSocket);
+    await bridge.close();
+    await waiting;
+    await closed;
+    assert.equal(bridge.authenticatedClientCount(), 0);
+    await assert.rejects(bridge.waitForAuthenticatedClient(), /closed/);
+  } finally {
+    silent.terminate();
+    pendingSocket?.terminate();
+    await bridge.close();
+  }
+});

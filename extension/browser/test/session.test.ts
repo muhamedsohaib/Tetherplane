@@ -245,3 +245,80 @@ test("authenticated extension session emits periodic keepalive traffic and cance
   client.close();
   assert.equal(cancelledHandle, 1);
 });
+
+test("unacknowledged authentication times out and permits a fresh session", async () => {
+  const factory = new FakeFactory();
+  const client = new ExtensionBridgeClient({
+    url: "ws://127.0.0.1:8123",
+    launchToken: "launch-token",
+    extensionId: "extension-test",
+    socketFactory: factory,
+    connectTimeoutMs: 40,
+  });
+  const firstConnect = client.connect();
+  const first = factory.sockets[0]!;
+  first.open();
+  await assert.rejects(firstConnect, /authentication deadline/);
+  assert.equal(first.readyState, 3);
+  assert.equal(client.authenticated, false);
+
+  const secondConnect = client.connect();
+  const second = factory.sockets[1]!;
+  second.open();
+  second.message({ type: "hello_ack", authenticated: true });
+  await secondConnect;
+  first.emit("close", {});
+  first.message({ type: "command", request_id: "old", operation: "close" });
+  assert.equal(client.authenticated, true);
+  const next = client.nextMessage();
+  second.message({ type: "command", request_id: "new", operation: "pages" });
+  assert.equal((await next).request_id, "new");
+  client.close();
+});
+
+test("disconnect discards buffered commands and errors release pending waiters", async () => {
+  const factory = new FakeFactory();
+  const client = new ExtensionBridgeClient({
+    url: "ws://127.0.0.1:8123",
+    launchToken: "launch-token",
+    extensionId: "extension-test",
+    socketFactory: factory,
+  });
+  const firstConnect = client.connect();
+  const first = factory.sockets[0]!;
+  first.open();
+  first.message({ type: "hello_ack", authenticated: true });
+  await firstConnect;
+  first.message({ type: "command", request_id: "must-not-replay", operation: "perform" });
+  first.close();
+  await assert.rejects(client.nextMessage(), /not authenticated/);
+
+  const secondConnect = client.connect();
+  const second = factory.sockets[1]!;
+  second.open();
+  second.message({ type: "hello_ack", authenticated: true });
+  await secondConnect;
+  const waiting = assert.rejects(client.nextMessage(), /socket failed/);
+  second.emit("error", {});
+  await waiting;
+  assert.equal(client.authenticated, false);
+  assert.equal(second.readyState, 3);
+});
+
+test("explicit close settles an incomplete handshake and prevents late hello acknowledgement", async () => {
+  const factory = new FakeFactory();
+  const client = new ExtensionBridgeClient({
+    url: "ws://127.0.0.1:8123",
+    launchToken: "launch-token",
+    extensionId: "extension-test",
+    socketFactory: factory,
+  });
+  const connecting = client.connect();
+  const first = factory.sockets[0]!;
+  first.open();
+  const rejected = assert.rejects(connecting, /session closed/);
+  client.close();
+  await rejected;
+  first.message({ type: "hello_ack", authenticated: true });
+  assert.equal(client.authenticated, false);
+});
