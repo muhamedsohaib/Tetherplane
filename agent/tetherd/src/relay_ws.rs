@@ -1,6 +1,7 @@
+use std::collections::VecDeque;
 use std::path::Path;
 use std::sync::Arc;
-use std::time::Duration;
+use std::time::{Duration, Instant};
 
 use futures_util::{SinkExt, StreamExt};
 use rustls::pki_types::CertificateDer;
@@ -12,6 +13,7 @@ use tether_core::{
     CapabilityError, ErrorCode, InvocationEnvelope, ResultEnvelope, ResultStatus,
     SynchronizedDevicePolicy, Timing, VerificationStatus,
 };
+use tokio::task::JoinHandle;
 use tokio_tungstenite::tungstenite::client::IntoClientRequest;
 use tokio_tungstenite::tungstenite::http::header::AUTHORIZATION;
 use tokio_tungstenite::tungstenite::http::{HeaderName, HeaderValue, StatusCode};
@@ -27,7 +29,11 @@ const DEVICE_ID_HEADER: HeaderName = HeaderName::from_static("x-tetherplane-devi
 // inbound WebSocket frames. A missing Pong forces reconnect independently
 // of browser probing, with normal reconnect delay applied by serve().
 const RELAY_HEARTBEAT_INTERVAL: Duration = Duration::from_secs(10);
-const RELAY_PING_SEND_TIMEOUT: Duration = Duration::from_secs(5);
+const RELAY_SEND_TIMEOUT: Duration = Duration::from_secs(5);
+const RELAY_CONNECT_TIMEOUT: Duration = Duration::from_secs(15);
+const RELAY_PENDING_LIMIT: usize = 16;
+const RELAY_PENDING_BYTES: usize = 4 * 1024 * 1024;
+const RELAY_PENDING_WAIT: Duration = Duration::from_secs(5);
 
 pub(crate) struct RelayConfig {
     pub url: String,
@@ -166,21 +172,96 @@ pub(crate) fn load_device_credential(path: &Path) -> Result<String, String> {
 
 pub(crate) async fn serve(runtime: Arc<AgentRuntime>, config: RelayConfig) -> Result<(), String> {
     validate_relay_url(&config.url, config.allow_insecure_localhost)?;
+    let mut tasks = RelayTasks::default();
+    let mut attempt = 0_u64;
 
     loop {
-        match connect_and_run(Arc::clone(&runtime), &config).await {
+        attempt = attempt.saturating_add(1);
+        let started = Instant::now();
+        let result = connect_session(
+            Arc::clone(&runtime),
+            &config,
+            RELAY_HEARTBEAT_INTERVAL,
+            &mut tasks,
+        )
+        .await;
+        let elapsed_ms = started.elapsed().as_millis();
+        match result {
             Ok(()) => {
-                tokio::time::sleep(config.reconnect_delay).await;
+                eprintln!("relay session {attempt} closed after {elapsed_ms} ms");
             }
             Err(RelayFailure::Fatal(message)) => return Err(message),
             Err(RelayFailure::Retryable(message)) => {
-                eprintln!("relay connection lost: {message}");
-                tokio::time::sleep(config.reconnect_delay).await;
+                eprintln!("relay session {attempt} lost after {elapsed_ms} ms: {message}");
             }
         }
+        eprintln!(
+            "relay reconnect scheduled in {} ms",
+            config.reconnect_delay.as_millis()
+        );
+        tokio::time::sleep(config.reconnect_delay).await;
     }
 }
 
+// Only one ordered invocation (including policy sync) may execute at a time.
+// An already-dispatched invocation can finish across a transport interruption;
+// never cancel and replay an uncertain mutation or send its result on a new socket.
+#[derive(Default)]
+struct RelayTasks {
+    active: Option<JoinHandle<Result<String, RelayFailure>>>,
+    deliver_result: bool,
+    probe: Option<JoinHandle<bool>>,
+}
+
+struct QueuedMessage {
+    inbound: RelayInbound,
+    bytes: usize,
+    received: Instant,
+}
+
+#[derive(Default)]
+struct RelayQueue {
+    messages: VecDeque<QueuedMessage>,
+    bytes: usize,
+}
+
+impl RelayQueue {
+    fn enqueue(&mut self, item: QueuedMessage, busy: bool) -> Result<Option<String>, RelayFailure> {
+        let waiting = busy || !self.messages.is_empty();
+        if waiting
+            && (self.messages.len() >= RELAY_PENDING_LIMIT
+                || self.bytes.saturating_add(item.bytes) > RELAY_PENDING_BYTES)
+        {
+            return match item.inbound {
+                RelayInbound::Invoke {
+                    route_id,
+                    invocation,
+                } => encode_result(&route_id, &queue_rejected_result(&invocation)).map(Some),
+                RelayInbound::PolicySync { .. } => Err(RelayFailure::Retryable(
+                    "relay queue full before policy sync; reconnect required".into(),
+                )),
+            };
+        }
+        self.bytes += item.bytes;
+        self.messages.push_back(item);
+        Ok(None)
+    }
+
+    fn pop(&mut self) -> Option<QueuedMessage> {
+        let item = self.messages.pop_front()?;
+        self.bytes -= item.bytes;
+        Some(item)
+    }
+}
+
+async fn await_task<T>(task: &mut Option<JoinHandle<T>>) -> Result<T, tokio::task::JoinError> {
+    match task {
+        Some(task) => task.await,
+        None => std::future::pending().await,
+    }
+}
+
+#[cfg(test)]
 async fn connect_and_run(
     runtime: Arc<AgentRuntime>,
     config: &RelayConfig,
@@ -188,11 +269,25 @@ async fn connect_and_run(
     connect_and_run_with_heartbeat(runtime, config, RELAY_HEARTBEAT_INTERVAL).await
 }
 
+#[cfg(test)]
 async fn connect_and_run_with_heartbeat(
     runtime: Arc<AgentRuntime>,
     config: &RelayConfig,
     heartbeat_interval: Duration,
 ) -> Result<(), RelayFailure> {
+    let mut tasks = RelayTasks::default();
+    connect_session(runtime, config, heartbeat_interval, &mut tasks).await
+}
+
+async fn connect_session(
+    runtime: Arc<AgentRuntime>,
+    config: &RelayConfig,
+    heartbeat_interval: Duration,
+    tasks: &mut RelayTasks,
+) -> Result<(), RelayFailure> {
+    // All pending routes belong to the socket that received them. A prior
+    // active task may finish, but its acknowledgement belongs to that old socket.
+    tasks.deliver_result = false;
     let mut request = config
         .url
         .as_str()
@@ -207,12 +302,16 @@ async fn connect_and_run_with_heartbeat(
     request.headers_mut().insert(AUTHORIZATION, authorization);
     request.headers_mut().insert(DEVICE_ID_HEADER, device_id);
 
-    let (mut socket, _) =
-        connect_async_tls_with_config(request, None, false, config.tls_connector.clone())
-            .await
-            .map_err(|error| classify_connect_error(&error))?;
+    let (mut socket, _) = tokio::time::timeout(
+        RELAY_CONNECT_TIMEOUT,
+        connect_async_tls_with_config(request, None, false, config.tls_connector.clone()),
+    )
+    .await
+    .map_err(|_| RelayFailure::Retryable("relay connection handshake timed out".into()))?
+    .map_err(|error| classify_connect_error(&error))?;
 
-    let _ = runtime.refresh_browser_availability().await;
+    // Send cached capability state immediately. Browser probing below runs
+    // independently and publishes updated telemetry when availability changes.
     let hello_payload = json!({
         "type": "device_hello",
         "deviceId": config.device_id,
@@ -221,24 +320,35 @@ async fn connect_and_run_with_heartbeat(
         "capabilities": runtime.device_capabilities(None, Some(&config.device_id)),
     });
     if let Ok(hello_text) = serde_json::to_string(&hello_payload) {
-        socket
-            .send(Message::Text(hello_text.into()))
-            .await
-            .map_err(|error| {
-                RelayFailure::Retryable(format!("websocket hello send failed: {error}"))
-            })?;
+        send_frame(&mut socket, Message::Text(hello_text.into()), "hello").await?;
     }
+    eprintln!("relay authenticated session established");
 
+    run_connected(&mut socket, &runtime, config, heartbeat_interval, tasks).await
+}
+
+async fn run_connected<S>(
+    socket: &mut S,
+    runtime: &Arc<AgentRuntime>,
+    config: &RelayConfig,
+    heartbeat_interval: Duration,
+    tasks: &mut RelayTasks,
+) -> Result<(), RelayFailure>
+where
+    S: futures_util::Sink<Message, Error = WebSocketError>
+        + futures_util::Stream<Item = Result<Message, WebSocketError>>
+        + Unpin,
+{
     let mut probe_tick = tokio::time::interval(config.probe_interval);
     probe_tick.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Skip);
-    let _ = probe_tick.tick().await;
-
     let mut heartbeat_tick = tokio::time::interval(heartbeat_interval);
     heartbeat_tick.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Skip);
     let _ = heartbeat_tick.tick().await;
     let mut heartbeat = RelayHeartbeat::default();
+    let mut queue = RelayQueue::default();
 
     loop {
+        dispatch_next(socket, runtime, &config.device_id, tasks, &mut queue).await?;
         tokio::select! {
             next = socket.next() => {
                 let Some(next) = next else {
@@ -247,57 +357,111 @@ async fn connect_and_run_with_heartbeat(
                 let message = next.map_err(|error| {
                     RelayFailure::Retryable(format!("websocket receive failed: {error}"))
                 })?;
-                if let Message::Pong(payload) = &message {
-                    heartbeat.observe_pong(payload);
-                }
-                if handle_ws_frame(&mut socket, &runtime, config, message).await? {
-                    return Ok(());
+                match message {
+                    Message::Text(text) => {
+                        let inbound = parse_inbound(text.as_str())?;
+                        let item = QueuedMessage {
+                            inbound,
+                            bytes: text.len(),
+                            received: Instant::now(),
+                        };
+                        if let Some(rejection) = queue.enqueue(item, tasks.active.is_some())? {
+                            send_frame(socket, Message::Text(rejection.into()), "queue rejection").await?;
+                        }
+                    }
+                    Message::Ping(payload) => {
+                        send_frame(socket, Message::Pong(payload), "pong").await?;
+                    }
+                    Message::Pong(payload) => heartbeat.observe_pong(&payload),
+                    Message::Close(frame) => {
+                        if let Some(frame) = frame {
+                            eprintln!("relay close code {}", u16::from(frame.code));
+                        }
+                        return Ok(());
+                    }
+                    Message::Binary(_) | Message::Frame(_) => {}
                 }
             }
-            _ = probe_tick.tick(), if runtime.has_browser_provider() => {
-                if runtime.refresh_browser_availability().await {
-                    send_device_telemetry(&mut socket, &runtime, &config.device_id).await?;
+            completed = await_task(&mut tasks.active) => {
+                tasks.active = None;
+                if tasks.deliver_result {
+                    let outbound = completed.map_err(|_| {
+                        RelayFailure::Retryable("relay invocation worker failed".into())
+                    })??;
+                    send_frame(socket, Message::Text(outbound.into()), "result").await?;
+                } else {
+                    eprintln!("previous relay session invocation finished; no acknowledgement replayed");
+                }
+            }
+            _ = probe_tick.tick(), if runtime.has_browser_provider() && tasks.probe.is_none() => {
+                let runtime = Arc::clone(runtime);
+                tasks.probe = Some(tokio::spawn(async move {
+                    runtime.refresh_browser_availability().await
+                }));
+            }
+            completed = await_task(&mut tasks.probe) => {
+                tasks.probe = None;
+                match completed {
+                    Ok(true) => send_device_telemetry(socket, runtime, &config.device_id).await?,
+                    Ok(false) => {}
+                    Err(_) => eprintln!("relay browser health probe worker failed"),
                 }
             }
             _ = heartbeat_tick.tick() => {
                 let ping = heartbeat.next_ping()?;
-                tokio::time::timeout(RELAY_PING_SEND_TIMEOUT, socket.send(ping))
-                    .await
-                    .map_err(|_| RelayFailure::Retryable("relay heartbeat Ping send timed out".into()))?
-                    .map_err(|error| RelayFailure::Retryable(format!("relay heartbeat Ping failed: {error}")))?;
+                send_frame(socket, ping, "heartbeat ping").await?;
             }
         }
     }
 }
 
-async fn handle_ws_frame<S>(
+async fn dispatch_next<S>(
     socket: &mut S,
     runtime: &Arc<AgentRuntime>,
-    config: &RelayConfig,
-    message: Message,
-) -> Result<bool, RelayFailure>
+    device_id: &str,
+    tasks: &mut RelayTasks,
+    queue: &mut RelayQueue,
+) -> Result<(), RelayFailure>
 where
     S: futures_util::Sink<Message, Error = WebSocketError> + Unpin,
 {
-    match message {
-        Message::Text(text) => {
-            let outbound = handle_inbound_text(runtime, config, text.as_str()).await?;
-            socket
-                .send(Message::Text(outbound.into()))
-                .await
-                .map_err(|error| {
-                    RelayFailure::Retryable(format!("websocket send failed: {error}"))
-                })?;
-        }
-        Message::Ping(payload) => {
-            socket.send(Message::Pong(payload)).await.map_err(|error| {
-                RelayFailure::Retryable(format!("websocket pong failed: {error}"))
-            })?;
-        }
-        Message::Close(_) => return Ok(true),
-        Message::Binary(_) | Message::Pong(_) | Message::Frame(_) => {}
+    while tasks.active.is_none() {
+        let Some(item) = queue.pop() else {
+            break;
+        };
+        let inbound = match item.inbound {
+            RelayInbound::Invoke {
+                route_id,
+                invocation,
+            } if item.received.elapsed() >= RELAY_PENDING_WAIT => {
+                let rejection = encode_result(&route_id, &queue_rejected_result(&invocation))?;
+                send_frame(socket, Message::Text(rejection.into()), "expired queue item").await?;
+                continue;
+            }
+            inbound => inbound,
+        };
+        let runtime = Arc::clone(runtime);
+        let device_id = device_id.to_owned();
+        tasks.active = Some(tokio::spawn(async move {
+            handle_inbound(&runtime, &device_id, inbound).await
+        }));
+        tasks.deliver_result = true;
     }
-    Ok(false)
+    Ok(())
+}
+
+async fn send_frame<S>(
+    socket: &mut S,
+    message: Message,
+    label: &str,
+) -> Result<(), RelayFailure>
+where
+    S: futures_util::Sink<Message, Error = WebSocketError> + Unpin,
+{
+    tokio::time::timeout(RELAY_SEND_TIMEOUT, socket.send(message))
+        .await
+        .map_err(|_| RelayFailure::Retryable(format!("relay {label} send timed out")))?
+        .map_err(|error| RelayFailure::Retryable(format!("relay {label} send failed: {error}")))
 }
 
 async fn send_device_telemetry<S>(
@@ -315,50 +479,59 @@ where
         "capabilities": runtime.device_capabilities(None, Some(device_id)),
     });
     if let Ok(text) = serde_json::to_string(&payload) {
-        socket
-            .send(Message::Text(text.into()))
-            .await
-            .map_err(|error| {
-                RelayFailure::Retryable(format!("websocket telemetry send failed: {error}"))
-            })?;
+        send_frame(socket, Message::Text(text.into()), "telemetry").await?;
     }
     Ok(())
 }
 
+fn parse_inbound(text: &str) -> Result<RelayInbound, RelayFailure> {
+    serde_json::from_str(text)
+        .map_err(|error| RelayFailure::Retryable(format!("relay sent invalid message: {error}")))
+}
+
+fn encode_result(route_id: &str, result: &ResultEnvelope) -> Result<String, RelayFailure> {
+    serde_json::to_string(&RelayResultOutbound {
+        kind: "result",
+        route_id,
+        result,
+    })
+    .map_err(|error| RelayFailure::Fatal(format!("failed to serialize relay result: {error}")))
+}
+
+#[cfg(test)]
 async fn handle_inbound_text(
     runtime: &Arc<AgentRuntime>,
     config: &RelayConfig,
     text: &str,
 ) -> Result<String, RelayFailure> {
-    let inbound = serde_json::from_str::<RelayInbound>(text)
-        .map_err(|error| RelayFailure::Retryable(format!("relay sent invalid message: {error}")))?;
+    handle_inbound(runtime, &config.device_id, parse_inbound(text)?).await
+}
+
+async fn handle_inbound(
+    runtime: &AgentRuntime,
+    device_id: &str,
+    inbound: RelayInbound,
+) -> Result<String, RelayFailure> {
     match inbound {
         RelayInbound::Invoke {
             route_id,
             invocation,
         } => {
-            let result = if invocation.device_id.as_deref() == Some(config.device_id.as_str()) {
+            let result = if invocation.device_id.as_deref() == Some(device_id) {
                 runtime.execute(invocation).await
             } else {
-                wrong_device_result(&invocation, &config.device_id)
+                wrong_device_result(&invocation, device_id)
             };
-            serde_json::to_string(&RelayResultOutbound {
-                kind: "result",
-                route_id: &route_id,
-                result: &result,
-            })
-            .map_err(|error| {
-                RelayFailure::Fatal(format!("failed to serialize relay result: {error}"))
-            })
+            encode_result(&route_id, &result)
         }
         RelayInbound::PolicySync { policy } => {
             let pushed_revision = policy.revision;
-            let ack_payload = if policy.device_id == config.device_id {
+            let ack_payload = if policy.device_id == device_id {
                 match runtime.apply_synchronized_policy(policy) {
-                    Ok(ack_data) => build_policy_ack(&config.device_id, &ack_data, None),
+                    Ok(ack_data) => build_policy_ack(device_id, &ack_data, None),
                     Err(error) => json!({
                         "type": "policy_ack",
-                        "deviceId": config.device_id,
+                        "deviceId": device_id,
                         "revision": pushed_revision,
                         "currentRevision": runtime.applied_policy_revision(),
                         "applied": false,
@@ -368,7 +541,7 @@ async fn handle_inbound_text(
             } else {
                 json!({
                     "type": "policy_ack",
-                    "deviceId": config.device_id,
+                    "deviceId": device_id,
                     "revision": pushed_revision,
                     "currentRevision": runtime.applied_policy_revision(),
                     "applied": false,
@@ -379,6 +552,26 @@ async fn handle_inbound_text(
                 RelayFailure::Fatal(format!("failed to serialize policy_ack: {error}"))
             })
         }
+    }
+}
+
+fn queue_rejected_result(invocation: &InvocationEnvelope) -> ResultEnvelope {
+    ResultEnvelope {
+        protocol_version: "1.0".into(),
+        request_id: invocation.request_id,
+        status: ResultStatus::Error,
+        data: None,
+        delta: None,
+        error: Some(CapabilityError {
+            code: ErrorCode::ResourceConflict,
+            message: "relay work queue busy; invocation was not dispatched".into(),
+            recovery_hint: Some("Retry only after the active work has completed".into()),
+            details: json!({ "dispatched": false }),
+        }),
+        verification: VerificationStatus::Failed,
+        continuation: None,
+        policy: None,
+        timing: Timing { duration_ms: 0 },
     }
 }
 
@@ -568,6 +761,284 @@ mod tests {
             "correct Pongs must avoid false reconnect: {result:?}"
         );
         peer.await.unwrap();
+    }
+
+
+    fn relay_test_invocation(
+        device: &str,
+        route: &str,
+        capability: &str,
+        arguments: serde_json::Value,
+    ) -> tokio_tungstenite::tungstenite::Message {
+        tokio_tungstenite::tungstenite::Message::Text(
+            json!({
+                "type": "invoke",
+                "routeId": route,
+                "invocation": {
+                    "protocol_version": "1.0",
+                    "request_id": uuid::Uuid::new_v4(),
+                    "device_id": device,
+                    "principal_id": "human:relay-test",
+                    "job_id": null,
+                    "capability": capability,
+                    "arguments": arguments,
+                    "actor": {"id": "relay-loopback-test", "kind": "ai_client"},
+                    "session_id": null,
+                    "response_mode": "compact",
+                    "idempotency_key": null,
+                    "preconditions": [],
+                    "expectations": []
+                }
+            })
+            .to_string()
+            .into(),
+        )
+    }
+
+    fn slow_work_args() -> serde_json::Value {
+        if cfg!(windows) {
+            json!({
+                "program": "powershell.exe",
+                "args": ["-NoProfile", "-NonInteractive", "-Command", "Start-Sleep -Milliseconds 2000; Write-Output RELAY_SLOW_WORK"],
+                "wait_ms": 6000
+            })
+        } else {
+            json!({
+                "program": "sh",
+                "args": ["-c", "sleep 2; printf RELAY_SLOW_WORK"],
+                "wait_ms": 6000
+            })
+        }
+    }
+
+    async fn read_relay_test_result(
+        ws: &mut tokio_tungstenite::WebSocketStream<tokio::net::TcpStream>,
+    ) -> (serde_json::Value, usize) {
+        use futures_util::{SinkExt, StreamExt};
+        use tokio_tungstenite::tungstenite::Message;
+
+        let mut pings = 0;
+        loop {
+            match ws.next().await.unwrap().unwrap() {
+                Message::Ping(payload) => {
+                    pings += 1;
+                    ws.send(Message::Pong(payload)).await.unwrap();
+                }
+                Message::Text(text) => {
+                    let reply = serde_json::from_str(text.as_str()).unwrap();
+                    return (reply, pings);
+                }
+                _ => {}
+            }
+        }
+    }
+
+    #[tokio::test]
+    async fn real_slow_process_does_not_starve_relay_heartbeats() {
+        use super::{RelayConfig, connect_and_run_with_heartbeat};
+        use crate::runtime::AgentRuntime;
+        use futures_util::{SinkExt, StreamExt};
+        use std::sync::Arc;
+        use std::time::Duration;
+        use tokio::net::TcpListener;
+        use tokio_tungstenite::tungstenite::Message;
+
+        let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let port = listener.local_addr().unwrap().port();
+        let peer = tokio::spawn(async move {
+            let (stream, _) = listener.accept().await.unwrap();
+            let mut ws = tokio_tungstenite::accept_async(stream).await.unwrap();
+            assert!(matches!(
+                ws.next().await.unwrap().unwrap(),
+                Message::Text(_)
+            ));
+            ws.send(relay_test_invocation(
+                "heartbeat-work-test",
+                "slow-route",
+                "process.run",
+                slow_work_args(),
+            ))
+            .await
+            .unwrap();
+            let (reply, pings) = read_relay_test_result(&mut ws).await;
+            assert_eq!(reply["routeId"], "slow-route");
+            assert_eq!(reply["result"]["status"], "success");
+            assert!(
+                reply["result"]["data"]["stdout"]
+                    .as_str()
+                    .unwrap()
+                    .contains("RELAY_SLOW_WORK")
+            );
+            assert!(pings >= 3, "slow work starved connection maintenance");
+            ws.close(None).await.unwrap();
+        });
+        let runtime =
+            Arc::new(AgentRuntime::new(vec![std::env::temp_dir()], None, None, None).unwrap());
+        let config = RelayConfig {
+            url: format!("ws://127.0.0.1:{port}/device"),
+            device_id: "heartbeat-work-test".into(),
+            credential: "a-test-only-local-device-credential".into(),
+            allow_insecure_localhost: true,
+            tls_connector: None,
+            reconnect_delay: Duration::from_secs(1),
+            probe_interval: Duration::from_secs(5),
+        };
+        let result = tokio::time::timeout(
+            Duration::from_secs(12),
+            connect_and_run_with_heartbeat(runtime, &config, Duration::from_millis(150)),
+        )
+        .await
+        .expect("slow operation and heartbeat test must finish");
+        assert!(result.is_ok(), "{result:?}");
+        peer.await.unwrap();
+    }
+
+    #[tokio::test]
+    async fn reconnect_discards_undispatched_work_and_never_replays_old_result() {
+        use super::{RelayConfig, RelayTasks, connect_session};
+        use crate::runtime::AgentRuntime;
+        use futures_util::{SinkExt, StreamExt};
+        use std::sync::Arc;
+        use std::time::Duration;
+        use tokio::net::TcpListener;
+        use tokio_tungstenite::tungstenite::Message;
+
+        let root = std::env::temp_dir().join(format!("tether-relay-{}", uuid::Uuid::new_v4()));
+        std::fs::create_dir_all(&root).unwrap();
+        let queued_path = root.join("must-not-be-replayed.txt");
+        let peer_path = queued_path.clone();
+        let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let port = listener.local_addr().unwrap().port();
+        let peer = tokio::spawn(async move {
+            let (stream, _) = listener.accept().await.unwrap();
+            let mut first = tokio_tungstenite::accept_async(stream).await.unwrap();
+            assert!(matches!(
+                first.next().await.unwrap().unwrap(),
+                Message::Text(_)
+            ));
+            first
+                .send(relay_test_invocation(
+                    "heartbeat-reconnect-test",
+                    "old-active",
+                    "process.run",
+                    slow_work_args(),
+                ))
+                .await
+                .unwrap();
+            let Message::Ping(payload) = first.next().await.unwrap().unwrap() else {
+                panic!("expected heartbeat while old work runs");
+            };
+            first.send(Message::Pong(payload)).await.unwrap();
+            first
+                .send(relay_test_invocation(
+                    "heartbeat-reconnect-test",
+                    "old-queued",
+                    "filesystem.append",
+                    json!({"path": peer_path, "content": "must not run"}),
+                ))
+                .await
+                .unwrap();
+            let Message::Ping(payload) = first.next().await.unwrap().unwrap() else {
+                panic!("expected heartbeat while queued work waits");
+            };
+            first.send(Message::Pong(payload)).await.unwrap();
+            first.close(None).await.unwrap();
+            drop(first);
+
+            let (stream, _) = listener.accept().await.unwrap();
+            let mut second = tokio_tungstenite::accept_async(stream).await.unwrap();
+            let Message::Text(hello) = second.next().await.unwrap().unwrap() else {
+                panic!("expected new session hello");
+            };
+            assert_eq!(
+                serde_json::from_str::<serde_json::Value>(hello.as_str()).unwrap()["type"],
+                "device_hello"
+            );
+            second
+                .send(relay_test_invocation(
+                    "heartbeat-reconnect-test",
+                    "new-route",
+                    "device.status",
+                    json!({}),
+                ))
+                .await
+                .unwrap();
+            let (reply, _) = read_relay_test_result(&mut second).await;
+            assert_eq!(reply["routeId"], "new-route", "old route was replayed");
+            assert_eq!(reply["result"]["status"], "success");
+            second.close(None).await.unwrap();
+        });
+        let runtime = Arc::new(AgentRuntime::new(vec![root.clone()], None, None, None).unwrap());
+        let config = RelayConfig {
+            url: format!("ws://127.0.0.1:{port}/device"),
+            device_id: "heartbeat-reconnect-test".into(),
+            credential: "a-test-only-local-device-credential".into(),
+            allow_insecure_localhost: true,
+            tls_connector: None,
+            reconnect_delay: Duration::from_secs(1),
+            probe_interval: Duration::from_secs(5),
+        };
+        let mut tasks = RelayTasks::default();
+        tokio::time::timeout(Duration::from_secs(15), async {
+            connect_session(
+                Arc::clone(&runtime),
+                &config,
+                Duration::from_millis(150),
+                &mut tasks,
+            )
+            .await
+            .unwrap();
+            assert!(tasks.active.is_some(), "old invocation should still be running");
+            connect_session(runtime, &config, Duration::from_millis(150), &mut tasks)
+                .await
+                .unwrap();
+            peer.await.unwrap();
+        })
+        .await
+        .expect("reconnect must finish within deadline");
+        assert!(!queued_path.exists(), "old queued mutation was dispatched");
+        assert!(tasks.active.is_none());
+        std::fs::remove_dir_all(root).unwrap();
+    }
+
+    #[test]
+    fn bounded_relay_queue_rejects_overflow_before_dispatch() {
+        use super::RELAY_PENDING_LIMIT;
+        use super::{QueuedMessage, RelayQueue, parse_inbound};
+        use std::time::Instant;
+        use tokio_tungstenite::tungstenite::Message;
+
+        let mut queue = RelayQueue::default();
+        for index in 0..=RELAY_PENDING_LIMIT {
+            let route = format!("queue-{index}");
+            let Message::Text(raw) =
+                relay_test_invocation("queue-test", &route, "device.status", json!({}))
+            else {
+                unreachable!()
+            };
+            let result = queue
+                .enqueue(
+                    QueuedMessage {
+                        inbound: parse_inbound(raw.as_str()).unwrap(),
+                        bytes: raw.len(),
+                        received: Instant::now(),
+                    },
+                    true,
+                )
+                .unwrap();
+            if index < RELAY_PENDING_LIMIT {
+                assert!(result.is_none());
+            } else {
+                let rejection: serde_json::Value =
+                    serde_json::from_str(&result.unwrap()).unwrap();
+                assert_eq!(rejection["routeId"], route);
+                assert_eq!(rejection["result"]["error"]["code"], "resource_conflict");
+                assert_eq!(rejection["result"]["error"]["details"]["dispatched"], false);
+            }
+        }
+        assert_eq!(queue.messages.len(), RELAY_PENDING_LIMIT);
+        while queue.pop().is_some() {}
+        assert_eq!(queue.bytes, 0);
     }
 
     #[test]
