@@ -532,6 +532,9 @@ test(
       assert.equal(recoveredBrowser.fullyLive, false);
       assert.ok(recoveredBrowser.activeOperations.length > 0);
       assert.ok(recoveredBrowser.activeOperations.length < recoveredBrowser.canonicalOperationCount);
+      assert.deepEqual([...recoveredBrowser.activeOperations].sort(), [
+        "browser.create_tab", "browser.pages", "browser.snapshot", "browser.status",
+      ]);
 
       const pagesRes = await ownerClient.callTool({
         name: "browser",

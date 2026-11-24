@@ -171,12 +171,13 @@ async fn connect_and_run(
             .map_err(|error| classify_connect_error(&error))?;
 
     let _ = runtime.refresh_browser_availability().await;
+    let mut last_reported_capabilities = runtime.device_capabilities(None, Some(&config.device_id));
     let hello_payload = json!({
         "type": "device_hello",
         "deviceId": config.device_id,
         "appliedPolicyRevision": runtime.applied_policy_revision(),
         "status": runtime.device_status(),
-        "capabilities": runtime.device_capabilities(None, Some(&config.device_id)),
+        "capabilities": last_reported_capabilities.clone(),
     });
     if let Ok(hello_text) = serde_json::to_string(&hello_payload) {
         socket
@@ -205,8 +206,13 @@ async fn connect_and_run(
                 }
             }
             _ = probe_tick.tick(), if runtime.has_browser_provider() => {
-                if runtime.refresh_browser_availability().await {
-                    send_device_telemetry(&mut socket, &runtime, &config.device_id).await?;
+                runtime.refresh_browser_availability().await;
+                // Compare against what the relay actually received, including
+                // evidence changed by a foreground RPC between probe ticks.
+                let current = runtime.device_capabilities(None, Some(&config.device_id));
+                if current != last_reported_capabilities {
+                    send_device_telemetry(&mut socket, &runtime, &config.device_id, &current).await?;
+                    last_reported_capabilities = current;
                 }
             }
         }
@@ -247,6 +253,7 @@ async fn send_device_telemetry<S>(
     socket: &mut S,
     runtime: &AgentRuntime,
     device_id: &str,
+    capabilities: &Value,
 ) -> Result<(), RelayFailure>
 where
     S: futures_util::Sink<Message, Error = WebSocketError> + Unpin,
@@ -255,7 +262,7 @@ where
         "type": "device_telemetry",
         "deviceId": device_id,
         "status": runtime.device_status(),
-        "capabilities": runtime.device_capabilities(None, Some(device_id)),
+        "capabilities": capabilities,
     });
     if let Ok(text) = serde_json::to_string(&payload) {
         socket

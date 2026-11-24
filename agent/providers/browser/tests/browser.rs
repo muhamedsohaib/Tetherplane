@@ -328,7 +328,8 @@ async fn probe_status_tracks_standby_disconnect_and_reconnect() {
 
     let listener = TcpListener::bind(address).await.unwrap();
     let mock = tokio::spawn(async move {
-        for attached in [false, true] {
+        for phase in 0..4 {
+            let attached = phase != 0;
             let (stream, _) = listener.accept().await.unwrap();
             let (read, mut write) = stream.into_split();
             let mut lines = BufReader::new(read).lines();
@@ -343,7 +344,13 @@ async fn probe_status_tracks_standby_disconnect_and_reconnect() {
                     "data": {
                         "available": true,
                         "mode": "background_only",
-                        "capabilities": { "backend": "extension", "connected": true, "status": "ready" }
+                        "capabilities": if phase == 1 {
+                            json!({"backend": "extension", "connected": true, "status": "ready", "operations": ["status", "pages", "pages", "noncanonical", "snapshot"], "unavailable_operations": ["snapshot"]})
+                        } else if phase == 2 {
+                            json!({"backend": "extension", "connected": true, "status": "ready", "operations": ["status", "snapshot"]})
+                        } else {
+                            json!({"backend": "extension", "connected": true, "status": "ready"})
+                        }
                     },
                     "verification": "not_applicable"
                 })
@@ -380,10 +387,22 @@ async fn probe_status_tracks_standby_disconnect_and_reconnect() {
     assert!(live_avail);
     assert_eq!(live_reason, None);
     assert_eq!(provider.current_availability(), (true, None));
+    assert_eq!(
+        provider.current_capability_report().operations,
+        ["pages", "status"]
+    );
+    assert_eq!(provider.probe_status().await, (true, None));
+    assert_eq!(
+        provider.current_capability_report().operations,
+        ["snapshot", "status"]
+    );
+    assert_eq!(provider.probe_status().await, (true, None));
+    assert_eq!(provider.current_capability_report().operations, ["status"]);
     mock.await.unwrap();
 
     // After listener stops, next probe transitions back to unavailable
     let (lost_avail, lost_reason) = provider.probe_status().await;
     assert!(!lost_avail);
     assert!(lost_reason.is_some());
+    assert!(provider.current_capability_report().operations.is_empty());
 }
