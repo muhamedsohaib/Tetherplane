@@ -388,7 +388,6 @@ async fn probe_status_tracks_standby_disconnect_and_reconnect() {
     assert!(lost_reason.is_some());
 }
 
-
 #[tokio::test]
 async fn lost_mutation_acknowledgement_is_unverified_and_not_retried() {
     let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
@@ -397,12 +396,21 @@ async fn lost_mutation_acknowledgement_is_unverified_and_not_retried() {
         let (stream, _) = listener.accept().await.unwrap();
         let (read, mut write) = stream.into_split();
         let mut lines = BufReader::new(read).lines();
-        let request: serde_json::Value = serde_json::from_str(&lines.next_line().await.unwrap().unwrap()).unwrap();
+        let request: serde_json::Value =
+            serde_json::from_str(&lines.next_line().await.unwrap().unwrap()).unwrap();
         assert_eq!(request["capability"], "browser.act");
         write.shutdown().await.unwrap();
     });
-    let provider = BrowserProvider::new_reconnectable(BrowserBridgeConfig { address, token: None, timeout_ms: 100 }).unwrap();
-    let error = provider.execute(&invocation("browser.act", json!({"page_id":"fixture"}))).await.unwrap_err();
+    let provider = BrowserProvider::new_reconnectable(BrowserBridgeConfig {
+        address,
+        token: None,
+        timeout_ms: 100,
+    })
+    .unwrap();
+    let error = provider
+        .execute(&invocation("browser.act", json!({"page_id":"fixture"})))
+        .await
+        .unwrap_err();
     assert_eq!(error.code, tether_core::ErrorCode::ActionUnverified);
     assert!(error.message.contains("may have executed"));
     server.await.unwrap();
@@ -416,22 +424,49 @@ async fn native_snapshot_accepts_delayed_correlated_response() {
         let (stream, _) = listener.accept().await.unwrap();
         let (read, mut write) = stream.into_split();
         let mut lines = BufReader::new(read).lines();
-        let request: serde_json::Value = serde_json::from_str(&lines.next_line().await.unwrap().unwrap()).unwrap();
+        let request: serde_json::Value =
+            serde_json::from_str(&lines.next_line().await.unwrap().unwrap()).unwrap();
         tokio::time::sleep(Duration::from_millis(180)).await;
-        let response = json!({"request_id":request["request_id"],"status":"success","data":{"nodes":[]}});
-        write.write_all(format!("{response}\n").as_bytes()).await.unwrap();
+        let response =
+            json!({"request_id":request["request_id"],"status":"success","data":{"nodes":[]}});
+        write
+            .write_all(format!("{response}\n").as_bytes())
+            .await
+            .unwrap();
     });
-    let provider = BrowserProvider::new_reconnectable(BrowserBridgeConfig { address, token: None, timeout_ms: 100 }).unwrap();
-    let result = provider.execute(&invocation("browser.snapshot", json!({"page_id":"fixture"}))).await.unwrap();
-    assert_eq!(result.data["nodes"],json!([]));
+    let provider = BrowserProvider::new_reconnectable(BrowserBridgeConfig {
+        address,
+        token: None,
+        timeout_ms: 100,
+    })
+    .unwrap();
+    let result = provider
+        .execute(&invocation(
+            "browser.snapshot",
+            json!({"page_id":"fixture"}),
+        ))
+        .await
+        .unwrap();
+    assert_eq!(result.data["nodes"], json!([]));
     server.await.unwrap();
 }
 
 #[tokio::test]
 async fn mismatched_mutation_acknowledgement_is_not_success() {
-    let (address, received) = fake_bridge(json!({"request_id":"wrong","status":"success","verification":"verified","data":{}})).await;
-    let provider = BrowserProvider::new_reconnectable(BrowserBridgeConfig { address, token: None, timeout_ms: 100 }).unwrap();
-    let error = provider.execute(&invocation("browser.act", json!({"page_id":"fixture"}))).await.unwrap_err();
-    assert_eq!(error.code,tether_core::ErrorCode::ActionUnverified);
+    let (address, received) = fake_bridge(
+        json!({"request_id":"wrong","status":"success","verification":"verified","data":{}}),
+    )
+    .await;
+    let provider = BrowserProvider::new_reconnectable(BrowserBridgeConfig {
+        address,
+        token: None,
+        timeout_ms: 100,
+    })
+    .unwrap();
+    let error = provider
+        .execute(&invocation("browser.act", json!({"page_id":"fixture"})))
+        .await
+        .unwrap_err();
+    assert_eq!(error.code, tether_core::ErrorCode::ActionUnverified);
     let _ = received.await.unwrap();
 }

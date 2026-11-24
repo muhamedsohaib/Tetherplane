@@ -283,7 +283,10 @@ impl CapabilityProvider for BrowserProvider {
                 self.set_availability(false, Some(error.message.clone()));
             }
             if browser_mutation(&invocation.capability)
-                && matches!(error.code, ErrorCode::Timeout | ErrorCode::Disconnected | ErrorCode::ProviderFailure)
+                && matches!(
+                    error.code,
+                    ErrorCode::Timeout | ErrorCode::Disconnected | ErrorCode::ProviderFailure
+                )
             {
                 return Err(uncertain_mutation(&error));
             }
@@ -338,7 +341,14 @@ fn availability_from_status_data(data: &Value) -> (bool, Option<String>) {
 }
 
 fn browser_mutation(capability: &str) -> bool {
-    matches!(capability, "browser.act" | "browser.navigate" | "browser.create_tab" | "browser.close" | "browser.upload")
+    matches!(
+        capability,
+        "browser.act"
+            | "browser.navigate"
+            | "browser.create_tab"
+            | "browser.close"
+            | "browser.upload"
+    )
 }
 
 fn uncertain_mutation(error: &CapabilityError) -> CapabilityError {
@@ -380,7 +390,9 @@ async fn rpc_call(config: &BrowserBridgeConfig, request: Value) -> Result<Value,
     if response["request_id"] != request["request_id"]
         || !matches!(response["status"].as_str(), Some("success" | "error"))
     {
-        return Err(provider_failure("browser bridge response does not match the request"));
+        return Err(provider_failure(
+            "browser bridge response does not match the request",
+        ));
     }
     Ok(response)
 }
@@ -417,9 +429,10 @@ fn map_error_code(code: &str) -> ErrorCode {
         "stale_reference" => ErrorCode::StaleReference,
         "resource_conflict" => ErrorCode::ResourceConflict,
         "precondition_failed" => ErrorCode::PreconditionFailed,
-        "action_unverified" | "action_outcome_unknown" | "validation_failed" | "semantic_wait_timeout" => {
-            ErrorCode::ActionUnverified
-        }
+        "action_unverified"
+        | "action_outcome_unknown"
+        | "validation_failed"
+        | "semantic_wait_timeout" => ErrorCode::ActionUnverified,
         "timeout" => ErrorCode::Timeout,
         "disconnected" => ErrorCode::Disconnected,
         _ => ErrorCode::ProviderFailure,
