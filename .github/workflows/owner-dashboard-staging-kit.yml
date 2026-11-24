@@ -1,0 +1,190 @@
+name: Owner Dashboard Isolated Candidate Kit
+on:
+  pull_request:
+    branches: [feat/owner-dashboard-instrument-ui-20261124]
+    paths: ['.github/workflows/owner-dashboard-staging-kit.yml']
+permissions:
+  contents: read
+jobs:
+  build-kit:
+    if: github.event.pull_request.head.ref == 'experiment/owner-dashboard-staging-55df75d0' && github.event.pull_request.head.repo.full_name == github.repository
+    runs-on: windows-latest
+    timeout-minutes: 50
+    steps:
+      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
+        with:
+          persist-credentials: false
+          ref: 55df75d0bfec3096eaaf2e6d5026410e425a462e
+      - name: Verify exact CI-approved source
+        shell: pwsh
+        run: |
+          if((git rev-parse HEAD).Trim() -cne '55df75d0bfec3096eaaf2e6d5026410e425a462e'){throw 'Unexpected product revision'}
+          if((git rev-parse 'HEAD^{tree}').Trim() -cne 'f06d4bca329d42cf70626902beb0d1fcd1392ae4'){throw 'Unexpected source tree'}
+          if(git status --porcelain){throw 'Source worktree is not clean'}
+          Write-Output 'CANDIDATE_SOURCE_VERIFIED=PASS'
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4.4.0
+        with:
+          node-version: '22'
+      - name: Build locked agent, relay and extension
+        shell: pwsh
+        run: |
+          $ErrorActionPreference='Stop'
+          $env:RUSTFLAGS='-C target-feature=+crt-static'
+          cargo build -p tetherd --release --locked
+          if($LASTEXITCODE -ne 0){throw 'agent build failed'}
+          corepack enable
+          corepack prepare pnpm@10.34.5 --activate
+          pnpm install --frozen-lockfile
+          if($LASTEXITCODE -ne 0){throw 'locked install failed'}
+          pnpm -r build
+          if($LASTEXITCODE -ne 0){throw 'workspace build failed'}
+          pnpm --filter @tetherplane/browser-extension build
+          if($LASTEXITCODE -ne 0){throw 'extension build failed'}
+      - name: Package dependencies for disposable offline guest
+        shell: pwsh
+        run: |
+          $ErrorActionPreference='Stop'
+          $out=Join-Path $env:RUNNER_TEMP 'g4-remote-stage'
+          foreach($p in @($out,(Join-Path $out 'scripts'),(Join-Path $out 'tests/e2e/fixtures'),(Join-Path $out 'target/release'),(Join-Path $out 'tools'))){
+            New-Item -ItemType Directory -Path $p -Force | Out-Null
+          }
+          Copy-Item 'target/release/tetherd.exe' (Join-Path $out 'target/release/tetherd.exe')
+          Copy-Item (Get-Command node.exe).Source (Join-Path $out 'node.exe')
+          Copy-Item 'scripts/staging-acceptance.mjs' (Join-Path $out 'scripts/staging-acceptance.mjs')
+          Copy-Item 'tests/e2e/fixtures/windows-desktop-fixture.ps1' (Join-Path $out 'tests/e2e/fixtures/windows-desktop-fixture.ps1')
+          Copy-Item 'docs/release/windows-staging-acceptance.md' (Join-Path $out 'staging-runbook.md')
+          Copy-Item 'docs/security/portal-oidc-owner-login.md' (Join-Path $out 'oidc-runbook.md')
+          [IO.File]::WriteAllText((Join-Path $out 'package.json'),'{"private":true,"type":"module"}',[Text.UTF8Encoding]::new($false))
+          [IO.File]::WriteAllText((Join-Path $out 'tests/e2e/package.json'),'{"private":true,"type":"module"}',[Text.UTF8Encoding]::new($false))
+          pnpm --filter @tetherplane/relay deploy --legacy (Join-Path $out 'relay')
+          if($LASTEXITCODE -ne 0){throw 'relay deploy failed'}
+          npm install --prefix (Join-Path $out 'tests/e2e') --no-package-lock --no-save --ignore-scripts --no-audit --no-fund '@modelcontextprotocol/sdk@1.30.0'
+          if($LASTEXITCODE -ne 0){throw 'MCP SDK packaging failed'}
+          # pnpm deploy --legacy sometimes retains the SDK package but drops its
+          # runtime dependency closure. Bring over the locked 1.30.0 npm SDK
+          # dependency tree into the deploy's node_modules without overwriting
+          # any package already present in the deployed relay. Never rely on
+          # developer-machine or CI-runner global node_modules at runtime.
+          $sdkRuntime=Join-Path $out 'tests/e2e/node_modules'
+          $relayRuntime=Join-Path $out 'relay/node_modules'
+          foreach($entry in @(Get-ChildItem -LiteralPath $sdkRuntime -Directory -Force)){
+            $dest=Join-Path $relayRuntime $entry.Name
+            if(-not(Test-Path -LiteralPath $dest)){
+              Copy-Item -LiteralPath $entry.FullName -Destination $dest -Recurse
+            } elseif($entry.Name.StartsWith('@')){
+              foreach($scoped in @(Get-ChildItem -LiteralPath $entry.FullName -Directory -Force)){
+                $target=Join-Path $dest $scoped.Name
+                if(-not(Test-Path -LiteralPath $target)){
+                  Copy-Item -LiteralPath $scoped.FullName -Destination $target -Recurse
+                }
+              }
+            }
+          }
+          if(-not(Test-Path (Join-Path $relayRuntime '@hono/node-server/package.json'))){
+            throw 'Standalone relay SDK runtime dependency closure incomplete'
+          }
+          $bundlerTool=Join-Path $env:RUNNER_TEMP 'g4-remote-bundler'
+          npm install --prefix $bundlerTool --no-package-lock --no-audit --no-fund 'esbuild@0.25.12' 'playwright@1.57.0'
+          if($LASTEXITCODE -ne 0){throw 'esbuild install failed'}
+          $bundler=Join-Path $bundlerTool 'node_modules/esbuild/bin/esbuild'
+          $banner="--banner:js=import { createRequire as __tpRequire } from 'node:module'; var require = __tpRequire(import.meta.url);"
+          & node $bundler 'scripts/browser-extension-host.ts' '--bundle' '--platform=node' '--target=node22' '--format=esm' $banner "--outfile=$(Join-Path $out 'scripts/browser-extension-host.ts')"
+          if($LASTEXITCODE -ne 0){throw 'bridge host bundle failed'}
+          $ext=Join-Path $out 'extension/browser'
+          New-Item -ItemType Directory -Path (Join-Path $ext 'dist') -Force | Out-Null
+          foreach($p in @('manifest.json','pair.html')){Copy-Item (Join-Path 'extension/browser' $p) (Join-Path $ext $p)}
+          Copy-Item 'extension/browser/dist/*' (Join-Path $ext 'dist') -Recurse
+          if(-not(Test-Path (Join-Path $ext 'dist/background.js'))){throw 'extension missing'}
+          # Offline headed Chromium for genuine MV3/portal acceptance in
+          # network-disabled disposable Windows Sandbox, not on production.
+          $env:PLAYWRIGHT_BROWSERS_PATH=Join-Path $env:RUNNER_TEMP 'g4-playwright-browser'
+          & node (Join-Path $bundlerTool 'node_modules/playwright/cli.js') install --no-shell chromium
+          if($LASTEXITCODE -ne 0){throw 'Pinned Chromium browser download failed'}
+          $chromiumDirs=@(Get-ChildItem -LiteralPath $env:PLAYWRIGHT_BROWSERS_PATH -Directory|
+            Where-Object {$_.Name -match '^chromium-[0-9]+$'}|Select-Object -First 1)
+          if($chromiumDirs.Count -ne 1){throw 'Pinned Chromium browser directory unavailable'}
+          $chromeFiles=@(Get-ChildItem -LiteralPath $chromiumDirs[0].FullName -Recurse -File -Filter 'chrome.exe'|
+            Select-Object -First 1)
+          if($chromeFiles.Count -ne 1){throw 'Chromium headed binary unavailable'}
+          $chromiumTarget=Join-Path $out 'browser/chromium'
+          New-Item -ItemType Directory -Path (Split-Path $chromiumTarget -Parent) -Force|Out-Null
+          Copy-Item -LiteralPath (Split-Path $chromeFiles[0].FullName -Parent) -Destination $chromiumTarget -Recurse
+          $chromeOut=Join-Path $chromiumTarget 'chrome.exe'
+          if(-not(Test-Path -LiteralPath $chromeOut)){throw 'Bundled Chromium binary missing'}
+          $chromeHash=(Get-FileHash -LiteralPath $chromeOut -Algorithm SHA256).Hash.ToLowerInvariant()
+          [IO.File]::WriteAllText((Join-Path $out 'browser/CHROMIUM-PROVENANCE.txt'),
+            "Test-only headed Chromium installed with Playwright 1.57.0 ($($chromiumDirs[0].Name)); https://playwright.dev/docs/browsers; chrome.exe SHA256=$chromeHash",
+            [Text.UTF8Encoding]::new($false))
+          Write-Output ('G4_OFFLINE_CHROMIUM=PASS REV='+$chromiumDirs[0].Name+' SHA256='+$chromeHash)
+          # OpenSSL is Apache-2.0. This runtime is disposable-VM-only, not a product artifact.
+          $opensslCandidates = @(
+            'C:/Program Files/Git/mingw64/bin/openssl.exe',
+            'C:/Program Files/Git/usr/bin/openssl.exe',
+            'C:/Program Files/OpenSSL-Win64/bin/openssl.exe',
+            (Get-Command openssl.exe -ErrorAction SilentlyContinue | Select-Object -First 1 -ExpandProperty Source)
+          ) | Where-Object { $_ -and (Test-Path -LiteralPath $_) }
+          $openssl = $opensslCandidates | Select-Object -First 1
+          if(-not $openssl){throw 'No licensed local OpenSSL runtime found on Windows runner'}
+          $sourceBin=Split-Path $openssl -Parent
+          Write-Output ('STAGING_OPENSSL_SOURCE='+ $sourceBin)
+          Copy-Item $openssl (Join-Path $out 'tools/openssl.exe')
+          foreach($dll in @(
+            'libcrypto-3-x64.dll','libssl-3-x64.dll','zlib1.dll','libzstd.dll',
+            'msys-2.0.dll','msys-crypto-3.dll','msys-ssl-3.dll','msys-z.dll',
+            'msys-gcc_s-seh-1.dll','msys-iconv-2.dll','msys-bz2-1.dll'
+          )){
+            $candidate=Join-Path $sourceBin $dll
+            if(Test-Path -LiteralPath $candidate){Copy-Item $candidate (Join-Path $out "tools/$dll")}
+          }
+          & (Join-Path $out 'tools/openssl.exe') version
+          if($LASTEXITCODE -ne 0){throw 'bundled OpenSSL dependencies unavailable'}
+          Copy-Item LICENSE-APACHE (Join-Path $out 'tools/LICENSE-APACHE')
+          [IO.File]::WriteAllText((Join-Path $out 'tools/OPENSSL-NOTICE.txt'),'Staging-only OpenSSL from Git for Windows; license Apache-2.0; https://www.openssl.org/source/license.html',[Text.UTF8Encoding]::new($false))
+          $manifest=[ordered]@{
+            source_provider_commit='55df75d0bfec3096eaaf2e6d5026410e425a462e'
+            source_tree='f06d4bca329d42cf70626902beb0d1fcd1392ae4'
+            packaging_commit=$env:GITHUB_SHA
+            agent_sha256=(Get-FileHash (Join-Path $out 'target/release/tetherd.exe') -Algorithm SHA256).Hash.ToLowerInvariant()
+            staging_runner_sha256=(Get-FileHash (Join-Path $out 'scripts/staging-acceptance.mjs') -Algorithm SHA256).Hash.ToLowerInvariant()
+            scope='CI-approved source, disposable offline guest preparation only; runner compatibility and interactive gates pending'
+            production_install=$false
+            guest_networking_required=$false
+            interactive_remote_g4='PENDING'
+            physical_g6='PENDING'
+            chromium_binary_sha256=$chromeHash
+            chromium_source='playwright@1.57.0 headed Chromium'
+          }
+          [IO.File]::WriteAllText((Join-Path $out 'manifest.json'),($manifest|ConvertTo-Json -Depth 5),[Text.UTF8Encoding]::new($false))
+          Write-Output 'REMOTE_G4_PACKAGE_ASSEMBLY=PASS'
+      - name: Portable staging describe smoke (NOT interactive acceptance)
+        shell: pwsh
+        run: |
+          $ErrorActionPreference='Stop'
+          $out=Join-Path $env:RUNNER_TEMP 'g4-remote-stage'
+          $env:PATH=(Join-Path $out 'tools')+[IO.Path]::PathSeparator+$env:PATH
+          & (Join-Path $out 'node.exe') (Join-Path $out 'relay/dist/cli.js') --help | Out-Null
+          if($LASTEXITCODE -ne 0){throw 'relay CLI failed'}
+          $env:TETHERPLANE_CHROMIUM=Join-Path $out 'browser/chromium/chrome.exe'
+          $manifest=Get-Content -LiteralPath (Join-Path $out 'manifest.json') -Raw|ConvertFrom-Json
+          $actual=(Get-FileHash -LiteralPath $env:TETHERPLANE_CHROMIUM -Algorithm SHA256).Hash.ToLowerInvariant()
+          if($actual -ne $manifest.chromium_binary_sha256){throw 'Bundled Chromium executable hash mismatch'}
+          $raw=& (Join-Path $out 'node.exe') (Join-Path $out 'scripts/staging-acceptance.mjs') --describe
+          if($LASTEXITCODE -ne 0){throw 'staging describe failed'}
+          $plan=($raw -join [Environment]::NewLine)|ConvertFrom-Json
+          if(-not $plan.environment.builtReady){throw 'offline staging package incomplete'}
+          if(-not $plan.environment.opensslPath){throw 'OpenSSL unavailable'}
+          if(-not $plan.environment.chromiumPath){throw 'No Chromium-based browser on runner'}
+          if($plan.environment.interactiveDesktopAvailable){throw 'CI must not certify interactive G4'}
+          & (Join-Path $out 'tools/openssl.exe') version
+          if($LASTEXITCODE -ne 0){throw 'Bundled OpenSSL smoke failed'}
+          if((Get-FileHash (Join-Path $out 'target/release/tetherd.exe') -Algorithm SHA256).Hash.ToLowerInvariant() -ne $manifest.agent_sha256){throw 'Agent hash mismatch'}
+          Write-Output 'STAGING_PACKAGE_PREFLIGHT=PASS'
+          Write-Output 'REMOTE_G4_OFFLINE_PREFLIGHT=PASS'
+          Write-Output 'REMOTE_G4_INTERACTIVE_CI=SKIPPED_INTENTIONALLY'
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        with:
+          name: tetherplane-owner-dashboard-staging-55df75d0
+          path: ${{ runner.temp }}/g4-remote-stage/
+          if-no-files-found: error
+          retention-days: 7
