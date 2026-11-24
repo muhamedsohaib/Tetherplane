@@ -276,6 +276,28 @@ class HeadlessBrowser {
   }
 }
 
+// Refresh is deliberately disabled while an overview request is in flight.
+// Check readiness and click in the same browser task, so an SSE-triggered
+// refresh cannot race the test between separate CDP calls.
+async function exerciseRefresh(browser: HeadlessBrowser): Promise<void> {
+  await until(() => browser.eval<boolean>(`(() => {
+    const button = document.getElementById("refresh-btn");
+    if (!button || button.disabled || !button.getClientRects().length ||
+        getComputedStyle(button).visibility === "hidden") return false;
+    performance.clearResourceTimings();
+    button.click();
+    if (!button.disabled) throw new Error("Refresh did not initiate an overview request");
+    return true;
+  })()`), 10_000, "enabled, visible Refresh control");
+  await until(() => browser.eval<boolean>(`(() => {
+    const url = new URL("/portal/api/overview", location.href).href;
+    return !document.getElementById("refresh-btn").disabled &&
+      document.getElementById("status-banner").classList.contains("hidden") &&
+      performance.getEntriesByType("resource").some(entry =>
+        entry.name === url && entry.initiatorType === "fetch" && entry.responseStatus === 200);
+  })()`), 10_000, "Refresh completes a successful overview request");
+}
+
 function fullCapabilities(): Record<string, unknown> {
   const toolFamilies: Record<string, unknown> = {};
   for (const family of ALL_TOOL_FAMILIES) {
@@ -830,8 +852,7 @@ test("owner controls: all navigation, session, device and global policy actions,
     await signIn();
     const updatedBefore = await ev<string>("document.querySelector('.fleet-meta').textContent");
     assert.match(updatedBefore,/Updated/);
-    await click("#refresh-btn");
-    await until(()=>ev<boolean>("!document.getElementById('refresh-btn').disabled"),5000,"refresh finished");
+    await exerciseRefresh(browser);
 
     // Section links must navigate to existing visible targets, not placeholders.
     for(const hash of ["#devices-container","#global-controls","#owner-identities","#security-audit"]){
@@ -990,7 +1011,7 @@ test("owner portal empty fleet and read-only pilot omit unavailable controls", a
       assert.equal(await ev<boolean>("Boolean(document.querySelector('.owner-nav a[href=\"#global-controls\"]').getClientRects().length)"),false);
       assert.equal(await ev<boolean>("Boolean(document.querySelector('.snapshot-controls').getClientRects().length)"),false);
       await pairDevice(address.httpUrl,token,"Mode-Fixture","synthetic-mode-fixture-secret-123");
-      await ev("document.getElementById('refresh-btn').click()");
+      await exerciseRefresh(browser);
       await until(()=>ev<boolean>("document.querySelectorAll('.device-card').length===1"),5000,"paired fixture");
       await ev("document.querySelector('.device-controls > summary').click()");
       assert.equal(await ev<boolean>("document.body.dataset.portalReadOnly==='true'"),readOnly);
