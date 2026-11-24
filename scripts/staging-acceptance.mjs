@@ -890,7 +890,6 @@ class StagingBrowser {
       ...(spkiPin ? [`--ignore-certificate-errors-spki-list=${spkiPin}`] : []),
       ...(extensionPath
         ? [
-            "--disable-features=DisableLoadExtensionCommandLineSwitch",
             `--load-extension=${extensionPath}`,
           ]
         : []),
@@ -1976,49 +1975,54 @@ async function runStagingAcceptance(opts) {
           headless: opts.mode === "auto",
           initialUrl: `${fixtures.baseUrl}/human.html`,
         });
-        const sw = await browser.waitForExtensionWorker();
-        const extId = new URL(sw.url).hostname;
-        const extOrigin = `chrome-extension://${extId}`;
-        const popup = await browser.openExtensionPopup(extOrigin);
+        try {
+          const sw = await browser.waitForExtensionWorker();
+          const extId = new URL(sw.url).hostname;
+          const extOrigin = `chrome-extension://${extId}`;
+          const popup = await browser.openExtensionPopup(extOrigin);
 
-        if (defaultExtPortsFree) {
-          await browser.evalInSession(
-            popup.sessionId,
-            `document.getElementById("pair-local").click()`,
-          );
-        } else {
-          await browser.evalInSession(
-            popup.sessionId,
-            `(() => {
-              document.querySelector("details").open = true;
-              document.getElementById("bridge-url").value = ${JSON.stringify(`ws://127.0.0.1:${extWsPort}/extension`)};
-              document.getElementById("launch-token").value = ${JSON.stringify(extLaunchToken)};
-              document.querySelector("#pair-form button[type='submit']").click();
-            })()`,
-          );
-        }
-
-        await until(
-          () =>
-            browser.evalInSession(
+          if (defaultExtPortsFree) {
+            await browser.evalInSession(
               popup.sessionId,
-              `(document.getElementById("status")?.textContent || "").includes("Paired")`,
-            ),
-          10_000,
-          "extension popup Paired status",
-        );
+              `document.getElementById("pair-local").click()`,
+            );
+          } else {
+            await browser.evalInSession(
+              popup.sessionId,
+              `(() => {
+                document.querySelector("details").open = true;
+                document.getElementById("bridge-url").value = ${JSON.stringify(`ws://127.0.0.1:${extWsPort}/extension`)};
+                document.getElementById("launch-token").value = ${JSON.stringify(extLaunchToken)};
+                document.querySelector("#pair-form button[type='submit']").click();
+              })()`,
+            );
+          }
 
-        await until(
-          () => extHostLogs.join("").includes(`AUTH_EXTENSION_CONNECTED=${extId}`),
-          10_000,
-          "extension host AUTH_EXTENSION_CONNECTED",
-        );
+          await until(
+            () =>
+              browser.evalInSession(
+                popup.sessionId,
+                `(document.getElementById("status")?.textContent || "").includes("Paired")`,
+              ),
+            10_000,
+            "extension popup Paired status",
+          );
 
-        if (screenshotPath) {
-          await browser.screenshot(screenshotPath, { sessionId: popup.sessionId });
+          await until(
+            () => extHostLogs.join("").includes(`AUTH_EXTENSION_CONNECTED=${extId}`),
+            10_000,
+            "extension host AUTH_EXTENSION_CONNECTED",
+          );
+
+          if (screenshotPath) {
+            await browser.screenshot(screenshotPath, { sessionId: popup.sessionId });
+          }
+          await browser.closeTarget(popup.targetId);
+          return { browser, extOrigin, extId };
+        } catch (error) {
+          await browser.close();
+          throw error;
         }
-        await browser.closeTarget(popup.targetId);
-        return { browser, extOrigin, extId };
       };
 
       const expectedActiveHealth = envInfo.interactiveDesktopAvailable

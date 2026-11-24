@@ -86,6 +86,23 @@ jobs:
           set -euo pipefail
           cargo build --locked -p tetherd
           node --test tests/release/staging-acceptance.test.mjs
+          # The ordinary branded Chrome no longer supports CLI unpacked-extension
+          # loading. Use the official testing flavor, isolated in RUNNER_TEMP.
+          chrome_dir="$RUNNER_TEMP/tetherplane-chrome-for-testing"
+          mkdir -p "$chrome_dir"
+          curl --fail --silent --show-error --location --proto '=https' --max-time 60 --retry 2 \
+            https://googlechromelabs.github.io/chrome-for-testing/last-known-good-versions-with-downloads.json \
+            -o "$chrome_dir/availability.json"
+          chrome_version="$(python3 -c 'import json,re,sys; d=json.load(open(sys.argv[1])); v=d["channels"]["Stable"]["version"]; assert re.fullmatch(r"[0-9]+\.[0-9]+\.[0-9]+\.[0-9]+",v); assert any(x["platform"]=="linux64" and x["url"]=="https://storage.googleapis.com/chrome-for-testing-public/"+v+"/linux64/chrome-linux64.zip" for x in d["channels"]["Stable"]["downloads"]["chrome"]); print(v)' "$chrome_dir/availability.json")"
+          curl --fail --silent --show-error --location --proto '=https' --max-time 180 --retry 2 \
+            "https://storage.googleapis.com/chrome-for-testing-public/$chrome_version/linux64/chrome-linux64.zip" \
+            -o "$chrome_dir/chrome.zip"
+          unzip -q "$chrome_dir/chrome.zip" -d "$chrome_dir"
+          export TETHERPLANE_CHROMIUM="$chrome_dir/chrome-linux64/chrome"
+          export TETHERPLANE_STAGING_CHROME_VERSION="$chrome_version"
+          test -x "$TETHERPLANE_CHROMIUM"
+          "$TETHERPLANE_CHROMIUM" --version
+          sha256sum "$TETHERPLANE_CHROMIUM"
           node scripts/staging-acceptance.mjs --mode auto --allow-partial --report-file "$RUNNER_TEMP/tetherplane-staging-report.json" > "$RUNNER_TEMP/tetherplane-staging.log"
           node scripts/verify-staging-ci-evidence.mjs "$RUNNER_TEMP/tetherplane-staging-report.json" "$RUNNER_TEMP/tetherplane-staging-evidence.json"
 
