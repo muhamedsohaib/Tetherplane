@@ -1340,6 +1340,28 @@ const PORTAL_STYLE = `
       .device-card { gap: 8px; }
     }
 
+    /* Non-actionable controls must not be presented as available. */
+    body[data-portal-read-only="true"] #global-controls,
+    body[data-portal-read-only="true"] .owner-nav a[href="#global-controls"],
+    body[data-portal-read-only="true"] #operator-advanced-box,
+    body[data-has-devices="false"] #global-controls,
+    body[data-has-devices="false"] .owner-nav a[href="#global-controls"],
+    body[data-has-devices="false"] #operator-advanced-box { display: none; }
+    .family-readout { font-family: var(--mono); font-size: 0.72rem; font-weight: 600; text-align: right; overflow-wrap: anywhere; }
+    .family-readout.on { color: var(--success); }
+    .family-readout.configured { color: var(--warning); }
+    .family-readout.off { color: var(--text-muted); }
+    .family-readout.partial { color: var(--text); }
+    .read-only-notice { display: none; }
+    body[data-auth="signed-in"][data-portal-read-only="true"] .read-only-notice {
+      display: block; font-size: 0.76rem; color: var(--text-muted);
+      padding: 9px 12px; border: 1px solid var(--border); border-radius: 6px; margin-bottom: 12px;
+    }
+    .snapshot-controls.hidden { display: none; }
+    @media (max-width: 600px) {
+      body[data-portal-read-only="true"] .owner-nav,
+      body[data-has-devices="false"] .owner-nav { grid-template-columns: repeat(3, minmax(0,1fr)); }
+    }
 `;
 
 const PORTAL_SCRIPT = `
@@ -1349,6 +1371,7 @@ const PORTAL_SCRIPT = `
       const connectBtn = document.getElementById("connect-btn");
       const oidcLink = document.getElementById("oidc-signin-link");
       const oidcMode = document.body.dataset.loginMode === "oidc";
+      const portalReadOnly = document.body.dataset.portalReadOnly === "true";
       const refreshBtn = document.getElementById("refresh-btn");
       const logoutBtn = document.getElementById("logout-btn");
       const authStateBadge = document.getElementById("auth-state-badge");
@@ -1380,6 +1403,8 @@ const PORTAL_SCRIPT = `
       const trackedAccessUpdates = new Map();
       const lastDeviceState = new Map();
       let livePageAlerts = false;
+      let signingOut = false;
+      let savingOperator = false;
 
       function createEl(tag, options, children) {
         const node = document.createElement(tag);
@@ -1587,6 +1612,11 @@ const PORTAL_SCRIPT = `
         }
       }
 
+      function targetDevices() {
+        const devices = (currentOverview && currentOverview.devices) || [];
+        return selectedDeviceIds.size === 0 ? devices : devices.filter(function (d) { return selectedDeviceIds.has(d.deviceId); });
+      }
+
       function updateSelectionIndicators() {
         const devices = (currentOverview && currentOverview.devices) || [];
         const knownIds = new Set(devices.map(function (d) { return d.deviceId; }));
@@ -1604,6 +1634,10 @@ const PORTAL_SCRIPT = `
           }
         });
         const selected = Array.from(selectedDeviceIds);
+        document.body.dataset.hasDevices = devices.length > 0 ? "true" : "false";
+        document.getElementById("select-all-devices-btn").classList.toggle("hidden", selected.length === devices.length);
+        document.getElementById("clear-selected-devices-btn").classList.toggle("hidden", selected.length === 0);
+        document.getElementById("global-lift-lockdown-btn").classList.toggle("hidden", !targetDevices().some(function(d) { return d.emergencyLockdown; }));
         const badge = document.getElementById("global-target-badge");
         if (badge) {
           if (selected.length === 0) {
@@ -1731,6 +1765,12 @@ const PORTAL_SCRIPT = `
         csrfToken = null;
         authenticatedOwner = null;
         currentOverview = null;
+        closeConfirmModal();
+        document.getElementById("operator-advanced-box").open = false;
+        document.getElementById("op-principal-id").value = "";
+        document.getElementById("op-display-name").value = "";
+        document.getElementById("op-profile-id").value = "";
+        document.getElementById("snapshots-advanced-box").open = false;
         activeFleetFilter = "all";
         lastUpdatedMs = null;
         openAdvancedDevices.clear();
@@ -1785,6 +1825,9 @@ const PORTAL_SCRIPT = `
 
       async function apiCall(path, method, body) {
         const effectiveMethod = method || "GET";
+        if (portalReadOnly && effectiveMethod !== "GET" && effectiveMethod !== "HEAD" && path !== "/portal/api/session/logout") {
+          throw new Error("This portal is read-only; permission changes are unavailable.");
+        }
         const headers = { Accept: "application/json" };
         if (body !== undefined) {
           headers["Content-Type"] = "application/json";
@@ -2020,12 +2063,18 @@ const PORTAL_SCRIPT = `
       }
 
       async function signOut() {
+        if (signingOut) return;
+        signingOut = true;
+        logoutBtn.disabled = true;
         try {
           await apiCall("/portal/api/session/logout", "POST", {});
-        } catch {
-          // Always transition UI cleanly to signed-out even if session already expired
+          setSignedOutUi("");
+        } catch (err) {
+          if (authenticatedOwner) showToast("Sign out could not be confirmed: " + err.message + ". Retry sign out.", "error", "logout-error");
+        } finally {
+          signingOut = false;
+          logoutBtn.disabled = false;
         }
-        setSignedOutUi("");
       }
 
       async function loadOverview() {
@@ -2189,12 +2238,7 @@ const PORTAL_SCRIPT = `
           "stat-value stat-value-compact " +
           (anyLockdown ? "security-lockdown" : "security-active");
 
-        const globalLiftBtn = document.getElementById("global-lift-lockdown-btn");
-        if (anyLockdown) {
-          globalLiftBtn.classList.remove("hidden");
-        } else {
-          globalLiftBtn.classList.add("hidden");
-        }
+        // The lift action is shown only when the current target scope includes a locked device.
 
         renderFleetToolbar(devices);
 
@@ -2270,7 +2314,7 @@ const PORTAL_SCRIPT = `
 
           const header = createEl("div", { className: "device-header" }, [
             createEl("div", { className: "device-title" }, [
-              createEl("input", {
+              portalReadOnly ? null : createEl("input", {
                 type: "checkbox",
                 className: "device-select-cb",
                 checked: selectedDeviceIds.has(dev.deviceId),
@@ -2392,7 +2436,7 @@ const PORTAL_SCRIPT = `
                   createEl("span", { className: "family-name", text: fam.family }),
                   createEl("span", { className: "family-sub", text: subText }),
                 ]),
-                createEl("button", {
+                portalReadOnly || dev.emergencyLockdown ? createEl("span", { className: "family-readout " + switchClass, text: dev.emergencyLockdown ? "LOCKDOWN" : switchLabel }) : createEl("button", {
                   type: "button",
                   className: "switch-btn " + switchClass,
                   text: switchLabel,
@@ -2473,6 +2517,16 @@ const PORTAL_SCRIPT = `
           if (openControlDevices.has(dev.deviceId)) controlsBox.open = true;
           card.appendChild(controlsBox);
 
+          const deniedCaps =
+            (dev.policy && dev.policy.owner_policy && dev.policy.owner_policy.denied_capabilities) ||
+            [];
+          if (portalReadOnly) {
+            controlContent.appendChild(createEl("div", {
+              className: "muted-note",
+              text: "Explicit denies: " + (deniedCaps.length ? deniedCaps.join(", ") : "None"),
+            }));
+            return card;
+          }
           const actionButtons = [];
           if (dev.emergencyLockdown) {
             actionButtons.push(
@@ -2487,6 +2541,10 @@ const PORTAL_SCRIPT = `
                 dataset: { action: "lift-lockdown", device: dev.deviceId },
               }),
             );
+          }
+          if (dev.emergencyLockdown) {
+            controlContent.appendChild(createEl("div", { className: "device-actions-row" }, actionButtons));
+            return card;
           }
           [
             { id: "universal", label: "Grant All (Universal)" },
@@ -2510,14 +2568,13 @@ const PORTAL_SCRIPT = `
           });
           controlContent.appendChild(createEl("div", { className: "device-actions-row" }, actionButtons));
 
-          const deniedCaps =
-            (dev.policy && dev.policy.owner_policy && dev.policy.owner_policy.denied_capabilities) ||
-            [];
           const ruleInput = createEl("input", {
             type: "text",
             className: "op-rule-input",
             attrs: {
               placeholder: "e.g. filesystem.write",
+              "aria-label": "Canonical operation on " + dev.deviceId,
+              required: "",
               list: "canonical-ops-list",
               autocomplete: "off",
             },
@@ -2653,10 +2710,10 @@ const PORTAL_SCRIPT = `
                     "Device grants: " + (grants.length ? grants.join(", ") : "None active"),
                 }),
               ]),
-              createEl("div", { className: "identity-actions" }, [
-                createEl("button", {
+              portalReadOnly ? null : createEl("div", { className: "identity-actions" }, [
+                grants.length === 0 ? null : createEl("button", {
                   type: "button",
-                  text: "Edit",
+                  text: "Edit grants",
                   dataset: { action: "edit-operator", principal: op.principalId },
                 }),
                 createEl("button", {
@@ -2726,19 +2783,15 @@ const PORTAL_SCRIPT = `
         const filterSelect = document.getElementById("snapshot-device-filter");
         const deviceOptions = [];
         const seenFilterIds = new Set();
-        (data.devices || []).forEach(function (d) {
-          if (d.deviceId && !seenFilterIds.has(d.deviceId)) {
-            seenFilterIds.add(d.deviceId);
-            deviceOptions.push(d.deviceId);
-          }
-        });
+        const pairedIds = new Set((data.devices || []).map(function(d) { return d.deviceId; }));
         snaps.forEach(function (s) {
           if (s.deviceId && !seenFilterIds.has(s.deviceId)) {
             seenFilterIds.add(s.deviceId);
             deviceOptions.push(s.deviceId);
           }
         });
-        if (snapshotFilterDevice && !seenFilterIds.has(snapshotFilterDevice) && deviceOptions.length > 0) {
+        filterSelect.closest(".snapshot-controls").classList.toggle("hidden", deviceOptions.length < 2);
+        if (snapshotFilterDevice && (!seenFilterIds.has(snapshotFilterDevice) || deviceOptions.length < 2)) {
           snapshotFilterDevice = "";
           snapshotLimit = SNAPSHOT_PAGE_SIZE;
         }
@@ -2774,7 +2827,7 @@ const PORTAL_SCRIPT = `
                   ": " +
                   String(s.reason || ""),
               ]),
-              createEl("button", {
+              portalReadOnly || !pairedIds.has(s.deviceId) ? null : createEl("button", {
                 type: "button",
                 text: "Rollback",
                 dataset: { action: "rollback", device: s.deviceId, rev: String(s.revision) },
@@ -2803,6 +2856,10 @@ const PORTAL_SCRIPT = `
           pagEl.replaceChildren();
         }
       }
+
+      document.addEventListener("input", function (e) {
+        if (e.target.matches("[data-role=op-rule-input], #op-principal-id, #op-profile-id")) e.target.setCustomValidity("");
+      });
 
       document.addEventListener("change", function (e) {
         const cb = e.target.closest('input[data-action="select-device"]');
@@ -2880,7 +2937,13 @@ const PORTAL_SCRIPT = `
             const card = btn.closest(".device-card");
             const input = card ? card.querySelector("[data-role='op-rule-input']") : null;
             const cap = input ? input.value.trim() : "";
-            if (!cap) return;
+            const valid = cap && Array.from(canonicalOpsList.options).some(function(o) { return o.value === cap; });
+            if (!valid) {
+              if (input) { input.setCustomValidity("Choose a valid operation from the canonical operation list."); input.reportValidity(); input.focus(); }
+              showToast("Choose a valid operation before changing access.", "error", "input-validation");
+              return;
+            }
+            input.setCustomValidity("");
             btn.disabled = true;
             const result = await apiCall("/portal/api/devices/" + encodeURIComponent(deviceId) + "/policy", "POST", {
               grantCapabilities: action === "allow-op" ? [cap] : [],
@@ -2929,7 +2992,7 @@ const PORTAL_SCRIPT = `
             displayInput.value = (opMeta && opMeta.displayName) || principalId;
 
             const matchingDeviceIds = [];
-            let matchedProfile = null;
+            const matchedProfiles = new Set();
             (currentOverview.devices || []).forEach(function (dev) {
               const opPol =
                 dev.policy &&
@@ -2937,29 +3000,22 @@ const PORTAL_SCRIPT = `
                 dev.policy.operator_policies[principalId];
               if (opPol) {
                 matchingDeviceIds.push(dev.deviceId);
-                if (!matchedProfile && opPol.profile_id) {
-                  matchedProfile = opPol.profile_id;
-                }
+                matchedProfiles.add(opPol.profile_id || "custom");
               }
             });
             const profileSelect = document.getElementById("op-profile-id");
-            if (
-              matchedProfile &&
-              Array.from(profileSelect.options).some(function (o) {
-                return o.value === matchedProfile;
-              })
-            ) {
-              profileSelect.value = matchedProfile;
+            const matchedProfile = matchedProfiles.size === 1 ? Array.from(matchedProfiles)[0] : "";
+            profileSelect.value = Array.from(profileSelect.options).some(function(o) { return o.value === matchedProfile; }) ? matchedProfile : "";
+            if (!matchingDeviceIds.length) {
+              showToast("This operator has no device grants to edit. Select devices and use the authorization form.", "info", "operator-no-grants");
+              return;
             }
-            if (matchingDeviceIds.length > 0) {
-              selectedDeviceIds.clear();
-              matchingDeviceIds.forEach(function (id) {
-                selectedDeviceIds.add(id);
-              });
-              updateSelectionIndicators();
-            }
+            selectedDeviceIds.clear();
+            matchingDeviceIds.forEach(function (id) { selectedDeviceIds.add(id); });
+            updateSelectionIndicators();
+            if (!profileSelect.value) showToast("Mixed or custom profiles. Choose an explicit replacement profile for the selected devices.", "info", "operator-mixed-profile");
             if (detailsBox && typeof detailsBox.scrollIntoView === "function") {
-              detailsBox.scrollIntoView({ behavior: "smooth", block: "nearest" });
+              detailsBox.scrollIntoView({ block: "nearest" });
             }
             displayInput.focus();
           } else if (action === "remove-operator") {
@@ -2998,11 +3054,16 @@ const PORTAL_SCRIPT = `
         reasonInput.focus();
       }
 
-      function scopeDescriptionText() {
-        const selected = Array.from(selectedDeviceIds);
-        return selected.length > 0
-          ? "the " + selected.length + " selected device(s) (" + selected.join(", ") + ")"
-          : "every paired device";
+      function scopeDescriptionText(ids) {
+        return "the " + ids.length + " device(s) (" + ids.join(", ") + ")";
+      }
+      function capturedTargets(lockedOnly) {
+        return targetDevices().filter(function(d) { return !lockedOnly || d.emergencyLockdown; }).map(function(d) { return d.deviceId; });
+      }
+      function requireTargets(ids) {
+        if (ids.length > 0) return true;
+        showToast("No eligible paired devices in the current scope.", "error", "input-validation");
+        return false;
       }
 
       document.getElementById("modal-cancel-btn").addEventListener("click", closeConfirmModal);
@@ -3044,16 +3105,17 @@ const PORTAL_SCRIPT = `
       });
 
       document.getElementById("global-universal-btn").addEventListener("click", function () {
-        const scopeIds = Array.from(selectedDeviceIds);
+        const scopeIds = capturedTargets(false);
+        if (!requireTargets(scopeIds)) return;
         openConfirmModal(
           "Grant Universal Access",
-          "This will enable all six MCP tool families (auto-allowing destructive file replacements and AI-owned process termination, while human-origin process termination and unshared human tabs/windows remain blocked) on " + scopeDescriptionText() + ".",
+          "This will enable all six MCP tool families (auto-allowing destructive file replacements and AI-owned process termination, while human-origin process termination and unshared human tabs/windows remain blocked) on " + scopeDescriptionText(scopeIds) + ".",
           function (reason) {
             return apiCall("/portal/api/global/apply", "POST", {
               confirm: true,
               profileId: "universal",
               emergencyLockdown: false,
-              ...(scopeIds.length > 0 ? { deviceIds: scopeIds } : {}),
+              deviceIds: scopeIds,
               reason: reason || "Global grant universal access",
             });
           },
@@ -3061,15 +3123,16 @@ const PORTAL_SCRIPT = `
       });
 
       document.getElementById("global-readonly-btn").addEventListener("click", function () {
-        const scopeIds = Array.from(selectedDeviceIds);
+        const scopeIds = capturedTargets(false);
+        if (!requireTargets(scopeIds)) return;
         openConfirmModal(
           "Apply Read-Only Profile",
-          "This will restrict " + scopeDescriptionText() + " to non-destructive inspection operations.",
+          "This will restrict " + scopeDescriptionText(scopeIds) + " to non-destructive inspection operations.",
           function (reason) {
             return apiCall("/portal/api/global/apply", "POST", {
               confirm: true,
               profileId: "read_only",
-              ...(scopeIds.length > 0 ? { deviceIds: scopeIds } : {}),
+              deviceIds: scopeIds,
               reason: reason || "Global read-only profile",
             });
           },
@@ -3077,15 +3140,16 @@ const PORTAL_SCRIPT = `
       });
 
       document.getElementById("global-revoke-btn").addEventListener("click", function () {
-        const scopeIds = Array.from(selectedDeviceIds);
+        const scopeIds = capturedTargets(false);
+        if (!requireTargets(scopeIds)) return;
         openConfirmModal(
           "Revoke All Tool Families",
-          "This will disable all six MCP tool families on " + scopeDescriptionText() + " until re-enabled.",
+          "This will disable all six MCP tool families on " + scopeDescriptionText(scopeIds) + " until re-enabled.",
           function (reason) {
             return apiCall("/portal/api/global/apply", "POST", {
               confirm: true,
               profileId: "lockdown",
-              ...(scopeIds.length > 0 ? { deviceIds: scopeIds } : {}),
+              deviceIds: scopeIds,
               reason: reason || "Global revoke all tool families",
             });
           },
@@ -3093,15 +3157,16 @@ const PORTAL_SCRIPT = `
       });
 
       document.getElementById("global-lift-lockdown-btn").addEventListener("click", function () {
-        const scopeIds = Array.from(selectedDeviceIds);
+        const scopeIds = capturedTargets(true);
+        if (!requireTargets(scopeIds)) return;
         openConfirmModal(
           "Lift Emergency Access Lockdown",
-          "This will lift emergency lockdown and restore baseline Universal Access (all six MCP tool families, auto-allowing destructive operations subject to human-coexistence protections) on " + scopeDescriptionText() + ". To restore prior custom restrictions instead, use Recoverable Snapshots & Rollback below.",
+          "This will lift emergency lockdown and restore baseline Universal Access (all six MCP tool families, auto-allowing destructive operations subject to human-coexistence protections) on " + scopeDescriptionText(scopeIds) + ". To restore prior custom restrictions instead, use Recoverable Snapshots & Rollback below.",
           function (reason) {
             return apiCall("/portal/api/global/emergency-revoke", "POST", {
               confirm: true,
               restore: true,
-              ...(scopeIds.length > 0 ? { deviceIds: scopeIds } : {}),
+              deviceIds: scopeIds,
               reason: reason || "Lift emergency access lockdown from Portal",
             });
           },
@@ -3109,14 +3174,15 @@ const PORTAL_SCRIPT = `
       });
 
       document.getElementById("emergency-revoke-btn").addEventListener("click", function () {
-        const scopeIds = Array.from(selectedDeviceIds);
+        const scopeIds = capturedTargets(false);
+        if (!requireTargets(scopeIds)) return;
         openConfirmModal(
           "Emergency Access Revocation",
-          "Immediate lockdown on " + scopeDescriptionText() + ". All owner and operator capabilities will be blocked until lifted.",
+          "Immediate lockdown on " + scopeDescriptionText(scopeIds) + ". All owner and operator capabilities will be blocked until lifted.",
           function (reason) {
             return apiCall("/portal/api/global/emergency-revoke", "POST", {
               confirm: true,
-              ...(scopeIds.length > 0 ? { deviceIds: scopeIds } : {}),
+              deviceIds: scopeIds,
               reason: reason || "Emergency access revocation triggered from Portal",
             });
           },
@@ -3129,23 +3195,39 @@ const PORTAL_SCRIPT = `
         const principalId = principalInput.value.trim();
         const displayName = displayInput.value.trim();
         const profileId = document.getElementById("op-profile-id").value;
-        if (!principalId) return;
-        const scopeIds = Array.from(selectedDeviceIds);
+        if (savingOperator) return;
+        if (!principalId || !profileId) {
+          const field = !principalId ? principalInput : document.getElementById("op-profile-id");
+          field.setCustomValidity(!principalId ? "Enter an operator principal ID." : "Choose a permission profile.");
+          field.reportValidity();
+          showToast("An operator ID and explicit profile are required.", "error", "input-validation");
+          return;
+        }
+        principalInput.setCustomValidity("");
+        document.getElementById("op-profile-id").setCustomValidity("");
+        const scopeIds = capturedTargets(false);
+        if (!requireTargets(scopeIds)) return;
+        savingOperator = true;
+        document.getElementById("save-operator-btn").disabled = true;
         try {
           const result = await apiCall("/portal/api/operators", "POST", {
             principalId: principalId,
             displayName: displayName || principalId,
             profileId: profileId,
-            ...(scopeIds.length > 0 ? { deviceIds: scopeIds } : {}),
+            deviceIds: scopeIds,
             reason: "Configured operator " + principalId + " (" + profileId + ")",
           });
           principalInput.value = "";
           displayInput.value = "";
+          document.getElementById("op-profile-id").value = "";
           trackAccessChange("Operator access policy", result);
           await loadOverview();
         } catch (err) {
           showBanner("Operator update failed: " + err.message);
           showToast("Operator update rejected: " + err.message, "error", "policy-error");
+        } finally {
+          savingOperator = false;
+          document.getElementById("save-operator-btn").disabled = false;
         }
       });
 
@@ -3206,18 +3288,18 @@ export function renderControlPortalManifest(): string {
 }
 
 export function renderControlPortalPage(
-  options: { loginMode?: "token" | "oidc" } = {},
+  options: { loginMode?: "token" | "oidc"; readOnly?: boolean } = {},
 ): {
   html: string;
   contentSecurityPolicy: string;
 } {
   return {
-    html: renderControlPortalHtml(options.loginMode),
+    html: renderControlPortalHtml(options.loginMode, options.readOnly),
     contentSecurityPolicy: PORTAL_CONTENT_SECURITY_POLICY,
   };
 }
 
-export function renderControlPortalHtml(loginMode: "token" | "oidc" = "token"): string {
+export function renderControlPortalHtml(loginMode: "token" | "oidc" = "token", readOnly = false): string {
   return `<!DOCTYPE html>
 <html lang="en">
 <head>
@@ -3228,7 +3310,7 @@ export function renderControlPortalHtml(loginMode: "token" | "oidc" = "token"): 
   <link rel="manifest" href="/portal/manifest.webmanifest" />
   <style>${PORTAL_STYLE}</style>
 </head>
-<body data-auth="signed-out" data-login-mode="${loginMode}">
+<body data-auth="signed-out" data-login-mode="${loginMode}" data-portal-read-only="${readOnly}" data-has-devices="false">
   <div class="portal-shell">
     <header class="topbar">
       <div class="brand">
@@ -3282,7 +3364,8 @@ export function renderControlPortalHtml(loginMode: "token" | "oidc" = "token"): 
     </nav>
 
     <main>
-      <div id="status-banner" class="unavailable-banner status-banner-outer hidden"></div>
+      <div id="status-banner" class="unavailable-banner status-banner-outer hidden" role="status" aria-live="polite"></div>
+      <p class="read-only-notice">Read-only pilot — device status and audit history are available; permission changes are not.</p>
       <div class="fleet-heading"><h2>Connected devices</h2><span>Owner fleet</span></div>
       <div id="fleet-filter-bar" class="fleet-toolbar" aria-label="Fleet filters"></div>
       <section class="devices-grid" id="devices-container" aria-label="Connected Devices">
@@ -3325,9 +3408,10 @@ export function renderControlPortalHtml(loginMode: "token" | "oidc" = "token"): 
             <summary>Authorize / Update Scoped Operator Identity</summary>
             <div class="op-form-stack">
               <div id="op-target-scope-note" class="muted-note">Applies to: All paired devices (select checkboxes above to scope)</div>
-              <input id="op-principal-id" type="text" placeholder="operator:assistant-id" />
-              <input id="op-display-name" type="text" placeholder="Display Name (e.g. Build Agent)" />
-              <select id="op-profile-id">
+              <input id="op-principal-id" type="text" placeholder="operator:assistant-id" aria-label="Operator principal ID" required />
+              <input id="op-display-name" type="text" placeholder="Display Name (e.g. Build Agent)" aria-label="Operator display name" />
+              <select id="op-profile-id" aria-label="Operator permission profile" required>
+                <option value="" disabled selected>Choose a permission profile</option>
                 <option value="read_only">Read &amp; Inspect Only</option>
                 <option value="files_and_process">Files &amp; Process Only</option>
                 <option value="standard">Standard Automation</option>
@@ -3340,12 +3424,12 @@ export function renderControlPortalHtml(loginMode: "token" | "oidc" = "token"): 
         </section>
 
         <section id="security-audit" class="panel-card" aria-label="Security Audit and Rollback">
-          <h2>Security Audit &amp; Safe Rollback</h2>
+          <h2>${readOnly ? "Security Audit" : "Security Audit &amp; Safe Rollback"}</h2>
           <div id="audit-container" class="audit-scroll">
             <div class="muted-note">No audit events loaded.</div>
           </div>
           <details id="snapshots-advanced-box" class="advanced-box advanced-box-spaced">
-            <summary>Recoverable Snapshots &amp; Rollback</summary>
+            <summary>${readOnly ? "Recoverable Snapshots" : "Recoverable Snapshots &amp; Rollback"}</summary>
             <div class="snapshot-controls">
               <label class="muted-note" for="snapshot-device-filter">Filter device:</label>
               <select id="snapshot-device-filter">
@@ -3362,11 +3446,11 @@ export function renderControlPortalHtml(loginMode: "token" | "oidc" = "token"): 
 
   <datalist id="canonical-ops-list"></datalist>
   <div id="toast-stack" class="toast-stack" role="region" aria-label="Access and security notifications" aria-live="polite" aria-relevant="additions"></div>
-  <div class="modal-backdrop" id="confirm-modal" role="dialog" aria-modal="true">
+  <div class="modal-backdrop" id="confirm-modal" role="dialog" aria-modal="true" aria-labelledby="modal-title" aria-describedby="modal-desc">
     <div class="modal">
       <h3 id="modal-title">Confirm Global Security Change</h3>
       <p id="modal-desc" class="modal-desc"></p>
-      <input id="modal-reason" class="modal-reason-input" type="text" placeholder="Reason for audit history" />
+      <input id="modal-reason" class="modal-reason-input" type="text" placeholder="Reason for audit history" aria-label="Reason for audit history" />
       <div class="modal-actions">
         <button id="modal-cancel-btn" type="button">Cancel</button>
         <button id="modal-confirm-btn" class="danger" type="button">Confirm Change</button>

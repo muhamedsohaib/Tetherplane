@@ -742,3 +742,256 @@ test("owner portal usability: clean signed-in header, relay-pending vs device-co
     await rm(dir, { recursive: true, force: true, maxRetries: 20, retryDelay: 50 });
   }
 });
+
+
+// Browser-to-relay functional contract. Every mutation uses temporary synthetic
+// devices and an ephemeral test owner. Nothing contacts production.
+test("owner controls: all navigation, session, device and global policy actions, operator profiles and rollback execute", async () => {
+  const dir = await mkdtemp(path.join(os.tmpdir(), "tether-portal-functional-"));
+  const token = "synthetic-portal-functional-owner-token";
+  const relay = await RelayServer.create({
+    authenticator: new StaticClientAuthenticator([{
+      token, accountId: "acct-functional", clientId: "functional-owner",
+      principalId: "human:acct-functional", role: "owner",
+    }]),
+    stateFile: path.join(dir, "devices.json"),
+    allowInsecureLocalhost: true,
+  });
+  const address = await relay.listen({host:"127.0.0.1",port:0});
+  let browser: HeadlessBrowser | null = null;
+  try {
+    await pairDevice(address.httpUrl,token,"Fixture-A","synthetic-device-a-123456789");
+    await pairDevice(address.httpUrl,token,"Fixture-B","synthetic-device-b-123456789");
+    const getOverview = async (): Promise<any> => {
+      const res=await fetch(address.httpUrl+"/portal/api/overview",{headers:{authorization:"Bearer "+token}});
+      assert.equal(res.status,200);
+      return res.json();
+    };
+    const device = async (id: string): Promise<any> => (await getOverview()).devices.find((x:any)=>x.deviceId===id);
+    const dev = (id:string) => '.device-card[data-device-id="'+id+'"]';
+    browser = await HeadlessBrowser.launch(path.join(dir,"chrome"));
+    await browser.setViewport(390,844,true);
+    await browser.navigate(address.httpUrl+"/portal");
+    const ev = <T>(expr:string) => browser!.eval<T>(expr);
+    const click = async (selector:string) => {
+      const clicked=await ev<boolean>("(() => { const x=document.querySelector("+JSON.stringify(selector)+"); if(!x || x.disabled || !x.getClientRects().length || getComputedStyle(x).visibility==='hidden') return false; x.scrollIntoView({block:'nearest'}); x.click();return true;})()");
+      assert.equal(clicked,true,"missing or inaccessible control "+selector);
+    };
+    const set = async (selector:string,value:string) => ev("(() => { const x=document.querySelector("+JSON.stringify(selector)+"); if(!x) throw Error('missing input'); x.value="+JSON.stringify(value)+"; x.dispatchEvent(new Event('input',{bubbles:true})); x.dispatchEvent(new Event('change',{bubbles:true})); })()");
+    const open = async (selector:string) => {
+      if (!await ev<boolean>("document.querySelector("+JSON.stringify(selector)+").open")) await click(selector+" > summary");
+    };
+    const visible = (selector:string) => ev<boolean>("Boolean(document.querySelector("+JSON.stringify(selector)+")?.getClientRects().length)");
+    const waitForCards = () => until(()=>ev<boolean>("document.querySelectorAll('.device-card').length===2"),5000,"fixture cards");
+    const signIn = async () => {
+      await set("#token-input",token);
+      await click("#connect-btn");
+      await waitForCards();
+    };
+    const selectOnly = async (id:string) => {
+      if(await visible("#clear-selected-devices-btn")) await click("#clear-selected-devices-btn");
+      await click(dev(id)+' [data-action="select-device"]');
+      assert.match(await ev<string>("document.getElementById('global-target-badge').textContent"),new RegExp(id));
+    };
+    const mutate = async (id:string,action:()=>Promise<void>,verify:(d:any)=>boolean) => {
+      const before=(await device(id)).desiredRevision;
+      await action();
+      await until(async()=>{const d=await device(id);return d.desiredRevision>before && verify(d)},5000,"mutation "+id);
+      const next=(await device(id)).desiredRevision;
+      await until(()=>ev<boolean>("Boolean(document.querySelector("+JSON.stringify('[data-sync-detail="'+id+'"]')+")?.textContent.includes('v"+next+" '))"),5000,"UI reflects revision "+next);
+    };
+    const confirm = async (id:string, reason:string) => {
+      await click(id);
+      assert.equal(await ev<boolean>("document.getElementById('confirm-modal').classList.contains('active')"),true);
+      await set("#modal-reason",reason);
+      await click("#modal-confirm-btn");
+    };
+    // No silent blank login. Valid login and authenticated refresh.
+    await click("#connect-btn");
+    assert.match(await ev<string>("document.getElementById('status-banner').textContent"),/Enter an owner bearer token/);
+    await signIn();
+    const updatedBefore = await ev<string>("document.querySelector('.fleet-meta').textContent");
+    assert.match(updatedBefore,/Updated/);
+    await click("#refresh-btn");
+    await until(()=>ev<boolean>("!document.getElementById('refresh-btn').disabled"),5000,"refresh finished");
+
+    // Section links must navigate to existing visible targets, not placeholders.
+    for(const hash of ["#devices-container","#global-controls","#owner-identities","#security-audit"]){
+      await click('.owner-nav a[href="'+hash+'"]');
+      assert.equal(await ev<string>("location.hash"),hash);
+      assert.equal(await visible(hash),true);
+    }
+    await open(".session-menu");
+    await click("#live-alerts-btn");
+    assert.equal(await ev<string>("document.getElementById('live-alerts-btn').getAttribute('aria-pressed')"),"true");
+    await click(".toast-dismiss");
+    await click("#live-alerts-btn");
+    assert.equal(await ev<string>("document.getElementById('live-alerts-btn').getAttribute('aria-pressed')"),"false");
+    await click(".session-menu > summary");
+    // All, Online(empty), Offline, Attention, and empty result reset.
+    await click('[data-action="fleet-filter"][data-filter="online"]');
+    assert.equal(await ev<number>("document.querySelectorAll('.device-card').length"),0);
+    await click('#devices-container [data-action="fleet-filter"][data-filter="all"]');
+    await waitForCards();
+    await click('[data-action="fleet-filter"][data-filter="offline"]');
+    await waitForCards();
+    await click('[data-action="fleet-filter"][data-filter="attention"]');
+    await waitForCards();
+    await click('[data-action="fleet-filter"][data-filter="all"]');
+    // Actual selection controls and policy disclosure.
+    await click("#select-all-devices-btn");
+    assert.equal(await ev<number>("document.querySelectorAll('.device-select-cb:checked').length"),2);
+    assert.equal(await visible("#select-all-devices-btn"),false);
+    await click("#clear-selected-devices-btn");
+    assert.equal(await ev<number>("document.querySelectorAll('.device-select-cb:checked').length"),0);
+    assert.equal(await visible("#clear-selected-devices-btn"),false);
+    await open(".policy-explainer");
+    await click(".policy-explainer > summary");
+    await open(dev("Fixture-A")+" .device-controls");
+    await open(dev("Fixture-A")+" details.advanced-box");
+
+    const rule=dev("Fixture-A")+' [data-role="op-rule-input"]';
+    const deny=dev("Fixture-A")+' [data-action="deny-op"]';
+    const allow=dev("Fixture-A")+' [data-action="allow-op"]';
+    const beforeBlank=(await device("Fixture-A")).desiredRevision;
+    await click(deny);
+    assert.equal(await ev<boolean>("document.querySelector("+JSON.stringify(rule)+").validity.valid"),false);
+    await set(rule,"not.a.real.operation");
+    await click(deny);
+    assert.equal(await ev<boolean>("document.querySelector("+JSON.stringify(rule)+").validity.valid"),false);
+    assert.equal((await device("Fixture-A")).desiredRevision,beforeBlank);
+    await set(rule,"filesystem.write");
+    await mutate("Fixture-A",()=>click(deny),d=>d.policy.owner_policy.denied_capabilities.includes("filesystem.write"));
+    await set(rule,"filesystem.write");
+    await mutate("Fixture-A",()=>click(allow),d=>!d.policy.owner_policy.denied_capabilities.includes("filesystem.write"));
+
+    // Every family control uses the same handler; verify each family round-trip.
+    for (const family of ALL_TOOL_FAMILIES) {
+      const selector=dev("Fixture-A")+' [data-action="toggle-family"][data-family="'+family+'"]';
+      await mutate("Fixture-A",()=>click(selector),d=>!d.familySummaries.find((f:any)=>f.family===family).granted);
+      await mutate("Fixture-A",()=>click(selector),d=>d.familySummaries.find((f:any)=>f.family===family).granted);
+    }
+    // Three local profile controls.
+    for (const profile of ["read_only","lockdown","universal"]) {
+      await mutate("Fixture-A",()=>click(dev("Fixture-A")+' [data-action="device-profile"][data-profile="'+profile+'"]'),d=>d.policy.owner_policy.profile_id===profile);
+    }
+    // Bulk confirmation cancellation must not mutate. Then apply each action to exactly A.
+    await selectOnly("Fixture-A");
+    const bRevision=(await device("Fixture-B")).desiredRevision;
+    const aBeforeCancel=(await device("Fixture-A")).desiredRevision;
+    await click("#global-readonly-btn");
+    await click("#modal-cancel-btn");
+    assert.equal((await device("Fixture-A")).desiredRevision,aBeforeCancel);
+    await mutate("Fixture-A",()=>confirm("#global-readonly-btn","functional read-only"),d=>d.policy.owner_policy.profile_id==="read_only");
+    await mutate("Fixture-A",()=>confirm("#global-revoke-btn","functional revoke"),d=>d.policy.owner_policy.profile_id==="lockdown");
+    await mutate("Fixture-A",()=>confirm("#global-universal-btn","functional grant"),d=>d.policy.owner_policy.profile_id==="universal");
+    await mutate("Fixture-A",()=>confirm("#emergency-revoke-btn","functional emergency"),d=>d.emergencyLockdown===true);
+    assert.equal(await visible(dev("Fixture-A")+' [data-action="toggle-family"]'),false);
+    assert.equal(await visible(dev("Fixture-A")+' [data-action="device-profile"]'),false);
+    assert.equal(await visible(dev("Fixture-A")+' [data-action="lift-lockdown"]'),true);
+    // Lift is only actionable if locked devices are selected.
+    await selectOnly("Fixture-B");
+    assert.equal(await visible("#global-lift-lockdown-btn"),false);
+    await selectOnly("Fixture-A");
+    await mutate("Fixture-A",()=>confirm("#global-lift-lockdown-btn","functional lift"),d=>!d.emergencyLockdown);
+    await mutate("Fixture-A",()=>confirm("#emergency-revoke-btn","local lift fixture"),d=>d.emergencyLockdown===true);
+    await mutate("Fixture-A",()=>click(dev("Fixture-A")+' [data-action="lift-lockdown"]'),d=>!d.emergencyLockdown);
+    assert.equal((await device("Fixture-B")).desiredRevision,bRevision,"scoped changes must not affect B");
+
+    // Operator authorization: blank input rejected; every profile option reaches relay.
+    await selectOnly("Fixture-A");
+    await open("#operator-advanced-box");
+    await click("#save-operator-btn");
+    assert.equal(await ev<boolean>("document.getElementById('op-principal-id').validity.valid"),false);
+    for(const profile of ["read_only","files_and_process","standard","universal","lockdown"]){
+      await set("#op-principal-id","operator:functional");
+      await set("#op-display-name","Synthetic functional operator");
+      await set("#op-profile-id",profile);
+      await mutate("Fixture-A",()=>click("#save-operator-btn"),d=>d.policy.operator_policies["operator:functional"]?.profile_id===profile);
+      assert.equal((await device("Fixture-B")).policy.operator_policies["operator:functional"],undefined);
+    }
+    await selectOnly("Fixture-B");
+    await click('[data-action="edit-operator"][data-principal="operator:functional"]');
+    assert.equal(await ev<string>("document.getElementById('op-principal-id').value"),"operator:functional");
+    assert.equal(await ev<string>("document.getElementById('op-profile-id').value"),"lockdown");
+    assert.equal(await ev<boolean>("document.querySelector('.device-card[data-device-id=Fixture-A] .device-select-cb').checked"),true);
+    assert.equal(await ev<boolean>("document.querySelector('.device-card[data-device-id=Fixture-B] .device-select-cb').checked"),false);
+    await mutate("Fixture-A",()=>click('[data-action="remove-operator"][data-principal="operator:functional"]'),d=>!d.policy.operator_policies["operator:functional"]);
+    assert.equal((await device("Fixture-B")).desiredRevision,bRevision);
+
+    // Snapshot filter, pagination and rollback against actual revision history.
+    await open("#snapshots-advanced-box");
+    await set("#snapshot-device-filter","Fixture-A");
+    assert.equal(await ev<string>("document.getElementById('snapshot-device-filter').value"),"Fixture-A");
+    const rowsBefore=await ev<number>("document.querySelectorAll('#snapshots-container .snapshot-row').length");
+    assert.equal(rowsBefore,10);
+    await click('[data-action="snapshots-more"]');
+    assert.ok(await ev<number>("document.querySelectorAll('#snapshots-container .snapshot-row').length")>rowsBefore);
+    while(await visible('[data-action="snapshots-more"]')) await click('[data-action="snapshots-more"]');
+    await mutate("Fixture-A",()=>click('[data-action="rollback"][data-device="Fixture-A"][data-rev="1"]'),d=>d.policy.owner_policy.profile_id==="universal");
+    assert.equal((await device("Fixture-B")).desiredRevision,bRevision);
+
+    await open(".session-menu");
+    await click("#logout-btn");
+    await until(()=>ev<boolean>("document.body.dataset.auth==='signed-out'"),5000,"sign out");
+    assert.equal(await ev<number>("document.querySelectorAll('.device-card').length"),0);
+    assert.equal(await visible(".owner-nav"),false);
+    await signIn();
+    assert.equal(await ev<number>("sessionStorage.length+localStorage.length"),0);
+    assert.deepEqual(browser.exceptions,[]);
+    assert.deepEqual(browser.consoleErrors,[]);
+  } finally {
+    await browser?.close();
+    await relay.close();
+    await rm(dir,{recursive:true,force:true,maxRetries:20,retryDelay:50});
+  }
+});
+
+test("owner portal empty fleet and read-only pilot omit unavailable controls", async () => {
+  for(const readOnly of [false,true]){
+    const dir=await mkdtemp(path.join(os.tmpdir(),"tether-portal-mode-"));
+    const token="synthetic-mode-owner-token";
+    const relay=await RelayServer.create({
+      authenticator:new StaticClientAuthenticator([{token,accountId:"acct-mode",clientId:"mode-owner",principalId:"human:acct-mode",role:"owner"}]),
+      stateFile:path.join(dir,"devices.json"),
+      allowInsecureLocalhost:true,
+      ...(readOnly?{portalPort:0,portalReadOnly:true}:{}),
+    });
+    let browser:HeadlessBrowser|null=null;
+    try {
+      const address=await relay.listen({host:"127.0.0.1",port:0});
+      const portalUrl=readOnly?address.portalListenUrl!:address.httpUrl;
+      browser=await HeadlessBrowser.launch(path.join(dir,"chrome"));
+      await browser.setViewport(320,740,true);
+      await browser.navigate(portalUrl+"/portal");
+      const ev=<T>(expr:string)=>browser!.eval<T>(expr);
+      await ev("document.getElementById('token-input').value="+JSON.stringify(token)+";document.getElementById('connect-btn').click()");
+      await until(()=>ev<boolean>("document.getElementById('devices-container').textContent.includes('No paired devices')"),5000,"empty overview");
+      assert.equal(await ev<boolean>("Boolean(document.querySelector('#global-controls').getClientRects().length)"),false);
+      assert.equal(await ev<boolean>("Boolean(document.querySelector('#operator-advanced-box').getClientRects().length)"),false);
+      assert.equal(await ev<boolean>("Boolean(document.querySelector('.owner-nav a[href=\"#global-controls\"]').getClientRects().length)"),false);
+      assert.equal(await ev<boolean>("Boolean(document.querySelector('.snapshot-controls').getClientRects().length)"),false);
+      await pairDevice(address.httpUrl,token,"Mode-Fixture","synthetic-mode-fixture-secret-123");
+      await ev("document.getElementById('refresh-btn').click()");
+      await until(()=>ev<boolean>("document.querySelectorAll('.device-card').length===1"),5000,"paired fixture");
+      await ev("document.querySelector('.device-controls > summary').click()");
+      assert.equal(await ev<boolean>("document.body.dataset.portalReadOnly==='true'"),readOnly);
+      assert.equal(await ev<number>("document.querySelectorAll('.device-card [data-action=toggle-family]').length"),readOnly?0:6);
+      assert.equal(await ev<number>("document.querySelectorAll('.device-card [data-action=select-device]').length"),readOnly?0:1);
+      assert.equal(await ev<boolean>("Boolean(document.getElementById('global-controls').getClientRects().length)"),!readOnly);
+      assert.equal(await ev<boolean>("Boolean(document.getElementById('operator-advanced-box').getClientRects().length)"),!readOnly);
+      assert.equal(await ev<boolean>("Boolean(document.querySelector('.read-only-notice').getClientRects().length)"),readOnly);
+      await ev("document.querySelector('#snapshots-advanced-box > summary').click()");
+      assert.equal(await ev<number>("document.querySelectorAll('[data-action=rollback]').length"),readOnly?0:1);
+      assert.equal(await ev<number>("document.querySelectorAll('.capability-segment').length"),6);
+      await ev("document.querySelector('.session-menu > summary').click();document.getElementById('logout-btn').click()");
+      await until(()=>ev<boolean>("document.body.dataset.auth==='signed-out'"),5000,"sign out in mode");
+      assert.deepEqual(browser.exceptions,[]);
+      assert.deepEqual(browser.consoleErrors,[]);
+    } finally {
+      await browser?.close();
+      await relay.close();
+      await rm(dir,{recursive:true,force:true,maxRetries:20,retryDelay:50});
+    }
+  }
+});
