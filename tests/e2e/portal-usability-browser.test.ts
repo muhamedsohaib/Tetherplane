@@ -626,6 +626,10 @@ test("owner portal usability: clean signed-in header, relay-pending vs device-co
       "Node-Online v3 confirmed",
     );
 
+    // Explicit operation denies must reduce full-family coverage even if the family is enabled.
+    assert.equal(await browser.eval<string>(`document.querySelector('.device-card[data-device-id="Node-Online"] [data-capability-family="files"]').dataset.capabilityState`),"partial");
+    assert.equal(await browser.eval<string>(`document.querySelector('.device-card[data-device-id="Node-Online"] [data-action="toggle-family"][data-family="files"]').textContent`),"PARTIAL");
+
     // Click one-tap Allow chip to remove explicit deny
     await browser.eval(
       `document.querySelector('[data-action="allow-denied-op"][data-device="Node-Online"][data-capability="filesystem.write"]').click()`,
@@ -729,6 +733,20 @@ test("owner portal usability: clean signed-in header, relay-pending vs device-co
     assert.equal(await browser.eval<number>(`document.querySelectorAll('.device-card[data-device-id="Node-ReadOnly"] [data-capability-state="full"],.device-card[data-device-id="Node-ReadOnly"] [data-capability-state="partial"]').length`),0);
     assert.ok(!(await browser.eval<string>(`document.querySelector('[data-sync-badge="Node-ReadOnly"]')?.textContent || ""`)).startsWith("Confirmed Active"));
 
+    // A fresh connection and policy ACK cannot reactivate cached telemetry.
+    const reconnected = await RawDeviceWs.connect(address.deviceWsUrl, {
+      authorization: "Device secret-readonly-node-1234567890",
+      "x-tetherplane-device-id": "Node-ReadOnly",
+    });
+    sockets.push(reconnected);
+    reconnected.sendJson({
+      type: "device_hello", deviceId: "Node-ReadOnly", appliedPolicyRevision: 2,
+      status: { os: "linux", agent_version: "0.1.0" },
+    });
+    await until(() => browser!.eval<boolean>(`document.querySelector('.device-card[data-device-id="Node-ReadOnly"] [data-capability-family="files"]')?.dataset.capabilityState === "unknown"`), 5000, "reconnect without telemetry is unknown");
+    assert.equal(await browser.eval<number>(`document.querySelectorAll('.device-card[data-device-id="Node-ReadOnly"] [data-capability-state="full"],.device-card[data-device-id="Node-ReadOnly"] [data-capability-state="partial"]').length`),0);
+    reconnected.sendJson({type:"device_telemetry",deviceId:"Node-ReadOnly",capabilities:fullCapabilities()});
+    await until(() => browser!.eval<boolean>(`document.querySelector('.device-card[data-device-id="Node-ReadOnly"] [data-capability-family="files"]')?.dataset.capabilityState === "partial"`),5000,"fresh telemetry restores partial capability");
     // Security invariants still intact
     assert.equal(await browser.eval<number>("sessionStorage.length"), 0);
     assert.equal(await browser.eval<number>("localStorage.length"), 0);

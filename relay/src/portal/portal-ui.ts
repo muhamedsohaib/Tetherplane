@@ -1507,6 +1507,7 @@ const PORTAL_SCRIPT = `
           Boolean(dev.emergencyLockdown) ||
           dev.syncStatus === "pending" ||
           dev.syncStatus === "failed" ||
+          dev.agentHealth === "unknown" || dev.agentHealth === "degraded" ||
           (Array.isArray(dev.unavailableCapabilities) &&
             dev.unavailableCapabilities.length > 0)
         );
@@ -2185,9 +2186,9 @@ const PORTAL_SCRIPT = `
             ? status.os + "/" + status.arch
             : status.os
           : status.platform || "unknown";
-        const version = status.agent_version || status.version || "0.1.0";
+        const version = status.agent_version || status.version;
         const mode = status.policy_mode ? " • " + status.policy_mode : "";
-        return platform + " • v" + version + mode;
+        return platform + (version ? " • v" + version : " • version not reported") + mode;
       }
 
       function renderOverview(data) {
@@ -2389,36 +2390,48 @@ const PORTAL_SCRIPT = `
             const policyCount = Array.isArray(fam.policyGrantedOperations)
               ? fam.policyGrantedOperations.length
               : fam.grantedOperations.length;
-            const isPartial = !isOn && policyCount > 0;
-            const isDegraded = Boolean(dev.online) && !fam.providerAvailable;
+            const canonicalCount = Number(fam.canonicalOperationCount) || 0;
+            const policyFull = canonicalCount > 0 && policyCount === canonicalCount;
+            const isPartial = policyCount > 0 && !policyFull;
+            const providerState = fam.providerState || "unknown";
+            const isDegraded = Boolean(dev.online) && providerState === "unavailable";
             const livePolicyConfirmed =
               Boolean(dev.online) && Boolean(dev.confirmedByDevice) &&
-              dev.syncStatus === "applied" && Boolean(fam.providerAvailable);
+              dev.syncStatus === "applied" && providerState === "available";
+            const activeCount = livePolicyConfirmed && Array.isArray(fam.activeOperations)
+              ? fam.activeOperations.length : 0;
+            const fullyLive = livePolicyConfirmed && fam.fullyLive === true && canonicalCount > 0 && activeCount === canonicalCount;
             const configuredWithoutLiveConfirmation = policyCount > 0 && !livePolicyConfirmed;
-            // Display-only: never infer live access from configured policy or cached ACKs.
+            // Family policy and observed operation coverage are separate dimensions.
             const dialState = dev.emergencyLockdown
               ? (dev.online && dev.confirmedByDevice && dev.syncStatus === "applied" ? "blocked" : "lockdown-pending")
-              : dev.online && !fam.providerAvailable ? "unavailable"
-              : configuredWithoutLiveConfirmation ? "configured"
-              : livePolicyConfirmed && fam.grantedOperations.length > 0 ? (isOn ? "full" : "partial")
-              : policyCount === 0 ? "off" : "unknown";
+              : policyCount === 0 ? "off"
+              : !dev.online ? "configured"
+              : providerState === "unknown" ? "unknown"
+              : providerState === "unavailable" ? "unavailable"
+              : !livePolicyConfirmed ? "configured"
+              : fullyLive ? "full"
+              : activeCount > 0 ? "partial" : "unavailable";
             capabilityStates.set(fam.family, dialState);
             const subText =
               !dev.online
                 ? "Offline (" + policyCount + " policy-granted; not currently active)"
-                : !fam.providerAvailable
-                  ? "Unavailable (" + policyCount + " policy-granted; not currently active)"
-                  : !livePolicyConfirmed && policyCount > 0
-                    ? "Awaiting device confirmation (" + policyCount + " configured)"
-                    : fam.grantedOperations.length + "/" + fam.availableOperations.length + " ops active";
+                : providerState === "unknown"
+                  ? "Telemetry unknown (" + policyCount + " configured; no live access verified)"
+                  : providerState === "unavailable"
+                    ? "Unavailable (" + policyCount + " policy-granted; not currently active)"
+                    : !livePolicyConfirmed && policyCount > 0
+                      ? "Awaiting device confirmation (" + policyCount + " configured)"
+                      : activeCount + "/" + canonicalCount + " ops reported active";
             const switchLabel = configuredWithoutLiveConfirmation
-              ? (isOn ? "CONFIGURED" : "PARTIAL SET")
-              : isOn ? "ON" : isPartial ? "PARTIAL" : "OFF";
+              ? (policyFull ? "CONFIGURED" : "PARTIAL SET")
+              : policyCount === 0 ? "OFF" : fullyLive ? "ON" : activeCount > 0 ? "PARTIAL" : "UNAVAILABLE";
             const switchClass = configuredWithoutLiveConfirmation
               ? "configured"
-              : isOn ? "on" : isPartial ? "partial" : "off";
-            // Keep aria-pressed bound to desired policy, not instantaneous device availability.
-            const switchPressed = isOn ? "true" : isPartial ? "mixed" : "false";
+              : policyCount === 0 ? "off" : fullyLive ? "on" : activeCount > 0 ? "partial" : "configured";
+            // The action still changes the desired family grant; never silently
+            // remove explicit operation denies when toggling a family.
+            const switchPressed = policyFull ? "true" : policyCount > 0 ? "mixed" : "false";
             const tileClasses = ["family-toggle"];
             if (configuredWithoutLiveConfirmation) tileClasses.push("configured");
             else if (isOn) tileClasses.push("granted");
@@ -2442,15 +2455,9 @@ const PORTAL_SCRIPT = `
                   text: switchLabel,
                   attrs: {
                     "aria-pressed": switchPressed,
-                    title: configuredWithoutLiveConfirmation
-                      ? "Policy configured, but not confirmed active " +
-                        (!dev.online ? "(device offline). " : !fam.providerAvailable ? "(provider unavailable). " : "(awaiting device ACK). ") +
-                        (isOn ? "Click to revoke the family." : "Click to grant the full family.")
-                      : isPartial
-                        ? "Partial access (" + policyCount + " ops granted). Click to grant full family."
-                        : isOn
-                          ? "Full family granted and device-confirmed. Click to revoke family."
-                          : "Family revoked. Click to grant full family.",
+                    title: subText + ". " +
+                      (isOn ? "Click to revoke the enabled family." : "Click to enable this family.") +
+                      " Explicit operation denies are preserved.",
                   },
                   dataset: {
                     action: "toggle-family",
@@ -2506,8 +2513,8 @@ const PORTAL_SCRIPT = `
             dial,
             createEl("span", { className: "capability-copy" }, [
               createEl("span", { className: "capability-kicker", text: "Permissions & controls" }),
-              createEl("span", { className: "capability-readout", text: fullCount + "/" + families.length + " fully live" }),
-              createEl("span", { className: "capability-breakdown", text: breakdown || "All families confirmed" }),
+              createEl("span", { className: "capability-readout", text: fullCount + "/" + families.length + " full families" }),
+              createEl("span", { className: "capability-breakdown", text: breakdown || "All canonical operations reported available and policy-confirmed" }),
             ]),
             createEl("span", { className: "capability-arrow", attrs: { "aria-hidden": "true" } }),
           ]);
