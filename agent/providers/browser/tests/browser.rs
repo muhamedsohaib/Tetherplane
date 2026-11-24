@@ -404,5 +404,8 @@ async fn probe_status_tracks_standby_disconnect_and_reconnect() {
     let (lost_avail, lost_reason) = provider.probe_status().await;
     assert!(!lost_avail);
     assert!(lost_reason.is_some());
-    assert!(provider.current_capability_report().operations.is_empty());
+    assert_eq!(
+        provider.current_capability_report().operations,
+        [] as [String; 0]
+    );
 }
