@@ -295,12 +295,16 @@ test("lost extension mutation acknowledgement is bounded and never replayed", {t
   const id = String(transport.sent[0]?.request_id);
   await assert.rejects(first, (error: unknown) => error instanceof ExtensionBackendError && error.code === "action_outcome_unknown");
   assert.equal(transport.sent.length,1);
-  const next = backend.pages();
-  const nextId = String(transport.sent[1]?.request_id);
-  transport.push(success(id,{}));
-  transport.push(success(nextId,{pages:[]}));
+  assert.equal(backend.capabilities().connected, false);
+  await assert.rejects(backend.pages(), (error: unknown) => error instanceof ExtensionBackendError && error.code === "capability_unavailable");
+  transport.push(success(id,{})); // late result is ignored
+  assert.equal(transport.sent.length,1);
+  const replacementTransport = new FakeTransport();
+  const replacement = new ExtensionBrowserBackend({transport: replacementTransport, commandTimeoutMs: 100});
+  const next = replacement.pages();
+  replacementTransport.push(success(String(replacementTransport.sent[0]?.request_id),{pages:[]}));
   assert.deepEqual(await next,[]);
-  assert.equal(transport.sent.length,2);
+  assert.equal(replacementTransport.sent.length,1);
 });
 
 test("stalled observation times out without being represented as a mutation", {timeout: 2000}, async () => {

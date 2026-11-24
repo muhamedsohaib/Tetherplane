@@ -46,6 +46,7 @@ type CdpResponse = {
 };
 
 type PendingRequest = {
+  uncertainOnLoss: boolean;
   resolve(value: Record<string, unknown>): void;
   reject(error: CdpBackendError): void;
 };
@@ -56,15 +57,18 @@ type CdpEventListener = (event: {
   params: Record<string, unknown>;
 }) => void;
 
-class CdpWire {
+// Internal owned-browser transport. Exported from this module for loopback fault tests.
+export class CdpWire {
   readonly #socket: WebSocket;
   readonly #pending = new Map<number, PendingRequest>();
   readonly #eventListeners = new Set<CdpEventListener>();
   #nextId = 1;
   #closed = false;
+  readonly #commandTimeoutMs: number;
 
-  private constructor(socket: WebSocket) {
+  private constructor(socket: WebSocket, commandTimeoutMs: number) {
     this.#socket = socket;
+    this.#commandTimeoutMs = commandTimeoutMs;
 
     socket.on("message", (data) => {
       this.#handleMessage(String(data));
@@ -77,25 +81,52 @@ class CdpWire {
         ),
       );
     });
-    socket.once("error", (error) => {
-      this.#disconnect(
-        new CdpBackendError(
-          "provider_failure",
-          `CDP browser connection failed: ${error.message}`,
-        ),
-      );
+    socket.on("error", () => {
+      this.#disconnect(new CdpBackendError("provider_failure", "CDP browser connection failed"));
     });
   }
 
-  static async connect(url: string): Promise<CdpWire> {
-    const socket = new WebSocket(url);
-    await Promise.race([
-      once(socket, "open").then(() => undefined),
-      once(socket, "error").then(([error]) =>
-        Promise.reject(error),
-      ),
-    ]);
-    return new CdpWire(socket);
+  static async connect(url: string, options: {
+    handshakeTimeoutMs?: number;
+    commandTimeoutMs?: number;
+  } = {}): Promise<CdpWire> {
+    const target = new URL(url);
+    if (target.protocol !== "ws:" || target.hostname !== "127.0.0.1" ||
+        !target.port || target.username || target.password || target.search ||
+        target.hash || !/^\/devtools\/browser\/[A-Za-z0-9-]+$/.test(target.pathname)) {
+      throw new CdpBackendError("invalid_arguments", "CDP requires the owned loopback browser endpoint");
+    }
+    const handshakeTimeoutMs = cdpDeadline(options.handshakeTimeoutMs ?? 5_000);
+    const commandTimeoutMs = cdpDeadline(options.commandTimeoutMs ?? 8_000);
+    const socket = new WebSocket(target, {
+      handshakeTimeout: handshakeTimeoutMs,
+      followRedirects: false,
+      perMessageDeflate: false,
+    });
+    return await new Promise<CdpWire>((resolve, reject) => {
+      let settled = false;
+      const fail = (code: string, message: string): void => {
+        if (settled) return;
+        settled = true;
+        clearTimeout(timer);
+        socket.terminate();
+        reject(new CdpBackendError(code, message));
+      };
+      const timer = setTimeout(() => fail("timeout", "CDP connection handshake timed out"), handshakeTimeoutMs);
+      // Keep an error listener during failed-handshake teardown.
+      socket.on("error", () => fail("provider_failure", "CDP connection handshake failed"));
+      socket.once("close", () => fail("provider_failure", "CDP closed before handshake"));
+      socket.once("open", () => {
+        if (settled) return;
+        settled = true;
+        clearTimeout(timer);
+        resolve(new CdpWire(socket, commandTimeoutMs));
+      });
+    });
+  }
+
+  isConnected(): boolean {
+    return !this.#closed && this.#socket.readyState === WebSocket.OPEN;
   }
 
   send(
@@ -103,37 +134,44 @@ class CdpWire {
     params: Record<string, unknown> = {},
     sessionId?: string,
   ): Promise<Record<string, unknown>> {
-    if (this.#closed || this.#socket.readyState !== WebSocket.OPEN) {
-      return Promise.reject(
-        new CdpBackendError(
-          "provider_failure",
-          "CDP browser connection is not open",
-        ),
-      );
+    if (!this.isConnected()) {
+      return Promise.reject(new CdpBackendError(
+        "capability_unavailable", "CDP session retired; request not sent",
+      ));
+    }
+    if (this.#pending.size >= 32) {
+      return Promise.reject(new CdpBackendError("resource_conflict", "CDP request queue full; request not sent"));
     }
 
     const id = this.#nextId++;
     return new Promise((resolve, reject) => {
-      this.#pending.set(id, { resolve, reject });
+      let payload: string;
       try {
-        this.#socket.send(
-          JSON.stringify({
-            id,
-            method,
-            params,
-            ...(sessionId ? { sessionId } : {}),
-          }),
-        );
-      } catch (error) {
-        this.#pending.delete(id);
-        reject(
-          new CdpBackendError(
-            "provider_failure",
-            error instanceof Error
-              ? error.message
-              : "failed to send CDP request",
-          ),
-        );
+        payload = JSON.stringify({ id, method, params, ...(sessionId ? { sessionId } : {}) });
+      } catch {
+        reject(new CdpBackendError("invalid_arguments", "CDP request could not be serialized"));
+        return;
+      }
+      const timer = setTimeout(() => {
+        if (!this.#pending.has(id)) return;
+        // A renderer may still be executing the previous command. Refuse all
+        // later work on this transport rather than replay or assume failure.
+        this.#disconnect(new CdpBackendError("timeout", "CDP command deadline exceeded; session retired"));
+      }, this.#commandTimeoutMs);
+      this.#pending.set(id, {
+        uncertainOnLoss: !CDP_READ_ONLY_METHODS.has(method),
+        resolve(value) { clearTimeout(timer); resolve(value); },
+        reject(error) { clearTimeout(timer); reject(error); },
+      });
+      const sendFailed = () => {
+        if (this.#pending.has(id)) {
+          this.#disconnect(new CdpBackendError("provider_failure", "CDP request send failed; session retired"));
+        }
+      };
+      try {
+        this.#socket.send(payload, (error) => { if (error) sendFailed(); });
+      } catch {
+        sendFailed();
       }
     });
   }
@@ -147,23 +185,16 @@ class CdpWire {
   }
 
   close(): void {
-    if (this.#closed) {
-      return;
-    }
-    this.#closed = true;
-    this.#socket.close();
-    this.#rejectPending(
-      new CdpBackendError(
-        "provider_failure",
-        "CDP browser connection closed",
-      ),
-    );
+    this.#disconnect(new CdpBackendError("provider_failure", "CDP browser connection closed"));
   }
 
   #handleMessage(text: string): void {
+    if (this.#closed) return;
     let message: CdpResponse;
     try {
-      message = JSON.parse(text) as CdpResponse;
+      const parsed: unknown = JSON.parse(text);
+      if (!isRecord(parsed)) return;
+      message = parsed as CdpResponse;
     } catch {
       return;
     }
@@ -214,14 +245,33 @@ class CdpWire {
     }
     this.#closed = true;
     this.#rejectPending(error);
+    this.#eventListeners.clear();
+    this.#socket.terminate();
   }
 
   #rejectPending(error: CdpBackendError): void {
     for (const pending of this.#pending.values()) {
-      pending.reject(error);
+      pending.reject(pending.uncertainOnLoss
+        ? new CdpBackendError("action_outcome_unknown", "CDP command outcome not confirmed; inspect before retrying")
+        : error);
     }
     this.#pending.clear();
   }
+}
+
+// Runtime.evaluate and Runtime.callFunctionOn may execute page mutations.
+// Unknown methods are intentionally treated conservatively on transport loss.
+const CDP_READ_ONLY_METHODS = new Set([
+  "Browser.getVersion", "SystemInfo.getProcessInfo", "Target.getTargets",
+  "Page.getFrameTree", "DOM.getDocument", "DOM.describeNode",
+  "DOM.querySelector", "DOM.getAttributes", "DOM.getBoxModel",
+]);
+
+function cdpDeadline(value: number): number {
+  if (!Number.isInteger(value) || value < 25 || value > 30_000) {
+    throw new CdpBackendError("invalid_arguments", "CDP deadline must be between 25 and 30000 ms");
+  }
+  return value;
 }
 
 export const DEFAULT_CDP_LAUNCH_TIMEOUT_MS = 30_000;
@@ -278,6 +328,10 @@ class OwnedChromiumControl implements LaunchedCdpControl {
       this.#handleCdpEvent(event);
     };
     this.#wire.onEvent(this.#eventListener);
+  }
+
+  isConnected(): boolean {
+    return !this.#closed && this.#wire.isConnected();
   }
 
   async createTarget(
@@ -892,6 +946,7 @@ export async function launchCdpOwnedBrowser(options: {
     stdio: "ignore",
     windowsHide: true,
   });
+  let wire: CdpWire | undefined;
 
   try {
     await Promise.race([
@@ -908,7 +963,7 @@ export async function launchCdpOwnedBrowser(options: {
         timeoutMs:
           options.launchTimeoutMs ?? DEFAULT_CDP_LAUNCH_TIMEOUT_MS,
       });
-    const wire = await CdpWire.connect(websocketUrl);
+    wire = await CdpWire.connect(websocketUrl);
     const browserPid = await discoverBrowserPid(wire);
     const downloadDir = path.join(profileDir, "Downloads");
     await mkdir(downloadDir, { recursive: true });
@@ -927,6 +982,7 @@ export async function launchCdpOwnedBrowser(options: {
       browserPid,
     });
   } catch (error) {
+    wire?.close();
     await stopOwnedChromiumProcesses(child, null);
     await rm(profileDir, {
       recursive: true,
@@ -994,8 +1050,8 @@ async function waitForDevToolsActivePort(options: {
       const port = Number(portLine);
       if (
         Number.isInteger(port) &&
-        port > 0 &&
-        pathLine?.startsWith("/devtools/browser/")
+        port > 0 && port <= 65535 &&
+        pathLine && /^\/devtools\/browser\/[A-Za-z0-9-]+$/.test(pathLine)
       ) {
         return `ws://127.0.0.1:${port}${pathLine}`;
       }

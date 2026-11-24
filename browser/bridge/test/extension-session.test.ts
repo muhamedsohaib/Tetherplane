@@ -3,7 +3,7 @@ import test from "node:test";
 
 import WebSocket from "ws";
 
-import { startExtensionBridgeServer } from "../src/index.ts";
+import { ExtensionBackendError, ExtensionBrowserBackend, startExtensionBridgeServer } from "../src/index.ts";
 
 function onceOpen(socket: WebSocket): Promise<void> {
   return new Promise((resolve, reject) => {
@@ -493,6 +493,59 @@ test("uncompleted hello is bounded and bridge shutdown closes unauthenticated pe
   } finally {
     silent.terminate();
     pendingSocket?.terminate();
+    await bridge.close();
+  }
+});
+
+test("lost browser mutation acknowledgement retires the real authenticated socket and fresh session is usable", { timeout: 5000 }, async () => {
+  const token = "synthetic-command-stall-token";
+  const bridge = await startExtensionBridgeServer({
+    launchToken: token,
+    expectedExtensionId: EXT_ID_A,
+  });
+  const first = new WebSocket(bridge.url, { headers: { origin: EXT_ORIGIN_A } });
+  let second: WebSocket | undefined;
+  try {
+    await onceOpen(first);
+    const hello = onceMessage(first);
+    first.send(JSON.stringify({ type: "hello", token, extension_id: EXT_ID_A }));
+    await hello;
+    const client = await bridge.waitForAuthenticatedClient();
+    const backend = new ExtensionBrowserBackend({ transport: client, commandTimeoutMs: 150 });
+    const command = onceMessage(first);
+    const mutation = backend.perform("tab:fixture", { kind: "click", backend_id: "frame:0|css:#fixture" });
+    const rejected = assert.rejects(mutation, (error: unknown) =>
+      error instanceof ExtensionBackendError && error.code === "action_outcome_unknown");
+    const sent = await command as Record<string, unknown>;
+    assert.equal(sent.operation, "perform");
+    // The peer deliberately acknowledges no command. A keepalive is not proof
+    // that the command completed.
+    first.send(JSON.stringify({ type: "keepalive" }));
+    await rejected;
+    await client.closed;
+    assert.equal(bridge.authenticatedClientCount(), 0);
+    assert.equal(backend.capabilities().connected, false);
+    await assert.rejects(backend.pages(), (error: unknown) =>
+      error instanceof ExtensionBackendError && error.code === "capability_unavailable");
+
+    second = new WebSocket(bridge.url, { headers: { origin: EXT_ORIGIN_A } });
+    await onceOpen(second);
+    const ack = onceMessage(second);
+    second.send(JSON.stringify({ type: "hello", token, extension_id: EXT_ID_A }));
+    await ack;
+    const current = await bridge.waitForAuthenticatedClient();
+    assert.notEqual(current, client);
+    const fresh = new ExtensionBrowserBackend({ transport: current, commandTimeoutMs: 1000 });
+    const nextCommand = onceMessage(second);
+    const pages = fresh.pages();
+    const next = await nextCommand as Record<string, unknown>;
+    assert.equal(next.operation, "pages");
+    assert.notEqual(next.request_id, sent.request_id);
+    second.send(JSON.stringify({ type: "result", request_id: next.request_id, status: "success", data: { pages: [] } }));
+    assert.deepEqual(await pages, []);
+  } finally {
+    first.terminate();
+    second?.terminate();
     await bridge.close();
   }
 });

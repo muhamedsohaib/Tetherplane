@@ -98,7 +98,8 @@ class ExtensionClient implements AuthenticatedExtensionClient {
   }
 
   close(): void {
-    this.#socket.close();
+    // Retire only this authenticated bridge socket. Do not close browser tabs.
+    this.#socket.terminate();
   }
 }
 

@@ -33,6 +33,7 @@ export type CdpFrameObservation = {
 };
 
 export type CdpControl = {
+  isConnected?(): boolean;
   createTarget(
     url: string,
     background: boolean,
@@ -75,6 +76,8 @@ export type CdpPageInfo = {
 };
 
 export type CdpCapabilities = {
+  connected?: false;
+  status?: "command_channel_retired";
   backend: "cdp";
   ownership: "tetherplane_only";
   operations: string[];
@@ -108,6 +111,9 @@ export class CdpBrowserBackend implements BrowserBridgeBackend {
 
   capabilities(): CdpCapabilities {
     return {
+      ...(this.#control.isConnected?.() === false
+        ? { connected: false as const, status: "command_channel_retired" as const }
+        : {}),
       backend: "cdp",
       ownership: "tetherplane_only",
       operations: [

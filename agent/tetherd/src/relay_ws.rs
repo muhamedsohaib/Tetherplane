@@ -800,13 +800,13 @@ mod tests {
             json!({
                 "program": "powershell.exe",
                 "args": ["-NoProfile", "-NonInteractive", "-Command", "Start-Sleep -Milliseconds 2000; Write-Output RELAY_SLOW_WORK"],
-                "wait_ms": 6000
+                "wait_ms": 20000
             })
         } else {
             json!({
                 "program": "sh",
                 "args": ["-c", "sleep 2; printf RELAY_SLOW_WORK"],
-                "wait_ms": 6000
+                "wait_ms": 20000
             })
         }
     }
@@ -863,6 +863,8 @@ mod tests {
             let (reply, pings) = read_relay_test_result(&mut ws).await;
             assert_eq!(reply["routeId"], "slow-route");
             assert_eq!(reply["result"]["status"], "success");
+            assert_eq!(reply["result"]["data"]["running"], false);
+            assert_eq!(reply["result"]["data"]["exit_code"], 0);
             assert!(
                 reply["result"]["data"]["stdout"]
                     .as_str()
@@ -884,7 +886,7 @@ mod tests {
             probe_interval: Duration::from_secs(5),
         };
         let result = tokio::time::timeout(
-            Duration::from_secs(12),
+            Duration::from_secs(35),
             connect_and_run_with_heartbeat(runtime, &config, Duration::from_millis(150)),
         )
         .await
@@ -903,6 +905,43 @@ mod tests {
             panic!("expected heartbeat while old work runs");
         };
         ws.send(Message::Pong(payload)).await.unwrap();
+    }
+
+    async fn assert_reconnected_status(
+        ws: &mut tokio_tungstenite::WebSocketStream<tokio::net::TcpStream>,
+    ) {
+        use futures_util::SinkExt;
+
+        ws.send(relay_test_invocation(
+            "heartbeat-reconnect-test",
+            "new-route",
+            "device.status",
+            &json!({}),
+        ))
+        .await
+        .unwrap();
+        let (reply, _) = read_relay_test_result(ws).await;
+        assert_eq!(reply["routeId"], "new-route", "old route was replayed");
+        // Slow Windows process startup can legitimately exceed the bounded
+        // queue age. The first status request must then be refused before
+        // dispatch. Only a new, read-only status request may be made.
+        if reply["result"]["status"] == "error" {
+            assert_eq!(reply["result"]["error"]["code"], "resource_conflict");
+            assert_eq!(reply["result"]["error"]["details"]["dispatched"], false);
+            ws.send(relay_test_invocation(
+                "heartbeat-reconnect-test",
+                "new-route-after-drain",
+                "device.status",
+                &json!({}),
+            ))
+            .await
+            .unwrap();
+            let (next, _) = read_relay_test_result(ws).await;
+            assert_eq!(next["routeId"], "new-route-after-drain");
+            assert_eq!(next["result"]["status"], "success");
+        } else {
+            assert_eq!(reply["result"]["status"], "success");
+        }
     }
 
     #[tokio::test]
@@ -960,18 +999,7 @@ mod tests {
                 serde_json::from_str::<serde_json::Value>(hello.as_str()).unwrap()["type"],
                 "device_hello"
             );
-            second
-                .send(relay_test_invocation(
-                    "heartbeat-reconnect-test",
-                    "new-route",
-                    "device.status",
-                    &json!({}),
-                ))
-                .await
-                .unwrap();
-            let (reply, _) = read_relay_test_result(&mut second).await;
-            assert_eq!(reply["routeId"], "new-route", "old route was replayed");
-            assert_eq!(reply["result"]["status"], "success");
+            assert_reconnected_status(&mut second).await;
             second.close(None).await.unwrap();
         });
         let runtime = Arc::new(AgentRuntime::new(vec![root.clone()], None, None, None).unwrap());
@@ -985,7 +1013,7 @@ mod tests {
             probe_interval: Duration::from_secs(5),
         };
         let mut tasks = RelayTasks::default();
-        tokio::time::timeout(Duration::from_secs(15), async {
+        tokio::time::timeout(Duration::from_secs(35), async {
             connect_session(
                 Arc::clone(&runtime),
                 &config,

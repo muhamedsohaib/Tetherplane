@@ -13,6 +13,7 @@ import type {
 export type ExtensionCommandTransport = {
   send(message: Record<string, unknown>): void;
   nextMessage(): Promise<Record<string, unknown>>;
+  close?(): void;
 };
 
 export type ExtensionPageInfo = {
@@ -52,6 +53,7 @@ export class ExtensionBrowserBackend
   readonly #commandTimeoutMs: number;
   readonly #pending = new Map<string, PendingCommand>();
   #pumpRunning = false;
+  #retired = false;
 
   constructor(options: {
     transport: ExtensionCommandTransport;
@@ -70,6 +72,7 @@ export class ExtensionBrowserBackend
 
   capabilities(): Record<string, unknown> {
     return {
+      ...(this.#retired ? { connected: false, status: "command_channel_retired" } : {}),
       backend: "extension_authenticated_profile",
       authenticated_profile: true,
       human_tab_sharing: true,
@@ -250,16 +253,19 @@ export class ExtensionBrowserBackend
     operation: string,
     args: Record<string, unknown>,
   ): Promise<unknown> {
+    if (this.#retired) {
+      return Promise.reject(new ExtensionBackendError(
+        "capability_unavailable",
+        "Extension command channel retired; a fresh authenticated session is required; request not sent",
+      ));
+    }
     const requestId = randomUUID();
 
     return new Promise((resolve, reject) => {
-      const mutation = ["perform", "create_tab", "navigate", "close", "upload"].includes(operation);
+      const mutation = ["perform", "create_tab", "navigate", "close", "upload", "attach", "detach"].includes(operation);
       const deadline = setTimeout(() => {
-        if (!this.#pending.delete(requestId)) return;
-        reject(new ExtensionBackendError(
-          mutation ? "action_outcome_unknown" : "timeout",
-          mutation ? "Extension mutation may have executed; inspect before retrying" : "Extension command deadline exceeded",
-        ));
+        if (!this.#pending.has(requestId)) return;
+        this.#retire(new ExtensionBackendError("timeout", "Extension command deadline exceeded; session retired"));
       }, this.#commandTimeoutMs);
       this.#pending.set(requestId, {
         mutation,
@@ -275,16 +281,25 @@ export class ExtensionBrowserBackend
         });
         this.#ensurePump();
       } catch (error) {
-        this.#pending.delete(requestId);
-        clearTimeout(deadline);
-        reject(
-          normalizeTransportError(
-            error,
-            "extension command could not be sent",
-          ),
-        );
+        this.#retire(normalizeTransportError(error, "extension command could not be sent"));
       }
     });
+  }
+
+  #retire(cause: ExtensionBackendError): void {
+    if (this.#retired) return;
+    this.#retired = true;
+    for (const pending of this.#pending.values()) {
+      pending.reject(pending.mutation
+        ? new ExtensionBackendError("action_outcome_unknown", "Extension command session lost; mutation may have executed; inspect before retrying")
+        : cause);
+    }
+    this.#pending.clear();
+    try {
+      this.#transport.close?.();
+    } catch {
+      // A failed close cannot make this backend usable again.
+    }
   }
 
   #ensurePump(): void {
@@ -299,6 +314,7 @@ export class ExtensionBrowserBackend
     try {
       while (this.#pending.size > 0) {
         const message = await this.#transport.nextMessage();
+        if (this.#retired) break;
         if (
           message.type !== "result" ||
           typeof message.request_id !== "string"
@@ -336,12 +352,7 @@ export class ExtensionBrowserBackend
         error,
         "extension command channel disconnected",
       );
-      for (const pending of this.#pending.values()) {
-        pending.reject(pending.mutation
-          ? new ExtensionBackendError("action_outcome_unknown", "Extension transport disconnected; mutation may have executed; inspect before retrying")
-          : normalized);
-      }
-      this.#pending.clear();
+      this.#retire(normalized);
     } finally {
       this.#pumpRunning = false;
     }
