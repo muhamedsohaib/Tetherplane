@@ -425,6 +425,65 @@ test("owner portal usability: clean signed-in header, relay-pending vs device-co
       "3 device cards rendered",
     );
 
+    // Verify compact disclosure and live vs configured capabilities.
+    const compact = await browser.eval<{
+      cards: number; closed: boolean; full: number; partial: number; offlineActive: number;
+      segments: number[]; accessibleLabels: boolean; sessionClosed: boolean;
+    }>(`(() => {
+      const cards = [...document.querySelectorAll(".device-card")];
+      const card = id => cards.find(x => x.dataset.deviceId === id);
+      return {
+        cards: cards.length,
+        closed: cards.every(x => !x.querySelector("details.device-controls").open),
+        full: card("Node-Online").querySelectorAll('[data-capability-state="full"]').length,
+        partial: card("Node-ReadOnly").querySelectorAll('[data-capability-state="partial"]').length,
+        offlineActive: card("Node-Offline").querySelectorAll('[data-capability-state="full"],[data-capability-state="partial"]').length,
+        segments: cards.map(x => x.querySelectorAll(".capability-segment").length),
+        accessibleLabels: cards.every(x => /device.*files.*process.*browser.*desktop.*batch/i.test(x.querySelector(".capability-dial").getAttribute("aria-label") || "")),
+        sessionClosed: !document.querySelector(".session-menu").open
+      };
+    })()`);
+    assert.equal(compact.cards, 3);
+    assert.equal(compact.closed, true, "permission controls should be collapsed initially");
+    assert.equal(compact.full, 6);
+    assert.ok(compact.partial > 0);
+    assert.equal(compact.offlineActive, 0);
+    assert.deepEqual(compact.segments, [6,6,6]);
+    assert.equal(compact.accessibleLabels, true);
+    assert.equal(compact.sessionClosed, true);
+
+    for (const [w,h,m] of [[1280,860,false],[768,1024,false],[390,844,true],[320,740,true]] as const) {
+      await browser.setViewport(w,h,m);
+      await browser.eval("window.scrollTo(0,0)");
+      const compactLayout: {overflow:boolean; targetHeight:number; animations:number; rasterNodes:number} = await browser.eval(`(() => ({
+        overflow: document.documentElement.scrollWidth > innerWidth || [...document.querySelectorAll(".device-card,.stat-card,.owner-nav a,.device-controls > summary")].some(el => {
+          const b = el.getBoundingClientRect();
+          return b.width > 0 && (b.left < -1 || b.right > innerWidth + 1);
+        }),
+        targetHeight: document.querySelector(".device-controls > summary").getBoundingClientRect().height,
+        animations: document.getAnimations().length,
+        rasterNodes: document.querySelectorAll("canvas,svg").length
+      }))()`);
+      assert.equal(compactLayout.overflow,false, "horizontal overflow at " + w);
+      assert.ok(compactLayout.targetHeight >= 44, "small disclosure touch target at " + w);
+      assert.equal(compactLayout.animations,0);
+      assert.equal(compactLayout.rasterNodes,0);
+      await browser.eval(`document.querySelector(".session-menu > summary").click()`);
+      const sessionLayout: {inBounds:boolean; buttons:number; minHeight:number} = await browser.eval(`(() => {
+        const el=document.querySelector(".session-actions");
+        const b=el.getBoundingClientRect();
+        const buttons=[...el.querySelectorAll("button:not(.hidden)")];
+        return {inBounds:b.left>=-1 && b.right<=document.documentElement.clientWidth+1,buttons:buttons.length,minHeight:Math.min(...buttons.map(x=>x.getBoundingClientRect().height))};
+      })()`);
+      assert.equal(sessionLayout.inBounds,true,"session menu clipped at " + w);
+      assert.equal(sessionLayout.buttons,2);
+      if (m) assert.ok(sessionLayout.minHeight>=44);
+      await browser.eval(`document.querySelector(".session-menu > summary").click()`);
+    }
+    await browser.setViewport(1280,860,false);
+    await browser.eval(`document.querySelector('.device-card[data-device-id="Node-Online"] .device-controls > summary').click()`);
+    assert.equal(await browser.eval<boolean>(`document.querySelector('.device-card[data-device-id="Node-Online"] .device-controls').open`),true);
+
     // Signed-in state: token input & connect button hidden; live SSE indicator & canonical datalist present
     const signedInUi = await browser.eval<{
       authAttr: string;
@@ -496,6 +555,8 @@ test("owner portal usability: clean signed-in header, relay-pending vs device-co
       confirmedToastCount: document.querySelectorAll('#toast-stack .toast[data-kind="policy-confirmed"]').length,
     }))()`);
     assert.match(pendingState.syncDetail, /Relay accepted v2.*waiting for device confirmation/i);
+    assert.equal(await browser.eval<number>(`document.querySelectorAll('.device-card[data-device-id="Node-Online"] [data-capability-state="full"],.device-card[data-device-id="Node-Online"] [data-capability-state="partial"]').length`),0,"pending policy cannot appear fully or partially live");
+    assert.equal(await browser.eval<boolean>(`document.querySelector('.device-card[data-device-id="Node-Online"] .device-controls').open`),true,"expanded controls must persist across policy updates");
     assert.equal(pendingState.pendingToastCount, 1);
     assert.equal(pendingState.confirmedToastCount, 0);
 
@@ -527,6 +588,8 @@ test("owner portal usability: clean signed-in header, relay-pending vs device-co
       confirmedToastText: document.querySelector('#toast-stack .toast[data-kind="policy-confirmed"]')?.textContent || "",
     }))()`);
     assert.match(confirmedState.syncDetail, /Device confirmed v2/i);
+    assert.equal(await browser.eval<string>(`document.querySelector('.device-card[data-device-id="Node-Online"] [data-capability-family="process"]').dataset.capabilityState`),"off");
+    assert.equal(await browser.eval<number>(`document.querySelectorAll('.device-card[data-device-id="Node-Online"] [data-capability-state="full"]').length`),5);
     assert.equal(confirmedState.pendingToastCount, 0, "resolved pending toast should clear");
     assert.match(confirmedState.confirmedToastText, /confirmed by device/i);
 
@@ -621,6 +684,7 @@ test("owner portal usability: clean signed-in header, relay-pending vs device-co
 
     // Mobile 390x844 ergonomics: compact signed-in topbar, >=44px switches, zero horizontal overflow
     await browser.setViewport(390, 844, true);
+    await browser.eval(`(() => { const box=document.querySelector(".device-controls"); if(!box.open) box.querySelector("summary").click(); })()`);
     await new Promise((r) => setTimeout(r, 150));
     const mobileAudit = await browser.eval<{
       scrollWidth: number;
@@ -658,6 +722,12 @@ test("owner portal usability: clean signed-in header, relay-pending vs device-co
     assert.ok(mobileAudit.devicesTop < mobileAudit.globalTop);
     assert.equal(mobileAudit.imgOrSvgCount, 0);
     assert.match(mobileAudit.auditText, /Confirmed by device/);
+
+    // A disconnected, previously confirmed device must never retain a live dial.
+    roWs.close();
+    await until(() => browser!.eval<boolean>(`document.querySelector('.device-card[data-device-id="Node-ReadOnly"] .device-title .pill')?.textContent === "Offline"`), 5_000, "confirmed device disconnected");
+    assert.equal(await browser.eval<number>(`document.querySelectorAll('.device-card[data-device-id="Node-ReadOnly"] [data-capability-state="full"],.device-card[data-device-id="Node-ReadOnly"] [data-capability-state="partial"]').length`),0);
+    assert.ok(!(await browser.eval<string>(`document.querySelector('[data-sync-badge="Node-ReadOnly"]')?.textContent || ""`)).startsWith("Confirmed Active"));
 
     // Security invariants still intact
     assert.equal(await browser.eval<number>("sessionStorage.length"), 0);

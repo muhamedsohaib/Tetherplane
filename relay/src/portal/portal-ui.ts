@@ -1237,6 +1237,109 @@ const PORTAL_STYLE = `
       .policy-explainer summary, details.advanced-box summary { min-height: 44px; display: list-item; padding: 12px 0; }
     }
 
+    /* Compact instrument controls. The dial is a read-only indicator, not a grant button.
+       Six static CSS shapes, no timers, canvas, external assets, or animated effects. */
+    .session-menu { position: relative; margin-left: auto; }
+    .session-menu > summary {
+      display: flex; align-items: center; justify-content: center; gap: 7px;
+      min-height: 34px; padding: 7px 12px; cursor: pointer;
+      border: 1px solid var(--border); border-radius: 6px;
+      background: var(--surface-elevated); font-size: 0.8rem; font-weight: 600;
+      list-style: none;
+    }
+    .session-menu > summary::-webkit-details-marker,
+    .device-controls > summary::-webkit-details-marker { display: none; }
+    .session-menu > summary::after { content: "+"; font-family: var(--mono); color: var(--text-muted); }
+    .session-menu[open] > summary::after { content: "−"; }
+    .session-menu[open] > summary { border-color: var(--border-strong); }
+    .session-actions {
+      position: absolute; right: 0; top: calc(100% + 6px); z-index: 50;
+      width: min(220px, calc(100vw - 32px)); padding: 6px;
+      display: grid; gap: 6px; background: var(--surface);
+      border: 1px solid var(--border-strong); border-radius: 7px;
+    }
+    .session-actions button { width: 100%; text-align: left; min-height: 40px; }
+    body[data-auth="signed-out"] .session-menu { display: none; }
+    .session-menu > summary:focus-visible, .device-controls > summary:focus-visible,
+    details.advanced-box > summary:focus-visible, .policy-explainer > summary:focus-visible {
+      outline: 2px solid var(--primary); outline-offset: 2px;
+    }
+    .auth-bar { min-width: 0; }
+    #auth-state-badge { overflow-wrap: anywhere; max-width: 100%; }
+    .devices-grid { align-items: start; }
+    .device-controls { border: 1px solid var(--border); border-radius: 8px; min-width: 0; background: var(--surface-subtle); }
+    .device-controls > summary {
+      display: grid; grid-template-columns: 72px minmax(0, 1fr) 30px;
+      align-items: center; gap: 12px; min-height: 88px; padding: 9px 10px;
+      cursor: pointer; list-style: none; border-radius: 7px;
+    }
+    .device-controls > summary:hover { background: var(--surface-elevated); }
+    .device-controls[open] > summary { border-bottom: 1px solid var(--border); border-radius: 7px 7px 0 0; }
+    .capability-dial {
+      position: relative; display: block; width: 72px; height: 72px;
+      flex: 0 0 72px; border-radius: 50%;
+    }
+    .capability-segment { position: absolute; inset: 0; background: #55554f; }
+    .capability-segment:nth-child(1) { clip-path: polygon(52.14% 1.05%, 57.98% 1.65%, 63.71% 2.96%, 69.24% 4.94%, 74.50% 7.56%, 79.40% 10.80%, 83.88% 14.60%, 87.88% 18.91%, 91.33% 23.67%, 72.77% 35.49%, 70.87% 32.87%, 68.67% 30.50%, 66.20% 28.40%, 63.50% 26.62%, 60.60% 25.17%, 57.56% 24.08%, 54.40% 23.36%, 51.18% 23.03%); }
+    .capability-segment:nth-child(2) { clip-path: polygon(93.46% 27.37%, 95.86% 32.74%, 97.60% 38.35%, 98.65% 44.13%, 99.00% 50.00%, 98.65% 55.87%, 97.60% 61.65%, 95.86% 67.26%, 93.46% 72.63%, 73.95% 62.47%, 75.27% 59.51%, 76.23% 56.42%, 76.81% 53.23%, 77.00% 50.00%, 76.81% 46.77%, 76.23% 43.58%, 75.27% 40.49%, 73.95% 37.53%); }
+    .capability-segment:nth-child(3) { clip-path: polygon(91.33% 76.33%, 87.88% 81.09%, 83.88% 85.40%, 79.40% 89.20%, 74.50% 92.44%, 69.24% 95.06%, 63.71% 97.04%, 57.98% 98.35%, 52.14% 98.95%, 51.18% 76.97%, 54.40% 76.64%, 57.56% 75.92%, 60.60% 74.83%, 63.50% 73.38%, 66.20% 71.60%, 68.67% 69.50%, 70.87% 67.13%, 72.77% 64.51%); }
+    .capability-segment:nth-child(4) { clip-path: polygon(47.86% 98.95%, 42.02% 98.35%, 36.29% 97.04%, 30.76% 95.06%, 25.50% 92.44%, 20.60% 89.20%, 16.12% 85.40%, 12.12% 81.09%, 8.67% 76.33%, 27.23% 64.51%, 29.13% 67.13%, 31.33% 69.50%, 33.80% 71.60%, 36.50% 73.38%, 39.40% 74.83%, 42.44% 75.92%, 45.60% 76.64%, 48.82% 76.97%); }
+    .capability-segment:nth-child(5) { clip-path: polygon(6.54% 72.63%, 4.14% 67.26%, 2.40% 61.65%, 1.35% 55.87%, 1.00% 50.00%, 1.35% 44.13%, 2.40% 38.35%, 4.14% 32.74%, 6.54% 27.37%, 26.05% 37.53%, 24.73% 40.49%, 23.77% 43.58%, 23.19% 46.77%, 23.00% 50.00%, 23.19% 53.23%, 23.77% 56.42%, 24.73% 59.51%, 26.05% 62.47%); }
+    .capability-segment:nth-child(6) { clip-path: polygon(8.67% 23.67%, 12.12% 18.91%, 16.12% 14.60%, 20.60% 10.80%, 25.50% 7.56%, 30.76% 4.94%, 36.29% 2.96%, 42.02% 1.65%, 47.86% 1.05%, 48.82% 23.03%, 45.60% 23.36%, 42.44% 24.08%, 39.40% 25.17%, 36.50% 26.62%, 33.80% 28.40%, 31.33% 30.50%, 29.13% 32.87%, 27.23% 35.49%); }
+    .capability-segment[data-capability-state="full"] { background: var(--success); }
+    .capability-segment[data-capability-state="partial"] { background: var(--text); }
+    .capability-segment[data-capability-state="configured"],
+    .capability-segment[data-capability-state="unavailable"],
+    .capability-segment[data-capability-state="lockdown-pending"] { background: var(--warning); }
+    .capability-segment[data-capability-state="off"] { background: #55554f; }
+    .capability-segment[data-capability-state="unknown"] { background: #77776f; }
+    .capability-segment[data-capability-state="blocked"] { background: var(--danger); }
+    .capability-core {
+      position: absolute; inset: 28%; border-radius: 50%;
+      display: grid; place-items: center; border: 1px solid var(--border-strong);
+      color: var(--text); font-family: var(--mono); font-size: 0.73rem;
+      font-weight: 700; font-variant-numeric: tabular-nums;
+    }
+    .capability-copy { min-width: 0; display: grid; gap: 2px; }
+    .capability-kicker {
+      font-family: var(--mono); font-size: 0.65rem; text-transform: uppercase;
+      letter-spacing: 0.075em; color: var(--text-muted);
+    }
+    .capability-readout { font-size: 0.92rem; font-weight: 650; color: var(--text); }
+    .capability-breakdown {
+      font-family: var(--mono); font-size: 0.67rem; color: var(--text-muted); overflow-wrap: anywhere;
+    }
+    .capability-arrow {
+      display: grid; place-items: center; width: 30px; height: 30px;
+      color: var(--text); border: 1px solid var(--border-strong);
+      border-radius: 50%; font-size: 1.2rem; line-height: 1;
+    }
+    .capability-arrow::after { content: "+"; }
+    .device-controls[open] .capability-arrow::after { content: "−"; }
+    .device-control-content { display: grid; gap: 10px; padding: 10px; min-width: 0; }
+    .device-control-content .family-grid { background: var(--surface); }
+    .device-control-content .family-toggle { min-height: 60px; }
+    .device-control-content .family-toggle:nth-last-child(-n+2) { border-bottom: 0; }
+    .device-card .device-select-cb { margin: 0; }
+    .device-card .device-title { min-height: 28px; }
+    .device-card .sync-detail { margin: 0; }
+    @media (max-width: 600px) {
+      .session-menu > summary, .session-actions button { min-height: 44px; }
+      .auth-bar { gap: 6px; }
+      body[data-auth="signed-in"] .auth-bar { display: grid; grid-template-columns: minmax(0, 1fr) auto auto; }
+      body[data-auth="signed-in"] #auth-state-badge { grid-column: 1 / -1; justify-self: start; }
+      body[data-auth="signed-in"] #live-stream-badge { justify-self: start; min-width: 0; }
+      .device-controls > summary { grid-template-columns: 64px minmax(0, 1fr) 28px; gap: 9px; min-height: 80px; }
+      .capability-dial { width: 64px; height: 64px; }
+      .capability-arrow { width: 28px; height: 28px; }
+      .capability-readout { font-size: 0.86rem; }
+      .capability-breakdown { font-size: 0.65rem; }
+      .device-control-content { padding: 8px; }
+      .device-control-content .family-toggle:nth-last-child(2) { border-bottom: 1px solid var(--border); }
+      .device-control-content .family-toggle:last-child { border-bottom: 0; }
+      .device-card { gap: 8px; }
+    }
+
 `;
 
 const PORTAL_SCRIPT = `
@@ -1272,6 +1375,7 @@ const PORTAL_SCRIPT = `
       let activeFleetFilter = "all";
       let lastUpdatedMs = null;
       const openAdvancedDevices = new Set();
+      const openControlDevices = new Set();
       const selectedDeviceIds = new Set();
       const trackedAccessUpdates = new Map();
       const lastDeviceState = new Map();
@@ -1432,7 +1536,7 @@ const PORTAL_SCRIPT = `
           };
         }
         if (dev.syncStatus === "applied") {
-          if (dev.online) {
+          if (dev.online && dev.confirmedByDevice) {
             return {
               cls: "applied",
               text: "Device confirmed v" + dev.appliedRevision + ackSuffix,
@@ -1444,7 +1548,7 @@ const PORTAL_SCRIPT = `
               "Device confirmed v" +
               dev.appliedRevision +
               ackSuffix +
-              " • Currently offline",
+              (dev.online ? " • Awaiting device confirmation" : " • Currently offline"),
           };
         }
         if (!dev.online) {
@@ -1630,6 +1734,8 @@ const PORTAL_SCRIPT = `
         activeFleetFilter = "all";
         lastUpdatedMs = null;
         openAdvancedDevices.clear();
+        openControlDevices.clear();
+        document.querySelector(".session-menu").open = false;
         selectedDeviceIds.clear();
         snapshotFilterDevice = "";
         snapshotLimit = SNAPSHOT_PAGE_SIZE;
@@ -2038,12 +2144,19 @@ const PORTAL_SCRIPT = `
       function renderOverview(data) {
         const draftOpRules = {};
         let focusedOpDeviceId = null;
+        let focusedControlDeviceId = null;
         let focusedSelStart = null;
         let focusedSelEnd = null;
         const activeEl = document.activeElement;
 
         document.querySelectorAll(".device-card[data-device-id]").forEach(function (cardEl) {
           const id = cardEl.dataset.deviceId;
+          const controlsEl = cardEl.querySelector("details.device-controls");
+          if (id && controlsEl) {
+            if (controlsEl.open) openControlDevices.add(id);
+            else openControlDevices.delete(id);
+            if (controlsEl.querySelector("summary") === activeEl) focusedControlDeviceId = id;
+          }
           const detailsEl = cardEl.querySelector("details.advanced-box");
           if (id && detailsEl) {
             if (detailsEl.open) openAdvancedDevices.add(id);
@@ -2145,14 +2258,14 @@ const PORTAL_SCRIPT = `
             : dev.syncStatus === "failed"
               ? "Sync Rejected"
               : dev.syncStatus === "applied"
-                ? "Confirmed Active (v" + dev.appliedRevision + ")"
+                ? (dev.online && dev.confirmedByDevice ? "Confirmed Active (v" : "Last Confirmed (v") + dev.appliedRevision + ")"
                 : "Pending Device Ack (v" + dev.desiredRevision + ")";
           const syncClass = dev.emergencyLockdown
             ? "lockdown"
             : dev.syncStatus === "failed"
               ? "failed"
               : dev.syncStatus === "applied"
-                ? "applied"
+                ? (dev.online && dev.confirmedByDevice ? "applied" : "offline")
                 : "pending";
 
           const header = createEl("div", { className: "device-header" }, [
@@ -2226,6 +2339,7 @@ const PORTAL_SCRIPT = `
           }
 
           const familyGrid = createEl("div", { className: "family-grid" });
+          const capabilityStates = new Map();
           (dev.familySummaries || []).forEach(function (fam) {
             const isOn = Boolean(fam.granted);
             const policyCount = Array.isArray(fam.policyGrantedOperations)
@@ -2237,6 +2351,14 @@ const PORTAL_SCRIPT = `
               Boolean(dev.online) && Boolean(dev.confirmedByDevice) &&
               dev.syncStatus === "applied" && Boolean(fam.providerAvailable);
             const configuredWithoutLiveConfirmation = policyCount > 0 && !livePolicyConfirmed;
+            // Display-only: never infer live access from configured policy or cached ACKs.
+            const dialState = dev.emergencyLockdown
+              ? (dev.online && dev.confirmedByDevice && dev.syncStatus === "applied" ? "blocked" : "lockdown-pending")
+              : dev.online && !fam.providerAvailable ? "unavailable"
+              : configuredWithoutLiveConfirmation ? "configured"
+              : livePolicyConfirmed && fam.grantedOperations.length > 0 ? (isOn ? "full" : "partial")
+              : policyCount === 0 ? "off" : "unknown";
+            capabilityStates.set(fam.family, dialState);
             const subText =
               !dev.online
                 ? "Offline (" + policyCount + " policy-granted; not currently active)"
@@ -2297,7 +2419,59 @@ const PORTAL_SCRIPT = `
             );
             familyGrid.appendChild(row);
           });
-          card.appendChild(familyGrid);
+          const families = ["device", "files", "process", "browser", "desktop", "batch"];
+          const stateLabels = {
+            full: "live", partial: "partial", configured: "configured",
+            unavailable: "unavailable", off: "off", unknown: "unknown",
+            blocked: "lockdown confirmed", "lockdown-pending": "lockdown pending",
+          };
+          const dialStates = families.map(function (family) {
+            return { family: family, state: capabilityStates.get(family) || "unknown" };
+          });
+          const fullCount = dialStates.filter(function (item) { return item.state === "full"; }).length;
+          const countState = function (state) {
+            return dialStates.filter(function (item) { return item.state === state; }).length;
+          };
+          const breakdown = ["partial", "configured", "unavailable", "off", "unknown", "blocked", "lockdown-pending"]
+            .map(function (state) {
+              const count = countState(state);
+              return count ? count + " " + stateLabels[state] : "";
+            }).filter(Boolean).join(" / ");
+          const dial = createEl("span", {
+            className: "capability-dial",
+            attrs: {
+              role: "img",
+              "aria-label": "Capability status: " + dialStates.map(function (item) {
+                return item.family + " " + stateLabels[item.state];
+              }).join("; "),
+            },
+          }, dialStates.map(function (item) {
+            return createEl("span", {
+              className: "capability-segment",
+              attrs: { "aria-hidden": "true" },
+              dataset: { capabilityFamily: item.family, capabilityState: item.state },
+            });
+          }).concat([createEl("span", {
+            className: "capability-core", attrs: { "aria-hidden": "true" },
+            text: fullCount + "/" + families.length,
+          })]));
+          const controlsBox = createEl("details", { className: "device-controls" });
+          const controlsSummary = createEl("summary", {
+            attrs: { title: "View permissions and controls for " + dev.deviceId },
+          }, [
+            dial,
+            createEl("span", { className: "capability-copy" }, [
+              createEl("span", { className: "capability-kicker", text: "Permissions & controls" }),
+              createEl("span", { className: "capability-readout", text: fullCount + "/" + families.length + " fully live" }),
+              createEl("span", { className: "capability-breakdown", text: breakdown || "All families confirmed" }),
+            ]),
+            createEl("span", { className: "capability-arrow", attrs: { "aria-hidden": "true" } }),
+          ]);
+          const controlContent = createEl("div", { className: "device-control-content" }, [familyGrid]);
+          controlsBox.appendChild(controlsSummary);
+          controlsBox.appendChild(controlContent);
+          if (openControlDevices.has(dev.deviceId)) controlsBox.open = true;
+          card.appendChild(controlsBox);
 
           const actionButtons = [];
           if (dev.emergencyLockdown) {
@@ -2334,7 +2508,7 @@ const PORTAL_SCRIPT = `
               }),
             );
           });
-          card.appendChild(createEl("div", { className: "device-actions-row" }, actionButtons));
+          controlContent.appendChild(createEl("div", { className: "device-actions-row" }, actionButtons));
 
           const deniedCaps =
             (dev.policy && dev.policy.owner_policy && dev.policy.owner_policy.denied_capabilities) ||
@@ -2408,11 +2582,17 @@ const PORTAL_SCRIPT = `
           if (openAdvancedDevices.has(dev.deviceId)) {
             detailsBox.open = true;
           }
-          card.appendChild(detailsBox);
+          controlContent.appendChild(detailsBox);
           return card;
         });
 
         container.replaceChildren.apply(container, cards);
+        if (focusedControlDeviceId) {
+          const summary = container.querySelector(
+            '.device-card[data-device-id="' + CSS.escape(focusedControlDeviceId) + '"] .device-controls > summary',
+          );
+          if (summary) summary.focus({ preventScroll: true });
+        }
         if (focusedOpDeviceId) {
           const restoredInput = container.querySelector(
             '.device-card[data-device-id="' +
@@ -3065,8 +3245,13 @@ export function renderControlPortalHtml(loginMode: "token" | "oidc" = "token"): 
         <button id="connect-btn" class="primary ${loginMode === "oidc" ? "hidden" : ""}" type="button">Connect</button>
         <a id="oidc-signin-link" class="oidc-signin-link ${loginMode === "oidc" ? "" : "hidden"}" href="/portal/auth/start">Sign in with TetherAuth</a>
         <button id="refresh-btn" type="button">Refresh</button>
-        <button id="live-alerts-btn" type="button" aria-pressed="false">Enable live page alerts</button>
-        <button id="logout-btn" class="hidden" type="button">Sign Out</button>
+        <details class="session-menu">
+          <summary>Session</summary>
+          <div class="session-actions">
+            <button id="live-alerts-btn" type="button" aria-pressed="false">Enable live page alerts</button>
+            <button id="logout-btn" class="hidden" type="button">Sign Out</button>
+          </div>
+        </details>
       </div>
     </header>
 
