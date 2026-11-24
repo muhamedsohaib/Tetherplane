@@ -8,6 +8,7 @@
  */
 
 import { randomBytes } from "node:crypto";
+import { validatePublicOrigin } from "../relay/dist/cli-config.js";
 import { mkdtemp, rm } from "node:fs/promises";
 import { createRequire } from "node:module";
 import os from "node:os";
@@ -33,6 +34,7 @@ function parseArgs(argv) {
     host: "127.0.0.1",
     port: Number(process.env.PORT ?? "4788"),
     ownerToken: process.env.TETHERPLANE_PREVIEW_TOKEN || "",
+    publicOrigin: undefined,
     ackDelayMs: 400,
     slowAckDelayMs: 2000,
     stateDir: "",
@@ -46,6 +48,9 @@ function parseArgs(argv) {
       i += 1;
     } else if (arg === "--port" && next) {
       opts.port = Number(next);
+      i += 1;
+    } else if (arg === "--public-origin" && next) {
+      opts.publicOrigin = next;
       i += 1;
     } else if (arg === "--owner-token" && next) {
       opts.ownerToken = next;
@@ -70,6 +75,7 @@ function parseArgs(argv) {
           "  --port <num>          Loopback port (default: 4788, or 0 for ephemeral)",
           "  --host <addr>         Loopback host only: 127.0.0.1, localhost, ::1",
           "  --owner-token <tok>   Custom ephemeral preview token (default: random)",
+          "  --public-origin <url> Exact HTTPS origin of an authorized private proxy",
           "  --ack-delay-ms <ms>   Simulated device ACK delay for fast devices (default: 400)",
           "  --slow-ack-ms <ms>    Simulated device ACK delay for Synth-GPU (default: 2000)",
           "  --state-dir <path>    Persist synthetic state at path instead of temp dir",
@@ -89,6 +95,12 @@ function parseArgs(argv) {
   }
   if (!Number.isInteger(opts.port) || opts.port < 0 || opts.port > 65535) {
     throw new Error(`Invalid port: ${opts.port}`);
+  }
+  if (opts.publicOrigin !== undefined) {
+    opts.publicOrigin = validatePublicOrigin(opts.publicOrigin);
+    if (!opts.publicOrigin.startsWith("https:")) {
+      throw new Error("--public-origin must use https:// for a private preview proxy");
+    }
   }
   return opts;
 }
@@ -326,6 +338,7 @@ async function main() {
     ]),
     stateFile: path.join(stateDir, "devices.json"),
     allowInsecureLocalhost: true,
+    ...(opts.publicOrigin ? { publicOrigin: opts.publicOrigin } : {}),
   });
 
   const address = await relay.listen({ host: opts.host, port: opts.port });
@@ -465,7 +478,7 @@ async function main() {
   // Switch synthetic devices to realistic ACK delays for live interactive testing
   autoAckRef.immediate = false;
 
-  const portalUrl = `${address.httpUrl}/portal`;
+  const portalUrl = address.portalUrl ?? `${address.httpUrl}/portal`;
   if (opts.jsonReady) {
     process.stdout.write(
       `${JSON.stringify({
@@ -499,7 +512,7 @@ async function main() {
         "                     Synth-GPU         (online, read-only, 2s ACK to observe Pending -> Confirmed)",
         "                     Synth-Tablet      (offline, queued pending rev 2)",
         "",
-        "  Safety: Loopback-only synthetic relay. No real devices or prod auth.",
+        "  Safety: Loopback synthetic relay; private HTTPS proxy optional. No real devices or prod auth.",
         "  Press Ctrl+C to stop and clean up ephemeral preview state.",
         "====================================================================",
         "",
