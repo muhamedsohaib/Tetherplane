@@ -1,0 +1,12 @@
+BASELINE: row-2 blackhole vs pre-S1/S2 code (expected FAIL)
+date: 2026-11-27T11:50:50Z
+worktree: detached HEAD 44fbbdec (docs(reliability): close Architecture B gate)
+tetherd: worktree target/debug/tetherd (pre-S1: no heartbeat, no connect timeout)
+relay: worktree relay/src (pre-S2: no nonce heartbeat, no stale retire)
+oracle: row2-blackhole.mjs --seeds 1 --heartbeat production (same file as S6, copied in)
+instruction: blackhole a live connection; relay must retire <=60s, agent must detect
+--- oracle output ---
+seed=0 FAIL retire=-ms detect=-ms(-) healDelay=-ms restore=-ms suspect=-ms fail=timed out waiting for presence cleared after 70000 ms
+row2-blackhole: 0/1 seeds passed
+--- seed record ---
+{"oracle":"row2-blackhole","seed":0,"mode":"production","pass":false,"rssRelayBeforeKb":88588,"rssAgentBeforeKb":11680,"fail":"timed out waiting for presence cleared after 70000 ms","agentLines":[],"dialTimesMs":[-1029],"victimSettlementsAtFail":1,"victimAtFail":{"code":"timeout","request_id":"021df364-c319-4178-834b-d3846c3061f1"}}

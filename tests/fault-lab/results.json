@@ -1,7 +1,14 @@
 {
-  "at": "2026-11-27T09:32:09.285Z",
-  "seeds": 1,
+  "at": "2026-11-27T12:01:50.443Z",
+  "mode": "s6-full",
+  "seeds": 20,
   "platform": "linux",
+  "revisions": {
+    "head": "77e3d07d03a6a384830233397ef45bbc889b87f0",
+    "status": "M tests/fault-lab/results.json\n M tests/fault-lab/run.mjs\n?? package-lock.json\n?? tests/fault-lab/UPGRADE_SEQUENCE.md\n?? tests/fault-lab/harness.mjs\n?? tests/fault-lab/row2-blackhole.mjs\n?? tests/fault-lab/row2-production-retire.mjs\n?? tests/fault-lab/row2-stability.mjs",
+    "node": "v24.22.2",
+    "rustc": "rustc 1.100.0 (0ef1bc386 2026-11-09)"
+  },
   "note": "Linux simulation only; Windows lock/sleep/foreground NOT certified (see docs/WINDOWS_ACCEPTANCE_PLAN.md)",
   "results": [
     {
@@ -9,42 +16,1344 @@
       "row": 1,
       "name": "relay kill/restart + no replay (router oracle)",
       "status": "pass",
-      "ms": 288,
-      "tail": "✔ router injects authenticated provenance and correlates concurrent results (4.466112ms)\n✔ cross-account and unknown-device routing fail closed without touching a device (0.52401ms)\n✔ disconnect fails the in-flight call and reconnect never replays it (26.259728ms)\nℹ tests 3\nℹ suites 0\nℹ pass 3\nℹ fail 0\nℹ cancelled 0\nℹ skipped 0\nℹ todo 0\nℹ duration_ms 212.546788\n"
-    },
-    {
-      "seed": 0,
-      "row": 6,
-      "name": "stale generation dropped (router oracle)",
-      "status": "covered-by-row-1"
-    },
-    {
-      "seed": 0,
-      "row": 8,
-      "name": "delayed ack / timeout no double-resolve (router oracle)",
-      "status": "covered-by-row-1"
+      "ms": 238
     },
     {
       "seed": 0,
       "row": 5,
       "name": "revoked/expired auth denied (device-ws oracle)",
       "status": "pass",
-      "ms": 330,
-      "tail": "✔ paired device authenticates over websocket and carries routed canonical RPC (30.246386ms)\n✔ wrong device credential is rejected before router presence (4.852068ms)\n✔ gateway can disconnect a revoked live device (4.925336ms)\nℹ tests 3\nℹ suites 0\nℹ pass 3\nℹ fail 0\nℹ cancelled 0\nℹ skipped 0\nℹ todo 0\nℹ duration_ms 268.901415\n"
+      "ms": 2773
     },
     {
-      "seed": 0,
+      "seed": 1,
+      "row": 1,
+      "name": "relay kill/restart + no replay (router oracle)",
+      "status": "pass",
+      "ms": 295
+    },
+    {
+      "seed": 1,
+      "row": 5,
+      "name": "revoked/expired auth denied (device-ws oracle)",
+      "status": "pass",
+      "ms": 3044
+    },
+    {
+      "seed": 2,
+      "row": 1,
+      "name": "relay kill/restart + no replay (router oracle)",
+      "status": "pass",
+      "ms": 227
+    },
+    {
+      "seed": 2,
+      "row": 5,
+      "name": "revoked/expired auth denied (device-ws oracle)",
+      "status": "pass",
+      "ms": 2764
+    },
+    {
+      "seed": 3,
+      "row": 1,
+      "name": "relay kill/restart + no replay (router oracle)",
+      "status": "pass",
+      "ms": 256
+    },
+    {
+      "seed": 3,
+      "row": 5,
+      "name": "revoked/expired auth denied (device-ws oracle)",
+      "status": "pass",
+      "ms": 2783
+    },
+    {
+      "seed": 4,
+      "row": 1,
+      "name": "relay kill/restart + no replay (router oracle)",
+      "status": "pass",
+      "ms": 234
+    },
+    {
+      "seed": 4,
+      "row": 5,
+      "name": "revoked/expired auth denied (device-ws oracle)",
+      "status": "pass",
+      "ms": 2774
+    },
+    {
+      "seed": 5,
+      "row": 1,
+      "name": "relay kill/restart + no replay (router oracle)",
+      "status": "pass",
+      "ms": 247
+    },
+    {
+      "seed": 5,
+      "row": 5,
+      "name": "revoked/expired auth denied (device-ws oracle)",
+      "status": "pass",
+      "ms": 2785
+    },
+    {
+      "seed": 6,
+      "row": 1,
+      "name": "relay kill/restart + no replay (router oracle)",
+      "status": "pass",
+      "ms": 245
+    },
+    {
+      "seed": 6,
+      "row": 5,
+      "name": "revoked/expired auth denied (device-ws oracle)",
+      "status": "pass",
+      "ms": 2803
+    },
+    {
+      "seed": 7,
+      "row": 1,
+      "name": "relay kill/restart + no replay (router oracle)",
+      "status": "pass",
+      "ms": 234
+    },
+    {
+      "seed": 7,
+      "row": 5,
+      "name": "revoked/expired auth denied (device-ws oracle)",
+      "status": "pass",
+      "ms": 2766
+    },
+    {
+      "seed": 8,
+      "row": 1,
+      "name": "relay kill/restart + no replay (router oracle)",
+      "status": "pass",
+      "ms": 251
+    },
+    {
+      "seed": 8,
+      "row": 5,
+      "name": "revoked/expired auth denied (device-ws oracle)",
+      "status": "pass",
+      "ms": 2771
+    },
+    {
+      "seed": 9,
+      "row": 1,
+      "name": "relay kill/restart + no replay (router oracle)",
+      "status": "pass",
+      "ms": 318
+    },
+    {
+      "seed": 9,
+      "row": 5,
+      "name": "revoked/expired auth denied (device-ws oracle)",
+      "status": "pass",
+      "ms": 2818
+    },
+    {
+      "seed": 10,
+      "row": 1,
+      "name": "relay kill/restart + no replay (router oracle)",
+      "status": "pass",
+      "ms": 285
+    },
+    {
+      "seed": 10,
+      "row": 5,
+      "name": "revoked/expired auth denied (device-ws oracle)",
+      "status": "pass",
+      "ms": 2805
+    },
+    {
+      "seed": 11,
+      "row": 1,
+      "name": "relay kill/restart + no replay (router oracle)",
+      "status": "pass",
+      "ms": 237
+    },
+    {
+      "seed": 11,
+      "row": 5,
+      "name": "revoked/expired auth denied (device-ws oracle)",
+      "status": "pass",
+      "ms": 2770
+    },
+    {
+      "seed": 12,
+      "row": 1,
+      "name": "relay kill/restart + no replay (router oracle)",
+      "status": "pass",
+      "ms": 233
+    },
+    {
+      "seed": 12,
+      "row": 5,
+      "name": "revoked/expired auth denied (device-ws oracle)",
+      "status": "pass",
+      "ms": 2842
+    },
+    {
+      "seed": 13,
+      "row": 1,
+      "name": "relay kill/restart + no replay (router oracle)",
+      "status": "pass",
+      "ms": 222
+    },
+    {
+      "seed": 13,
+      "row": 5,
+      "name": "revoked/expired auth denied (device-ws oracle)",
+      "status": "pass",
+      "ms": 2765
+    },
+    {
+      "seed": 14,
+      "row": 1,
+      "name": "relay kill/restart + no replay (router oracle)",
+      "status": "pass",
+      "ms": 232
+    },
+    {
+      "seed": 14,
+      "row": 5,
+      "name": "revoked/expired auth denied (device-ws oracle)",
+      "status": "pass",
+      "ms": 2788
+    },
+    {
+      "seed": 15,
+      "row": 1,
+      "name": "relay kill/restart + no replay (router oracle)",
+      "status": "pass",
+      "ms": 242
+    },
+    {
+      "seed": 15,
+      "row": 5,
+      "name": "revoked/expired auth denied (device-ws oracle)",
+      "status": "pass",
+      "ms": 2783
+    },
+    {
+      "seed": 16,
+      "row": 1,
+      "name": "relay kill/restart + no replay (router oracle)",
+      "status": "pass",
+      "ms": 230
+    },
+    {
+      "seed": 16,
+      "row": 5,
+      "name": "revoked/expired auth denied (device-ws oracle)",
+      "status": "pass",
+      "ms": 2753
+    },
+    {
+      "seed": 17,
+      "row": 1,
+      "name": "relay kill/restart + no replay (router oracle)",
+      "status": "pass",
+      "ms": 246
+    },
+    {
+      "seed": 17,
+      "row": 5,
+      "name": "revoked/expired auth denied (device-ws oracle)",
+      "status": "pass",
+      "ms": 2776
+    },
+    {
+      "seed": 18,
+      "row": 1,
+      "name": "relay kill/restart + no replay (router oracle)",
+      "status": "pass",
+      "ms": 226
+    },
+    {
+      "seed": 18,
+      "row": 5,
+      "name": "revoked/expired auth denied (device-ws oracle)",
+      "status": "pass",
+      "ms": 2747
+    },
+    {
+      "seed": 19,
+      "row": 1,
+      "name": "relay kill/restart + no replay (router oracle)",
+      "status": "pass",
+      "ms": 227
+    },
+    {
+      "seed": 19,
+      "row": 5,
+      "name": "revoked/expired auth denied (device-ws oracle)",
+      "status": "pass",
+      "ms": 2869
+    },
+    {
+      "row": 6,
+      "name": "stale generation dropped (router oracle)",
+      "status": "covered-by-row-1"
+    },
+    {
+      "row": 8,
+      "name": "delayed ack / timeout no double-resolve (router oracle)",
+      "status": "covered-by-row-1"
+    },
+    {
       "row": 2,
-      "name": "half-open blackhole bounded detection",
-      "status": "known-fail-on-main",
-      "reason": "agent/tetherd/src/relay_ws.rs has no heartbeat on main (RC-1); fixed by Spark S1+S2"
+      "name": "half-open blackhole bounded detection (real agent+relay)",
+      "status": "pass",
+      "seeds": 20,
+      "passed": 20
     },
     {
-      "seed": 0,
       "row": 9,
       "name": "provider kill -> truthful per-capability state",
-      "status": "known-fail-on-main",
+      "status": "known-fail-pending-s3",
       "reason": "capability available is a startup snapshot (RC-3); fixed by Spark S3"
+    },
+    {
+      "row": 3,
+      "name": "partition then heal, no duplicate mutations",
+      "status": "no-oracle",
+      "reason": "no fault-lab oracle yet; covered by unit suites only"
+    },
+    {
+      "row": 4,
+      "name": "agent SIGKILL, no stale handles",
+      "status": "no-oracle",
+      "reason": "no fault-lab oracle yet; covered by unit suites only"
+    },
+    {
+      "row": 7,
+      "name": "duplicate/ambiguous requests",
+      "status": "no-oracle",
+      "reason": "no fault-lab oracle yet; covered by unit suites only"
+    },
+    {
+      "row": 12,
+      "name": "unauthorized recovery abuse",
+      "status": "no-oracle",
+      "reason": "no fault-lab oracle yet; covered by unit suites only"
+    },
+    {
+      "row": 11,
+      "name": "resource pressure",
+      "status": "partial",
+      "reason": "RSS boundedness measured via row2-stability; CPU/disk-full pressure not oracled"
     }
-  ]
+  ],
+  "measurements": {
+    "row2-blackhole": {
+      "seeds": 20,
+      "passed": 20,
+      "retireMs": {
+        "n": 20,
+        "mean": 105,
+        "p50": 101,
+        "p99": 127,
+        "max": 127
+      },
+      "detectMs": {
+        "n": 20,
+        "mean": 94,
+        "p50": 93,
+        "p99": 113,
+        "max": 113
+      },
+      "restoreMs": {
+        "n": 20,
+        "mean": 9618,
+        "p50": 11061,
+        "p99": 16810,
+        "max": 16810
+      },
+      "records": [
+        {
+          "oracle": "row2-blackhole",
+          "seed": 0,
+          "mode": "scaled",
+          "pass": true,
+          "rssRelayBeforeKb": 93680,
+          "rssAgentBeforeKb": 11816,
+          "retireMs": 101,
+          "retireKind": "relay-stale-timer",
+          "victimSettlements": 1,
+          "victimCode": "disconnected",
+          "victimRequestId": "5650bc02-b5c8-413f-a95b-50005348f2a2",
+          "suspectMs": null,
+          "detectMs": 97,
+          "detectLine": "relay connection lost: websocket receive failed: WebSocket protocol error: Connection reset without closing handshake",
+          "detectKind": "transport",
+          "droppedRelayToAgent": 114,
+          "healDelayMs": 0,
+          "healRule": "detect+spread",
+          "restoreMs": 2002,
+          "freshOk": true,
+          "recoveryDials": 1,
+          "droppedAgentToRelay": 42,
+          "dialTimesMs": [
+            -1030,
+            2098
+          ],
+          "agentLines": [
+            {
+              "tMs": 97,
+              "stream": "err",
+              "line": "relay connection lost: websocket receive failed: WebSocket protocol error: Connection reset without closing handshake"
+            }
+          ],
+          "rssRelayAfterKb": 93936,
+          "rssAgentAfterKb": 12452
+        },
+        {
+          "oracle": "row2-blackhole",
+          "seed": 1,
+          "mode": "scaled",
+          "pass": true,
+          "rssRelayBeforeKb": 94064,
+          "rssAgentBeforeKb": 11712,
+          "retireMs": 102,
+          "retireKind": "relay-stale-timer",
+          "victimSettlements": 1,
+          "victimCode": "disconnected",
+          "victimRequestId": "4764f717-e031-4919-905d-adecef653930",
+          "suspectMs": null,
+          "detectMs": 79,
+          "detectLine": "relay connection lost: websocket receive failed: WebSocket protocol error: Connection reset without closing handshake",
+          "detectKind": "transport",
+          "droppedRelayToAgent": 114,
+          "healDelayMs": 7919,
+          "healRule": "detect+spread",
+          "restoreMs": 11061,
+          "freshOk": true,
+          "recoveryDials": 2,
+          "droppedAgentToRelay": 292,
+          "dialTimesMs": [
+            -1023,
+            2081,
+            19085
+          ],
+          "agentLines": [
+            {
+              "tMs": 79,
+              "stream": "err",
+              "line": "relay connection lost: websocket receive failed: WebSocket protocol error: Connection reset without closing handshake"
+            },
+            {
+              "tMs": 17083,
+              "stream": "err",
+              "line": "relay connection lost: relay connection handshake timed out"
+            }
+          ],
+          "rssRelayAfterKb": 94192,
+          "rssAgentAfterKb": 12404
+        },
+        {
+          "oracle": "row2-blackhole",
+          "seed": 2,
+          "mode": "scaled",
+          "pass": true,
+          "rssRelayBeforeKb": 94448,
+          "rssAgentBeforeKb": 11800,
+          "retireMs": 100,
+          "retireKind": "relay-stale-timer",
+          "victimSettlements": 1,
+          "victimCode": "disconnected",
+          "victimRequestId": "38266044-5a6c-4013-85e7-0948f96443cd",
+          "suspectMs": null,
+          "detectMs": 91,
+          "detectLine": "relay connection lost: websocket receive failed: WebSocket protocol error: Connection reset without closing handshake",
+          "detectKind": "transport",
+          "droppedRelayToAgent": 114,
+          "healDelayMs": 15838,
+          "healRule": "detect+spread",
+          "restoreMs": 3137,
+          "freshOk": true,
+          "recoveryDials": 2,
+          "droppedAgentToRelay": 292,
+          "dialTimesMs": [
+            -1026,
+            2093,
+            19094
+          ],
+          "agentLines": [
+            {
+              "tMs": 91,
+              "stream": "err",
+              "line": "relay connection lost: websocket receive failed: WebSocket protocol error: Connection reset without closing handshake"
+            },
+            {
+              "tMs": 17093,
+              "stream": "err",
+              "line": "relay connection lost: relay connection handshake timed out"
+            }
+          ],
+          "rssRelayAfterKb": 95088,
+          "rssAgentAfterKb": 12432
+        },
+        {
+          "oracle": "row2-blackhole",
+          "seed": 3,
+          "mode": "scaled",
+          "pass": true,
+          "rssRelayBeforeKb": 95344,
+          "rssAgentBeforeKb": 11556,
+          "retireMs": 127,
+          "retireKind": "relay-stale-timer",
+          "victimSettlements": 1,
+          "victimCode": "disconnected",
+          "victimRequestId": "59e3d913-1dcc-43ac-861a-8592e83f7b46",
+          "suspectMs": null,
+          "detectMs": 111,
+          "detectLine": "relay connection lost: websocket receive failed: WebSocket protocol error: Connection reset without closing handshake",
+          "detectKind": "transport",
+          "droppedRelayToAgent": 152,
+          "healDelayMs": 3757,
+          "healRule": "detect+spread",
+          "restoreMs": 15252,
+          "freshOk": true,
+          "recoveryDials": 2,
+          "droppedAgentToRelay": 250,
+          "dialTimesMs": [
+            -1054,
+            2112,
+            19116
+          ],
+          "agentLines": [
+            {
+              "tMs": 111,
+              "stream": "err",
+              "line": "relay connection lost: websocket receive failed: WebSocket protocol error: Connection reset without closing handshake"
+            },
+            {
+              "tMs": 17114,
+              "stream": "err",
+              "line": "relay connection lost: relay connection handshake timed out"
+            }
+          ],
+          "rssRelayAfterKb": 95984,
+          "rssAgentAfterKb": 12432
+        },
+        {
+          "oracle": "row2-blackhole",
+          "seed": 4,
+          "mode": "scaled",
+          "pass": true,
+          "rssRelayBeforeKb": 96112,
+          "rssAgentBeforeKb": 11768,
+          "retireMs": 100,
+          "retireKind": "relay-stale-timer",
+          "victimSettlements": 1,
+          "victimCode": "disconnected",
+          "victimRequestId": "efd4adf4-c02a-4287-876a-79660be450bc",
+          "suspectMs": null,
+          "detectMs": 91,
+          "detectLine": "relay connection lost: websocket receive failed: WebSocket protocol error: Connection reset without closing handshake",
+          "detectKind": "transport",
+          "droppedRelayToAgent": 114,
+          "healDelayMs": 11676,
+          "healRule": "detect+spread",
+          "restoreMs": 7331,
+          "freshOk": true,
+          "recoveryDials": 2,
+          "droppedAgentToRelay": 292,
+          "dialTimesMs": [
+            -1025,
+            2093,
+            19095
+          ],
+          "agentLines": [
+            {
+              "tMs": 91,
+              "stream": "err",
+              "line": "relay connection lost: websocket receive failed: WebSocket protocol error: Connection reset without closing handshake"
+            },
+            {
+              "tMs": 17094,
+              "stream": "err",
+              "line": "relay connection lost: relay connection handshake timed out"
+            }
+          ],
+          "rssRelayAfterKb": 96240,
+          "rssAgentAfterKb": 12400
+        },
+        {
+          "oracle": "row2-blackhole",
+          "seed": 5,
+          "mode": "scaled",
+          "pass": true,
+          "rssRelayBeforeKb": 93280,
+          "rssAgentBeforeKb": 11796,
+          "retireMs": 102,
+          "retireKind": "relay-stale-timer",
+          "victimSettlements": 1,
+          "victimCode": "disconnected",
+          "victimRequestId": "9c2f4374-7248-48d8-b3ea-220d4db4acb2",
+          "suspectMs": null,
+          "detectMs": 99,
+          "detectLine": "relay connection lost: websocket receive failed: WebSocket protocol error: Connection reset without closing handshake",
+          "detectKind": "transport",
+          "droppedRelayToAgent": 114,
+          "healDelayMs": 19595,
+          "healRule": "detect+spread",
+          "restoreMs": 16454,
+          "freshOk": true,
+          "recoveryDials": 3,
+          "droppedAgentToRelay": 542,
+          "dialTimesMs": [
+            -1027,
+            2100,
+            19103,
+            36110
+          ],
+          "agentLines": [
+            {
+              "tMs": 99,
+              "stream": "err",
+              "line": "relay connection lost: websocket receive failed: WebSocket protocol error: Connection reset without closing handshake"
+            },
+            {
+              "tMs": 17101,
+              "stream": "err",
+              "line": "relay connection lost: relay connection handshake timed out"
+            },
+            {
+              "tMs": 34105,
+              "stream": "err",
+              "line": "relay connection lost: relay connection handshake timed out"
+            }
+          ],
+          "rssRelayAfterKb": 93664,
+          "rssAgentAfterKb": 12492
+        },
+        {
+          "oracle": "row2-blackhole",
+          "seed": 6,
+          "mode": "scaled",
+          "pass": true,
+          "rssRelayBeforeKb": 93792,
+          "rssAgentBeforeKb": 11816,
+          "retireMs": 100,
+          "retireKind": "relay-stale-timer",
+          "victimSettlements": 1,
+          "victimCode": "disconnected",
+          "victimRequestId": "e7f0b75f-e219-4cfd-9ea1-6ede4324c7c9",
+          "suspectMs": null,
+          "detectMs": 87,
+          "detectLine": "relay connection lost: websocket receive failed: WebSocket protocol error: Connection reset without closing handshake",
+          "detectKind": "transport",
+          "droppedRelayToAgent": 114,
+          "healDelayMs": 7514,
+          "healRule": "detect+spread",
+          "restoreMs": 11463,
+          "freshOk": true,
+          "recoveryDials": 2,
+          "droppedAgentToRelay": 292,
+          "dialTimesMs": [
+            -1024,
+            2088,
+            19097
+          ],
+          "agentLines": [
+            {
+              "tMs": 87,
+              "stream": "err",
+              "line": "relay connection lost: websocket receive failed: WebSocket protocol error: Connection reset without closing handshake"
+            },
+            {
+              "tMs": 17096,
+              "stream": "err",
+              "line": "relay connection lost: relay connection handshake timed out"
+            }
+          ],
+          "rssRelayAfterKb": 94816,
+          "rssAgentAfterKb": 12512
+        },
+        {
+          "oracle": "row2-blackhole",
+          "seed": 7,
+          "mode": "scaled",
+          "pass": true,
+          "rssRelayBeforeKb": 94944,
+          "rssAgentBeforeKb": 11732,
+          "retireMs": 100,
+          "retireKind": "relay-stale-timer",
+          "victimSettlements": 1,
+          "victimCode": "disconnected",
+          "victimRequestId": "31cd8382-c121-4e9f-a228-1abc44f9298c",
+          "suspectMs": null,
+          "detectMs": 87,
+          "detectLine": "relay connection lost: websocket receive failed: WebSocket protocol error: Connection reset without closing handshake",
+          "detectKind": "transport",
+          "droppedRelayToAgent": 114,
+          "healDelayMs": 15433,
+          "healRule": "detect+spread",
+          "restoreMs": 3565,
+          "freshOk": true,
+          "recoveryDials": 2,
+          "droppedAgentToRelay": 292,
+          "dialTimesMs": [
+            -1023,
+            2089,
+            19098
+          ],
+          "agentLines": [
+            {
+              "tMs": 87,
+              "stream": "err",
+              "line": "relay connection lost: websocket receive failed: WebSocket protocol error: Connection reset without closing handshake"
+            },
+            {
+              "tMs": 17097,
+              "stream": "err",
+              "line": "relay connection lost: relay connection handshake timed out"
+            }
+          ],
+          "rssRelayAfterKb": 95456,
+          "rssAgentAfterKb": 12424
+        },
+        {
+          "oracle": "row2-blackhole",
+          "seed": 8,
+          "mode": "scaled",
+          "pass": true,
+          "rssRelayBeforeKb": 95456,
+          "rssAgentBeforeKb": 11760,
+          "retireMs": 101,
+          "retireKind": "relay-stale-timer",
+          "victimSettlements": 1,
+          "victimCode": "disconnected",
+          "victimRequestId": "8a5c5299-fdf4-46ea-a045-6e549d4c4272",
+          "suspectMs": null,
+          "detectMs": 88,
+          "detectLine": "relay connection lost: websocket receive failed: WebSocket protocol error: Connection reset without closing handshake",
+          "detectKind": "transport",
+          "droppedRelayToAgent": 114,
+          "healDelayMs": 3352,
+          "healRule": "detect+spread",
+          "restoreMs": 15653,
+          "freshOk": true,
+          "recoveryDials": 2,
+          "droppedAgentToRelay": 250,
+          "dialTimesMs": [
+            -1032,
+            2090,
+            19092
+          ],
+          "agentLines": [
+            {
+              "tMs": 88,
+              "stream": "err",
+              "line": "relay connection lost: websocket receive failed: WebSocket protocol error: Connection reset without closing handshake"
+            },
+            {
+              "tMs": 17091,
+              "stream": "err",
+              "line": "relay connection lost: relay connection handshake timed out"
+            }
+          ],
+          "rssRelayAfterKb": 95712,
+          "rssAgentAfterKb": 12452
+        },
+        {
+          "oracle": "row2-blackhole",
+          "seed": 9,
+          "mode": "scaled",
+          "pass": true,
+          "rssRelayBeforeKb": 95840,
+          "rssAgentBeforeKb": 11784,
+          "retireMs": 102,
+          "retireKind": "relay-stale-timer",
+          "victimSettlements": 1,
+          "victimCode": "disconnected",
+          "victimRequestId": "542da3b0-58d0-4140-ac1c-108c18654fa1",
+          "suspectMs": null,
+          "detectMs": 88,
+          "detectLine": "relay connection lost: websocket receive failed: WebSocket protocol error: Connection reset without closing handshake",
+          "detectKind": "transport",
+          "droppedRelayToAgent": 114,
+          "healDelayMs": 11271,
+          "healRule": "detect+spread",
+          "restoreMs": 7737,
+          "freshOk": true,
+          "recoveryDials": 2,
+          "droppedAgentToRelay": 292,
+          "dialTimesMs": [
+            -1025,
+            2089,
+            19098
+          ],
+          "agentLines": [
+            {
+              "tMs": 88,
+              "stream": "err",
+              "line": "relay connection lost: websocket receive failed: WebSocket protocol error: Connection reset without closing handshake"
+            },
+            {
+              "tMs": 17095,
+              "stream": "err",
+              "line": "relay connection lost: relay connection handshake timed out"
+            }
+          ],
+          "rssRelayAfterKb": 95840,
+          "rssAgentAfterKb": 12540
+        },
+        {
+          "oracle": "row2-blackhole",
+          "seed": 10,
+          "mode": "scaled",
+          "pass": true,
+          "rssRelayBeforeKb": 92136,
+          "rssAgentBeforeKb": 11644,
+          "retireMs": 102,
+          "retireKind": "relay-stale-timer",
+          "victimSettlements": 1,
+          "victimCode": "disconnected",
+          "victimRequestId": "82b85572-da13-4e3c-a934-11fa4b88a247",
+          "suspectMs": null,
+          "detectMs": 93,
+          "detectLine": "relay connection lost: websocket receive failed: WebSocket protocol error: Connection reset without closing handshake",
+          "detectKind": "transport",
+          "droppedRelayToAgent": 114,
+          "healDelayMs": 19190,
+          "healRule": "detect+spread",
+          "restoreMs": 16810,
+          "freshOk": true,
+          "recoveryDials": 3,
+          "droppedAgentToRelay": 544,
+          "dialTimesMs": [
+            -1029,
+            2094,
+            19097,
+            36100
+          ],
+          "agentLines": [
+            {
+              "tMs": 93,
+              "stream": "err",
+              "line": "relay connection lost: websocket receive failed: WebSocket protocol error: Connection reset without closing handshake"
+            },
+            {
+              "tMs": 17096,
+              "stream": "err",
+              "line": "relay connection lost: relay connection handshake timed out"
+            },
+            {
+              "tMs": 34099,
+              "stream": "err",
+              "line": "relay connection lost: relay connection handshake timed out"
+            }
+          ],
+          "rssRelayAfterKb": 93416,
+          "rssAgentAfterKb": 12520
+        },
+        {
+          "oracle": "row2-blackhole",
+          "seed": 11,
+          "mode": "scaled",
+          "pass": true,
+          "rssRelayBeforeKb": 93544,
+          "rssAgentBeforeKb": 11700,
+          "retireMs": 101,
+          "retireKind": "relay-stale-timer",
+          "victimSettlements": 1,
+          "victimCode": "disconnected",
+          "victimRequestId": "81fc3e5c-ac7a-4fa9-804a-8afac7ad1abd",
+          "suspectMs": null,
+          "detectMs": 93,
+          "detectLine": "relay connection lost: websocket receive failed: WebSocket protocol error: Connection reset without closing handshake",
+          "detectKind": "transport",
+          "droppedRelayToAgent": 114,
+          "healDelayMs": 7109,
+          "healRule": "detect+spread",
+          "restoreMs": 11870,
+          "freshOk": true,
+          "recoveryDials": 2,
+          "droppedAgentToRelay": 293,
+          "dialTimesMs": [
+            -1025,
+            2095,
+            19098
+          ],
+          "agentLines": [
+            {
+              "tMs": 93,
+              "stream": "err",
+              "line": "relay connection lost: websocket receive failed: WebSocket protocol error: Connection reset without closing handshake"
+            },
+            {
+              "tMs": 17096,
+              "stream": "err",
+              "line": "relay connection lost: relay connection handshake timed out"
+            }
+          ],
+          "rssRelayAfterKb": 94440,
+          "rssAgentAfterKb": 12456
+        },
+        {
+          "oracle": "row2-blackhole",
+          "seed": 12,
+          "mode": "scaled",
+          "pass": true,
+          "rssRelayBeforeKb": 94568,
+          "rssAgentBeforeKb": 11796,
+          "retireMs": 101,
+          "retireKind": "relay-stale-timer",
+          "victimSettlements": 1,
+          "victimCode": "disconnected",
+          "victimRequestId": "9c05aca9-9365-4a6b-8f56-582a201a297f",
+          "suspectMs": null,
+          "detectMs": 91,
+          "detectLine": "relay connection lost: websocket receive failed: WebSocket protocol error: Connection reset without closing handshake",
+          "detectKind": "transport",
+          "droppedRelayToAgent": 114,
+          "healDelayMs": 15028,
+          "healRule": "detect+spread",
+          "restoreMs": 3973,
+          "freshOk": true,
+          "recoveryDials": 2,
+          "droppedAgentToRelay": 251,
+          "dialTimesMs": [
+            -1028,
+            2093,
+            19096
+          ],
+          "agentLines": [
+            {
+              "tMs": 91,
+              "stream": "err",
+              "line": "relay connection lost: websocket receive failed: WebSocket protocol error: Connection reset without closing handshake"
+            },
+            {
+              "tMs": 17094,
+              "stream": "err",
+              "line": "relay connection lost: relay connection handshake timed out"
+            }
+          ],
+          "rssRelayAfterKb": 95208,
+          "rssAgentAfterKb": 12488
+        },
+        {
+          "oracle": "row2-blackhole",
+          "seed": 13,
+          "mode": "scaled",
+          "pass": true,
+          "rssRelayBeforeKb": 95208,
+          "rssAgentBeforeKb": 11816,
+          "retireMs": 100,
+          "retireKind": "relay-stale-timer",
+          "victimSettlements": 1,
+          "victimCode": "disconnected",
+          "victimRequestId": "2b0290a8-eeaa-454b-9cc9-0ea59b961308",
+          "suspectMs": null,
+          "detectMs": 93,
+          "detectLine": "relay connection lost: websocket receive failed: WebSocket protocol error: Connection reset without closing handshake",
+          "detectKind": "transport",
+          "droppedRelayToAgent": 114,
+          "healDelayMs": 2947,
+          "healRule": "detect+spread",
+          "restoreMs": 16059,
+          "freshOk": true,
+          "recoveryDials": 2,
+          "droppedAgentToRelay": 251,
+          "dialTimesMs": [
+            -1027,
+            2094,
+            19097
+          ],
+          "agentLines": [
+            {
+              "tMs": 93,
+              "stream": "err",
+              "line": "relay connection lost: websocket receive failed: WebSocket protocol error: Connection reset without closing handshake"
+            },
+            {
+              "tMs": 17096,
+              "stream": "err",
+              "line": "relay connection lost: relay connection handshake timed out"
+            }
+          ],
+          "rssRelayAfterKb": 95336,
+          "rssAgentAfterKb": 12436
+        },
+        {
+          "oracle": "row2-blackhole",
+          "seed": 14,
+          "mode": "scaled",
+          "pass": true,
+          "rssRelayBeforeKb": 95464,
+          "rssAgentBeforeKb": 11792,
+          "retireMs": 101,
+          "retireKind": "relay-stale-timer",
+          "victimSettlements": 1,
+          "victimCode": "disconnected",
+          "victimRequestId": "6c4c14c5-4303-4a09-a439-62163717317a",
+          "suspectMs": null,
+          "detectMs": 93,
+          "detectLine": "relay connection lost: websocket receive failed: WebSocket protocol error: Connection reset without closing handshake",
+          "detectKind": "transport",
+          "droppedRelayToAgent": 114,
+          "healDelayMs": 10866,
+          "healRule": "detect+spread",
+          "restoreMs": 8136,
+          "freshOk": true,
+          "recoveryDials": 2,
+          "droppedAgentToRelay": 293,
+          "dialTimesMs": [
+            -1024,
+            2094,
+            19096
+          ],
+          "agentLines": [
+            {
+              "tMs": 93,
+              "stream": "err",
+              "line": "relay connection lost: websocket receive failed: WebSocket protocol error: Connection reset without closing handshake"
+            },
+            {
+              "tMs": 17095,
+              "stream": "err",
+              "line": "relay connection lost: relay connection handshake timed out"
+            }
+          ],
+          "rssRelayAfterKb": 95464,
+          "rssAgentAfterKb": 12472
+        },
+        {
+          "oracle": "row2-blackhole",
+          "seed": 15,
+          "mode": "scaled",
+          "pass": true,
+          "rssRelayBeforeKb": 96064,
+          "rssAgentBeforeKb": 11860,
+          "retireMs": 102,
+          "retireKind": "relay-stale-timer",
+          "victimSettlements": 1,
+          "victimCode": "disconnected",
+          "victimRequestId": "18114bfe-b3be-45c3-aa31-5872f98682dd",
+          "suspectMs": null,
+          "detectMs": 86,
+          "detectLine": "relay connection lost: websocket receive failed: WebSocket protocol error: Connection reset without closing handshake",
+          "detectKind": "transport",
+          "droppedRelayToAgent": 114,
+          "healDelayMs": 18785,
+          "healRule": "detect+spread",
+          "restoreMs": 203,
+          "freshOk": true,
+          "recoveryDials": 2,
+          "droppedAgentToRelay": 293,
+          "dialTimesMs": [
+            -1029,
+            2088,
+            19089
+          ],
+          "agentLines": [
+            {
+              "tMs": 86,
+              "stream": "err",
+              "line": "relay connection lost: websocket receive failed: WebSocket protocol error: Connection reset without closing handshake"
+            },
+            {
+              "tMs": 17088,
+              "stream": "err",
+              "line": "relay connection lost: relay connection handshake timed out"
+            }
+          ],
+          "rssRelayAfterKb": 96320,
+          "rssAgentAfterKb": 12556
+        },
+        {
+          "oracle": "row2-blackhole",
+          "seed": 16,
+          "mode": "scaled",
+          "pass": true,
+          "rssRelayBeforeKb": 96320,
+          "rssAgentBeforeKb": 11772,
+          "retireMs": 101,
+          "retireKind": "relay-stale-timer",
+          "victimSettlements": 1,
+          "victimCode": "disconnected",
+          "victimRequestId": "11a687ad-4dfa-48c0-9a1a-1c74e5ca0298",
+          "suspectMs": null,
+          "detectMs": 88,
+          "detectLine": "relay connection lost: websocket receive failed: WebSocket protocol error: Connection reset without closing handshake",
+          "detectKind": "transport",
+          "droppedRelayToAgent": 114,
+          "healDelayMs": 6704,
+          "healRule": "detect+spread",
+          "restoreMs": 12285,
+          "freshOk": true,
+          "recoveryDials": 2,
+          "droppedAgentToRelay": 293,
+          "dialTimesMs": [
+            -1025,
+            2089,
+            19096
+          ],
+          "agentLines": [
+            {
+              "tMs": 88,
+              "stream": "err",
+              "line": "relay connection lost: websocket receive failed: WebSocket protocol error: Connection reset without closing handshake"
+            },
+            {
+              "tMs": 17095,
+              "stream": "err",
+              "line": "relay connection lost: relay connection handshake timed out"
+            }
+          ],
+          "rssRelayAfterKb": 96448,
+          "rssAgentAfterKb": 12524
+        },
+        {
+          "oracle": "row2-blackhole",
+          "seed": 17,
+          "mode": "scaled",
+          "pass": true,
+          "rssRelayBeforeKb": 96704,
+          "rssAgentBeforeKb": 11780,
+          "retireMs": 126,
+          "retireKind": "relay-stale-timer",
+          "victimSettlements": 1,
+          "victimCode": "disconnected",
+          "victimRequestId": "75cb108d-793c-4272-ad54-90442dc3b7b3",
+          "suspectMs": null,
+          "detectMs": 110,
+          "detectLine": "relay connection lost: websocket receive failed: WebSocket protocol error: Connection reset without closing handshake",
+          "detectKind": "transport",
+          "droppedRelayToAgent": 152,
+          "healDelayMs": 14623,
+          "healRule": "detect+spread",
+          "restoreMs": 4342,
+          "freshOk": true,
+          "recoveryDials": 2,
+          "droppedAgentToRelay": 293,
+          "dialTimesMs": [
+            -1024,
+            2111,
+            19114
+          ],
+          "agentLines": [
+            {
+              "tMs": 110,
+              "stream": "err",
+              "line": "relay connection lost: websocket receive failed: WebSocket protocol error: Connection reset without closing handshake"
+            },
+            {
+              "tMs": 17113,
+              "stream": "err",
+              "line": "relay connection lost: relay connection handshake timed out"
+            }
+          ],
+          "rssRelayAfterKb": 97344,
+          "rssAgentAfterKb": 12408
+        },
+        {
+          "oracle": "row2-blackhole",
+          "seed": 18,
+          "mode": "scaled",
+          "pass": true,
+          "rssRelayBeforeKb": 97600,
+          "rssAgentBeforeKb": 11772,
+          "retireMs": 100,
+          "retireKind": "relay-stale-timer",
+          "victimSettlements": 1,
+          "victimCode": "disconnected",
+          "victimRequestId": "06312e8f-ce22-4b15-b40c-2128e9e05a89",
+          "suspectMs": null,
+          "detectMs": 95,
+          "detectLine": "relay connection lost: websocket receive failed: WebSocket protocol error: Connection reset without closing handshake",
+          "detectKind": "transport",
+          "droppedRelayToAgent": 114,
+          "healDelayMs": 2542,
+          "healRule": "detect+spread",
+          "restoreMs": 16477,
+          "freshOk": true,
+          "recoveryDials": 2,
+          "droppedAgentToRelay": 293,
+          "dialTimesMs": [
+            -1024,
+            2097,
+            19101
+          ],
+          "agentLines": [
+            {
+              "tMs": 95,
+              "stream": "err",
+              "line": "relay connection lost: websocket receive failed: WebSocket protocol error: Connection reset without closing handshake"
+            },
+            {
+              "tMs": 17099,
+              "stream": "err",
+              "line": "relay connection lost: relay connection handshake timed out"
+            }
+          ],
+          "rssRelayAfterKb": 98240,
+          "rssAgentAfterKb": 12404
+        },
+        {
+          "oracle": "row2-blackhole",
+          "seed": 19,
+          "mode": "scaled",
+          "pass": true,
+          "rssRelayBeforeKb": 98368,
+          "rssAgentBeforeKb": 11820,
+          "retireMs": 127,
+          "retireKind": "relay-stale-timer",
+          "victimSettlements": 1,
+          "victimCode": "disconnected",
+          "victimRequestId": "6dca92b2-9d0c-4067-a4c6-7610a2a99de3",
+          "suspectMs": null,
+          "detectMs": 113,
+          "detectLine": "relay connection lost: websocket receive failed: WebSocket protocol error: Connection reset without closing handshake",
+          "detectKind": "transport",
+          "droppedRelayToAgent": 152,
+          "healDelayMs": 10461,
+          "healRule": "detect+spread",
+          "restoreMs": 8542,
+          "freshOk": true,
+          "recoveryDials": 2,
+          "droppedAgentToRelay": 293,
+          "dialTimesMs": [
+            -1024,
+            2114,
+            19117
+          ],
+          "agentLines": [
+            {
+              "tMs": 113,
+              "stream": "err",
+              "line": "relay connection lost: websocket receive failed: WebSocket protocol error: Connection reset without closing handshake"
+            },
+            {
+              "tMs": 17115,
+              "stream": "err",
+              "line": "relay connection lost: relay connection handshake timed out"
+            }
+          ],
+          "rssRelayAfterKb": 98496,
+          "rssAgentAfterKb": 12452
+        }
+      ]
+    },
+    "row2-anchor": {
+      "seeds": 1,
+      "passed": 1,
+      "records": [
+        {
+          "oracle": "row2-blackhole",
+          "seed": 1000,
+          "mode": "production",
+          "pass": true,
+          "rssRelayBeforeKb": 93512,
+          "rssAgentBeforeKb": 11864,
+          "retireMs": 18990,
+          "retireKind": "agent-close-first",
+          "victimSettlements": 1,
+          "victimCode": "disconnected",
+          "victimRequestId": "25464618-3df3-46bf-87d2-864c9c86d366",
+          "suspectMs": 13976,
+          "detectMs": 18977,
+          "detectLine": "relay connection lost: relay heartbeat timeout; reconnecting",
+          "detectKind": "heartbeat",
+          "droppedRelayToAgent": 38,
+          "healDelayMs": 1000,
+          "healRule": "retire+detect+1s",
+          "restoreMs": 1007,
+          "freshOk": true,
+          "recoveryDials": 1,
+          "droppedAgentToRelay": 593,
+          "dialTimesMs": [
+            -1035,
+            20978
+          ],
+          "agentLines": [
+            {
+              "tMs": 13976,
+              "stream": "err",
+              "line": "relay heartbeat suspect: no Pong within suspect timeout"
+            },
+            {
+              "tMs": 18977,
+              "stream": "err",
+              "line": "relay connection lost: relay heartbeat timeout; reconnecting"
+            }
+          ],
+          "rssRelayAfterKb": 93896,
+          "rssAgentAfterKb": 12496
+        }
+      ]
+    },
+    "row2-production-retire": {
+      "seeds": 1,
+      "passed": 1,
+      "records": [
+        {
+          "oracle": "row2-production-retire",
+          "seed": 0,
+          "mode": "production",
+          "pass": true,
+          "retireMs": 44911,
+          "retireAgeMs": 45012,
+          "victimSettlements": 1,
+          "victimCode": "disconnected",
+          "victimRequestId": "3558bedd-a2bd-45ac-9c7b-012a07738bab"
+        }
+      ]
+    },
+    "row2-stability": {
+      "seeds": 3,
+      "passed": 3,
+      "records": [
+        {
+          "oracle": "row2-stability",
+          "seed": 0,
+          "pass": true,
+          "rssRelayBeforeKb": 92632,
+          "rssAgentBeforeKb": 11124,
+          "slowOpMs": 8021,
+          "offlineSamples": 0,
+          "steadyCallsOk": 4,
+          "steadyCallsTotal": 4,
+          "relayToAgentBytes": 32454,
+          "agentReconnects": 0,
+          "rssRelayAfterKb": 98136,
+          "rssAgentAfterKb": 12276
+        },
+        {
+          "oracle": "row2-stability",
+          "seed": 1,
+          "pass": true,
+          "rssRelayBeforeKb": 98264,
+          "rssAgentBeforeKb": 11192,
+          "slowOpMs": 8029,
+          "offlineSamples": 0,
+          "steadyCallsOk": 4,
+          "steadyCallsTotal": 4,
+          "relayToAgentBytes": 32492,
+          "agentReconnects": 0,
+          "rssRelayAfterKb": 98520,
+          "rssAgentAfterKb": 12252
+        },
+        {
+          "oracle": "row2-stability",
+          "seed": 2,
+          "pass": true,
+          "rssRelayBeforeKb": 98520,
+          "rssAgentBeforeKb": 11260,
+          "slowOpMs": 8013,
+          "offlineSamples": 0,
+          "steadyCallsOk": 4,
+          "steadyCallsTotal": 4,
+          "relayToAgentBytes": 32530,
+          "agentReconnects": 0,
+          "rssRelayAfterKb": 98904,
+          "rssAgentAfterKb": 12360
+        }
+      ]
+    }
+  }
 }
