@@ -169,6 +169,7 @@ export class DeviceWebSocketGateway {
     const connection = this.#router.connectDevice({
       accountId: input.accountId,
       deviceId: input.deviceId,
+      retire: () => this.#retireStaleSocket(input.deviceId, input.socket),
       send: async (message: RelayToDeviceMessage) => {
         if (input.socket.readyState !== WebSocket.OPEN) {
           throw new Error("device websocket is not open");

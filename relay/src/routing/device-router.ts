@@ -66,6 +66,8 @@ type ActiveConnection = {
   generation: string;
   send(message: RelayToDeviceMessage): Promise<void>;
   controlQueue: Promise<void>;
+  controlDepth: number;
+  retire: () => void;
   syncAware: boolean;
   pendingPolicyReports: number;
   evidence: { status: Record<string, unknown> | null; capabilities: Record<string, unknown> | null; appliedRevision: number | null };
@@ -84,6 +86,10 @@ export class DeviceRouter {
   readonly #policyStore: PolicyStore | null;
   readonly #enforcePolicy: boolean;
   readonly #timeoutMs: number;
+  readonly #maxPendingRoutesPerDevice: number;
+  readonly #maxPendingRoutes: number;
+  readonly #maxControlReportsPerDevice: number;
+  readonly #maxControlReports: number;
   readonly #connections = new Map<string, ActiveConnection>();
   readonly #pending = new Map<string, PendingRoute>();
   readonly #inFlightControl = new Set<Promise<void>>();
@@ -93,11 +99,19 @@ export class DeviceRouter {
     policyStore?: PolicyStore;
     enforcePolicy?: boolean;
     timeoutMs?: number;
+    maxPendingRoutesPerDevice?: number;
+    maxPendingRoutes?: number;
+    maxControlReportsPerDevice?: number;
+    maxControlReports?: number;
   }) {
     this.#registry = options.registry;
     this.#policyStore = options.policyStore ?? null;
     this.#enforcePolicy = options.enforcePolicy ?? true;
     this.#timeoutMs = options.timeoutMs ?? 30_000;
+    this.#maxPendingRoutesPerDevice = positiveBound(options.maxPendingRoutesPerDevice ?? 32);
+    this.#maxPendingRoutes = positiveBound(options.maxPendingRoutes ?? 256);
+    this.#maxControlReportsPerDevice = positiveBound(options.maxControlReportsPerDevice ?? 32);
+    this.#maxControlReports = positiveBound(options.maxControlReports ?? 256);
 
     if (this.#policyStore) {
       this.#policyStore.setSyncHooks({
@@ -119,6 +133,7 @@ export class DeviceRouter {
     accountId: string;
     deviceId: string;
     send(message: RelayToDeviceMessage): Promise<void>;
+    retire?: () => void;
   }): DeviceConnectionHandle {
     const binding = this.#registry.getDevice(input.deviceId);
     if (
@@ -137,6 +152,8 @@ export class DeviceRouter {
       generation: randomUUID(),
       send: input.send,
       controlQueue: Promise.resolve(),
+      controlDepth: 0,
+      retire: input.retire ?? (() => {}),
       syncAware: false,
       pendingPolicyReports: 0,
       evidence: { status: null, capabilities: null, appliedRevision: null },
@@ -266,6 +283,19 @@ export class DeviceRouter {
       }
     }
 
+    // Refuse excess work before cloning, sending, or allocating timers.
+    // Bounds are independent of the agent's own ordered execution queue.
+    let devicePending = 0;
+    for (const pending of this.#pending.values()) {
+      if (pending.deviceId === connection.deviceId &&
+          pending.generation === connection.generation) devicePending++;
+    }
+    if (this.#pending.size >= this.#maxPendingRoutes ||
+        devicePending >= this.#maxPendingRoutesPerDevice) {
+      return errorResult(invocation.request_id, "resource_conflict",
+        "relay pending route capacity exceeded", null, {dispatched: false});
+    }
+
     const routedInvocation: InvocationEnvelope = {
       ...structuredClone(invocation),
       device_id: connection.deviceId,
@@ -330,6 +360,16 @@ export class DeviceRouter {
     connection: ActiveConnection,
     task: () => Promise<void>,
   ): void {
+    if (!this.#isCurrent(connection)) return;
+    if (connection.controlDepth >= this.#maxControlReportsPerDevice ||
+        this.#inFlightControl.size >= this.#maxControlReports) {
+      // Do not silently drop a policy ACK or keep routing on stale
+      // authority. Retire only this generation and resynchronize.
+      this.#disconnect(connection);
+      connection.retire();
+      return;
+    }
+    connection.controlDepth++;
     let tracked: Promise<void>;
     tracked = connection.controlQueue
       .then(async () => {
@@ -340,6 +380,7 @@ export class DeviceRouter {
         // Control plane errors must not wedge subsequent messages or raise unhandled rejections
       })
       .finally(() => {
+        connection.controlDepth--;
         this.#inFlightControl.delete(tracked);
       });
     connection.controlQueue = tracked;
@@ -606,6 +647,13 @@ function batchCapabilities(capability: string, args: unknown): string[] | null {
   return visit(capability, args, 0) ? capabilities : null;
 }
 
+function positiveBound(value: number): number {
+  if (!Number.isSafeInteger(value) || value < 1) {
+    throw new RangeError("relay capacity must be a positive safe integer");
+  }
+  return value;
+}
+
 function errorResult(
   requestId: string,
   code:
@@ -614,7 +662,8 @@ function errorResult(
     | "permission_denied"
     | "timeout"
     | "disconnected"
-    | "provider_failure",
+    | "provider_failure"
+    | "resource_conflict",
   message: string,
   recoveryHint: string | null = null,
   details: Record<string, unknown> = {},
