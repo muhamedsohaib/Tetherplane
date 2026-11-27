@@ -48,6 +48,7 @@ export class DeviceRegistry {
   readonly #devices = new Map<string, DeviceRecord>();
   readonly #pendingByCode = new Map<string, PendingPairing>();
   readonly #pairingTtlMs: number;
+  #writeTail: Promise<void> = Promise.resolve();
 
   private constructor(options: {
     stateFile?: string;
@@ -101,24 +102,26 @@ export class DeviceRegistry {
     accountId: string;
     userCode: string;
   }): Promise<DeviceBinding> {
-    validateAccountId(input.accountId);
-    const pending = this.#pendingByCode.get(input.userCode);
-    if (!pending || pending.expiresAt <= Date.now()) {
-      if (pending) this.#pendingByCode.delete(input.userCode);
-      throw new Error("pairing code is invalid or expired");
-    }
-    this.#pendingByCode.delete(input.userCode);
-
-    const record: DeviceRecord = {
-      deviceId: pending.deviceId,
-      accountId: input.accountId,
-      credentialHash: pending.credentialHash,
-      pairedAt: new Date().toISOString(),
-      revokedAt: null,
-    };
-    this.#devices.set(record.deviceId, record);
-    await this.#persist();
-    return publicBinding(record);
+    return this.#withWrite(async () => {
+      validateAccountId(input.accountId);
+      const pending = this.#pendingByCode.get(input.userCode);
+      if (!pending || pending.expiresAt <= Date.now()) {
+        if (pending) this.#pendingByCode.delete(input.userCode);
+        throw new Error("pairing code is invalid or expired");
+      }
+      const record: DeviceRecord = {
+        deviceId: pending.deviceId,
+        accountId: input.accountId,
+        credentialHash: pending.credentialHash,
+        pairedAt: new Date().toISOString(),
+        revokedAt: null,
+      };
+      // Publish the pairing only after its registry write succeeds.
+      await this.#persist(record);
+      this.#devices.set(record.deviceId, record);
+      this.#pendingByCode.delete(input.userCode);
+      return publicBinding(record);
+    });
   }
 
   async authenticateDevice(
@@ -151,15 +154,19 @@ export class DeviceRegistry {
     accountId: string;
     deviceId: string;
   }): Promise<DeviceBinding> {
-    const record = this.#devices.get(input.deviceId);
-    if (!record || record.accountId !== input.accountId) {
-      throw new Error("device is not owned by this account");
-    }
-    if (record.revokedAt === null) {
-      record.revokedAt = new Date().toISOString();
+    return this.#withWrite(async () => {
+      const record = this.#devices.get(input.deviceId);
+      if (!record || record.accountId !== input.accountId) {
+        throw new Error("device is not owned by this account");
+      }
+      if (record.revokedAt === null) {
+        record.revokedAt = new Date().toISOString();
+      }
+      // Keep revocation effective in memory on write failure, and allow a
+      // later revocation request to retry persisting it.
       await this.#persist();
-    }
-    return publicBinding(record);
+      return publicBinding(record);
+    });
   }
 
   getDesiredPolicy(deviceId: string): PersistedDesiredPolicy | null {
@@ -177,15 +184,23 @@ export class DeviceRegistry {
     deviceId: string,
     desired: PersistedDesiredPolicy,
   ): Promise<void> {
-    const record = this.#devices.get(deviceId);
-    if (!record) {
-      throw new Error("device is unknown");
-    }
-    record.desired = {
-      version: desired.version,
-      allowedCapabilities: [...desired.allowedCapabilities],
-    };
-    await this.#persist();
+    return this.#withWrite(async () => {
+      const record = this.#devices.get(deviceId);
+      if (!record || record.revokedAt !== null) {
+        throw new Error("device is unknown or revoked");
+      }
+      const next: DeviceRecord = {
+        ...record,
+        desired: {
+          version: desired.version,
+          allowedCapabilities: [...desired.allowedCapabilities],
+        },
+      };
+      // A failed save must not leave an uncommitted desired revision in
+      // memory, where a later registry write could accidentally persist it.
+      await this.#persist(next);
+      this.#devices.set(deviceId, next);
+    });
   }
 
   getDevice(deviceId: string): DeviceBinding | null {
@@ -220,12 +235,21 @@ export class DeviceRegistry {
     }
   }
 
-  async #persist(): Promise<void> {
+  #withWrite<T>(operation: () => Promise<T>): Promise<T> {
+    const result = this.#writeTail.then(operation);
+    // A failed write must not poison the queue for subsequent writes.
+    this.#writeTail = result.then(() => undefined, () => undefined);
+    return result;
+  }
+
+  async #persist(replacement?: DeviceRecord): Promise<void> {
     if (!this.#stateFile) return;
     await mkdir(path.dirname(this.#stateFile), { recursive: true });
+    const snapshot = new Map(this.#devices);
+    if (replacement) snapshot.set(replacement.deviceId, replacement);
     const state: RegistryState = {
       version: 1,
-      devices: [...this.#devices.values()].sort((a, b) =>
+      devices: [...snapshot.values()].sort((a, b) =>
         a.deviceId.localeCompare(b.deviceId),
       ),
     };

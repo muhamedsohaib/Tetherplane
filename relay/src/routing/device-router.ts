@@ -73,6 +73,7 @@ type PendingRoute = {
 type DevicePolicySync = {
   desiredVersion: number;
   desiredCapabilities: string[];
+  saving: boolean;
   acknowledgedVersion: number;
   generation: string | null;
   lastStatus: "applied" | "rejected" | null;
@@ -90,6 +91,7 @@ export class DeviceRouter {
   readonly #connections = new Map<string, ActiveConnection>();
   readonly #pending = new Map<string, PendingRoute>();
   readonly #policies = new Map<string, DevicePolicySync>();
+  readonly #policyWrites = new Map<string, Promise<void>>();
 
   constructor(options: {
     registry: DeviceRegistry;
@@ -151,8 +153,8 @@ export class DeviceRouter {
    * Owner sets desired capabilities for one device. Versions increase
    * monotonically per device; only the latest version is ever pushed,
    * so rapid concurrent sets converge on the newest intent. Desired
-   * state persists in the registry before this resolves; a storage
-   * failure rolls the in-memory version back and throws, so the owner
+   * state persists in the registry before publication; a storage
+   * failure preserves the previous committed revision and throws, so the owner
    * never sees a phantom version. Pushes to the live socket when
    * online (bounded); offline devices receive the current desired
    * version on their next connect.
@@ -162,38 +164,55 @@ export class DeviceRouter {
     deviceId: string,
     allowedCapabilities: string[],
   ): Promise<{ version: number; pushed: boolean }> {
+    // Serialize writes for one device, so each caller gets its own
+    // committed revision and failed writes cannot roll back newer ones.
+    const capabilities = validatePolicyCapabilities(allowedCapabilities);
+    const previous = this.#policyWrites.get(deviceId) ?? Promise.resolve();
+    const result = previous.then(() =>
+      this.#saveDesiredPolicy(accountId, deviceId, capabilities),
+    );
+    const tail = result.then(() => undefined, () => undefined);
+    this.#policyWrites.set(deviceId, tail);
+    try {
+      return await result;
+    } finally {
+      if (this.#policyWrites.get(deviceId) === tail) {
+        this.#policyWrites.delete(deviceId);
+      }
+    }
+  }
+
+  async #saveDesiredPolicy(
+    accountId: string,
+    deviceId: string,
+    capabilities: string[],
+  ): Promise<{ version: number; pushed: boolean }> {
     const binding = this.#registry.getDevice(deviceId);
     if (!binding || binding.accountId !== accountId || binding.revokedAt !== null) {
       throw new Error("device is not available for policy sync");
     }
-    const capabilities = validatePolicyCapabilities(allowedCapabilities);
     const sync = this.#policyFor(deviceId);
-    const previous = {
-      desiredVersion: sync.desiredVersion,
-      desiredCapabilities: sync.desiredCapabilities,
-    };
-    sync.desiredVersion += 1;
-    sync.desiredCapabilities = capabilities;
+    const version = sync.desiredVersion + 1;
+    sync.saving = true;
     try {
       await this.#registry.setDesiredPolicy(deviceId, {
-        version: sync.desiredVersion,
+        version,
         allowedCapabilities: capabilities,
       });
-    } catch (error) {
-      sync.desiredVersion = previous.desiredVersion;
-      sync.desiredCapabilities = previous.desiredCapabilities;
-      throw error;
+      sync.desiredVersion = version;
+      sync.desiredCapabilities = capabilities;
+    } finally {
+      // During a save, hold requests; reconnect may re-push the previous
+      // committed revision, never the proposed but unsaved revision.
+      sync.saving = false;
     }
     const connection = this.#connections.get(deviceId);
-    if (!connection) {
-      return { version: sync.desiredVersion, pushed: false };
-    }
+    if (!connection) return { version, pushed: false };
     try {
       await this.#pushPolicy(connection, sync);
-      return { version: sync.desiredVersion, pushed: true };
+      return { version, pushed: true };
     } catch {
-      // Undelivered but stored: stays pending, re-pushed on reconnect.
-      return { version: sync.desiredVersion, pushed: false };
+      return { version, pushed: false };
     }
   }
 
@@ -223,6 +242,7 @@ export class DeviceRouter {
       sync = {
         desiredVersion: persisted?.version ?? 0,
         desiredCapabilities: persisted ? [...persisted.allowedCapabilities] : [],
+        saving: false,
         acknowledgedVersion: 0,
         generation: null,
         lastStatus: null,
@@ -247,13 +267,13 @@ export class DeviceRouter {
       lastReason: sync.lastReason,
       appliedCapabilities: [...sync.appliedCapabilities],
       pending:
-        sync.desiredVersion > 0 && sync.acknowledgedVersion !== sync.desiredVersion,
+        sync.saving || (sync.desiredVersion > 0 && sync.acknowledgedVersion !== sync.desiredVersion),
     };
   }
 
   #onReconnectPushPolicy(connection: ActiveConnection): void {
-    const sync = this.#policies.get(connection.deviceId);
-    if (!sync || sync.desiredVersion === 0) {
+    const sync = this.#policyFor(connection.deviceId);
+    if (sync.desiredVersion === 0) {
       return;
     }
     // New generation: prior acks belong to a dead socket. Reset and
@@ -263,6 +283,7 @@ export class DeviceRouter {
     sync.generation = connection.generation;
     sync.lastStatus = null;
     sync.lastReason = null;
+    sync.appliedCapabilities = [];
     void this.#pushPolicy(connection, sync).catch(() => undefined);
   }
 
@@ -342,11 +363,10 @@ export class DeviceRouter {
     // Hold while sync is pending: until the device acknowledges the
     // current desired version, routing would execute under the wider
     // ceiling instead of the configured restrictions.
-    const sync = this.#policies.get(connection.deviceId);
+    const sync = this.#policyFor(connection.deviceId);
     if (
-      sync &&
-      sync.desiredVersion > 0 &&
-      sync.acknowledgedVersion !== sync.desiredVersion
+      sync.saving ||
+      (sync.desiredVersion > 0 && sync.acknowledgedVersion !== sync.desiredVersion)
     ) {
       return errorResult(
         invocation.request_id,
