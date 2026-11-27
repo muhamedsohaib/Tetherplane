@@ -191,6 +191,34 @@ fn reusing_idempotency_key_for_different_mutation_fails() {
     std::fs::remove_dir_all(&root).unwrap();
 }
 
+fn rpc_without_state_dir(profile: &Path, sandbox: &Path, request: &Value) -> Value {
+    let mut child = Command::new(env!("CARGO_BIN_EXE_tetherd"))
+        .arg("--stdio-rpc")
+        .arg("--principal-profile")
+        .arg(profile)
+        .arg("--allow")
+        .arg(sandbox)
+        .stdin(Stdio::piped())
+        .stdout(Stdio::piped())
+        .stderr(Stdio::piped())
+        .spawn()
+        .unwrap();
+
+    let mut stdin = child.stdin.take().unwrap();
+    writeln!(stdin, "{}", serde_json::to_string(request).unwrap()).unwrap();
+    drop(stdin);
+
+    let stdout = child.stdout.take().unwrap();
+    let mut reader = BufReader::new(stdout);
+    let mut line = String::new();
+    assert!(reader.read_line(&mut line).unwrap() > 0);
+    let response = serde_json::from_str::<Value>(&line).unwrap();
+
+    let status = child.wait().unwrap();
+    assert!(status.success());
+    response
+}
+
 fn rpc_many(profile: &Path, sandbox: &Path, state_dir: &Path, requests: &[Value]) -> Vec<Value> {
     let mut child = Command::new(env!("CARGO_BIN_EXE_tetherd"))
         .arg("--stdio-rpc")
@@ -269,6 +297,184 @@ fn concurrent_identical_idempotent_mutations_execute_once() {
         ])
     );
     assert_eq!(std::fs::read_to_string(&target).unwrap(), "once\n");
+
+    std::fs::remove_dir_all(&root).unwrap();
+}
+
+#[test]
+fn unkeyed_mutation_retry_with_same_request_id_executes_once() {
+    let root = unique_root();
+    let sandbox = root.join("sandbox");
+    let control = root.join("control");
+    let state_dir = control.join("state");
+    std::fs::create_dir_all(&sandbox).unwrap();
+    let profile = write_profile(&control, &sandbox);
+    let target = sandbox.join("unkeyed-retry.txt");
+
+    let arguments = json!({ "path": target, "content": "once\n" });
+    let first = rpc(
+        &profile,
+        &sandbox,
+        &state_dir,
+        &invocation(
+            "00000000-0000-4000-8000-000000000431",
+            "filesystem.append",
+            arguments.clone(),
+            None,
+        ),
+    );
+    assert_eq!(first["status"], "success");
+
+    // Same request retried (same request_id, still no explicit key) must
+    // replay the stored result instead of appending a second time.
+    let retry = rpc(
+        &profile,
+        &sandbox,
+        &state_dir,
+        &invocation(
+            "00000000-0000-4000-8000-000000000431",
+            "filesystem.append",
+            arguments,
+            None,
+        ),
+    );
+    assert_eq!(retry["status"], "success");
+    assert_eq!(std::fs::read_to_string(&target).unwrap(), "once\n");
+
+    std::fs::remove_dir_all(&root).unwrap();
+}
+
+#[test]
+fn unkeyed_mutations_with_new_request_ids_each_execute() {
+    let root = unique_root();
+    let sandbox = root.join("sandbox");
+    let control = root.join("control");
+    let state_dir = control.join("state");
+    std::fs::create_dir_all(&sandbox).unwrap();
+    let profile = write_profile(&control, &sandbox);
+    let target = sandbox.join("unkeyed-fresh.txt");
+
+    // Auto keys are request-scoped: a newly submitted request (new
+    // request_id) with an identical payload is a new mutation, not a
+    // retry. No cross-request deduplication is promised.
+    for request_id in [
+        "00000000-0000-4000-8000-000000000441",
+        "00000000-0000-4000-8000-000000000442",
+    ] {
+        let response = rpc(
+            &profile,
+            &sandbox,
+            &state_dir,
+            &invocation(
+                request_id,
+                "filesystem.append",
+                json!({ "path": target, "content": "line\n" }),
+                None,
+            ),
+        );
+        assert_eq!(response["status"], "success");
+    }
+    assert_eq!(std::fs::read_to_string(&target).unwrap(), "line\nline\n");
+
+    std::fs::remove_dir_all(&root).unwrap();
+}
+
+#[test]
+fn unkeyed_retry_with_mutated_payload_conflicts() {
+    let root = unique_root();
+    let sandbox = root.join("sandbox");
+    let control = root.join("control");
+    let state_dir = control.join("state");
+    std::fs::create_dir_all(&sandbox).unwrap();
+    let profile = write_profile(&control, &sandbox);
+    let target = sandbox.join("unkeyed-conflict.txt");
+
+    let first = rpc(
+        &profile,
+        &sandbox,
+        &state_dir,
+        &invocation(
+            "00000000-0000-4000-8000-000000000451",
+            "filesystem.append",
+            json!({ "path": target, "content": "first\n" }),
+            None,
+        ),
+    );
+    assert_eq!(first["status"], "success");
+
+    // Same request identity with a different payload is a conflict,
+    // exactly as with an explicitly supplied key.
+    let conflict = rpc(
+        &profile,
+        &sandbox,
+        &state_dir,
+        &invocation(
+            "00000000-0000-4000-8000-000000000451",
+            "filesystem.append",
+            json!({ "path": target, "content": "different\n" }),
+            None,
+        ),
+    );
+    assert_eq!(conflict["status"], "error");
+    assert_eq!(conflict["error"]["code"], "resource_conflict");
+    assert_eq!(std::fs::read_to_string(&target).unwrap(), "first\n");
+
+    std::fs::remove_dir_all(&root).unwrap();
+}
+
+#[test]
+fn unkeyed_mutation_without_state_dir_still_executes() {
+    let root = unique_root();
+    let sandbox = root.join("sandbox");
+    let control = root.join("control");
+    std::fs::create_dir_all(&sandbox).unwrap();
+    let profile = write_profile(&control, &sandbox);
+    let target = sandbox.join("unkeyed-nostore.txt");
+
+    // Backward compatibility: without --state-dir there is no durable
+    // store, so auto-keyed mutations execute directly instead of
+    // failing with an unavailable-store error.
+    let response = rpc_without_state_dir(
+        &profile,
+        &sandbox,
+        &invocation(
+            "00000000-0000-4000-8000-000000000461",
+            "filesystem.append",
+            json!({ "path": target, "content": "direct\n" }),
+            None,
+        ),
+    );
+    assert_eq!(response["status"], "success");
+    assert_eq!(std::fs::read_to_string(&target).unwrap(), "direct\n");
+
+    std::fs::remove_dir_all(&root).unwrap();
+}
+
+#[test]
+fn explicit_key_without_state_dir_reports_unavailable() {
+    let root = unique_root();
+    let sandbox = root.join("sandbox");
+    let control = root.join("control");
+    std::fs::create_dir_all(&sandbox).unwrap();
+    let profile = write_profile(&control, &sandbox);
+    let target = sandbox.join("keyed-nostore.txt");
+
+    // An explicitly supplied key promises durable deduplication, which
+    // cannot be honored without a store: fail truthfully, never run
+    // the mutation while pretending it is deduplicated.
+    let response = rpc_without_state_dir(
+        &profile,
+        &sandbox,
+        &invocation(
+            "00000000-0000-4000-8000-000000000471",
+            "filesystem.append",
+            json!({ "path": target, "content": "never\n" }),
+            Some("explicit-no-store"),
+        ),
+    );
+    assert_eq!(response["status"], "error");
+    assert_eq!(response["error"]["code"], "provider_failure");
+    assert!(!target.exists());
 
     std::fs::remove_dir_all(&root).unwrap();
 }

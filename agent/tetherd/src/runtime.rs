@@ -24,8 +24,8 @@ use tokio::sync::Mutex;
 
 use crate::audit::{AuditProvider, AuditStore};
 use crate::idempotency::{
-    IdempotencyLookup, IdempotencyStore, conflict_result, is_mutation_capability, pending_result,
-    store_failure_result, unavailable_result,
+    IdempotencyLookup, IdempotencyStore, auto_idempotency_key, conflict_result,
+    is_mutation_capability, pending_result, store_failure_result, unavailable_result,
 };
 use crate::job::JobProvider;
 
@@ -401,11 +401,23 @@ impl AgentRuntime {
             invocation.principal_id = Some(principal_id.clone());
         }
 
+        // S5: every mutation executes under an idempotency key. Explicitly
+        // supplied keys are preserved untouched; a mutation submitted
+        // without one gets a deterministic request-scoped auto key so that
+        // retrying the same request replays instead of duplicating. The
+        // fill happens before the audit clone so the audit trail carries
+        // the effective key (auto keys carry the `unkeyed-` prefix).
+        let auto_key =
+            is_mutation_capability(&invocation.capability) && invocation.idempotency_key.is_none();
+        if auto_key {
+            invocation.idempotency_key = Some(auto_idempotency_key(&invocation));
+        }
+
         let audit_invocation = invocation.clone();
         let result = if invocation.idempotency_key.is_some()
             && is_mutation_capability(&invocation.capability)
         {
-            self.execute_idempotent(invocation).await
+            self.execute_idempotent(invocation, auto_key).await
         } else {
             self.execute_and_track(invocation).await
         };
@@ -429,8 +441,20 @@ impl AgentRuntime {
         result
     }
 
-    async fn execute_idempotent(&self, invocation: InvocationEnvelope) -> ResultEnvelope {
+    async fn execute_idempotent(
+        &self,
+        invocation: InvocationEnvelope,
+        auto_key: bool,
+    ) -> ResultEnvelope {
         let Some(store) = &self.idempotency_store else {
+            // Without a state directory there is no durable store. An
+            // explicitly supplied key promises durable deduplication that
+            // cannot be honored, so fail truthfully; an auto key is
+            // best-effort request dedupe, so execute directly to preserve
+            // pre-S5 behavior for stateless operation.
+            if auto_key {
+                return self.execute_and_track(invocation).await;
+            }
             return unavailable_result(&invocation);
         };
         let guard = store.lock().await;
@@ -440,12 +464,12 @@ impl AgentRuntime {
             Ok(IdempotencyLookup::Conflict) => conflict_result(&invocation),
             Ok(IdempotencyLookup::Pending) => pending_result(&invocation),
             Ok(IdempotencyLookup::Miss) => {
-                if let Err(error) = guard.reserve(&invocation) {
+                if let Err(error) = guard.reserve(&invocation, auto_key) {
                     return store_failure_result(&invocation, error);
                 }
 
                 let result = self.execute_and_track(invocation.clone()).await;
-                if let Err(error) = guard.complete(&invocation, &result) {
+                if let Err(error) = guard.complete(&invocation, &result, auto_key) {
                     return store_failure_result(&invocation, error);
                 }
                 result

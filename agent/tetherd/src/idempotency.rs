@@ -22,12 +22,20 @@ pub enum IdempotencyLookup {
 #[derive(Debug, Deserialize, Serialize)]
 struct PendingRecord {
     fingerprint: String,
+    /// Explicit unkeyed evidence: true when the runtime generated the key
+    /// for a mutation the client submitted without one. Defaults to false
+    /// so pre-S5 records (explicit keys only) still deserialize.
+    #[serde(default)]
+    auto_key: bool,
 }
 
 #[derive(Debug, Deserialize, Serialize)]
 struct CompletedRecord {
     fingerprint: String,
     result: ResultEnvelope,
+    /// Explicit unkeyed evidence, mirroring [`PendingRecord::auto_key`].
+    #[serde(default)]
+    auto_key: bool,
 }
 
 struct RecordPaths {
@@ -83,7 +91,11 @@ impl IdempotencyStore {
         Ok(IdempotencyLookup::Miss)
     }
 
-    pub fn reserve(&self, invocation: &InvocationEnvelope) -> Result<(), CapabilityError> {
+    pub fn reserve(
+        &self,
+        invocation: &InvocationEnvelope,
+        auto_key: bool,
+    ) -> Result<(), CapabilityError> {
         let key = invocation
             .idempotency_key
             .as_deref()
@@ -91,6 +103,7 @@ impl IdempotencyStore {
         let paths = self.record_paths(invocation, key)?;
         let record = PendingRecord {
             fingerprint: request_fingerprint(invocation)?,
+            auto_key,
         };
         let encoded = serde_json::to_vec_pretty(&record).map_err(|error| {
             provider_failure(format!(
@@ -111,13 +124,22 @@ impl IdempotencyStore {
                 provider_failure(format!(
                     "failed to persist idempotency reservation: {error}"
                 ))
-            })
+            })?;
+        // Durable before execution: the reservation must survive OS/power
+        // loss, not just process crash, so fsync the file and the
+        // directory entry that names it.
+        file.sync_all().map_err(|error| {
+            provider_failure(format!("failed to fsync idempotency reservation: {error}"))
+        })?;
+        drop(file);
+        sync_dir(&self.directory)
     }
 
     pub fn complete(
         &self,
         invocation: &InvocationEnvelope,
         result: &ResultEnvelope,
+        auto_key: bool,
     ) -> Result<(), CapabilityError> {
         let key = invocation
             .idempotency_key
@@ -139,6 +161,7 @@ impl IdempotencyStore {
         let record = CompletedRecord {
             fingerprint,
             result: result.clone(),
+            auto_key,
         };
         let encoded = serde_json::to_vec_pretty(&record).map_err(|error| {
             provider_failure(format!(
@@ -153,12 +176,25 @@ impl IdempotencyStore {
                 "failed to write completed idempotency record: {error}"
             ))
         })?;
+        {
+            let file = OpenOptions::new().read(true).open(&temp).map_err(|error| {
+                provider_failure(format!(
+                    "failed to reopen completed idempotency record: {error}"
+                ))
+            })?;
+            file.sync_all().map_err(|error| {
+                provider_failure(format!(
+                    "failed to fsync completed idempotency record: {error}"
+                ))
+            })?;
+        }
         fs::rename(&temp, &paths.completed).map_err(|error| {
             let _ = fs::remove_file(&temp);
             provider_failure(format!(
                 "failed to publish completed idempotency record: {error}"
             ))
         })?;
+        sync_dir(&self.directory)?;
         let _ = fs::remove_file(&paths.pending);
         Ok(())
     }
@@ -212,6 +248,28 @@ pub fn is_mutation_capability(capability: &str) -> bool {
             | "browser.upload"
     ) || capability.starts_with("browser.verified_action")
         || capability.starts_with("desktop.physical_")
+}
+
+/// Deterministic request-scoped key for a mutation the client submitted
+/// without an explicit idempotency key. Scope: bound principal +
+/// device + capability + request identity. Retrying the same request
+/// reproduces the key (replay on identical payload, conflict on mutated
+/// payload); a newly submitted request carries a new request identity
+/// and therefore always executes. Auto keys dedupe retries of one
+/// request only — they are explicitly NOT a cross-request
+/// exactly-once guarantee. The `unkeyed-` prefix marks the provenance
+/// in audit trails; the authoritative evidence flag is the `auto_key`
+/// bit on the stored Pending/Completed record.
+pub fn auto_idempotency_key(invocation: &InvocationEnvelope) -> String {
+    let context = serde_json::to_vec(&json!({
+        "principal_id": invocation.principal_id.as_deref().unwrap_or("compat:unbound"),
+        "device_id": invocation.device_id,
+        "capability": invocation.capability,
+        "request_id": invocation.request_id,
+    }));
+    let bytes = context.unwrap_or_else(|_| invocation.request_id.as_bytes().to_vec());
+    let digest = sha256_hex(&bytes);
+    format!("unkeyed-{}", &digest[..32])
 }
 
 pub fn conflict_result(invocation: &InvocationEnvelope) -> ResultEnvelope {
@@ -280,6 +338,29 @@ fn read_json<T: for<'de> Deserialize<'de>>(path: &Path, label: &str) -> Result<T
         .map_err(|error| provider_failure(format!("invalid {label}: {error}")))
 }
 
+fn sync_dir(directory: &Path) -> Result<(), CapabilityError> {
+    #[cfg(unix)]
+    {
+        let dir = OpenOptions::new()
+            .read(true)
+            .open(directory)
+            .map_err(|error| {
+                provider_failure(format!("failed to open idempotency directory: {error}"))
+            })?;
+        dir.sync_all().map_err(|error| {
+            provider_failure(format!("failed to fsync idempotency directory: {error}"))
+        })?;
+        Ok(())
+    }
+    #[cfg(not(unix))]
+    {
+        // Directory fsync is a Unix durability primitive; file fsync above
+        // still holds on other platforms.
+        let _ = directory;
+        Ok(())
+    }
+}
+
 fn idempotency_conflict(invocation: &InvocationEnvelope) -> CapabilityError {
     CapabilityError {
         code: ErrorCode::ResourceConflict,
@@ -310,5 +391,183 @@ fn provider_failure(message: String) -> CapabilityError {
         message,
         recovery_hint: None,
         details: serde_json::json!({}),
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use tether_core::{Actor, ActorKind, ResponseMode};
+
+    fn invocation(key: Option<&str>) -> InvocationEnvelope {
+        InvocationEnvelope {
+            protocol_version: "1.0".to_owned(),
+            request_id: Uuid::parse_str("00000000-0000-4000-8000-000000000001").unwrap(),
+            device_id: Some("Leno".to_owned()),
+            principal_id: Some("model:test".to_owned()),
+            job_id: None,
+            capability: "filesystem.append".to_owned(),
+            arguments: json!({ "path": "/tmp/x", "content": "x\n" }),
+            actor: Actor {
+                id: "test".to_owned(),
+                kind: ActorKind::AiClient,
+            },
+            session_id: None,
+            response_mode: ResponseMode::Compact,
+            idempotency_key: key.map(str::to_owned),
+            preconditions: vec![],
+            expectations: vec![],
+        }
+    }
+
+    fn unique_state_dir(label: &str) -> PathBuf {
+        std::env::temp_dir().join(format!(
+            "tetherplane-idempotency-unit-{label}-{}-{}",
+            std::process::id(),
+            Uuid::new_v4().as_simple()
+        ))
+    }
+
+    fn success_result(invocation: &InvocationEnvelope) -> ResultEnvelope {
+        ResultEnvelope {
+            protocol_version: invocation.protocol_version.clone(),
+            request_id: invocation.request_id,
+            status: ResultStatus::Success,
+            data: Some(json!({})),
+            delta: None,
+            error: None,
+            verification: VerificationStatus::Verified,
+            continuation: None,
+            policy: None,
+            timing: Timing { duration_ms: 1 },
+        }
+    }
+
+    #[test]
+    fn auto_key_is_deterministic_and_marked_unkeyed() {
+        let base = invocation(None);
+        let first = auto_idempotency_key(&base);
+        let second = auto_idempotency_key(&base);
+        assert_eq!(first, second);
+        assert!(
+            first.starts_with("unkeyed-"),
+            "auto key must carry the explicit unkeyed marker, got {first}"
+        );
+    }
+
+    #[test]
+    fn auto_key_is_scoped_to_context_and_request_identity() {
+        let base = invocation(None);
+        let base_key = auto_idempotency_key(&base);
+
+        let mut other_request = base.clone();
+        other_request.request_id = Uuid::new_v4();
+        assert_ne!(auto_idempotency_key(&other_request), base_key);
+
+        let mut other_principal = base.clone();
+        other_principal.principal_id = Some("model:other".to_owned());
+        assert_ne!(auto_idempotency_key(&other_principal), base_key);
+
+        let mut other_device = base.clone();
+        other_device.device_id = Some("Other".to_owned());
+        assert_ne!(auto_idempotency_key(&other_device), base_key);
+
+        let mut other_capability = base.clone();
+        other_capability.capability = "filesystem.write".to_owned();
+        assert_ne!(auto_idempotency_key(&other_capability), base_key);
+
+        // Same context + same request identity reproduces the key, so a
+        // retried request replays instead of re-executing.
+        assert_eq!(auto_idempotency_key(&base), base_key);
+    }
+
+    #[test]
+    fn reserve_without_complete_leaves_pending_never_replay() {
+        let state_dir = unique_state_dir("pending");
+        let store = IdempotencyStore::new(&state_dir).unwrap();
+        let mut inv = invocation(None);
+        inv.idempotency_key = Some(auto_idempotency_key(&inv));
+
+        assert!(matches!(
+            store.lookup(&inv).unwrap(),
+            IdempotencyLookup::Miss
+        ));
+        store.reserve(&inv, true).unwrap();
+
+        // The reserve→complete crash window stays explicitly uncertain:
+        // Pending, never an automatic replay or re-execution.
+        assert!(matches!(
+            store.lookup(&inv).unwrap(),
+            IdempotencyLookup::Pending
+        ));
+
+        // A mutated payload under the same key conflicts even while pending.
+        let mut mutated = inv.clone();
+        mutated.arguments = json!({ "path": "/tmp/x", "content": "different\n" });
+        assert!(matches!(
+            store.lookup(&mutated).unwrap(),
+            IdempotencyLookup::Conflict
+        ));
+
+        std::fs::remove_dir_all(&state_dir).unwrap();
+    }
+
+    #[test]
+    fn completed_record_marks_auto_key_evidence() {
+        let state_dir = unique_state_dir("evidence");
+        let store = IdempotencyStore::new(&state_dir).unwrap();
+
+        let mut auto = invocation(None);
+        auto.idempotency_key = Some(auto_idempotency_key(&auto));
+        store.reserve(&auto, true).unwrap();
+        let result = success_result(&auto);
+        store.complete(&auto, &result, true).unwrap();
+        let paths = store
+            .record_paths(&auto, auto.idempotency_key.as_deref().unwrap())
+            .unwrap();
+        let raw = std::fs::read_to_string(&paths.completed).unwrap();
+        assert!(
+            raw.contains("\"auto_key\": true"),
+            "auto-keyed completion must record the unkeyed evidence flag: {raw}"
+        );
+
+        let mut explicit = invocation(Some("explicit-evidence"));
+        explicit.request_id = Uuid::new_v4();
+        store.reserve(&explicit, false).unwrap();
+        let result = success_result(&explicit);
+        store.complete(&explicit, &result, false).unwrap();
+        let paths = store
+            .record_paths(&explicit, explicit.idempotency_key.as_deref().unwrap())
+            .unwrap();
+        let raw = std::fs::read_to_string(&paths.completed).unwrap();
+        assert!(
+            raw.contains("\"auto_key\": false"),
+            "explicit keys must not masquerade as auto-keyed: {raw}"
+        );
+
+        std::fs::remove_dir_all(&state_dir).unwrap();
+    }
+
+    #[test]
+    fn pre_s5_records_without_evidence_flag_still_read() {
+        let state_dir = unique_state_dir("legacy");
+        let store = IdempotencyStore::new(&state_dir).unwrap();
+        let inv = invocation(Some("legacy-key"));
+
+        // Simulate a record written before S5 added `auto_key`: the flag
+        // defaults to false (explicit) and the record still reads.
+        let paths = store.record_paths(&inv, "legacy-key").unwrap();
+        let fingerprint = request_fingerprint(&inv).unwrap();
+        std::fs::write(
+            &paths.pending,
+            format!("{{\"fingerprint\": \"{fingerprint}\"}}"),
+        )
+        .unwrap();
+        assert!(matches!(
+            store.lookup(&inv).unwrap(),
+            IdempotencyLookup::Pending
+        ));
+
+        std::fs::remove_dir_all(&state_dir).unwrap();
     }
 }
