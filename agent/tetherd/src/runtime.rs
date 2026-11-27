@@ -22,7 +22,10 @@ use tether_process_provider::ProcessProvider;
 use tether_search_provider::SearchProvider;
 use tokio::sync::Mutex;
 
-use crate::audit::{AuditProvider, AuditStore};
+use crate::audit::{
+    AuditProvider, AuditStore, DegradedObservation, EvidenceContext, EvidenceDispatch,
+    EvidenceKeyScope, EvidenceObservation, EvidenceStore,
+};
 use crate::idempotency::{
     IdempotencyLookup, IdempotencyStore, auto_idempotency_key, conflict_result,
     is_mutation_capability, pending_result, store_failure_result, unavailable_result,
@@ -34,6 +37,7 @@ pub struct AgentRuntime {
     bound_principal_id: Option<String>,
     audit_store: Option<Arc<AuditStore>>,
     idempotency_store: Option<Arc<Mutex<IdempotencyStore>>>,
+    evidence_store: Option<Arc<EvidenceStore>>,
     health: Arc<CapabilityHealthTracker>,
 }
 
@@ -334,6 +338,11 @@ impl AgentRuntime {
         } else {
             None
         };
+        let evidence_store = if let Some(state_dir) = state_dir {
+            Some(Arc::new(EvidenceStore::new(state_dir)?))
+        } else {
+            None
+        };
         let mut policy_config = LocalPolicyConfig::new(allowed_roots);
         if let Some(profile) = principal {
             policy_config = policy_config.with_principal(profile);
@@ -392,14 +401,31 @@ impl AgentRuntime {
             bound_principal_id,
             audit_store,
             idempotency_store,
+            evidence_store,
             health,
         })
     }
 
-    pub async fn execute(&self, mut invocation: InvocationEnvelope) -> ResultEnvelope {
+    pub async fn execute(&self, invocation: InvocationEnvelope) -> ResultEnvelope {
+        self.execute_with_context(invocation, &EvidenceContext::unspecified())
+            .await
+    }
+
+    /// Execution with an explicit transport context for evidence. The
+    /// context only feeds the evidence record (transport, generation,
+    /// route); dispatch, policy, and results are identical to [`execute`].
+    /// Callers that own the connection lifecycle pass their context here;
+    /// [`EvidenceContext::unspecified`] records every absence as an
+    /// explicit observation gap instead of guessing.
+    pub async fn execute_with_context(
+        &self,
+        mut invocation: InvocationEnvelope,
+        context: &EvidenceContext,
+    ) -> ResultEnvelope {
         if let Some(principal_id) = &self.bound_principal_id {
             invocation.principal_id = Some(principal_id.clone());
         }
+        let started = Instant::now();
 
         // S5: every mutation executes under an idempotency key. Explicitly
         // supplied keys are preserved untouched; a mutation submitted
@@ -414,20 +440,90 @@ impl AgentRuntime {
         }
 
         let audit_invocation = invocation.clone();
-        let result = if invocation.idempotency_key.is_some()
+        let key_scope = match (
+            invocation.idempotency_key.is_some(),
+            is_mutation_capability(&invocation.capability),
+            auto_key,
+        ) {
+            (false, _, _) => None,
+            (true, false, _) => Some(EvidenceKeyScope::Ignored),
+            (true, true, true) => Some(EvidenceKeyScope::Auto),
+            (true, true, false) => Some(EvidenceKeyScope::Explicit),
+        };
+        let (result, dispatch) = if invocation.idempotency_key.is_some()
             && is_mutation_capability(&invocation.capability)
         {
             self.execute_idempotent(invocation, auto_key).await
         } else {
-            self.execute_and_track(invocation).await
+            (
+                self.execute_and_track(invocation).await,
+                EvidenceDispatch::Direct,
+            )
         };
 
-        if let Some(audit_store) = &self.audit_store
-            && let Err(error) = audit_store.append(&audit_invocation, &result)
-        {
-            eprintln!("audit append failed: {}", error.message);
+        // Degraded health is attached only to paths that actually executed:
+        // replay/conflict/store verdicts describe the store, never the
+        // provider, and must not borrow an earlier execution's health.
+        let degraded = match dispatch {
+            EvidenceDispatch::Executed
+            | EvidenceDispatch::Direct
+            | EvidenceDispatch::DirectUntracked => {
+                self.observed_degraded(&audit_invocation.capability)
+            }
+            EvidenceDispatch::Replayed
+            | EvidenceDispatch::Conflict
+            | EvidenceDispatch::Pending
+            | EvidenceDispatch::StoreUnavailable
+            | EvidenceDispatch::StoreFailure => None,
+        };
+
+        let audit_event_id = if let Some(audit_store) = &self.audit_store {
+            match audit_store.append(&audit_invocation, &result) {
+                Ok(event_id) => Some(event_id),
+                Err(error) => {
+                    eprintln!("audit append failed: {}", error.message);
+                    None
+                }
+            }
+        } else {
+            None
+        };
+        if let Some(evidence_store) = &self.evidence_store {
+            let observation = EvidenceObservation {
+                invocation: &audit_invocation,
+                result: &result,
+                context,
+                dispatch,
+                key_scope,
+                duration_ms: u64::try_from(started.elapsed().as_millis()).unwrap_or(u64::MAX),
+                audit_event_id: audit_event_id.as_deref(),
+                degraded,
+            };
+            if let Err(error) = evidence_store.append(&observation) {
+                eprintln!("evidence append failed: {}", error.message);
+            }
         }
         result
+    }
+
+    fn observed_degraded(&self, capability: &str) -> Option<DegradedObservation> {
+        let namespace = capability.split_once('.').map(|(namespace, _)| namespace)?;
+        let tracked = self.health.get(namespace)?;
+        if tracked.state == CapabilityState::Ready {
+            return None;
+        }
+        let state = match tracked.state {
+            CapabilityState::Ready => "ready",
+            CapabilityState::Degraded => "degraded",
+            CapabilityState::Disconnected => "disconnected",
+            CapabilityState::Unauthorized => "unauthorized",
+            CapabilityState::Recovering => "recovering",
+        }
+        .to_owned();
+        Some(DegradedObservation {
+            state,
+            reason: tracked.reason,
+        })
     }
 
     /// Router-level execution with health tracking. Outcomes are
@@ -445,7 +541,7 @@ impl AgentRuntime {
         &self,
         invocation: InvocationEnvelope,
         auto_key: bool,
-    ) -> ResultEnvelope {
+    ) -> (ResultEnvelope, EvidenceDispatch) {
         let Some(store) = &self.idempotency_store else {
             // Without a state directory there is no durable store. An
             // explicitly supplied key promises durable deduplication that
@@ -453,28 +549,45 @@ impl AgentRuntime {
             // best-effort request dedupe, so execute directly to preserve
             // pre-S5 behavior for stateless operation.
             if auto_key {
-                return self.execute_and_track(invocation).await;
+                let result = self.execute_and_track(invocation).await;
+                return (result, EvidenceDispatch::DirectUntracked);
             }
-            return unavailable_result(&invocation);
+            return (
+                unavailable_result(&invocation),
+                EvidenceDispatch::StoreUnavailable,
+            );
         };
         let guard = store.lock().await;
 
         match guard.lookup(&invocation) {
-            Ok(IdempotencyLookup::Replay(result)) => *result,
-            Ok(IdempotencyLookup::Conflict) => conflict_result(&invocation),
-            Ok(IdempotencyLookup::Pending) => pending_result(&invocation),
+            Ok(IdempotencyLookup::Replay(result)) => (*result, EvidenceDispatch::Replayed),
+            Ok(IdempotencyLookup::Conflict) => {
+                (conflict_result(&invocation), EvidenceDispatch::Conflict)
+            }
+            Ok(IdempotencyLookup::Pending) => {
+                (pending_result(&invocation), EvidenceDispatch::Pending)
+            }
             Ok(IdempotencyLookup::Miss) => {
                 if let Err(error) = guard.reserve(&invocation, auto_key) {
-                    return store_failure_result(&invocation, error);
+                    return (
+                        store_failure_result(&invocation, error),
+                        EvidenceDispatch::StoreFailure,
+                    );
                 }
 
                 let result = self.execute_and_track(invocation.clone()).await;
                 if let Err(error) = guard.complete(&invocation, &result, auto_key) {
-                    return store_failure_result(&invocation, error);
+                    return (
+                        store_failure_result(&invocation, error),
+                        EvidenceDispatch::StoreFailure,
+                    );
                 }
-                result
+                (result, EvidenceDispatch::Executed)
             }
-            Err(error) => store_failure_result(&invocation, error),
+            Err(error) => (
+                store_failure_result(&invocation, error),
+                EvidenceDispatch::StoreFailure,
+            ),
         }
     }
 }
@@ -1291,5 +1404,244 @@ mod tests {
         );
         let second = tracker.get("browser").expect("tracked").observed_at_ms;
         assert!(second >= first);
+    }
+
+    fn evidence_test_invocation(
+        capability: &str,
+        arguments: Value,
+        key: Option<&str>,
+    ) -> InvocationEnvelope {
+        use tether_core::{Actor, ActorKind, ResponseMode};
+
+        InvocationEnvelope {
+            protocol_version: "1.0".into(),
+            request_id: uuid::Uuid::new_v4(),
+            device_id: Some("Leno".into()),
+            principal_id: None,
+            job_id: None,
+            capability: capability.into(),
+            arguments,
+            actor: Actor {
+                id: "evidence-runtime-test".into(),
+                kind: ActorKind::AiClient,
+            },
+            session_id: None,
+            response_mode: ResponseMode::Compact,
+            idempotency_key: key.map(str::to_owned),
+            preconditions: vec![],
+            expectations: vec![],
+        }
+    }
+
+    fn evidence_test_runtime() -> (AgentRuntime, PathBuf, PathBuf) {
+        let root = std::env::temp_dir().join(format!(
+            "tetherplane-evidence-runtime-{}-{}",
+            std::process::id(),
+            uuid::Uuid::new_v4().as_simple()
+        ));
+        let sandbox = root.join("sandbox");
+        let state_dir = root.join("state");
+        std::fs::create_dir_all(&sandbox).unwrap();
+        let runtime =
+            AgentRuntime::new(vec![sandbox.clone()], None, Some(&state_dir), None).unwrap();
+        (runtime, state_dir, sandbox)
+    }
+
+    fn evidence_records(state_dir: &Path) -> Vec<Value> {
+        let raw =
+            std::fs::read_to_string(state_dir.join("evidence").join("evidence.jsonl")).unwrap();
+        raw.lines()
+            .filter(|line| !line.trim().is_empty())
+            .map(|line| serde_json::from_str::<Value>(line).unwrap())
+            .collect()
+    }
+
+    #[tokio::test]
+    async fn runtime_emits_evidence_post_policy_for_success_and_denial() {
+        let (runtime, state_dir, sandbox) = evidence_test_runtime();
+
+        let success = runtime
+            .execute(evidence_test_invocation("device.status", json!({}), None))
+            .await;
+        assert_eq!(success.status, ResultStatus::Success);
+
+        let outside = std::env::temp_dir().join(format!(
+            "tetherplane-evidence-outside-{}",
+            uuid::Uuid::new_v4().as_simple()
+        ));
+        let denied = runtime
+            .execute(evidence_test_invocation(
+                "filesystem.append",
+                json!({ "path": outside, "content": "no\n" }),
+                Some("runtime-deny-1"),
+            ))
+            .await;
+        assert_eq!(denied.status, ResultStatus::Error);
+        assert_eq!(
+            denied.error.as_ref().expect("denial error").code,
+            ErrorCode::PermissionDenied
+        );
+
+        let records = evidence_records(&state_dir);
+        assert_eq!(records.len(), 2);
+        let status_record = records
+            .iter()
+            .find(|record| record["execution"]["capability"] == "device.status")
+            .expect("success evidence");
+        assert_eq!(status_record["outcome"]["status"], "success");
+        assert_eq!(status_record["outcome"]["policy_decision"], "allow");
+        assert_eq!(status_record["authorization"]["scope"], "launch-ceiling");
+        assert!(status_record["outcome"]["duration_ms"].is_number());
+
+        let denied_record = records
+            .iter()
+            .find(|record| record["execution"]["capability"] == "filesystem.append")
+            .expect("denial evidence");
+        assert_eq!(denied_record["outcome"]["status"], "error");
+        assert_eq!(denied_record["outcome"]["error_code"], "permission_denied");
+        assert_eq!(denied_record["outcome"]["policy_decision"], "deny");
+        assert_eq!(denied_record["authorization"]["decision"], "deny");
+
+        std::fs::remove_dir_all(state_dir.parent().unwrap()).unwrap();
+        let _ = sandbox;
+    }
+
+    #[tokio::test]
+    async fn runtime_evidence_marks_replay_conflict_and_uncertain() {
+        let (runtime, state_dir, sandbox) = evidence_test_runtime();
+        let target = sandbox.join("replay.txt");
+
+        let first_id = {
+            let mut invocation = evidence_test_invocation(
+                "filesystem.append",
+                json!({ "path": target, "content": "once\n" }),
+                Some("runtime-replay-1"),
+            );
+            let request_id = invocation.request_id;
+            let result = runtime.execute(invocation.clone()).await;
+            assert_eq!(result.status, ResultStatus::Success);
+
+            invocation.request_id = uuid::Uuid::new_v4();
+            let replayed = runtime.execute(invocation).await;
+            assert_eq!(replayed.status, ResultStatus::Success);
+            request_id
+        };
+        assert_eq!(std::fs::read_to_string(&target).unwrap(), "once\n");
+
+        let mut mutated = evidence_test_invocation(
+            "filesystem.append",
+            json!({ "path": target, "content": "mutated\n" }),
+            Some("runtime-replay-1"),
+        );
+        mutated.request_id = uuid::Uuid::new_v4();
+        let conflict = runtime.execute(mutated).await;
+        assert_eq!(conflict.status, ResultStatus::Error);
+
+        // An uncertain outcome: reserve without completing, then submit
+        // the same key. The runtime must report action_unverified and
+        // evidence it as uncertain — never replay or re-execute.
+        let mut uncertain_invocation = evidence_test_invocation(
+            "filesystem.append",
+            json!({ "path": target, "content": "uncertain\n" }),
+            Some("runtime-pending-1"),
+        );
+        uncertain_invocation.request_id = uuid::Uuid::new_v4();
+        runtime
+            .idempotency_store
+            .as_ref()
+            .expect("state dir store")
+            .lock()
+            .await
+            .reserve(&uncertain_invocation, false)
+            .unwrap();
+        let uncertain = runtime.execute(uncertain_invocation).await;
+        assert_eq!(uncertain.status, ResultStatus::Error);
+        assert_eq!(
+            uncertain.error.as_ref().expect("uncertain error").code,
+            ErrorCode::ActionUnverified
+        );
+
+        let records = evidence_records(&state_dir);
+        let handling = |request_id: &uuid::Uuid| {
+            records
+                .iter()
+                .find(|record| record["execution"]["request_id"] == request_id.to_string())
+                .unwrap_or_else(|| panic!("evidence for {request_id}"))["outcome"]
+                .clone()
+        };
+        assert_eq!(handling(&first_id)["duplicate_handling"], "none");
+        let replayed_outcome = records
+            .iter()
+            .filter(|record| record["outcome"]["duplicate_handling"] == "replayed")
+            .count();
+        assert_eq!(replayed_outcome, 1);
+        let conflict_outcome = records
+            .iter()
+            .filter(|record| record["outcome"]["duplicate_handling"] == "conflict")
+            .count();
+        assert_eq!(conflict_outcome, 1);
+        let uncertain_record = records
+            .iter()
+            .find(|record| record["outcome"]["uncertain"] == true)
+            .expect("uncertain evidence");
+        assert_eq!(
+            uncertain_record["outcome"]["error_code"],
+            "action_unverified"
+        );
+        assert_eq!(
+            uncertain_record["outcome"]["duplicate_handling"],
+            "uncertain"
+        );
+
+        std::fs::remove_dir_all(state_dir.parent().unwrap()).unwrap();
+    }
+
+    #[tokio::test]
+    async fn runtime_evidence_honors_supplied_generation_and_supersedes() {
+        use crate::audit::EvidenceContext;
+
+        let (runtime, state_dir, _sandbox) = evidence_test_runtime();
+        let first_context = EvidenceContext {
+            transport: Some("relay-ws".to_owned()),
+            generation: Some("runtime-gen-a".to_owned()),
+            route_id: Some("route-a".to_owned()),
+        };
+        let first = runtime
+            .execute_with_context(
+                evidence_test_invocation("device.status", json!({}), None),
+                &first_context,
+            )
+            .await;
+        assert_eq!(first.status, ResultStatus::Success);
+
+        let second_context = EvidenceContext {
+            transport: Some("relay-ws".to_owned()),
+            generation: Some("runtime-gen-b".to_owned()),
+            route_id: Some("route-b".to_owned()),
+        };
+        let second = runtime
+            .execute_with_context(
+                evidence_test_invocation("device.status", json!({}), None),
+                &second_context,
+            )
+            .await;
+        assert_eq!(second.status, ResultStatus::Success);
+
+        let records = evidence_records(&state_dir);
+        assert_eq!(records.len(), 2);
+        assert_eq!(records[0]["connection"]["generation"], "runtime-gen-a");
+        assert_eq!(records[1]["connection"]["generation"], "runtime-gen-b");
+        let generations =
+            std::fs::read_to_string(state_dir.join("evidence").join("generations.json")).unwrap();
+        let generations: Value = serde_json::from_str(&generations).unwrap();
+        assert_eq!(generations["current_generation"], "runtime-gen-b");
+        assert!(
+            generations["superseded"]
+                .as_array()
+                .unwrap()
+                .contains(&Value::String("runtime-gen-a".to_owned()))
+        );
+
+        std::fs::remove_dir_all(state_dir.parent().unwrap()).unwrap();
     }
 }

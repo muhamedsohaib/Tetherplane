@@ -312,7 +312,9 @@ pub fn unavailable_result(invocation: &InvocationEnvelope) -> ResultEnvelope {
     )
 }
 
-fn request_fingerprint(invocation: &InvocationEnvelope) -> Result<String, CapabilityError> {
+pub(crate) fn request_fingerprint(
+    invocation: &InvocationEnvelope,
+) -> Result<String, CapabilityError> {
     let bytes = serde_json::to_vec(&json!({
         "job_id": invocation.job_id,
         "session_id": invocation.session_id,
