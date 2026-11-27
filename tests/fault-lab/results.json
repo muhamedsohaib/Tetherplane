@@ -1,0 +1,50 @@
+{
+  "at": "2026-11-27T09:32:09.285Z",
+  "seeds": 1,
+  "platform": "linux",
+  "note": "Linux simulation only; Windows lock/sleep/foreground NOT certified (see docs/WINDOWS_ACCEPTANCE_PLAN.md)",
+  "results": [
+    {
+      "seed": 0,
+      "row": 1,
+      "name": "relay kill/restart + no replay (router oracle)",
+      "status": "pass",
+      "ms": 288,
+      "tail": "✔ router injects authenticated provenance and correlates concurrent results (4.466112ms)\n✔ cross-account and unknown-device routing fail closed without touching a device (0.52401ms)\n✔ disconnect fails the in-flight call and reconnect never replays it (26.259728ms)\nℹ tests 3\nℹ suites 0\nℹ pass 3\nℹ fail 0\nℹ cancelled 0\nℹ skipped 0\nℹ todo 0\nℹ duration_ms 212.546788\n"
+    },
+    {
+      "seed": 0,
+      "row": 6,
+      "name": "stale generation dropped (router oracle)",
+      "status": "covered-by-row-1"
+    },
+    {
+      "seed": 0,
+      "row": 8,
+      "name": "delayed ack / timeout no double-resolve (router oracle)",
+      "status": "covered-by-row-1"
+    },
+    {
+      "seed": 0,
+      "row": 5,
+      "name": "revoked/expired auth denied (device-ws oracle)",
+      "status": "pass",
+      "ms": 330,
+      "tail": "✔ paired device authenticates over websocket and carries routed canonical RPC (30.246386ms)\n✔ wrong device credential is rejected before router presence (4.852068ms)\n✔ gateway can disconnect a revoked live device (4.925336ms)\nℹ tests 3\nℹ suites 0\nℹ pass 3\nℹ fail 0\nℹ cancelled 0\nℹ skipped 0\nℹ todo 0\nℹ duration_ms 268.901415\n"
+    },
+    {
+      "seed": 0,
+      "row": 2,
+      "name": "half-open blackhole bounded detection",
+      "status": "known-fail-on-main",
+      "reason": "agent/tetherd/src/relay_ws.rs has no heartbeat on main (RC-1); fixed by Spark S1+S2"
+    },
+    {
+      "seed": 0,
+      "row": 9,
+      "name": "provider kill -> truthful per-capability state",
+      "status": "known-fail-on-main",
+      "reason": "capability available is a startup snapshot (RC-3); fixed by Spark S3"
+    }
+  ]
+}
