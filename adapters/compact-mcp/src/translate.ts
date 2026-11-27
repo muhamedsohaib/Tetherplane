@@ -74,6 +74,11 @@ function canonicalCapability(
     }
   }
 
+  // Compatibility belongs at the adapter boundary, before policy checks.
+  if (tool === "browser" && operation === "list_tabs") {
+    return "browser.pages";
+  }
+
   return `${tool}.${operation}`;
 }
 

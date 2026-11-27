@@ -549,9 +549,15 @@ test("global controls, emergency access revocation, operator identity scoping, a
       socket1.once("open", resolve);
       socket1.once("error", reject);
     });
+    let holdOperatorAck = true;
+    let pendingOperatorRevision: number | undefined;
     socket1.on("message", (raw) => {
       const msg = JSON.parse(String(raw)) as Record<string, any>;
       if (msg.type === "policy_sync") {
+        if (holdOperatorAck) {
+          pendingOperatorRevision = msg.policy.revision as number;
+          return;
+        }
         socket1.send(
           JSON.stringify({
             type: "policy_ack",
@@ -602,8 +608,12 @@ test("global controls, emergency access revocation, operator identity scoping, a
     );
     assert.equal(opConfig.status, 200);
 
-    // Operator can call filesystem.read
-    const opRead = await relay.router.call(
+    // A portal HTTP success only commits desired authority. Until the
+    // current connection acknowledges it, a newly granted operation
+    // must not be forwarded.
+    const revision = await until(() => pendingOperatorRevision ?? null);
+    assert.ok(revision >= 2);
+    const opReadPending = await relay.router.call(
       {
         accountId: "account-a",
         clientId: "assistant-client-a",
@@ -623,6 +633,26 @@ test("global controls, emergency access revocation, operator identity scoping, a
         idempotency_key: null,
         preconditions: [],
         expectations: [],
+      },
+    );
+    assert.equal(opReadPending.status, "error");
+    assert.match(opReadPending.error?.message ?? "", /sync pending/i);
+    holdOperatorAck = false;
+    socket1.send(JSON.stringify({
+      type: "policy_ack", deviceId: "Leno", revision, applied: true,
+      appliedAtMs: Date.now(),
+    }));
+    await waitForDevice(address.httpUrl,
+      (d) => d.confirmedByDevice === true && d.appliedRevision === revision,
+      "operator grant acknowledged by current device");
+    const opRead = await relay.router.call(
+      { accountId: "account-a", clientId: "assistant-client-a", principalId: "operator:assistant-a" },
+      {
+        protocol_version: "1.0", request_id: "req-op-read-after-ack",
+        principal_id: null, device_id: "Leno", job_id: null,
+        capability: "filesystem.read", arguments: { path: "/tmp/readme.txt" },
+        actor: { id: "assistant", kind: "ai_client" }, session_id: null,
+        response_mode: "compact", idempotency_key: null, preconditions: [], expectations: [],
       },
     );
     assert.equal(opRead.status, "success");

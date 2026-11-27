@@ -9,7 +9,6 @@ import {
 import type { DeviceBinding, DeviceRegistry } from "../devices/registry.ts";
 import {
   SerializedJsonFileWriter,
-  errorCodeOf,
   type PersistFileOps,
 } from "../persistence/atomic-json.ts";
 
@@ -465,6 +464,70 @@ export class PolicyStore {
     appliedRevision: number | null;
   } | null) | null = null;
   readonly #writer: SerializedJsonFileWriter | null;
+  // One writer for the existing multi-principal authority store.
+  // Control messages queue behind mutations, so a reconnect cannot
+  // synchronize a revision before its storage operation completes.
+  #stateTail: Promise<void> = Promise.resolve();
+  #authorityPending = 0;
+  #authorityBefore: PersistedPolicyState | null = null;
+
+  isAuthorityChangePending(): boolean {
+    return this.#authorityPending > 0;
+  }
+
+  #captureState(): PersistedPolicyState {
+    return structuredClone({
+      version: 1,
+      records: [...this.#records.values()],
+      snapshots: this.#snapshots,
+      auditHistory: this.#auditHistory,
+      identityUsage: [...this.#identityUsage.values()],
+      operators: [...this.#operators.values()],
+    });
+  }
+
+  #restoreState(before: PersistedPolicyState): void {
+    const originalRecords = new Map(this.#records);
+    this.#records.clear();
+    for (const saved of before.records) {
+      const record = originalRecords.get(saved.policy.device_id);
+      if (record) Object.assign(record, saved);
+      this.#records.set(saved.policy.device_id, record ?? saved);
+    }
+    this.#snapshots.splice(0, this.#snapshots.length, ...before.snapshots);
+    this.#auditHistory.splice(0, this.#auditHistory.length, ...before.auditHistory);
+    this.#identityUsage.clear();
+    for (const usage of before.identityUsage) {
+      this.#identityUsage.set(`${usage.accountId}::${usage.principalId}::${usage.deviceId}`, usage);
+    }
+    this.#operators.clear();
+    for (const operator of before.operators) {
+      this.#operators.set(`${operator.accountId}::${operator.principalId}`, operator);
+    }
+  }
+
+  #stateWrite<T>(task: () => Promise<T>, authority = false): Promise<T> {
+    if (authority) this.#authorityPending += 1;
+    const run = this.#stateTail.then(async () => {
+      const before = authority ? this.#captureState() : null;
+      if (before) this.#authorityBefore = before;
+      try {
+        return await task();
+      } catch (error) {
+        // Only roll back a transaction that has not crossed its commit
+        // point. A delivery failure cannot undo a committed revision.
+        if (before && this.#authorityBefore === before) this.#restoreState(before);
+        throw error;
+      } finally {
+        if (before) this.#authorityBefore = null;
+      }
+    });
+    const finished = run.finally(() => {
+      if (authority) this.#authorityPending -= 1;
+    });
+    this.#stateTail = finished.then(() => {}, () => {});
+    return finished;
+  }
 
   private constructor(options: {
     registry: DeviceRegistry;
@@ -544,6 +607,23 @@ export class PolicyStore {
     owner?: string | ClientIdentity,
   ): Promise<DevicePolicyRecord> {
     const existing = this.#records.get(binding.deviceId);
+    if (!this.isAuthorityChangePending() && existing &&
+        existing.policy.owner_account_id === binding.accountId) return existing;
+    return this.#stateWrite(async () => {
+      const current = this.#records.get(binding.deviceId);
+      if (current && current.policy.owner_account_id === binding.accountId) return current;
+      const record = this.#ensureDevicePolicy(binding, owner);
+      await this.#persist();
+      this.notifyChange(binding.accountId);
+      return record;
+    }, true);
+  }
+
+  #ensureDevicePolicy(
+    binding: DeviceBinding,
+    owner?: string | ClientIdentity,
+  ): DevicePolicyRecord {
+    const existing = this.#records.get(binding.deviceId);
     if (existing && existing.policy.owner_account_id === binding.accountId) {
       return existing;
     }
@@ -616,14 +696,17 @@ export class PolicyStore {
         allowedFamilies: policy.owner_policy.allowed_families,
       },
     });
-    await this.#persist();
-    this.notifyChange(binding.accountId);
     return record;
   }
 
   getRecord(deviceId: string): DevicePolicyRecord | null {
+    if (this.#authorityBefore) {
+      const committed = this.#authorityBefore.records.find((record) => record.policy.device_id === deviceId);
+      return committed ? structuredClone(committed) : null;
+    }
     const existing = this.#records.get(deviceId);
     if (existing) return existing;
+    if (this.isAuthorityChangePending()) return null;
     const binding = this.#registry.getDevice(deviceId);
     if (!binding || binding.revokedAt !== null) return null;
     const ownerPrincipal = `human:${binding.accountId}`;
@@ -660,9 +743,13 @@ export class PolicyStore {
     status?: Record<string, unknown> | null;
     capabilities?: Record<string, unknown> | null;
   }): Promise<SynchronizedDevicePolicy | null> {
+    return this.#stateWrite(() => this.#handleDeviceHello(input), false);
+  }
+
+  async #handleDeviceHello(input: Parameters<PolicyStore["handleDeviceHello"]>[0]): Promise<SynchronizedDevicePolicy | null> {
     const binding = this.#registry.getDevice(input.deviceId);
     if (!binding || binding.accountId !== input.accountId) return null;
-    const record = await this.ensureDevicePolicy(binding);
+    const record = this.#ensureDevicePolicy(binding);
     if (input.status) {
       record.status = input.status;
     }
@@ -729,6 +816,10 @@ export class PolicyStore {
     capabilities?: Record<string, unknown> | null;
     error?: string | null;
   }): Promise<void> {
+    return this.#stateWrite(() => this.#handlePolicyAck(input), false);
+  }
+
+  async #handlePolicyAck(input: Parameters<PolicyStore["handlePolicyAck"]>[0]): Promise<void> {
     const record = this.getRecord(input.deviceId);
     if (!record || record.policy.owner_account_id !== input.accountId) {
       return;
@@ -796,6 +887,10 @@ export class PolicyStore {
     status?: Record<string, unknown> | null;
     capabilities?: Record<string, unknown> | null;
   }): Promise<void> {
+    return this.#stateWrite(() => this.#handleDeviceTelemetry(input), false);
+  }
+
+  async #handleDeviceTelemetry(input: Parameters<PolicyStore["handleDeviceTelemetry"]>[0]): Promise<void> {
     const record = this.getRecord(input.deviceId);
     if (!record || record.policy.owner_account_id !== input.accountId) {
       return;
@@ -821,6 +916,10 @@ export class PolicyStore {
     mutation: PolicyMutationInput;
     actionName?: string;
   }): Promise<DevicePolicyRecord> {
+    return this.#stateWrite(() => this.#updateDevicePolicy(input), true);
+  }
+
+  async #updateDevicePolicy(input: Parameters<PolicyStore["updateDevicePolicy"]>[0]): Promise<DevicePolicyRecord> {
     const binding = this.#registry.getDevice(input.deviceId);
     if (
       !binding ||
@@ -829,7 +928,7 @@ export class PolicyStore {
     ) {
       throw new Error("device is not authorized for this account");
     }
-    const record = await this.ensureDevicePolicy(binding);
+    const record = this.#ensureDevicePolicy(binding);
     const nextRevision =
       Math.max(record.desiredRevision, record.appliedRevision ?? 0) + 1;
     const now = Date.now();
@@ -880,7 +979,7 @@ export class PolicyStore {
     await this.#persist();
     this.notifyChange(input.accountId);
     await this.#pushToDeviceIfOnline(input.deviceId, nextPolicy);
-    return record;
+    return structuredClone(record);
   }
 
   async applyGlobalPolicy(input: {
@@ -921,6 +1020,10 @@ export class PolicyStore {
     deviceIds?: string[];
     mutation: PolicyMutationInput;
   }): Promise<DevicePolicyRecord[]> {
+    return this.#stateWrite(() => this.#upsertOperatorPolicy(input), true);
+  }
+
+  async #upsertOperatorPolicy(input: Parameters<PolicyStore["upsertOperatorPolicy"]>[0]): Promise<DevicePolicyRecord[]> {
     const operatorId = input.operatorPrincipalId.trim();
     if (!operatorId) {
       throw new Error("principalId is required for operator policy");
@@ -962,7 +1065,7 @@ export class PolicyStore {
     const updated: DevicePolicyRecord[] = [];
     for (const binding of paired) {
       if (!targetIds.has(binding.deviceId)) continue;
-      const record = await this.ensureDevicePolicy(binding);
+      const record = this.#ensureDevicePolicy(binding);
       const currentOp =
         record.policy.operator_policies[operatorId] ??
         createProfilePermissionSet(
@@ -1016,13 +1119,15 @@ export class PolicyStore {
           deniedCapabilities: nextOp.denied_capabilities,
         },
       });
-      await this.#pushToDeviceIfOnline(binding.deviceId, nextPolicy);
       updated.push(record);
     }
 
     await this.#persist();
     this.notifyChange(input.accountId);
-    return updated;
+    for (const record of updated) {
+      await this.#pushToDeviceIfOnline(record.policy.device_id, record.policy);
+    }
+    return updated.map((record) => structuredClone(record));
   }
 
   async removeOperatorPolicy(input: {
@@ -1031,6 +1136,10 @@ export class PolicyStore {
     operatorPrincipalId: string;
     reason?: string;
   }): Promise<DevicePolicyRecord[]> {
+    return this.#stateWrite(() => this.#removeOperatorPolicy(input), true);
+  }
+
+  async #removeOperatorPolicy(input: Parameters<PolicyStore["removeOperatorPolicy"]>[0]): Promise<DevicePolicyRecord[]> {
     const operatorId = input.operatorPrincipalId.trim();
     this.#operators.delete(`${input.accountId}::${operatorId}`);
     const paired = this.#registry
@@ -1040,7 +1149,7 @@ export class PolicyStore {
     let modifiedAnyDevice = false;
     const updated: DevicePolicyRecord[] = [];
     for (const binding of paired) {
-      const record = await this.ensureDevicePolicy(binding);
+      const record = this.#ensureDevicePolicy(binding);
       if (!(operatorId in record.policy.operator_policies)) continue;
       modifiedAnyDevice = true;
       const nextOperators = structuredClone(record.policy.operator_policies);
@@ -1074,7 +1183,6 @@ export class PolicyStore {
           : "device_offline",
         details: { operatorPrincipalId: operatorId },
       });
-      await this.#pushToDeviceIfOnline(binding.deviceId, nextPolicy);
       updated.push(record);
     }
     if (!modifiedAnyDevice) {
@@ -1091,7 +1199,10 @@ export class PolicyStore {
     }
     await this.#persist();
     this.notifyChange(input.accountId);
-    return updated;
+    for (const record of updated) {
+      await this.#pushToDeviceIfOnline(record.policy.device_id, record.policy);
+    }
+    return updated.map((record) => structuredClone(record));
   }
 
   async rollbackDevicePolicy(input: {
@@ -1101,6 +1212,10 @@ export class PolicyStore {
     targetRevision: number;
     reason?: string;
   }): Promise<DevicePolicyRecord> {
+    return this.#stateWrite(() => this.#rollbackDevicePolicy(input), true);
+  }
+
+  async #rollbackDevicePolicy(input: Parameters<PolicyStore["rollbackDevicePolicy"]>[0]): Promise<DevicePolicyRecord> {
     const binding = this.#registry.getDevice(input.deviceId);
     if (
       !binding ||
@@ -1121,7 +1236,7 @@ export class PolicyStore {
       );
     }
 
-    const record = await this.ensureDevicePolicy(binding);
+    const record = this.#ensureDevicePolicy(binding);
     const nextRevision =
       Math.max(record.desiredRevision, record.appliedRevision ?? 0) + 1;
     const reason =
@@ -1159,7 +1274,7 @@ export class PolicyStore {
     await this.#persist();
     this.notifyChange(input.accountId);
     await this.#pushToDeviceIfOnline(input.deviceId, restoredPolicy);
-    return record;
+    return structuredClone(record);
   }
 
   evaluateAndRecordInvocation(input: {
@@ -1172,9 +1287,14 @@ export class PolicyStore {
     message?: string;
     recoveryHint?: string;
   } {
+    if (this.isAuthorityChangePending()) {
+      return { allowed: false, denialKind: "policy_sync_pending",
+        message: "device policy sync pending while authority is being saved" };
+    }
     const record = this.getRecord(input.deviceId);
     if (!record) {
-      return { allowed: true };
+      return { allowed: false, denialKind: "device_not_authorized",
+        message: "device policy is missing" };
     }
 
     const policy = record.policy;
@@ -1402,6 +1522,7 @@ export class PolicyStore {
     const evidence = online ? this.#connectionEvidenceCallback?.(binding.deviceId) ?? null : null;
     const currentCapabilities = evidence?.capabilities ?? null;
     const confirmedByDevice =
+      !this.isAuthorityChangePending() &&
       record.appliedRevision !== null &&
       record.appliedRevision === record.desiredRevision &&
       record.lastAckError === null &&
@@ -1414,33 +1535,67 @@ export class PolicyStore {
 
     const isRecord = (value: unknown): value is Record<string, unknown> =>
       Boolean(value && typeof value === "object" && !Array.isArray(value));
+    // Architecture B S3 reports readiness per namespace instead of a
+    // boolean per tool family. Treat it as evidence, never as a grant.
+    // The freshness window is the Architecture B 30-second contract;
+    // allow at most five seconds of forward clock skew.
+    const readinessNow = Date.now();
+    const hasReadiness = (entry: Record<string, unknown>): boolean =>
+      Object.prototype.hasOwnProperty.call(entry, "state");
+    const readinessState = (entry: Record<string, unknown>): string | null => {
+      if (!hasReadiness(entry)) return null;
+      const state = entry.state;
+      const observedAt = entry.observed_at;
+      if (typeof state !== "string" ||
+          !["ready", "degraded", "disconnected", "unauthorized", "recovering"].includes(state) ||
+          typeof observedAt !== "number" || !Number.isSafeInteger(observedAt) ||
+          observedAt < readinessNow - 30_000 || observedAt > readinessNow + 5_000) {
+        return "unknown";
+      }
+      return state;
+    };
     const providerAvailability = (entry: Record<string, unknown>): boolean | null => {
-      // Explicit negative evidence wins over conflicting ready flags.
+      // Explicit negative legacy evidence still wins. A new observation
+      // cannot be promoted by legacy positive flags if it is not ready.
       if (entry.available === false || entry.provider_available === false ||
           (typeof entry.status === "string" && entry.status !== "ready")) return false;
+      const state = readinessState(entry);
+      if (state !== null) return state === "unknown" ? null : state === "ready";
       if (entry.available === true || entry.provider_available === true || entry.status === "ready") return true;
       return null;
     };
-    const rawProviders = Array.isArray(currentCapabilities?.providers)
-      ? currentCapabilities.providers.filter(isRecord)
+    const rawProviders: Record<string, unknown>[] = Array.isArray(currentCapabilities?.providers)
+      ? currentCapabilities.providers.filter(isRecord).map((entry): Record<string, unknown> => {
+          if (!hasReadiness(entry)) return entry;
+          const namespace = typeof entry.namespace === "string" ? entry.namespace : "";
+          const family = ALL_TOOL_FAMILIES.find((candidate) =>
+            CANONICAL_OPERATIONS_BY_FAMILY[candidate].some((op) => op.startsWith(namespace + ".")));
+          return { ...entry, tool_family: family };
+        })
       : [];
 
     const unavailableCapabilities = rawProviders
-      .filter((p) => providerAvailability(p) === false)
-      .map((p) => ({
-        name: String(p.namespace ?? p.name ?? p.tool_family ?? "unknown"),
-        toolFamily: String(p.tool_family ?? p.namespace ?? "device"),
-        status:
-          typeof p.status === "string"
-            ? p.status
-            : p.available === false
-              ? "unavailable"
-              : "ready",
-        reason:
-          typeof p.unavailable_reason === "string"
-            ? p.unavailable_reason
-            : "Provider reported unavailable",
-      }));
+      .filter((p) => providerAvailability(p) === false ||
+        (hasReadiness(p) && providerAvailability(p) === null))
+      .map((p) => {
+        const state = readinessState(p);
+        return {
+          name: String(p.namespace ?? p.name ?? p.tool_family ?? "unknown"),
+          toolFamily: String(p.tool_family ?? p.namespace ?? "device"),
+          status: state !== null && state !== "ready"
+            ? state
+            : typeof p.status === "string" && p.status !== "ready"
+              ? p.status
+              : "unavailable",
+          reason: state === "unknown"
+            ? "Readiness observation is missing, stale, invalid or ahead of the relay clock"
+            : typeof p.reason === "string"
+              ? p.reason
+              : typeof p.unavailable_reason === "string"
+                ? p.unavailable_reason
+                : "Provider reported unavailable",
+        };
+      });
 
     const rawToolFamilies = currentCapabilities?.tool_families;
     const familySummaries = ALL_TOOL_FAMILIES.map((family) => {
@@ -1473,9 +1628,22 @@ export class PolicyStore {
         return [...new Set(names.filter((op) => canonical.has(op)))];
       };
       const familyOperations = operationList(reportedFamily?.available_operations);
-      const providerOperations = readyProviders.map((p) => operationList(p.available_operations, namespaceOf(p)));
+      const providerOperations = readyProviders.map((p) => {
+        const namespace = namespaceOf(p);
+        const legacy = operationList(p.available_operations, namespace);
+        if (!hasReadiness(p)) return legacy;
+        // S3's operation inventory is already locally filtered. An
+        // absent/malformed inventory must not inherit a broader list.
+        const observed = operationList(p.operations, namespace) ?? [];
+        return legacy === null ? observed : observed.filter((op) => legacy.includes(op));
+      });
       const hasOperationEvidence = familyOperations !== null || providerOperations.some((ops) => ops !== null);
-      const unavailableNamespaces = matchingProviders.filter((p) => providerAvailability(p) === false).map(namespaceOf).filter(Boolean);
+      const unknownReadiness = matchingProviders.some((p) =>
+        hasReadiness(p) && providerAvailability(p) === null);
+      const unavailableNamespaces = matchingProviders
+        .filter((p) => providerAvailability(p) === false ||
+          (hasReadiness(p) && providerAvailability(p) !== true))
+        .map(namespaceOf).filter(Boolean);
       const availableOperations = availabilityReported && hasOperationEvidence
         ? [...new Set(familyOperations ?? providerOperations.flatMap((ops) => ops ?? []))]
             .filter((op) => !unavailableNamespaces.some((ns) => op.startsWith(ns + ".")))
@@ -1489,7 +1657,7 @@ export class PolicyStore {
       const providerState = !online ? "offline"
         : explicitlyUnavailable ? "unavailable"
         : !availabilityReported || !hasOperationEvidence ? "unknown"
-        : availableOperations.length === 0 ? "unavailable" : "available";
+        : availableOperations.length === 0 ? (unknownReadiness ? "unknown" : "unavailable") : "available";
       const providerAvailable = providerState === "available";
       const unavailableReason = providerState === "unknown"
         ? "Current connection has not reported usable capability evidence"
@@ -1565,9 +1733,9 @@ export class PolicyStore {
       pairedAt: binding.pairedAt,
       online,
       agentHealth: !online ? "offline"
-        : unavailableCapabilities.length > 0 || familySummaries.some((f) => f.providerState === "unavailable")
+        : unavailableCapabilities.some((p) => p.status !== "unknown") || familySummaries.some((f) => f.providerState === "unavailable")
           ? "degraded"
-          : familySummaries.some((f) => f.providerState === "unknown")
+          : unavailableCapabilities.some((p) => p.status === "unknown") || familySummaries.some((f) => f.providerState === "unknown")
             ? "unknown"
             : "healthy",
       syncStatus,
@@ -1593,6 +1761,7 @@ export class PolicyStore {
   }
 
   async flush(): Promise<void> {
+    await this.#stateTail;
     await this.#writer?.flush();
   }
 
@@ -1605,7 +1774,13 @@ export class PolicyStore {
     policy: SynchronizedDevicePolicy,
   ): Promise<void> {
     if (!this.#pushPolicyCallback) return;
-    await this.#pushPolicyCallback(deviceId, policy);
+    // The desired revision is already committed. Transport failures are
+    // pending delivery, not a reason to undo persisted owner authority.
+    try {
+      await this.#pushPolicyCallback(deviceId, policy);
+    } catch {
+      // Reconnect synchronizes the stored desired revision.
+    }
   }
 
   #saveSnapshot(
@@ -1775,25 +1950,22 @@ export class PolicyStore {
   }
 
   async #persist(): Promise<void> {
-    if (!this.#writer) return;
-    try {
-      await this.#writer.write(() => {
-        const state: PersistedPolicyState = {
-          version: 1,
-          records: [...this.#records.values()],
-          snapshots: retainSnapshotsForPersistence(this.#snapshots),
-          auditHistory: this.#auditHistory.slice(-this.#maxAuditHistory),
-          identityUsage: [...this.#identityUsage.values()],
-          operators: [...this.#operators.values()],
-        };
-        return JSON.stringify(state, null, 2) + "\n";
-      });
-    } catch (error) {
-      if (errorCodeOf(error) === "ENOENT") {
-        return;
-      }
-      throw error;
+    if (this.#writer) {
+      const state: PersistedPolicyState = {
+        version: 1,
+        records: [...this.#records.values()],
+        snapshots: retainSnapshotsForPersistence(this.#snapshots),
+        auditHistory: this.#auditHistory.slice(-this.#maxAuditHistory),
+        identityUsage: [...this.#identityUsage.values()],
+        operators: [...this.#operators.values()],
+      };
+      // Capture this exact revision, not a later mutable closure.
+      const content = JSON.stringify(state, null, 2) + "\n";
+      await this.#writer.write(() => content);
     }
+    // Only a completed save (or an explicitly in-memory lab store)
+    // publishes the new authority. ENOENT is a real failure.
+    this.#authorityBefore = null;
   }
 }
 
