@@ -86,6 +86,7 @@ const MAX_POLICY_CAPABILITY_LENGTH = 256;
 export class DeviceRouter {
   readonly #registry: DeviceRegistry;
   readonly #timeoutMs: number;
+  readonly #pushTimeoutMs: number;
   readonly #connections = new Map<string, ActiveConnection>();
   readonly #pending = new Map<string, PendingRoute>();
   readonly #policies = new Map<string, DevicePolicySync>();
@@ -93,9 +94,11 @@ export class DeviceRouter {
   constructor(options: {
     registry: DeviceRegistry;
     timeoutMs?: number;
+    pushTimeoutMs?: number;
   }) {
     this.#registry = options.registry;
     this.#timeoutMs = options.timeoutMs ?? 30_000;
+    this.#pushTimeoutMs = options.pushTimeoutMs ?? 5_000;
   }
 
   connectDevice(input: {
@@ -147,29 +150,51 @@ export class DeviceRouter {
   /**
    * Owner sets desired capabilities for one device. Versions increase
    * monotonically per device; only the latest version is ever pushed,
-   * so rapid concurrent sets converge on the newest intent. Pushes to
-   * the live socket when online; offline devices receive the current
-   * desired version on their next connect.
+   * so rapid concurrent sets converge on the newest intent. Desired
+   * state persists in the registry before this resolves; a storage
+   * failure rolls the in-memory version back and throws, so the owner
+   * never sees a phantom version. Pushes to the live socket when
+   * online (bounded); offline devices receive the current desired
+   * version on their next connect.
    */
-  setDesiredPolicy(
+  async setDesiredPolicy(
     accountId: string,
     deviceId: string,
     allowedCapabilities: string[],
-  ): { version: number; pushed: boolean } {
+  ): Promise<{ version: number; pushed: boolean }> {
     const binding = this.#registry.getDevice(deviceId);
     if (!binding || binding.accountId !== accountId || binding.revokedAt !== null) {
       throw new Error("device is not available for policy sync");
     }
     const capabilities = validatePolicyCapabilities(allowedCapabilities);
     const sync = this.#policyFor(deviceId);
+    const previous = {
+      desiredVersion: sync.desiredVersion,
+      desiredCapabilities: sync.desiredCapabilities,
+    };
     sync.desiredVersion += 1;
     sync.desiredCapabilities = capabilities;
+    try {
+      await this.#registry.setDesiredPolicy(deviceId, {
+        version: sync.desiredVersion,
+        allowedCapabilities: capabilities,
+      });
+    } catch (error) {
+      sync.desiredVersion = previous.desiredVersion;
+      sync.desiredCapabilities = previous.desiredCapabilities;
+      throw error;
+    }
     const connection = this.#connections.get(deviceId);
     if (!connection) {
       return { version: sync.desiredVersion, pushed: false };
     }
-    void this.#pushPolicy(connection, sync).catch(() => undefined);
-    return { version: sync.desiredVersion, pushed: true };
+    try {
+      await this.#pushPolicy(connection, sync);
+      return { version: sync.desiredVersion, pushed: true };
+    } catch {
+      // Undelivered but stored: stays pending, re-pushed on reconnect.
+      return { version: sync.desiredVersion, pushed: false };
+    }
   }
 
   getPolicySync(
@@ -192,9 +217,12 @@ export class DeviceRouter {
   #policyFor(deviceId: string): DevicePolicySync {
     let sync = this.#policies.get(deviceId);
     if (!sync) {
+      // Lazy hydration: persisted desired survives relay restarts while
+      // acknowledgments (generation-scoped) always start over.
+      const persisted = this.#registry.getDesiredPolicy(deviceId);
       sync = {
-        desiredVersion: 0,
-        desiredCapabilities: [],
+        desiredVersion: persisted?.version ?? 0,
+        desiredCapabilities: persisted ? [...persisted.allowedCapabilities] : [],
         acknowledgedVersion: 0,
         generation: null,
         lastStatus: null,
@@ -207,20 +235,19 @@ export class DeviceRouter {
   }
 
   #syncStatus(deviceId: string, revokedAt: string | null): DevicePolicySyncStatus {
-    const sync = this.#policies.get(deviceId);
+    const sync = this.#policyFor(deviceId);
     return {
       deviceId,
       online: this.#connections.has(deviceId),
       revokedAt,
-      desiredVersion: sync?.desiredVersion ?? 0,
-      desiredCapabilities: sync?.desiredCapabilities ?? [],
-      acknowledgedVersion: sync?.acknowledgedVersion ?? 0,
-      lastStatus: sync?.lastStatus ?? null,
-      lastReason: sync?.lastReason ?? null,
-      appliedCapabilities: sync?.appliedCapabilities ?? [],
+      desiredVersion: sync.desiredVersion,
+      desiredCapabilities: [...sync.desiredCapabilities],
+      acknowledgedVersion: sync.acknowledgedVersion,
+      lastStatus: sync.lastStatus,
+      lastReason: sync.lastReason,
+      appliedCapabilities: [...sync.appliedCapabilities],
       pending:
-        (sync?.desiredVersion ?? 0) > 0 &&
-        (sync?.acknowledgedVersion ?? 0) !== (sync?.desiredVersion ?? 0),
+        sync.desiredVersion > 0 && sync.acknowledgedVersion !== sync.desiredVersion,
     };
   }
 
@@ -243,11 +270,26 @@ export class DeviceRouter {
     connection: ActiveConnection,
     sync: DevicePolicySync,
   ): Promise<void> {
-    await connection.send({
-      type: "policy",
-      version: sync.desiredVersion,
-      allowedCapabilities: [...sync.desiredCapabilities],
-    });
+    // Bounded push: a wedged socket must fail the push, never hang the
+    // owner call. Undelivered versions stay pending and re-push.
+    let timer: NodeJS.Timeout | null = null;
+    try {
+      await Promise.race([
+        connection.send({
+          type: "policy",
+          version: sync.desiredVersion,
+          allowedCapabilities: [...sync.desiredCapabilities],
+        }),
+        new Promise<never>((_, reject) => {
+          timer = setTimeout(
+            () => reject(new Error("policy push timed out")),
+            this.#pushTimeoutMs,
+          );
+        }),
+      ]);
+    } finally {
+      if (timer) clearTimeout(timer);
+    }
   }
 
   #receivePolicyAck(
@@ -297,6 +339,22 @@ export class DeviceRouter {
       );
     }
     const connection = resolved.connection;
+    // Hold while sync is pending: until the device acknowledges the
+    // current desired version, routing would execute under the wider
+    // ceiling instead of the configured restrictions.
+    const sync = this.#policies.get(connection.deviceId);
+    if (
+      sync &&
+      sync.desiredVersion > 0 &&
+      sync.acknowledgedVersion !== sync.desiredVersion
+    ) {
+      return errorResult(
+        invocation.request_id,
+        "timeout",
+        `device policy sync pending (desired v${sync.desiredVersion}); retry shortly`,
+        "retry the call after the device acknowledges the current desired version",
+      );
+    }
     const routedInvocation: InvocationEnvelope = {
       ...structuredClone(invocation),
       device_id: connection.deviceId,
@@ -520,6 +578,7 @@ function errorResult(
     | "disconnected"
     | "provider_failure",
   message: string,
+  recoveryHint: string | null = null,
 ): ResultEnvelope {
   return {
     protocol_version: "1.0",
@@ -530,7 +589,7 @@ function errorResult(
     error: {
       code,
       message,
-      recovery_hint: null,
+      recovery_hint: recoveryHint,
       details: {},
     },
     verification: "failed",

@@ -1,4 +1,7 @@
 import assert from "node:assert/strict";
+import { mkdtemp, rm, rmdir, mkdir } from "node:fs/promises";
+import os from "node:os";
+import path from "node:path";
 import test from "node:test";
 
 import type {
@@ -189,7 +192,7 @@ test("owner setDesired pushes versioned policy to the online device", async () =
   const sent: RelayToDeviceMessage[] = [];
   connectFake(router, sent);
 
-  const first = router.setDesiredPolicy("account-a", "Leno", [
+  const first = await router.setDesiredPolicy("account-a", "Leno", [
     "device.status",
   ]);
   assert.deepEqual(first, { version: 1, pushed: true });
@@ -200,7 +203,7 @@ test("owner setDesired pushes versioned policy to the online device", async () =
     allowedCapabilities: ["device.status"],
   });
 
-  const second = router.setDesiredPolicy("account-a", "Leno", [
+  const second = await router.setDesiredPolicy("account-a", "Leno", [
     "device.status",
     "browser.pages",
   ]);
@@ -215,7 +218,7 @@ test("setDesired on an offline device stores without push", async () => {
   const registry = await pairedRegistry();
   const router = new DeviceRouter({ registry, timeoutMs: 2_000 });
 
-  const set = router.setDesiredPolicy("account-a", "Leno", ["device.status"]);
+  const set = await router.setDesiredPolicy("account-a", "Leno", ["device.status"]);
   assert.deepEqual(set, { version: 1, pushed: false });
   const sync = router.getPolicySync("account-a", "Leno")!;
   assert.equal(sync.online, false);
@@ -232,7 +235,7 @@ test("applied ack converges with the applied set recorded", async () => {
   const router = new DeviceRouter({ registry, timeoutMs: 2_000 });
   const sent: RelayToDeviceMessage[] = [];
   const connection = connectFake(router, sent);
-  router.setDesiredPolicy("account-a", "Leno", ["device.status"]);
+  await router.setDesiredPolicy("account-a", "Leno", ["device.status"]);
 
   connection.receive(policyAck(1, "applied", ["device.status"]));
   const sync = router.getPolicySync("account-a", "Leno")!;
@@ -247,7 +250,7 @@ test("rejected ack converges with status and reason preserved", async () => {
   const router = new DeviceRouter({ registry, timeoutMs: 2_000 });
   const sent: RelayToDeviceMessage[] = [];
   const connection = connectFake(router, sent);
-  router.setDesiredPolicy("account-a", "Leno", ["device.status", "process.run"]);
+  await router.setDesiredPolicy("account-a", "Leno", ["device.status", "process.run"]);
 
   connection.receive(
     policyAck(1, "rejected", ["device.status"], "exceeds ceiling"),
@@ -265,8 +268,8 @@ test("stale and future acks can never regress acknowledged state", async () => {
   const router = new DeviceRouter({ registry, timeoutMs: 2_000 });
   const sent: RelayToDeviceMessage[] = [];
   const connection = connectFake(router, sent);
-  router.setDesiredPolicy("account-a", "Leno", ["device.status"]);
-  router.setDesiredPolicy("account-a", "Leno", ["device.status", "browser.pages"]);
+  await router.setDesiredPolicy("account-a", "Leno", ["device.status"]);
+  await router.setDesiredPolicy("account-a", "Leno", ["device.status", "browser.pages"]);
   connection.receive(policyAck(2, "applied", ["device.status", "browser.pages"]));
 
   connection.receive(policyAck(1, "applied", ["device.status"]));
@@ -285,7 +288,7 @@ test("reconnect resets ack state and re-pushes current desired", async () => {
   const router = new DeviceRouter({ registry, timeoutMs: 2_000 });
   const firstSent: RelayToDeviceMessage[] = [];
   const first = connectFake(router, firstSent);
-  router.setDesiredPolicy("account-a", "Leno", ["device.status"]);
+  await router.setDesiredPolicy("account-a", "Leno", ["device.status"]);
   first.receive(policyAck(1, "applied", ["device.status"]));
   assert.equal(router.getPolicySync("account-a", "Leno")!.pending, false);
   first.disconnect();
@@ -312,7 +315,7 @@ test("stale-generation ack is dropped and cannot touch live state", async () => 
   const router = new DeviceRouter({ registry, timeoutMs: 2_000 });
   const firstSent: RelayToDeviceMessage[] = [];
   const first = connectFake(router, firstSent);
-  router.setDesiredPolicy("account-a", "Leno", ["device.status"]);
+  await router.setDesiredPolicy("account-a", "Leno", ["device.status"]);
 
   const secondSent: RelayToDeviceMessage[] = [];
   connectFake(router, secondSent);
@@ -327,8 +330,8 @@ test("stale-generation ack is dropped and cannot touch live state", async () => 
 test("rapid concurrent sets deliver latest only", async () => {
   const registry = await pairedRegistry();
   const router = new DeviceRouter({ registry, timeoutMs: 2_000 });
-  router.setDesiredPolicy("account-a", "Leno", ["device.status"]);
-  router.setDesiredPolicy("account-a", "Leno", ["device.status", "browser.pages"]);
+  await router.setDesiredPolicy("account-a", "Leno", ["device.status"]);
+  await router.setDesiredPolicy("account-a", "Leno", ["device.status", "browser.pages"]);
 
   const sent: RelayToDeviceMessage[] = [];
   const connection = connectFake(router, sent);
@@ -347,17 +350,17 @@ test("rapid concurrent sets deliver latest only", async () => {
 test("policy sync fails closed on unknown, unowned, and revoked devices", async () => {
   const registry = await pairedRegistry();
   const router = new DeviceRouter({ registry, timeoutMs: 2_000 });
-  assert.throws(() =>
+  await assert.rejects(() =>
     router.setDesiredPolicy("account-a", "ghost", ["device.status"]),
   );
-  assert.throws(() =>
+  await assert.rejects(() =>
     router.setDesiredPolicy("account-b", "Leno", ["device.status"]),
   );
   assert.equal(router.getPolicySync("account-a", "ghost"), null);
   assert.equal(router.getPolicySync("account-b", "Leno"), null);
 
   await registry.revokeDevice({ accountId: "account-a", deviceId: "Leno" });
-  assert.throws(() =>
+  await assert.rejects(() =>
     router.setDesiredPolicy("account-a", "Leno", ["device.status"]),
   );
 });
@@ -373,8 +376,8 @@ test("policy sync validates capability payloads", async () => {
     ["oversized list", Array.from({ length: 1025 }, (_, index) => `cap.${index}`)],
   ];
   for (const [name, caps] of cases) {
-    assert.throws(
-      () => router.setDesiredPolicy("account-a", "Leno", caps as string[]),
+    await assert.rejects(
+      router.setDesiredPolicy("account-a", "Leno", caps as string[]),
       /allowedCapabilities/,
       `${name} must be rejected with a validation error`,
     );
@@ -386,7 +389,7 @@ test("policy fleet overview covers offline and unconfigured devices", async () =
   const router = new DeviceRouter({ registry, timeoutMs: 2_000 });
   const sent: RelayToDeviceMessage[] = [];
   connectFake(router, sent);
-  router.setDesiredPolicy("account-a", "Leno", ["device.status"]);
+  await router.setDesiredPolicy("account-a", "Leno", ["device.status"]);
 
   const fleet = router.listPolicySync("account-a");
   assert.equal(fleet.length, 1);
@@ -394,6 +397,160 @@ test("policy fleet overview covers offline and unconfigured devices", async () =
   assert.equal(fleet[0]?.online, true);
   assert.equal(fleet[0]?.pending, true);
   assert.deepEqual(router.listPolicySync("account-b"), []);
+});
+
+// ---- S4 closure: persistence, hold-while-pending, storage failure ----
+
+test("desired policy survives relay restart and re-pushes on reconnect", async () => {
+  const dir = await mkdtemp(path.join(os.tmpdir(), "tether-policy-restart-"));
+  try {
+    const stateFile = path.join(dir, "devices.json");
+    const registry1 = await DeviceRegistry.open({ stateFile });
+    const pending = await registry1.startPairing({
+      deviceId: "Leno",
+      credentialHash: hashDeviceCredential("device-secret-for-restart-test"),
+    });
+    await registry1.approvePairing({ accountId: "account-a", userCode: pending.userCode });
+    const router1 = new DeviceRouter({ registry: registry1, timeoutMs: 2_000 });
+    const sent1: RelayToDeviceMessage[] = [];
+    const first = router1.connectDevice({
+      accountId: "account-a",
+      deviceId: "Leno",
+      send: async (message) => {
+        sent1.push(message);
+      },
+    });
+    await router1.setDesiredPolicy("account-a", "Leno", ["device.status"]);
+    first.receive(policyAck(1, "applied", ["device.status"]));
+    assert.equal(router1.getPolicySync("account-a", "Leno")!.pending, false);
+
+    // Simulate a relay restart: fresh registry reloaded from the same
+    // file plus a fresh router. Desired persists; acks do not.
+    const registry2 = await DeviceRegistry.open({ stateFile });
+    const router2 = new DeviceRouter({ registry: registry2, timeoutMs: 2_000 });
+    const restored = router2.getPolicySync("account-a", "Leno")!;
+    assert.equal(restored.desiredVersion, 1);
+    assert.deepEqual(restored.desiredCapabilities, ["device.status"]);
+    assert.equal(restored.acknowledgedVersion, 0);
+    assert.equal(restored.online, false);
+    assert.equal(restored.pending, true);
+
+    const sent2: RelayToDeviceMessage[] = [];
+    const second = router2.connectDevice({
+      accountId: "account-a",
+      deviceId: "Leno",
+      send: async (message) => {
+        sent2.push(message);
+      },
+    });
+    assert.equal(sent2.length, 1);
+    assert.deepEqual(sent2[0], {
+      type: "policy",
+      version: 1,
+      allowedCapabilities: ["device.status"],
+    });
+    second.receive(policyAck(1, "applied", ["device.status"]));
+    assert.equal(router2.getPolicySync("account-a", "Leno")!.pending, false);
+  } finally {
+    await rm(dir, { recursive: true, force: true });
+  }
+});
+
+test("routing holds while sync pending and resumes after ack", async () => {
+  const registry = await pairedRegistry();
+  const router = new DeviceRouter({ registry, timeoutMs: 2_000 });
+  const sent: RelayToDeviceMessage[] = [];
+  const connection = connectFake(router, sent);
+  await router.setDesiredPolicy("account-a", "Leno", ["device.status"]);
+
+  const held = router.call(identityA, invocation("req-held", "device.status", "Leno"));
+  const heldResult = await held;
+  assert.equal(heldResult.status, "error");
+  assert.equal(heldResult.error?.code, "timeout");
+  assert.match(heldResult.error?.message ?? "", /sync pending/);
+  assert.equal(
+    sent.filter((message) => message.type === "invoke").length,
+    0,
+    "held call must never be routed to the device",
+  );
+
+  connection.receive(policyAck(1, "applied", ["device.status"]));
+  const released = router.call(identityA, invocation("req-free", "device.status", "Leno"));
+  await until(() => sent.some((message) => message.type === "invoke"));
+  const invoke = sent.find((message) => message.type === "invoke")!;
+  connection.receive(resultMessage(invoke, success(invocation("req-free", "device.status", "Leno"), {})));
+  assert.equal((await released).status, "success");
+});
+
+test("failed push reports unpushed and reconnect recovers", async () => {
+  const registry = await pairedRegistry();
+  const router = new DeviceRouter({ registry, timeoutMs: 2_000 });
+  router.connectDevice({
+    accountId: "account-a",
+    deviceId: "Leno",
+    send: async () => {
+      throw new Error("socket dead");
+    },
+  });
+  const set = await router.setDesiredPolicy("account-a", "Leno", ["device.status"]);
+  assert.deepEqual(set, { version: 1, pushed: false });
+  assert.equal(router.getPolicySync("account-a", "Leno")!.pending, true);
+
+  const sent: RelayToDeviceMessage[] = [];
+  const connection = connectFake(router, sent);
+  assert.equal(sent.length, 1);
+  assert.equal(sent[0]?.type, "policy");
+  connection.receive(policyAck(1, "applied", ["device.status"]));
+  assert.equal(router.getPolicySync("account-a", "Leno")!.pending, false);
+});
+
+test("missing configuration is distinct from converged-open", async () => {
+  const registry = await pairedRegistry();
+  const router = new DeviceRouter({ registry, timeoutMs: 2_000 });
+  const sent: RelayToDeviceMessage[] = [];
+  const connection = connectFake(router, sent);
+
+  const missing = router.getPolicySync("account-a", "Leno")!;
+  assert.equal(missing.desiredVersion, 0);
+  assert.equal(missing.pending, false);
+  assert.equal(missing.lastStatus, null);
+
+  await router.setDesiredPolicy("account-a", "Leno", ["device.status", "browser.pages"]);
+  connection.receive(policyAck(1, "applied", ["device.status", "browser.pages"]));
+  const open = router.getPolicySync("account-a", "Leno")!;
+  assert.equal(open.desiredVersion, 1);
+  assert.equal(open.pending, false);
+  assert.equal(open.lastStatus, "applied");
+  assert.deepEqual(open.appliedCapabilities, ["device.status", "browser.pages"]);
+});
+
+test("unavailable policy storage rolls back the version", async () => {
+  const dir = await mkdtemp(path.join(os.tmpdir(), "tether-policy-broken-"));
+  try {
+    const stateFile = path.join(dir, "devices.json");
+    const registry = await DeviceRegistry.open({ stateFile });
+    const pending = await registry.startPairing({
+      deviceId: "Leno",
+      credentialHash: hashDeviceCredential("device-secret-for-broken-store"),
+    });
+    await registry.approvePairing({ accountId: "account-a", userCode: pending.userCode });
+    const router = new DeviceRouter({ registry, timeoutMs: 2_000 });
+    // Block the registry's atomic-rename temp path with a directory:
+    // persistence fails deterministically (EISDIR, even for root).
+    await mkdir(`${stateFile}.tmp-${process.pid}`);
+    try {
+      await assert.rejects(
+        router.setDesiredPolicy("account-a", "Leno", ["device.status"]),
+      );
+    } finally {
+      await rmdir(`${stateFile}.tmp-${process.pid}`);
+    }
+    const sync = router.getPolicySync("account-a", "Leno")!;
+    assert.equal(sync.desiredVersion, 0, "failed persist must roll back memory");
+    assert.equal(sync.pending, false);
+  } finally {
+    await rm(dir, { recursive: true, force: true });
+  }
 });
 
 async function pairedRegistry(): Promise<DeviceRegistry> {

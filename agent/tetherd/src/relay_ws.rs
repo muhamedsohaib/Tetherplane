@@ -6,7 +6,7 @@ use std::time::{Duration, Instant};
 
 use futures_util::{Sink, SinkExt, Stream, StreamExt};
 use serde::{Deserialize, Serialize};
-use serde_json::json;
+use serde_json::{Value, json};
 use tether_core::{
     AckStatus, CapabilityError, DesiredPolicy, EffectivePolicy, ErrorCode, InvocationEnvelope,
     PolicyAcknowledgment, PrincipalProfile, ResultEnvelope, ResultStatus, Timing,
@@ -302,7 +302,7 @@ async fn handle_inbound(
 ) -> (String, ResultEnvelope) {
     let result = if invocation.device_id.as_deref() != Some(device_id) {
         wrong_device_result(&invocation, device_id)
-    } else if let Some(reason) = effective.check(&invocation.capability) {
+    } else if let Some(reason) = check_effective(effective, &invocation) {
         sync_denied_result(&invocation, &reason)
     } else {
         runtime.execute(invocation).await
@@ -585,6 +585,75 @@ fn classify_connect_error(error: &WebSocketError) -> RelayFailure {
         ));
     }
     RelayFailure::Retryable(format!("relay connection failed: {error}"))
+}
+
+/// Sync gate: the invoked capability must be granted, and batch
+/// invocations additionally require every transitively nested leaf
+/// capability to be granted (whole batch denied otherwise — atomic,
+/// never partial). Malformed batch arguments pass through: the router
+/// validates strictly and rejects them itself. Unverifiable shapes
+/// (excessive nesting or breadth) are denied fail-closed as abuse.
+fn check_effective(effective: &EffectivePolicy, invocation: &InvocationEnvelope) -> Option<String> {
+    if let Some(reason) = effective.check(&invocation.capability) {
+        return Some(reason);
+    }
+    if invocation.capability != "batch.execute" {
+        return None;
+    }
+    match batch_leaf_capabilities(&invocation.arguments, 0, &mut 0) {
+        BatchExpand::Leaves(leaves) => leaves
+            .iter()
+            .find_map(|leaf| effective.check(leaf))
+            .map(|reason| format!("batch denied: {reason}")),
+        BatchExpand::Malformed => None,
+        BatchExpand::Unverifiable => {
+            Some("batch denied: nesting exceeds verification bounds".to_owned())
+        }
+    }
+}
+
+enum BatchExpand {
+    Leaves(Vec<String>),
+    Malformed,
+    Unverifiable,
+}
+
+const BATCH_EXPAND_MAX_DEPTH: usize = 8;
+const BATCH_EXPAND_MAX_LEAVES: usize = 256;
+
+fn batch_leaf_capabilities(arguments: &Value, depth: usize, total: &mut usize) -> BatchExpand {
+    if depth > BATCH_EXPAND_MAX_DEPTH {
+        return BatchExpand::Unverifiable;
+    }
+    let Some(operations) = arguments.get("operations").and_then(Value::as_array) else {
+        return BatchExpand::Malformed;
+    };
+    let mut leaves = Vec::new();
+    for operation in operations {
+        let Some(capability) = operation
+            .get("capability")
+            .and_then(Value::as_str)
+            .filter(|value| !value.is_empty())
+        else {
+            return BatchExpand::Malformed;
+        };
+        if capability == "batch.execute" {
+            let Some(nested) = operation.get("arguments") else {
+                return BatchExpand::Malformed;
+            };
+            match batch_leaf_capabilities(nested, depth + 1, total) {
+                BatchExpand::Leaves(nested_leaves) => leaves.extend(nested_leaves),
+                other => return other,
+            }
+        } else {
+            *total += 1;
+            if *total > BATCH_EXPAND_MAX_LEAVES {
+                return BatchExpand::Unverifiable;
+            }
+            leaves.push(capability.to_owned());
+        }
+    }
+    BatchExpand::Leaves(leaves)
 }
 
 fn sync_denied_result(invocation: &InvocationEnvelope, reason: &str) -> ResultEnvelope {
@@ -1569,7 +1638,11 @@ mod tests {
             principal_id: "model:owner-managed".into(),
             authentication: tether_core::PrincipalAuthentication::LocalProcessBinding,
             allowed_devices: BTreeSet::from(["device-a".into()]),
-            allowed_capabilities: BTreeSet::from(["device.status".into(), "browser.pages".into()]),
+            allowed_capabilities: BTreeSet::from([
+                "device.status".into(),
+                "browser.pages".into(),
+                "batch.execute".into(),
+            ]),
             allowed_directories: Vec::new(),
         }
     }
@@ -1990,6 +2063,234 @@ mod tests {
             );
             socket.close(None).expect("clean close");
         }
+    }
+
+    fn batch_invocation(capabilities: &[&str]) -> InvocationEnvelope {
+        let mut invocation = test_invocation("device-a");
+        invocation.capability = "batch.execute".into();
+        invocation.arguments = json!({
+            "mode": "parallel",
+            "operations": capabilities
+                .iter()
+                .map(|capability| json!({"capability": capability, "arguments": {}}))
+                .collect::<Vec<_>>(),
+        });
+        invocation
+    }
+
+    async fn run_batch_case(capabilities: &[&str]) -> serde_json::Value {
+        let (socket, mut server_rx, server_tx) = fake_pair();
+        let effective = synced_policy();
+        let runtime = test_runtime();
+        let effective_worker = Arc::clone(&effective);
+        let loop_handle = tokio::spawn(run_loop(
+            socket,
+            "device-a",
+            Duration::from_millis(20),
+            Duration::from_secs(5),
+            Duration::from_secs(10),
+            Duration::from_secs(5),
+            move |route_id: String, invocation: InvocationEnvelope| {
+                let runtime = Arc::clone(&runtime);
+                let effective_worker = Arc::clone(&effective_worker);
+                async move {
+                    handle_inbound(
+                        &runtime,
+                        "device-a",
+                        route_id,
+                        invocation,
+                        &effective_worker,
+                    )
+                    .await
+                }
+            },
+            Arc::clone(&effective),
+        ));
+        server_tx
+            .send(Ok(Message::Text(
+                policy_text(1, &["device.status", "batch.execute"]).into(),
+            )))
+            .expect("server sends policy");
+        let _ = next_text(&mut server_rx, "policy ack").await;
+        let invocation = batch_invocation(capabilities);
+        server_tx
+            .send(Ok(Message::Text(
+                invoke_text("route-batch", &invocation).into(),
+            )))
+            .expect("server sends invoke");
+        let result = next_text(&mut server_rx, "batch result").await;
+        loop_handle.abort();
+        result
+    }
+
+    #[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+    async fn batch_with_denied_leaf_denies_whole_without_partial_results() {
+        let result = run_batch_case(&["device.status", "browser.pages"]).await;
+        assert_eq!(
+            result
+                .pointer("/result/error/code")
+                .and_then(serde_json::Value::as_str),
+            Some("permission_denied"),
+            "batch with a narrowed leaf must be denied whole, saw {result}"
+        );
+        assert!(
+            result.pointer("/result/data").is_none_or(Value::is_null),
+            "denied batch must carry no partial child results, saw {result}"
+        );
+    }
+
+    #[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+    async fn batch_with_allowed_leaves_executes() {
+        let result = run_batch_case(&["device.status"]).await;
+        assert_eq!(
+            result
+                .pointer("/result/status")
+                .and_then(serde_json::Value::as_str),
+            Some("success"),
+            "fully allowed batch must execute, saw {result}"
+        );
+    }
+
+    #[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+    async fn malformed_batch_still_reaches_router_validation() {
+        let (socket, mut server_rx, server_tx) = fake_pair();
+        let effective = synced_policy();
+        let runtime = test_runtime();
+        let effective_worker = Arc::clone(&effective);
+        let loop_handle = tokio::spawn(run_loop(
+            socket,
+            "device-a",
+            Duration::from_millis(20),
+            Duration::from_secs(5),
+            Duration::from_secs(10),
+            Duration::from_secs(5),
+            move |route_id: String, invocation: InvocationEnvelope| {
+                let runtime = Arc::clone(&runtime);
+                let effective_worker = Arc::clone(&effective_worker);
+                async move {
+                    handle_inbound(
+                        &runtime,
+                        "device-a",
+                        route_id,
+                        invocation,
+                        &effective_worker,
+                    )
+                    .await
+                }
+            },
+            Arc::clone(&effective),
+        ));
+        server_tx
+            .send(Ok(Message::Text(
+                policy_text(1, &["device.status", "batch.execute"]).into(),
+            )))
+            .expect("server sends policy");
+        let _ = next_text(&mut server_rx, "policy ack").await;
+        let mut invocation = test_invocation("device-a");
+        invocation.capability = "batch.execute".into();
+        invocation.arguments = json!({"mode": "parallel"});
+        server_tx
+            .send(Ok(Message::Text(
+                invoke_text("route-batch", &invocation).into(),
+            )))
+            .expect("server sends invoke");
+        let result = next_text(&mut server_rx, "batch result").await;
+        loop_handle.abort();
+        assert_eq!(
+            result
+                .pointer("/result/error/code")
+                .and_then(serde_json::Value::as_str),
+            Some("invalid_arguments"),
+            "malformed batch must reach router validation, saw {result}"
+        );
+    }
+
+    #[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+    async fn deeply_nested_batch_is_denied_when_narrowed() {
+        let mut arguments = json!({"mode": "parallel", "operations": [{"capability": "device.status", "arguments": {}}]});
+        for _ in 0..10 {
+            arguments = json!({"mode": "parallel", "operations": [{"capability": "batch.execute", "arguments": arguments}]});
+        }
+        let (socket, mut server_rx, server_tx) = fake_pair();
+        let effective = synced_policy();
+        let runtime = test_runtime();
+        let effective_worker = Arc::clone(&effective);
+        let loop_handle = tokio::spawn(run_loop(
+            socket,
+            "device-a",
+            Duration::from_millis(20),
+            Duration::from_secs(5),
+            Duration::from_secs(10),
+            Duration::from_secs(5),
+            move |route_id: String, invocation: InvocationEnvelope| {
+                let runtime = Arc::clone(&runtime);
+                let effective_worker = Arc::clone(&effective_worker);
+                async move {
+                    handle_inbound(
+                        &runtime,
+                        "device-a",
+                        route_id,
+                        invocation,
+                        &effective_worker,
+                    )
+                    .await
+                }
+            },
+            Arc::clone(&effective),
+        ));
+        server_tx
+            .send(Ok(Message::Text(
+                policy_text(1, &["device.status", "batch.execute"]).into(),
+            )))
+            .expect("server sends policy");
+        let _ = next_text(&mut server_rx, "policy ack").await;
+        let mut invocation = test_invocation("device-a");
+        invocation.capability = "batch.execute".into();
+        invocation.arguments = arguments;
+        server_tx
+            .send(Ok(Message::Text(
+                invoke_text("route-batch", &invocation).into(),
+            )))
+            .expect("server sends invoke");
+        let result = next_text(&mut server_rx, "batch result").await;
+        loop_handle.abort();
+        assert_eq!(
+            result
+                .pointer("/result/error/code")
+                .and_then(serde_json::Value::as_str),
+            Some("permission_denied"),
+            "unverifiable nesting must be denied, saw {result}"
+        );
+    }
+
+    #[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+    async fn local_execution_ignores_sync_narrowing() {
+        // The sync gate constrains remote agency only: the same
+        // capability the gate denies remotely still executes locally
+        // under the launch-bound (open) test runtime.
+        let effective = synced_policy();
+        let ack = effective
+            .apply_desired(&tether_core::DesiredPolicy {
+                version: 1,
+                allowed_capabilities: BTreeSet::from(["device.status".to_owned()]),
+            })
+            .expect("narrowing applies");
+        assert!(matches!(ack.status, tether_core::AckStatus::Applied));
+        assert!(effective.check("browser.pages").is_some());
+        let runtime = test_runtime();
+        let mut invocation = test_invocation("device-a");
+        invocation.capability = "browser.pages".into();
+        let result = runtime.execute(invocation).await;
+        assert!(
+            matches!(
+                result.error,
+                Some(CapabilityError {
+                    code: ErrorCode::CapabilityUnavailable,
+                    ..
+                })
+            ),
+            "local path must bypass the sync gate (absent provider, not denial)"
+        );
     }
 
     #[tokio::test(flavor = "multi_thread", worker_threads = 4)]

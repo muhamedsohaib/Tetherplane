@@ -350,6 +350,42 @@ test("policy endpoints enforce ownership and validate payloads", async () => {
   }
 });
 
+test("policy set on a revoked device fails without side effects", async () => {
+  const registry = await DeviceRegistry.open();
+  await pairedDevice(registry, "Leno", "device-secret-s4-revoked", "account-a");
+  const router = new DeviceRouter({ registry });
+  const gateway = new RelayControlHttpGateway({
+    registry,
+    authenticator: auth(),
+    disconnectDevice: () => undefined,
+    router,
+  });
+  const server = createServer();
+  gateway.attach(server);
+  await listen(server);
+  const base = baseUrl(server);
+
+  try {
+    const revoked = await jsonRequest(base, "/devices/Leno/revoke", {
+      method: "POST",
+      token: "token-a",
+      body: {},
+    });
+    assert.equal(revoked.status, 200);
+    const set = await jsonRequest(base, "/devices/Leno/policy", {
+      method: "POST",
+      token: "token-a",
+      body: { allowedCapabilities: ["device.status"] },
+    });
+    assert.equal(set.status, 400);
+    const sync = router.getPolicySync("account-a", "Leno")!;
+    assert.equal(sync.desiredVersion, 0);
+  } finally {
+    gateway.close();
+    await closeServer(server);
+  }
+});
+
 function auth(): StaticClientAuthenticator {
   return new StaticClientAuthenticator([
     {

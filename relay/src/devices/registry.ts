@@ -13,6 +13,15 @@ type DeviceRecord = {
   credentialHash: string;
   pairedAt: string;
   revokedAt: string | null;
+  desired?: {
+    version: number;
+    allowedCapabilities: string[];
+  };
+};
+
+export type PersistedDesiredPolicy = {
+  version: number;
+  allowedCapabilities: string[];
 };
 
 type PendingPairing = {
@@ -153,6 +162,32 @@ export class DeviceRegistry {
     return publicBinding(record);
   }
 
+  getDesiredPolicy(deviceId: string): PersistedDesiredPolicy | null {
+    const record = this.#devices.get(deviceId);
+    if (!record?.desired) {
+      return null;
+    }
+    return {
+      version: record.desired.version,
+      allowedCapabilities: [...record.desired.allowedCapabilities],
+    };
+  }
+
+  async setDesiredPolicy(
+    deviceId: string,
+    desired: PersistedDesiredPolicy,
+  ): Promise<void> {
+    const record = this.#devices.get(deviceId);
+    if (!record) {
+      throw new Error("device is unknown");
+    }
+    record.desired = {
+      version: desired.version,
+      allowedCapabilities: [...desired.allowedCapabilities],
+    };
+    await this.#persist();
+  }
+
   getDevice(deviceId: string): DeviceBinding | null {
     const record = this.#devices.get(deviceId);
     return record ? publicBinding(record) : null;
@@ -255,7 +290,22 @@ function isDeviceRecord(value: unknown): value is DeviceRecord {
     /^[0-9a-f]{64}$/i.test(record.credentialHash) &&
     typeof record.pairedAt === "string" &&
     (record.revokedAt === null ||
-      typeof record.revokedAt === "string")
+      typeof record.revokedAt === "string") &&
+    (record.desired === undefined || isDesiredPolicy(record.desired))
+  );
+}
+
+function isDesiredPolicy(value: unknown): boolean {
+  if (!value || typeof value !== "object") return false;
+  const desired = value as Partial<PersistedDesiredPolicy>;
+  return (
+    typeof desired.version === "number" &&
+    Number.isInteger(desired.version) &&
+    desired.version > 0 &&
+    Array.isArray(desired.allowedCapabilities) &&
+    desired.allowedCapabilities.every(
+      (entry): entry is string => typeof entry === "string",
+    )
   );
 }
 

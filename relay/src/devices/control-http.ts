@@ -259,7 +259,7 @@ export class RelayControlHttpGateway {
     const body = await readObjectBody(request);
     // Payload validation errors throw and map to 400 via the outer
     // handler; the router re-checks ownership and revocation itself.
-    const result = this.#router.setDesiredPolicy(
+    const result = await this.#router.setDesiredPolicy(
       identity.accountId,
       deviceId,
       body.allowedCapabilities as string[],
