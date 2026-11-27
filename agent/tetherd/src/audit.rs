@@ -434,7 +434,7 @@ impl EvidenceStore {
             provider_failure(format!("failed to write generations state: {error}"))
         })?;
         {
-            let file = OpenOptions::new().read(true).open(&temp).map_err(|error| {
+            let file = OpenOptions::new().write(true).open(&temp).map_err(|error| {
                 provider_failure(format!("failed to reopen generations state: {error}"))
             })?;
             file.sync_all().map_err(|error| {
