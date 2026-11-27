@@ -225,3 +225,124 @@ async fn denied_principal_capability_never_reaches_provider() {
     assert_eq!(result.status, ResultStatus::Error);
     assert_eq!(calls.load(Ordering::SeqCst), 0);
 }
+
+fn synced(ceiling: &[&str]) -> tether_core::EffectivePolicy {
+    tether_core::EffectivePolicy::new(profile("model:owner-managed", ceiling, vec![]))
+}
+
+fn desired(version: u64, capabilities: &[&str]) -> tether_core::DesiredPolicy {
+    tether_core::DesiredPolicy {
+        version,
+        allowed_capabilities: capabilities.iter().map(ToString::to_string).collect(),
+    }
+}
+
+#[test]
+fn desired_narrows_within_ceiling_and_applies_monotonically() {
+    let policy = synced(&["device.status", "browser.pages", "process.run"]);
+    let ack = policy.apply_desired(&desired(1, &["device.status", "browser.pages"]));
+    let ack = ack.expect("fresh version must produce an acknowledgment");
+    assert!(matches!(ack.status, tether_core::AckStatus::Applied));
+    assert_eq!(ack.version, 1);
+    assert!(policy.check("browser.pages").is_none());
+    assert!(policy.check("process.run").is_some());
+    let (version, effective) = policy.snapshot();
+    assert_eq!(version, 1);
+    assert_eq!(
+        effective,
+        BTreeSet::from(["device.status".to_owned(), "browser.pages".to_owned()])
+    );
+}
+
+#[test]
+fn restore_within_ceiling_reapplies_previously_removed_grants() {
+    let policy = synced(&["device.status", "browser.pages"]);
+    policy
+        .apply_desired(&desired(1, &["device.status"]))
+        .expect("v1 applies");
+    assert!(policy.check("browser.pages").is_some());
+    let ack = policy
+        .apply_desired(&desired(2, &["device.status", "browser.pages"]))
+        .expect("v2 applies");
+    assert!(matches!(ack.status, tether_core::AckStatus::Applied));
+    assert!(policy.check("browser.pages").is_none());
+}
+
+#[test]
+fn exceeding_desired_is_rejected_without_state_change() {
+    let policy = synced(&["device.status"]);
+    let ack = policy
+        .apply_desired(&desired(1, &["device.status", "browser.pages"]))
+        .expect("rejection must still acknowledge");
+    assert!(matches!(ack.status, tether_core::AckStatus::Rejected));
+    assert_eq!(ack.version, 1);
+    assert!(ack.reason.as_deref().unwrap_or("").contains("ceiling"));
+    // Effective still stands at the ceiling; version did not advance.
+    let (version, effective) = policy.snapshot();
+    assert_eq!(version, 0);
+    assert_eq!(effective, BTreeSet::from(["device.status".to_owned()]));
+    assert!(policy.check("device.status").is_none());
+    assert!(policy.check("browser.pages").is_some());
+}
+
+#[test]
+fn stale_version_is_ignored_without_acknowledgment() {
+    let policy = synced(&["device.status", "browser.pages"]);
+    policy
+        .apply_desired(&desired(2, &["device.status"]))
+        .expect("v2 applies");
+    assert!(
+        policy
+            .apply_desired(&desired(1, &["device.status"]))
+            .is_none()
+    );
+    assert!(
+        policy
+            .apply_desired(&desired(2, &["device.status"]))
+            .is_none()
+    );
+    let (version, _) = policy.snapshot();
+    assert_eq!(version, 2);
+}
+
+#[test]
+fn sync_requires_a_launch_bound_ceiling() {
+    let policy = tether_core::EffectivePolicy::without_ceiling();
+    // Open agents stay open locally; the sync channel cannot author policy.
+    assert!(policy.check("browser.pages").is_none());
+    let ack = policy
+        .apply_desired(&desired(1, &["browser.pages"]))
+        .expect("refusal must still acknowledge");
+    assert!(matches!(ack.status, tether_core::AckStatus::Rejected));
+    assert!(
+        ack.reason
+            .as_deref()
+            .unwrap_or("")
+            .contains("principal profile")
+    );
+}
+
+#[test]
+fn acknowledgment_carries_version_and_standing_set() {
+    let policy = synced(&["device.status", "browser.pages"]);
+    let applied = policy
+        .apply_desired(&desired(1, &["device.status"]))
+        .expect("v1 applies");
+    assert_eq!(applied.version, 1);
+    assert_eq!(
+        applied.applied_capabilities,
+        BTreeSet::from(["device.status".to_owned()])
+    );
+    let rejected = policy
+        .apply_desired(&desired(
+            2,
+            &["device.status", "process.run", "browser.pages"],
+        ))
+        .expect("rejection acknowledges");
+    assert_eq!(rejected.version, 2);
+    assert_eq!(
+        rejected.applied_capabilities,
+        BTreeSet::from(["device.status".to_owned()]),
+        "rejection reports the standing set, not the refused one"
+    );
+}

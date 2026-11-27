@@ -74,6 +74,13 @@ function canonicalCapability(
     }
   }
 
+  // Compatibility alias (S4): models habitually ask for `list_tabs`;
+  // the canonical browser operation is `pages`. The adapter boundary
+  // is the one place aliases belong.
+  if (tool === "browser" && operation === "list_tabs") {
+    return "browser.pages";
+  }
+
   return `${tool}.${operation}`;
 }
 

@@ -1,4 +1,4 @@
-use std::collections::VecDeque;
+use std::collections::{BTreeSet, VecDeque};
 use std::future::Future;
 use std::path::Path;
 use std::sync::Arc;
@@ -8,7 +8,8 @@ use futures_util::{Sink, SinkExt, Stream, StreamExt};
 use serde::{Deserialize, Serialize};
 use serde_json::json;
 use tether_core::{
-    CapabilityError, ErrorCode, InvocationEnvelope, ResultEnvelope, ResultStatus, Timing,
+    AckStatus, CapabilityError, DesiredPolicy, EffectivePolicy, ErrorCode, InvocationEnvelope,
+    PolicyAcknowledgment, PrincipalProfile, ResultEnvelope, ResultStatus, Timing,
     VerificationStatus,
 };
 use tokio_tungstenite::connect_async;
@@ -45,6 +46,7 @@ pub(crate) struct RelayConfig {
     pub credential: String,
     pub allow_insecure_localhost: bool,
     pub reconnect_delay: Duration,
+    pub principal_profile: Option<PrincipalProfile>,
 }
 
 #[derive(Debug)]
@@ -52,6 +54,9 @@ enum RelayFailure {
     Fatal(String),
     Retryable(String),
 }
+/// Large-variant spread is inherent (invoke envelopes dwarf policy
+/// pushes) and harmless: values are transient per-message parses.
+#[allow(clippy::large_enum_variant)]
 #[derive(Debug, Deserialize)]
 #[serde(tag = "type")]
 enum RelayInbound {
@@ -60,6 +65,12 @@ enum RelayInbound {
         #[serde(rename = "routeId")]
         route_id: String,
         invocation: InvocationEnvelope,
+    },
+    #[serde(rename = "policy")]
+    Policy {
+        version: u64,
+        #[serde(rename = "allowedCapabilities")]
+        allowed_capabilities: BTreeSet<String>,
     },
 }
 
@@ -70,6 +81,20 @@ struct RelayOutbound<'a> {
     #[serde(rename = "routeId")]
     route_id: &'a str,
     result: &'a ResultEnvelope,
+}
+
+/// Dedicated policy acknowledgment channel (S4): acks never ride the
+/// result path, so they cannot be confused with routed call outcomes.
+#[derive(Serialize)]
+struct RelayPolicyAck<'a> {
+    #[serde(rename = "type")]
+    kind: &'static str,
+    version: u64,
+    status: AckStatus,
+    #[serde(rename = "appliedCapabilities")]
+    applied_capabilities: &'a BTreeSet<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    reason: &'a Option<String>,
 }
 
 /// Tracks round-trip liveness independently of work execution.
@@ -228,6 +253,14 @@ async fn connect_and_run_with_timing(
         .map_err(|error| classify_connect_error(&error))?;
 
     let device_id = config.device_id.clone();
+    // Fresh sync policy per connection (version 0 = ceiling): a reconnect
+    // re-applies the relay's current desired version instead of stalling
+    // as stale, and nothing survives across sockets implicitly.
+    let effective = Arc::new(match config.principal_profile.clone() {
+        Some(profile) => EffectivePolicy::new(profile),
+        None => EffectivePolicy::without_ceiling(),
+    });
+    let effective_worker = Arc::clone(&effective);
     run_loop(
         socket,
         &device_id,
@@ -238,25 +271,41 @@ async fn connect_and_run_with_timing(
         |route_id, invocation| {
             let runtime = Arc::clone(&runtime);
             let device_id = device_id.clone();
-            async move { handle_inbound(&runtime, &device_id, route_id, invocation).await }
+            let effective_worker = Arc::clone(&effective_worker);
+            async move {
+                handle_inbound(
+                    &runtime,
+                    &device_id,
+                    route_id,
+                    invocation,
+                    &effective_worker,
+                )
+                .await
+            }
         },
+        effective,
     )
     .await
 }
 
-/// Production executor: enforce local device binding, then run.
-/// The relay principal is never trusted here; `AgentRuntime::execute`
-/// rebinds to the launch-bound principal before policy dispatch.
+/// Production executor: enforce local device binding, then the
+/// synchronized effective policy, then run. The relay principal is never
+/// trusted here; `AgentRuntime::execute` rebinds to the launch-bound
+/// principal before policy dispatch, and the sync gate only narrows
+/// within the launch-bound ceiling (never grants).
 async fn handle_inbound(
     runtime: &AgentRuntime,
     device_id: &str,
     route_id: String,
     invocation: InvocationEnvelope,
+    effective: &EffectivePolicy,
 ) -> (String, ResultEnvelope) {
-    let result = if invocation.device_id.as_deref() == Some(device_id) {
-        runtime.execute(invocation).await
-    } else {
+    let result = if invocation.device_id.as_deref() != Some(device_id) {
         wrong_device_result(&invocation, device_id)
+    } else if let Some(reason) = effective.check(&invocation.capability) {
+        sync_denied_result(&invocation, &reason)
+    } else {
+        runtime.execute(invocation).await
     };
     (route_id, result)
 }
@@ -269,7 +318,7 @@ async fn handle_inbound(
 /// them: if this socket dies, in-flight work settles as `disconnected`
 /// (the caller reconnects and reconciles via idempotency keys in S5 scope;
 /// this function never replays an old result on a new socket).
-#[allow(clippy::too_many_arguments)]
+#[allow(clippy::too_many_arguments, clippy::too_many_lines)]
 async fn run_loop<S, E, F>(
     mut socket: S,
     device_id: &str,
@@ -278,6 +327,7 @@ async fn run_loop<S, E, F>(
     dead_timeout: Duration,
     pending_wait: Duration,
     mut execute: E,
+    effective: Arc<EffectivePolicy>,
 ) -> Result<(), RelayFailure>
 where
     S: Sink<Message, Error = WebSocketError>
@@ -296,28 +346,16 @@ where
     heartbeat_tick.tick().await;
 
     loop {
-        // Dispatch next queued invoke while the single ordered worker is idle.
-        // Expired waits (> pending_wait) are rejected per-route, never run stale.
-        while active.is_none() {
-            let Some(item) = queue.pop() else {
-                break;
-            };
-            if item.received.elapsed() >= pending_wait {
-                let rejection = queue_rejection_result(&item.invocation, device_id);
-                let payload = encode_result(&item.route_id, &rejection)?;
-                send_frame(
-                    &mut socket,
-                    Message::Text(payload.into()),
-                    "expired queue item",
-                )
-                .await?;
-                continue;
-            }
-            let route_id = item.route_id.clone();
-            let invocation = item.invocation;
-            active_route = Some(route_id.clone());
-            active = Some(tokio::spawn(execute(route_id, invocation)));
-        }
+        dispatch_queued(
+            &mut socket,
+            device_id,
+            pending_wait,
+            &mut queue,
+            &mut active,
+            &mut active_route,
+            &mut execute,
+        )
+        .await?;
 
         tokio::select! {
             next = socket.next() => {
@@ -332,6 +370,18 @@ where
                         let bytes = text.len();
                         let inbound = parse_inbound(text.as_str())?;
                         match inbound {
+                            RelayInbound::Policy {
+                                version,
+                                allowed_capabilities,
+                            } => {
+                                apply_policy_and_ack(
+                                    &mut socket,
+                                    &effective,
+                                    version,
+                                    allowed_capabilities,
+                                )
+                                .await?;
+                            }
                             RelayInbound::Invoke { route_id, invocation } => {
                                 let item = QueuedInvoke {
                                     route_id: route_id.clone(),
@@ -393,6 +443,41 @@ where
     }
 }
 
+/// Dispatch next queued invoke while the single ordered worker is idle.
+/// Expired waits (past `pending_wait`) are rejected per-route, never run stale.
+#[allow(clippy::too_many_arguments)]
+async fn dispatch_queued<S, E, F>(
+    socket: &mut S,
+    device_id: &str,
+    pending_wait: Duration,
+    queue: &mut RelayQueue,
+    active: &mut Option<tokio::task::JoinHandle<(String, ResultEnvelope)>>,
+    active_route: &mut Option<String>,
+    execute: &mut E,
+) -> Result<(), RelayFailure>
+where
+    S: Sink<Message, Error = WebSocketError> + Unpin,
+    E: FnMut(String, InvocationEnvelope) -> F,
+    F: Future<Output = (String, ResultEnvelope)> + Send + 'static,
+{
+    while active.is_none() {
+        let Some(item) = queue.pop() else {
+            break;
+        };
+        if item.received.elapsed() >= pending_wait {
+            let rejection = queue_rejection_result(&item.invocation, device_id);
+            let payload = encode_result(&item.route_id, &rejection)?;
+            send_frame(socket, Message::Text(payload.into()), "expired queue item").await?;
+            continue;
+        }
+        let route_id = item.route_id.clone();
+        let invocation = item.invocation;
+        *active_route = Some(route_id.clone());
+        *active = Some(tokio::spawn(execute(route_id, invocation)));
+    }
+    Ok(())
+}
+
 async fn await_task<T>(
     task: &mut Option<tokio::task::JoinHandle<T>>,
 ) -> Result<T, tokio::task::JoinError> {
@@ -400,6 +485,28 @@ async fn await_task<T>(
         Some(task) => task.await,
         None => std::future::pending().await,
     }
+}
+
+/// Apply one desired-policy push and acknowledge it on the dedicated
+/// channel. Stale versions are ignored silently (no ack to send).
+async fn apply_policy_and_ack<S>(
+    socket: &mut S,
+    effective: &EffectivePolicy,
+    version: u64,
+    allowed_capabilities: BTreeSet<String>,
+) -> Result<(), RelayFailure>
+where
+    S: Sink<Message, Error = WebSocketError> + Unpin,
+{
+    let desired = DesiredPolicy {
+        version,
+        allowed_capabilities,
+    };
+    if let Some(ack) = effective.apply_desired(&desired) {
+        let payload = encode_ack(&ack)?;
+        send_frame(socket, Message::Text(payload.into()), "policy ack").await?;
+    }
+    Ok(())
 }
 
 async fn send_frame<S>(socket: &mut S, message: Message, label: &str) -> Result<(), RelayFailure>
@@ -424,6 +531,17 @@ fn encode_result(route_id: &str, result: &ResultEnvelope) -> Result<String, Rela
         result,
     })
     .map_err(|error| RelayFailure::Fatal(format!("failed to serialize relay result: {error}")))
+}
+
+fn encode_ack(ack: &PolicyAcknowledgment) -> Result<String, RelayFailure> {
+    serde_json::to_string(&RelayPolicyAck {
+        kind: "policy_ack",
+        version: ack.version,
+        status: ack.status,
+        applied_capabilities: &ack.applied_capabilities,
+        reason: &ack.reason,
+    })
+    .map_err(|error| RelayFailure::Fatal(format!("failed to serialize policy ack: {error}")))
 }
 
 /// Per-route backpressure signal: the queue is bounded (16 / 4 MiB / 5 s)
@@ -467,6 +585,29 @@ fn classify_connect_error(error: &WebSocketError) -> RelayFailure {
         ));
     }
     RelayFailure::Retryable(format!("relay connection failed: {error}"))
+}
+
+fn sync_denied_result(invocation: &InvocationEnvelope, reason: &str) -> ResultEnvelope {
+    ResultEnvelope {
+        protocol_version: "1.0".into(),
+        request_id: invocation.request_id,
+        status: ResultStatus::Error,
+        data: None,
+        delta: None,
+        error: Some(CapabilityError {
+            code: ErrorCode::PermissionDenied,
+            message: "remote invocation is denied by synchronized device policy".into(),
+            recovery_hint: Some("owner must restore the grant via desired policy sync".into()),
+            details: json!({
+                "capability": invocation.capability,
+                "reason": reason,
+            }),
+        }),
+        verification: VerificationStatus::Failed,
+        continuation: None,
+        policy: None,
+        timing: Timing { duration_ms: 0 },
+    }
 }
 
 fn wrong_device_result(invocation: &InvocationEnvelope, local_device_id: &str) -> ResultEnvelope {
@@ -679,6 +820,7 @@ mod tests {
                 |_route_id: String, _invocation: InvocationEnvelope| async move {
                     panic!("silent-socket detection must not dispatch work or probe providers")
                 },
+                open_policy(),
             ),
         )
         .await
@@ -711,6 +853,7 @@ mod tests {
                 std::thread::sleep(Duration::from_millis(400));
                 (route_id, success_envelope(&invocation))
             },
+            open_policy(),
         ));
         server_tx
             .send(Ok(Message::Text(
@@ -766,6 +909,7 @@ mod tests {
                 |route_id: String, invocation: InvocationEnvelope| async move {
                     (route_id, success_envelope(&invocation))
                 },
+                open_policy(),
             ),
         )
         .await;
@@ -794,6 +938,7 @@ mod tests {
                 std::thread::sleep(Duration::from_millis(500));
                 (route_id, success_envelope(&invocation))
             },
+            open_policy(),
         ));
         for index in 0..(RELAY_PENDING_LIMIT + 2) {
             let invocation = test_invocation("device-a");
@@ -852,6 +997,7 @@ mod tests {
                     }
                 }
             },
+            open_policy(),
         ));
         let invocation = test_invocation("device-a");
         server_tx1
@@ -911,6 +1057,7 @@ mod tests {
                     (route_id, success_envelope(&invocation))
                 }
             },
+            open_policy(),
         ));
         let invocation2 = test_invocation("device-a");
         server_tx2
@@ -975,6 +1122,7 @@ mod tests {
                     }
                 }
             },
+            open_policy(),
         ));
         let invocation = test_invocation("device-a");
         server_tx
@@ -1092,6 +1240,7 @@ mod tests {
             credential: "test-credential-0123456789".into(),
             allow_insecure_localhost: true,
             reconnect_delay: Duration::from_millis(50),
+            principal_profile: None,
         }
     }
 
@@ -1160,6 +1309,7 @@ mod tests {
                     std::future::pending::<()>().await;
                 }
             },
+            open_policy(),
         ));
         let pad = "x".repeat(900 * 1024);
         let mut rejected_request_id: Option<String> = None;
@@ -1264,6 +1414,7 @@ mod tests {
                     (route_id, success_envelope(&invocation))
                 }
             },
+            open_policy(),
         ));
         let first = test_invocation("device-a");
         server_tx
@@ -1339,6 +1490,7 @@ mod tests {
             |_route_id: String, _invocation: InvocationEnvelope| async move {
                 panic!("measurement needs no executor: silence alone must trip death")
             },
+            open_policy(),
         )
         .await;
         let elapsed_ms = started.elapsed().as_millis();
@@ -1379,6 +1531,7 @@ mod tests {
                     std::thread::sleep(Duration::from_millis(500));
                     (route_id, success_envelope(&invocation))
                 },
+                open_policy(),
             ));
             server_tx
                 .send(Ok(Message::Text(
@@ -1407,5 +1560,460 @@ mod tests {
                 "production scheduler: ordered result must still arrive"
             );
         });
+    }
+
+    // ---- S4: Desired/Effective/Acknowledged policy sync ----
+
+    fn sync_ceiling() -> PrincipalProfile {
+        PrincipalProfile {
+            principal_id: "model:owner-managed".into(),
+            authentication: tether_core::PrincipalAuthentication::LocalProcessBinding,
+            allowed_devices: BTreeSet::from(["device-a".into()]),
+            allowed_capabilities: BTreeSet::from(["device.status".into(), "browser.pages".into()]),
+            allowed_directories: Vec::new(),
+        }
+    }
+
+    fn open_policy() -> Arc<EffectivePolicy> {
+        Arc::new(EffectivePolicy::without_ceiling())
+    }
+
+    fn synced_policy() -> Arc<EffectivePolicy> {
+        Arc::new(EffectivePolicy::new(sync_ceiling()))
+    }
+
+    fn policy_text(version: u64, capabilities: &[&str]) -> String {
+        serde_json::to_string(&json!({
+            "type": "policy",
+            "version": version,
+            "allowedCapabilities": capabilities,
+        }))
+        .expect("policy serializes")
+    }
+
+    async fn next_text(
+        server_rx: &mut UnboundedReceiver<Message>,
+        what: &str,
+    ) -> serde_json::Value {
+        let deadline = Instant::now() + Duration::from_secs(3);
+        loop {
+            let remaining = deadline.saturating_duration_since(Instant::now());
+            match tokio::time::timeout(remaining, server_rx.recv()).await {
+                Ok(Some(Message::Text(text))) => {
+                    return serde_json::from_str(text.as_str()).expect("result parses");
+                }
+                Ok(Some(_)) => {}
+                Ok(None) => panic!("socket closed while waiting for {what}"),
+                Err(elapsed) => panic!("timed out waiting for {what} ({elapsed})"),
+            }
+        }
+    }
+
+    #[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+    async fn policy_push_applies_and_acks_on_dedicated_channel() {
+        let (socket, mut server_rx, server_tx) = fake_pair();
+        let effective = synced_policy();
+        let loop_handle = tokio::spawn(run_loop(
+            socket,
+            "device-a",
+            Duration::from_millis(20),
+            Duration::from_secs(5),
+            Duration::from_secs(10),
+            Duration::from_secs(5),
+            |route_id: String, invocation: InvocationEnvelope| async move {
+                (route_id, success_envelope(&invocation))
+            },
+            Arc::clone(&effective),
+        ));
+        server_tx
+            .send(Ok(Message::Text(policy_text(1, &["device.status"]).into())))
+            .expect("server sends policy");
+        let ack = next_text(&mut server_rx, "policy ack").await;
+        loop_handle.abort();
+        assert_eq!(
+            ack.pointer("/type").and_then(serde_json::Value::as_str),
+            Some("policy_ack"),
+            "ack must use the dedicated channel, saw {ack}"
+        );
+        assert!(ack.get("routeId").is_none(), "ack carries no route: {ack}");
+        assert_eq!(
+            ack.pointer("/version").and_then(serde_json::Value::as_u64),
+            Some(1)
+        );
+        assert_eq!(
+            ack.pointer("/status").and_then(serde_json::Value::as_str),
+            Some("applied")
+        );
+        assert!(
+            effective.check("browser.pages").is_some(),
+            "narrowed capability must be denied after apply"
+        );
+        assert_eq!(effective.snapshot().0, 1);
+    }
+
+    #[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+    async fn policy_push_exceeding_ceiling_rejects_without_applying() {
+        let (socket, mut server_rx, server_tx) = fake_pair();
+        let effective = synced_policy();
+        let loop_handle = tokio::spawn(run_loop(
+            socket,
+            "device-a",
+            Duration::from_millis(20),
+            Duration::from_secs(5),
+            Duration::from_secs(10),
+            Duration::from_secs(5),
+            |route_id: String, invocation: InvocationEnvelope| async move {
+                (route_id, success_envelope(&invocation))
+            },
+            Arc::clone(&effective),
+        ));
+        server_tx
+            .send(Ok(Message::Text(
+                policy_text(1, &["device.status", "process.run"]).into(),
+            )))
+            .expect("server sends policy");
+        let ack = next_text(&mut server_rx, "policy ack").await;
+        loop_handle.abort();
+        assert_eq!(
+            ack.pointer("/status").and_then(serde_json::Value::as_str),
+            Some("rejected")
+        );
+        assert!(
+            ack.pointer("/reason")
+                .and_then(serde_json::Value::as_str)
+                .unwrap_or("")
+                .contains("ceiling"),
+            "rejection must name the ceiling, saw {ack}"
+        );
+        assert_eq!(effective.snapshot().0, 0, "version must not advance");
+        assert!(
+            effective.check("device.status").is_none(),
+            "ceiling still stands after rejection"
+        );
+    }
+
+    #[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+    async fn stale_policy_push_is_ignored_silently() {
+        let (socket, mut server_rx, server_tx) = fake_pair();
+        let effective = synced_policy();
+        let loop_handle = tokio::spawn(run_loop(
+            socket,
+            "device-a",
+            Duration::from_millis(20),
+            Duration::from_secs(5),
+            Duration::from_secs(10),
+            Duration::from_secs(5),
+            |route_id: String, invocation: InvocationEnvelope| async move {
+                (route_id, success_envelope(&invocation))
+            },
+            Arc::clone(&effective),
+        ));
+        server_tx
+            .send(Ok(Message::Text(policy_text(2, &["device.status"]).into())))
+            .expect("server sends policy");
+        let ack = next_text(&mut server_rx, "policy ack").await;
+        assert_eq!(
+            ack.pointer("/version").and_then(serde_json::Value::as_u64),
+            Some(2)
+        );
+        server_tx
+            .send(Ok(Message::Text(policy_text(1, &["device.status"]).into())))
+            .expect("server sends stale policy");
+        let deadline = Instant::now() + Duration::from_millis(150);
+        let mut texts = 0_u32;
+        while Instant::now() < deadline {
+            let remaining = deadline.saturating_duration_since(Instant::now());
+            match tokio::time::timeout(remaining, server_rx.recv()).await {
+                Ok(Some(Message::Text(_))) => texts += 1,
+                Ok(Some(_)) => {}
+                Ok(None) | Err(_) => break,
+            }
+        }
+        loop_handle.abort();
+        assert_eq!(texts, 0, "stale push must produce no ack");
+        assert_eq!(effective.snapshot().0, 2);
+    }
+
+    #[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+    async fn sync_denied_invoke_never_reaches_provider() {
+        // The test runtime is wide open (no launch profile, no browser
+        // bridge): without the sync gate this invoke would reach the
+        // (absent) browser provider and fail capability_unavailable.
+        // permission_denied therefore proves the sync gate fired first.
+        let (socket, mut server_rx, server_tx) = fake_pair();
+        let effective = synced_policy();
+        let runtime = test_runtime();
+        let effective_worker = Arc::clone(&effective);
+        let loop_handle = tokio::spawn(run_loop(
+            socket,
+            "device-a",
+            Duration::from_millis(20),
+            Duration::from_secs(5),
+            Duration::from_secs(10),
+            Duration::from_secs(5),
+            move |route_id: String, invocation: InvocationEnvelope| {
+                let runtime = Arc::clone(&runtime);
+                let effective_worker = Arc::clone(&effective_worker);
+                async move {
+                    handle_inbound(
+                        &runtime,
+                        "device-a",
+                        route_id,
+                        invocation,
+                        &effective_worker,
+                    )
+                    .await
+                }
+            },
+            Arc::clone(&effective),
+        ));
+        server_tx
+            .send(Ok(Message::Text(policy_text(1, &["device.status"]).into())))
+            .expect("server sends policy");
+        let ack = next_text(&mut server_rx, "policy ack").await;
+        assert_eq!(
+            ack.pointer("/status").and_then(serde_json::Value::as_str),
+            Some("applied")
+        );
+        let mut denied = test_invocation("device-a");
+        denied.capability = "browser.pages".into();
+        let request_id = denied.request_id.to_string();
+        server_tx
+            .send(Ok(Message::Text(
+                invoke_text("route-denied", &denied).into(),
+            )))
+            .expect("server sends invoke");
+        let result = next_text(&mut server_rx, "denial result").await;
+        loop_handle.abort();
+        assert_eq!(
+            result
+                .pointer("/result/error/code")
+                .and_then(serde_json::Value::as_str),
+            Some("permission_denied"),
+            "sync gate must deny before provider dispatch, saw {result}"
+        );
+        assert_eq!(
+            result
+                .pointer("/result/request_id")
+                .and_then(serde_json::Value::as_str),
+            Some(request_id.as_str())
+        );
+    }
+
+    #[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+    async fn sync_allowed_invoke_executes_normally() {
+        let (socket, mut server_rx, server_tx) = fake_pair();
+        let effective = synced_policy();
+        let runtime = test_runtime();
+        let effective_worker = Arc::clone(&effective);
+        let loop_handle = tokio::spawn(run_loop(
+            socket,
+            "device-a",
+            Duration::from_millis(20),
+            Duration::from_secs(5),
+            Duration::from_secs(10),
+            Duration::from_secs(5),
+            move |route_id: String, invocation: InvocationEnvelope| {
+                let runtime = Arc::clone(&runtime);
+                let effective_worker = Arc::clone(&effective_worker);
+                async move {
+                    handle_inbound(
+                        &runtime,
+                        "device-a",
+                        route_id,
+                        invocation,
+                        &effective_worker,
+                    )
+                    .await
+                }
+            },
+            Arc::clone(&effective),
+        ));
+        server_tx
+            .send(Ok(Message::Text(policy_text(1, &["device.status"]).into())))
+            .expect("server sends policy");
+        let _ = next_text(&mut server_rx, "policy ack").await;
+        let invocation = test_invocation("device-a");
+        server_tx
+            .send(Ok(Message::Text(
+                invoke_text("route-allowed", &invocation).into(),
+            )))
+            .expect("server sends invoke");
+        let result = next_text(&mut server_rx, "result").await;
+        loop_handle.abort();
+        assert_eq!(
+            result
+                .pointer("/result/status")
+                .and_then(serde_json::Value::as_str),
+            Some("success")
+        );
+    }
+
+    #[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+    #[allow(clippy::similar_names)]
+    async fn fresh_policy_per_connection_reconverges_without_version_growth() {
+        // Session 1 applies v1, then dies. Session 2 starts a fresh
+        // connection policy (version 0): the relay's re-push of the same
+        // v1 applies cleanly instead of stalling as stale.
+        let (socket1, mut server_rx1, server_tx1) = fake_pair();
+        let policy1 = synced_policy();
+        let session1 = tokio::spawn(run_loop(
+            socket1,
+            "device-a",
+            Duration::from_millis(20),
+            Duration::from_secs(5),
+            Duration::from_secs(10),
+            Duration::from_secs(5),
+            |route_id: String, invocation: InvocationEnvelope| async move {
+                (route_id, success_envelope(&invocation))
+            },
+            Arc::clone(&policy1),
+        ));
+        server_tx1
+            .send(Ok(Message::Text(policy_text(1, &["device.status"]).into())))
+            .expect("server sends policy");
+        let ack1 = next_text(&mut server_rx1, "policy ack").await;
+        assert_eq!(
+            ack1.pointer("/status").and_then(serde_json::Value::as_str),
+            Some("applied")
+        );
+        drop(server_tx1);
+        let outcome = tokio::time::timeout(Duration::from_secs(2), session1)
+            .await
+            .expect("session 1 ends")
+            .expect("session 1 joinable");
+        assert!(outcome.is_ok(), "clean close must end Ok, got {outcome:?}");
+
+        let (socket2, mut server_rx2, server_tx2) = fake_pair();
+        let policy2 = synced_policy();
+        let session2 = tokio::spawn(run_loop(
+            socket2,
+            "device-a",
+            Duration::from_millis(20),
+            Duration::from_secs(5),
+            Duration::from_secs(10),
+            Duration::from_secs(5),
+            |route_id: String, invocation: InvocationEnvelope| async move {
+                (route_id, success_envelope(&invocation))
+            },
+            Arc::clone(&policy2),
+        ));
+        server_tx2
+            .send(Ok(Message::Text(policy_text(1, &["device.status"]).into())))
+            .expect("server re-pushes same version");
+        let ack2 = next_text(&mut server_rx2, "policy ack").await;
+        session2.abort();
+        assert_eq!(
+            ack2.pointer("/status").and_then(serde_json::Value::as_str),
+            Some("applied"),
+            "fresh connection must converge on re-push, saw {ack2}"
+        );
+        assert_eq!(policy2.snapshot().0, 1);
+    }
+
+    fn read_text_frame(
+        socket: &mut tokio_tungstenite::tungstenite::WebSocket<std::net::TcpStream>,
+    ) -> serde_json::Value {
+        loop {
+            match socket.read().expect("fake relay reads") {
+                Message::Text(text) => {
+                    return serde_json::from_str(text.as_str()).expect("frame parses");
+                }
+                Message::Ping(payload) => {
+                    socket
+                        .send(Message::Pong(payload))
+                        .expect("fake relay pongs");
+                }
+                Message::Pong(_) => {}
+                other => panic!("unexpected frame from agent: {other:?}"),
+            }
+        }
+    }
+
+    /// Scripted fake relay over real TCP: accepts two sequential agent
+    /// connections; each gets a v1 narrow push (acked), one allowed and
+    /// one sync-denied invoke, then a clean close.
+    fn policy_relay_twice() -> (u16, std::thread::JoinHandle<()>) {
+        let listener = std::net::TcpListener::bind("127.0.0.1:0").expect("listener binds");
+        let port = listener.local_addr().expect("port known").port();
+        let listener = Arc::new(listener);
+        let relay = std::thread::spawn({
+            let listener = Arc::clone(&listener);
+            move || policy_relay_accept_twice(&listener)
+        });
+        (port, relay)
+    }
+
+    fn policy_relay_accept_twice(listener: &std::net::TcpListener) {
+        for _ in 0..2 {
+            let (stream, _) = listener.accept().expect("agent connects");
+            stream
+                .set_read_timeout(Some(Duration::from_secs(5)))
+                .expect("read timeout set");
+            let mut socket =
+                tokio_tungstenite::tungstenite::accept(stream).expect("upgrade accepted");
+            socket
+                .send(Message::Text(policy_text(1, &["device.status"]).into()))
+                .expect("policy pushed");
+            let ack = read_text_frame(&mut socket);
+            assert_eq!(
+                ack.pointer("/status").and_then(serde_json::Value::as_str),
+                Some("applied"),
+                "re-push must apply on a fresh connection, saw {ack}"
+            );
+            let invocation = test_invocation("device-a");
+            socket
+                .send(Message::Text(
+                    invoke_text("route-allowed", &invocation).into(),
+                ))
+                .expect("invoke sent");
+            let result = read_text_frame(&mut socket);
+            assert_eq!(
+                result
+                    .pointer("/result/status")
+                    .and_then(serde_json::Value::as_str),
+                Some("success"),
+                "allowed call must succeed, saw {result}"
+            );
+            let mut denied = test_invocation("device-a");
+            denied.capability = "browser.pages".into();
+            socket
+                .send(Message::Text(invoke_text("route-denied", &denied).into()))
+                .expect("invoke sent");
+            let denial = read_text_frame(&mut socket);
+            assert_eq!(
+                denial
+                    .pointer("/result/error/code")
+                    .and_then(serde_json::Value::as_str),
+                Some("permission_denied"),
+                "sync gate must deny narrowed call, saw {denial}"
+            );
+            socket.close(None).expect("clean close");
+        }
+    }
+
+    #[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+    async fn production_path_push_apply_ack_and_enforce_over_real_handshake() {
+        let (port, relay) = policy_relay_twice();
+        let runtime = test_runtime();
+        for _ in 0..2 {
+            let mut config = loopback_config(port);
+            config.principal_profile = Some(sync_ceiling());
+            let outcome = tokio::time::timeout(
+                Duration::from_secs(15),
+                connect_and_run_with_timing(
+                    Arc::clone(&runtime),
+                    &config,
+                    Duration::from_millis(20),
+                    Duration::from_secs(5),
+                    Duration::from_secs(10),
+                    Duration::from_secs(5),
+                ),
+            )
+            .await
+            .expect("connection completes");
+            assert!(outcome.is_ok(), "clean close must end Ok, got {outcome:?}");
+        }
+        relay.join().expect("fake relay completes");
     }
 }

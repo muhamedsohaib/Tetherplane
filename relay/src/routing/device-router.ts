@@ -8,16 +8,43 @@ import type {
 import type { ClientIdentity } from "../auth/static-auth.ts";
 import type { DeviceRegistry } from "../devices/registry.ts";
 
-export type RelayToDeviceMessage = {
-  type: "invoke";
-  routeId: string;
-  invocation: InvocationEnvelope;
-};
+export type RelayToDeviceMessage =
+  | {
+      type: "invoke";
+      routeId: string;
+      invocation: InvocationEnvelope;
+    }
+  | {
+      type: "policy";
+      version: number;
+      allowedCapabilities: string[];
+    };
 
-export type DeviceToRelayMessage = {
-  type: "result";
-  routeId: string;
-  result: ResultEnvelope;
+export type DeviceToRelayMessage =
+  | {
+      type: "result";
+      routeId: string;
+      result: ResultEnvelope;
+    }
+  | {
+      type: "policy_ack";
+      version: number;
+      status: "applied" | "rejected";
+      appliedCapabilities: string[];
+      reason?: string;
+    };
+
+export type DevicePolicySyncStatus = {
+  deviceId: string;
+  online: boolean;
+  revokedAt: string | null;
+  desiredVersion: number;
+  desiredCapabilities: string[];
+  acknowledgedVersion: number;
+  lastStatus: "applied" | "rejected" | null;
+  lastReason: string | null;
+  appliedCapabilities: string[];
+  pending: boolean;
 };
 
 export type DeviceConnectionHandle = {
@@ -39,11 +66,29 @@ type PendingRoute = {
   timer: NodeJS.Timeout;
 };
 
+// Owner desired state per device (S4). Desired survives reconnects (it is
+// owner intent, re-pushed on every connect); acknowledgments are
+// generation-scoped and reset on every new connection. The relay never
+// grants: it stores, forwards, and reports convergence only.
+type DevicePolicySync = {
+  desiredVersion: number;
+  desiredCapabilities: string[];
+  acknowledgedVersion: number;
+  generation: string | null;
+  lastStatus: "applied" | "rejected" | null;
+  lastReason: string | null;
+  appliedCapabilities: string[];
+};
+
+const MAX_POLICY_CAPABILITIES = 1024;
+const MAX_POLICY_CAPABILITY_LENGTH = 256;
+
 export class DeviceRouter {
   readonly #registry: DeviceRegistry;
   readonly #timeoutMs: number;
   readonly #connections = new Map<string, ActiveConnection>();
   readonly #pending = new Map<string, PendingRoute>();
+  readonly #policies = new Map<string, DevicePolicySync>();
 
   constructor(options: {
     registry: DeviceRegistry;
@@ -76,6 +121,7 @@ export class DeviceRouter {
       send: input.send,
     };
     this.#connections.set(input.deviceId, connection);
+    this.#onReconnectPushPolicy(connection);
 
     return {
       receive: (message) => {
@@ -96,6 +142,143 @@ export class DeviceRouter {
 
   isOnline(deviceId: string): boolean {
     return this.#connections.has(deviceId);
+  }
+
+  /**
+   * Owner sets desired capabilities for one device. Versions increase
+   * monotonically per device; only the latest version is ever pushed,
+   * so rapid concurrent sets converge on the newest intent. Pushes to
+   * the live socket when online; offline devices receive the current
+   * desired version on their next connect.
+   */
+  setDesiredPolicy(
+    accountId: string,
+    deviceId: string,
+    allowedCapabilities: string[],
+  ): { version: number; pushed: boolean } {
+    const binding = this.#registry.getDevice(deviceId);
+    if (!binding || binding.accountId !== accountId || binding.revokedAt !== null) {
+      throw new Error("device is not available for policy sync");
+    }
+    const capabilities = validatePolicyCapabilities(allowedCapabilities);
+    const sync = this.#policyFor(deviceId);
+    sync.desiredVersion += 1;
+    sync.desiredCapabilities = capabilities;
+    const connection = this.#connections.get(deviceId);
+    if (!connection) {
+      return { version: sync.desiredVersion, pushed: false };
+    }
+    void this.#pushPolicy(connection, sync).catch(() => undefined);
+    return { version: sync.desiredVersion, pushed: true };
+  }
+
+  getPolicySync(
+    accountId: string,
+    deviceId: string,
+  ): DevicePolicySyncStatus | null {
+    const binding = this.#registry.getDevice(deviceId);
+    if (!binding || binding.accountId !== accountId) {
+      return null;
+    }
+    return this.#syncStatus(binding.deviceId, binding.revokedAt);
+  }
+
+  listPolicySync(accountId: string): DevicePolicySyncStatus[] {
+    return this.#registry
+      .listDevices(accountId)
+      .map((binding) => this.#syncStatus(binding.deviceId, binding.revokedAt));
+  }
+
+  #policyFor(deviceId: string): DevicePolicySync {
+    let sync = this.#policies.get(deviceId);
+    if (!sync) {
+      sync = {
+        desiredVersion: 0,
+        desiredCapabilities: [],
+        acknowledgedVersion: 0,
+        generation: null,
+        lastStatus: null,
+        lastReason: null,
+        appliedCapabilities: [],
+      };
+      this.#policies.set(deviceId, sync);
+    }
+    return sync;
+  }
+
+  #syncStatus(deviceId: string, revokedAt: string | null): DevicePolicySyncStatus {
+    const sync = this.#policies.get(deviceId);
+    return {
+      deviceId,
+      online: this.#connections.has(deviceId),
+      revokedAt,
+      desiredVersion: sync?.desiredVersion ?? 0,
+      desiredCapabilities: sync?.desiredCapabilities ?? [],
+      acknowledgedVersion: sync?.acknowledgedVersion ?? 0,
+      lastStatus: sync?.lastStatus ?? null,
+      lastReason: sync?.lastReason ?? null,
+      appliedCapabilities: sync?.appliedCapabilities ?? [],
+      pending:
+        (sync?.desiredVersion ?? 0) > 0 &&
+        (sync?.acknowledgedVersion ?? 0) !== (sync?.desiredVersion ?? 0),
+    };
+  }
+
+  #onReconnectPushPolicy(connection: ActiveConnection): void {
+    const sync = this.#policies.get(connection.deviceId);
+    if (!sync || sync.desiredVersion === 0) {
+      return;
+    }
+    // New generation: prior acks belong to a dead socket. Reset and
+    // re-push current desired; the device re-applies from its own
+    // fresh per-connection baseline and re-acknowledges.
+    sync.acknowledgedVersion = 0;
+    sync.generation = connection.generation;
+    sync.lastStatus = null;
+    sync.lastReason = null;
+    void this.#pushPolicy(connection, sync).catch(() => undefined);
+  }
+
+  async #pushPolicy(
+    connection: ActiveConnection,
+    sync: DevicePolicySync,
+  ): Promise<void> {
+    await connection.send({
+      type: "policy",
+      version: sync.desiredVersion,
+      allowedCapabilities: [...sync.desiredCapabilities],
+    });
+  }
+
+  #receivePolicyAck(
+    connection: ActiveConnection,
+    message: Extract<DeviceToRelayMessage, { type: "policy_ack" }>,
+  ): void {
+    const sync = this.#policies.get(connection.deviceId);
+    if (!sync) return;
+    if (typeof message.version !== "number" || message.version <= 0) return;
+    // Monotonic per generation: stale, duplicate, or future acks can
+    // never move acknowledged state backward (or claim unsent versions).
+    if (sync.generation !== connection.generation) {
+      sync.acknowledgedVersion = 0;
+      sync.generation = connection.generation;
+      sync.lastStatus = null;
+      sync.lastReason = null;
+    }
+    if (
+      message.version <= sync.acknowledgedVersion ||
+      message.version > sync.desiredVersion
+    ) {
+      return;
+    }
+    if (message.status !== "applied" && message.status !== "rejected") return;
+    sync.acknowledgedVersion = message.version;
+    sync.lastStatus = message.status;
+    sync.lastReason =
+      typeof message.reason === "string" && message.reason ? message.reason : null;
+    sync.appliedCapabilities = Array.isArray(message.appliedCapabilities)
+      ? message.appliedCapabilities.filter((entry): entry is string => typeof entry === "string")
+      : [];
   }
 
   async call(
@@ -172,6 +355,10 @@ export class DeviceRouter {
     connection: ActiveConnection,
     message: DeviceToRelayMessage,
   ): void {
+    if (message.type === "policy_ack") {
+      this.#receivePolicyAck(connection, message);
+      return;
+    }
     if (message.type !== "result") return;
     const pending = this.#pending.get(message.routeId);
     if (
@@ -299,6 +486,28 @@ export class DeviceRouter {
     const deviceId = online[0]!.deviceId;
     return { connection: this.#connections.get(deviceId)! };
   }
+}
+
+function validatePolicyCapabilities(input: unknown): string[] {
+  if (!Array.isArray(input)) {
+    throw new Error("allowedCapabilities must be an array of capability names");
+  }
+  if (input.length > MAX_POLICY_CAPABILITIES) {
+    throw new Error(
+      `allowedCapabilities must list at most ${MAX_POLICY_CAPABILITIES} capabilities`,
+    );
+  }
+  return input.map((entry) => {
+    if (typeof entry !== "string" || !entry.trim()) {
+      throw new Error("allowedCapabilities entries must be non-empty strings");
+    }
+    if (entry.length > MAX_POLICY_CAPABILITY_LENGTH) {
+      throw new Error(
+        `allowedCapabilities entries must be at most ${MAX_POLICY_CAPABILITY_LENGTH} characters`,
+      );
+    }
+    return entry;
+  });
 }
 
 function errorResult(

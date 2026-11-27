@@ -217,6 +217,15 @@ async fn main() {
         None
     };
 
+    // S4: the relay sync gate enforces the launch ceiling on remote
+    // calls; clone it before the runtime takes ownership (stdio never
+    // syncs, so it keeps nothing).
+    let sync_ceiling = if matches!(transport, TransportMode::Relay { .. }) {
+        principal.clone()
+    } else {
+        None
+    };
+
     let runtime = match AgentRuntime::new(
         options.allowed_roots,
         principal,
@@ -258,6 +267,7 @@ async fn main() {
                     credential,
                     allow_insecure_localhost,
                     reconnect_delay: Duration::from_secs(2),
+                    principal_profile: sync_ceiling,
                 },
             )
             .await

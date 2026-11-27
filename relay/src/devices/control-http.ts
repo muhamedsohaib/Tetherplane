@@ -8,12 +8,14 @@ import type {
   ClientAuthenticator,
   ClientIdentity,
 } from "../auth/static-auth.ts";
+import type { DeviceRouter } from "../routing/device-router.ts";
 import type { DeviceRegistry } from "./registry.ts";
 
 export class RelayControlHttpGateway {
   readonly #registry: DeviceRegistry;
   readonly #authenticator: ClientAuthenticator;
   readonly #disconnectDevice: (deviceId: string) => void;
+  readonly #router: DeviceRouter;
   #attachedServer: Server | null = null;
   #requestHandler:
     | ((request: IncomingMessage, response: ServerResponse) => void)
@@ -23,10 +25,12 @@ export class RelayControlHttpGateway {
     registry: DeviceRegistry;
     authenticator: ClientAuthenticator;
     disconnectDevice(deviceId: string): void;
+    router: DeviceRouter;
   }) {
     this.#registry = options.registry;
     this.#authenticator = options.authenticator;
     this.#disconnectDevice = options.disconnectDevice;
+    this.#router = options.router;
   }
 
   attach(server: Server): void {
@@ -108,6 +112,40 @@ export class RelayControlHttpGateway {
           identity,
           decodeURIComponent(revoke[1]!),
         );
+        return;
+      }
+
+      if (
+        request.method === "GET" &&
+        url.pathname === "/devices/policy"
+      ) {
+        const identity = await this.#requireIdentity(
+          request,
+          response,
+        );
+        if (!identity) return;
+        writeJson(response, 200, {
+          devices: this.#router.listPolicySync(identity.accountId),
+        });
+        return;
+      }
+
+      const policy = /^\/devices\/([^/]+)\/policy$/.exec(url.pathname);
+      if (policy) {
+        const identity = await this.#requireIdentity(
+          request,
+          response,
+        );
+        if (!identity) return;
+        const deviceId = decodeURIComponent(policy[1]!);
+        if (request.method === "GET") {
+          this.#readPolicy(response, identity, deviceId);
+          return;
+        }
+        if (request.method === "POST") {
+          await this.#writePolicy(request, response, identity, deviceId);
+          return;
+        }
       }
     } catch (error) {
       if (response.headersSent) {
@@ -182,6 +220,51 @@ export class RelayControlHttpGateway {
     });
     this.#disconnectDevice(deviceId);
     writeJson(response, 200, revoked);
+  }
+
+  #readPolicy(
+    response: ServerResponse,
+    identity: ClientIdentity,
+    deviceId: string,
+  ): void {
+    const sync = this.#router.getPolicySync(identity.accountId, deviceId);
+    if (!sync) {
+      writeJson(response, 403, {
+        error: {
+          code: "permission_denied",
+          message: "device is not owned by this account",
+        },
+      });
+      return;
+    }
+    writeJson(response, 200, sync);
+  }
+
+  async #writePolicy(
+    request: IncomingMessage,
+    response: ServerResponse,
+    identity: ClientIdentity,
+    deviceId: string,
+  ): Promise<void> {
+    const binding = this.#registry.getDevice(deviceId);
+    if (!binding || binding.accountId !== identity.accountId) {
+      writeJson(response, 403, {
+        error: {
+          code: "permission_denied",
+          message: "device is not owned by this account",
+        },
+      });
+      return;
+    }
+    const body = await readObjectBody(request);
+    // Payload validation errors throw and map to 400 via the outer
+    // handler; the router re-checks ownership and revocation itself.
+    const result = this.#router.setDesiredPolicy(
+      identity.accountId,
+      deviceId,
+      body.allowedCapabilities as string[],
+    );
+    writeJson(response, 200, result);
   }
 
   async #requireIdentity(

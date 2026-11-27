@@ -33,6 +33,9 @@ test("authenticated Streamable HTTP exposes exactly six compact tools and routes
     deviceId: "Leno",
     send: async (message) => {
       observed.push(message);
+      if (message.type !== "invoke") {
+        throw new Error("fake device only answers invokes");
+      }
       connection.receive({
         type: "result",
         routeId: message.routeId,
@@ -104,11 +107,15 @@ test("authenticated Streamable HTTP exposes exactly six compact tools and routes
     assert.deepEqual(result.structuredContent, { remote: true });
 
     assert.equal(observed.length, 1);
+    const routed = observed[0];
+    if (!routed || routed.type !== "invoke") {
+      throw new Error("fake device must observe one invoke");
+    }
     assert.equal(
-      observed[0]?.invocation.principal_id,
+      routed.invocation.principal_id,
       "human:account-a",
     );
-    assert.deepEqual(observed[0]?.invocation.actor, {
+    assert.deepEqual(routed.invocation.actor, {
       id: "client-a",
       kind: "ai_client",
     });

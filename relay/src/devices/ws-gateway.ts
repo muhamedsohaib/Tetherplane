@@ -330,6 +330,19 @@ function parseDeviceMessage(
   }
   if (!value || typeof value !== "object") return null;
   const record = value as Record<string, unknown>;
+  // Dedicated policy acknowledgment channel (S4): validated structurally
+  // here, applied monotonically by the router (stale generations and
+  // out-of-range versions are dropped there, never here).
+  if (record.type === "policy_ack") {
+    if (
+      typeof record.version !== "number" ||
+      (record.status !== "applied" && record.status !== "rejected") ||
+      !Array.isArray(record.appliedCapabilities)
+    ) {
+      return null;
+    }
+    return value as DeviceToRelayMessage;
+  }
   if (
     record.type !== "result" ||
     typeof record.routeId !== "string" ||
