@@ -62,7 +62,18 @@ test("relay exposes minimal unauthenticated liveness and readiness probes", asyn
     });
     assert.equal(ready.status, 200);
     assert.equal(ready.headers.get("content-type"), "application/json");
-    assert.deepEqual(await ready.json(), { status: "ready" });
+    assert.equal(ready.headers.get("cache-control"), "no-store");
+    const first = await ready.json() as Record<string, unknown>;
+    assert.equal(first.status, "ready");
+    assert.deepEqual(Object.keys(first).sort(), ["observed_at", "ready_since", "status", "uptime_ms"]);
+    assert.ok(typeof first.observed_at === "string" && Number.isFinite(Date.parse(first.observed_at)));
+    assert.ok(typeof first.ready_since === "string" && Number.isFinite(Date.parse(first.ready_since)));
+    assert.ok(typeof first.uptime_ms === "number" && first.uptime_ms >= 0);
+    await new Promise(resolve => setTimeout(resolve, 25));
+    const next = await fetch(ready.url, { signal: AbortSignal.timeout(1_000) });
+    const second = await next.json() as Record<string, unknown>;
+    assert.equal(second.ready_since, first.ready_since);
+    assert.ok(typeof second.uptime_ms === "number" && typeof first.uptime_ms === "number" && second.uptime_ms > first.uptime_ms);
   } finally {
     await relay.close();
     await rm(dir, { recursive: true, force: true });

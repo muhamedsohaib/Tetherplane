@@ -33,6 +33,7 @@ export type DeviceToRelayMessage =
       type: "device_hello";
       deviceId: string;
       appliedPolicyRevision: number | null;
+      heartbeatVersion?: number;
       status?: Record<string, unknown> | null;
       capabilities?: Record<string, unknown> | null;
     }
