@@ -96,9 +96,24 @@ Use the existing authenticated client mechanism. Do not print a bearer token or 
 
 Record only pass/fail evidence and non-secret identifiers.
 
-## 5. Cleanup
+## 5. Windows session stages (lock / sleep / reboot)
 
-After local and remote live proof are complete:
+These stages come from [WINDOWS_ACCEPTANCE_PLAN.md](/workspaces/Tetherplane/docs/WINDOWS_ACCEPTANCE_PLAN.md) and run only on Leno with the operator present. A Linux host reports every stage `unverified` and must never self-certify them. Run them after the remote-plane proof and before cleanup, in plan order:
+
+1. `windows_locked_workstation` — lock Windows; verify device/files/process/job operations still succeed, already-connected browser semantic ops behave as observed (record the actual result), desktop snapshot/act return the observed truthful state (expected: fail closed, never fake success), and physical pointer ops are denied without a lease.
+2. `windows_unlock_recovery` — unlock; verify the desktop capability returns to `ready` only after a live UIA probe, and stale references fail `stale_reference` without targeting the lock screen or another window.
+3. `windows_sleep_wake` — sleep at least 2 minutes (past the foreground-lease TTL), wake; verify leases expired, handles are invalid, the relay reconnects on a new generation within 30 s of network return, and no mutation replays.
+4. `windows_reboot_logon` — restart the OS; verify the agent is offline before logon (record the AtLogOn limitation as stated, not as a failure), auto-starts at logon, durable jobs/idempotency survive, and a fresh authorized op succeeds with no manual step.
+5. `browser_runtime_onboarding` — on a fresh install with no Chromium, verify the browser reports `disconnected`/not-installed truthfully (not "installed successfully"); after installing Chromium and pairing the extension, verify the browser reaches `ready` only on a real `pages` probe.
+6. `windows_resource_baseline` — record working-set idle and cold start via `scripts/bench-local.ps1` beside the Linux floor; investigate variance before claiming the <250 ms target.
+
+Record each stage in its `observed_outcome` block in `scripts/live-acceptance-plan.json`: initial state, injected fault, observed transition, recovery seconds, final state, and independently verified outcome (file bytes / counters / operator observation), plus observer, timestamp, and machine. Flip `status` from `unverified` to `pass`/`fail` only with the observation in hand.
+
+Known limits that are recorded, not certified away: no agent before logon or after logoff with the current AtLogOn registration; secure-desktop surfaces are not automatable by design; certification covers the tested machine only.
+
+## 6. Cleanup
+
+After local, remote, and Windows session proof are complete:
 
     node scripts/live-acceptance.mjs --cleanup
 
@@ -108,9 +123,9 @@ Expected marker:
 
     LIVE_ACCEPTANCE_CLEANUP=PASS
 
-## 6. Release tag
+## 7. Release tag
 
-Only after both the operator-observed local phase and the separate remote-plane proof pass should `v0.1.0` be created.
+Only after the operator-observed local phase, the separate remote-plane proof, and the Windows session stages pass should `v0.1.0` be created.
 
 Pushing that tag triggers `.github/workflows/release.yml`, which rebuilds and re-verifies the Windows package, creates the ZIP/checksum, and publishes the GitHub Release.
 

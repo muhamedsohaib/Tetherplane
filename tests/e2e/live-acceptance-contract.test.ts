@@ -8,6 +8,19 @@ import { promisify } from "node:util";
 import { fileURLToPath } from "node:url";
 import { normalizeCommandForPlatform } from "../../scripts/live-acceptance-command.mjs";
 
+type ObservedOutcome = {
+  status: string;
+  initial_state: unknown;
+  injected_fault: unknown;
+  observed_transition: unknown;
+  recovery_seconds: unknown;
+  final_state: unknown;
+  independent_verification: unknown;
+  observed_at: unknown;
+  operator: unknown;
+  machine: unknown;
+};
+
 type Stage = {
   id: string;
   phase: "prepare" | "live" | "manual" | "cleanup" | "finalize";
@@ -17,6 +30,7 @@ type Stage = {
   destructive: boolean;
   external_communication: boolean;
   financial: boolean;
+  observed_outcome?: ObservedOutcome;
 };
 
 type AcceptancePlan = {
@@ -52,6 +66,12 @@ test("v0.1.0 live acceptance plan is explicit and human-safe", async () => {
       "browser_semantic",
       "desktop_semantic",
       "remote_plane",
+      "windows_locked_workstation",
+      "windows_unlock_recovery",
+      "windows_sleep_wake",
+      "windows_reboot_logon",
+      "browser_runtime_onboarding",
+      "windows_resource_baseline",
       "cleanup",
       "release_tag",
     ],
@@ -69,15 +89,56 @@ test("v0.1.0 live acceptance plan is explicit and human-safe", async () => {
     ),
   );
 
+  const windowsStages = [
+    "windows_locked_workstation",
+    "windows_unlock_recovery",
+    "windows_sleep_wake",
+    "windows_reboot_logon",
+    "browser_runtime_onboarding",
+    "windows_resource_baseline",
+  ];
+
   for (const id of [
     "local_core",
     "browser_semantic",
     "desktop_semantic",
     "remote_plane",
+    ...windowsStages,
   ]) {
     const stage = plan.stages.find((candidate) => candidate.id === id);
     assert.ok(stage, "missing stage " + id);
     assert.equal(stage.requires_user_present, true);
+  }
+
+  // S8: every Windows session stage carries an observed-outcome record
+  // with the WINDOWS_ACCEPTANCE_PLAN fields. The status starts
+  // unverified on any Linux host and flips only with an observation
+  // in hand on Leno.
+  for (const id of windowsStages) {
+    const stage = plan.stages.find((candidate) => candidate.id === id);
+    assert.ok(stage, "missing stage " + id);
+    const outcome = stage.observed_outcome;
+    assert.ok(outcome, "missing observed_outcome for " + id);
+    assert.ok(
+      ["unverified", "pass", "fail"].includes(outcome.status),
+      "bad observed_outcome.status for " + id,
+    );
+    for (const field of [
+      "initial_state",
+      "injected_fault",
+      "observed_transition",
+      "recovery_seconds",
+      "final_state",
+      "independent_verification",
+      "observed_at",
+      "operator",
+      "machine",
+    ] as const) {
+      assert.ok(
+        field in outcome,
+        `missing observed_outcome.${field} for ` + id,
+      );
+    }
   }
 
   const remote = plan.stages.find(
