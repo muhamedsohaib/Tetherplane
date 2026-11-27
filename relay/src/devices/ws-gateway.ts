@@ -1,3 +1,4 @@
+import { randomUUID } from "node:crypto";
 import type { IncomingMessage, Server } from "node:http";
 
 import {
@@ -16,14 +17,35 @@ import type {
 
 const DEVICE_ID_HEADER = "x-tetherplane-device-id";
 
+// S2 heartbeat bounds (normative in docs/CONNECTION_STATE_MACHINE.md):
+// a socket whose Pongs stop echoing the challenged nonce is retired
+// well within the 60 s stale bound.
+export const RELAY_HEARTBEAT_INTERVAL_MS = 15_000;
+export const RELAY_STALE_AFTER_MS = 45_000;
+const RELAY_STALE_LIMIT_MS = 60_000;
+
+export type RelayHeartbeatOptions = {
+  intervalMs?: number;
+  staleMs?: number;
+};
+
+type HeartbeatState = {
+  timer: NodeJS.Timeout | null;
+  lastNonce: string | null;
+  lastPongAt: number;
+};
+
 type LiveDevice = {
   socket: WebSocket;
   connection: DeviceConnectionHandle;
+  heartbeat: HeartbeatState;
 };
 
 export class DeviceWebSocketGateway {
   readonly #registry: DeviceRegistry;
   readonly #router: DeviceRouter;
+  readonly #heartbeatIntervalMs: number;
+  readonly #staleAfterMs: number;
   readonly #server = new WebSocketServer({ noServer: true });
   readonly #live = new Map<string, LiveDevice>();
   #attachedServer: Server | null = null;
@@ -34,9 +56,27 @@ export class DeviceWebSocketGateway {
   constructor(options: {
     registry: DeviceRegistry;
     router: DeviceRouter;
+    heartbeat?: RelayHeartbeatOptions;
   }) {
     this.#registry = options.registry;
     this.#router = options.router;
+    const intervalMs =
+      options.heartbeat?.intervalMs ?? RELAY_HEARTBEAT_INTERVAL_MS;
+    const staleMs = options.heartbeat?.staleMs ?? RELAY_STALE_AFTER_MS;
+    if (
+      !Number.isFinite(intervalMs) ||
+      !Number.isFinite(staleMs) ||
+      intervalMs <= 0 ||
+      staleMs <= 0 ||
+      intervalMs > staleMs ||
+      staleMs > RELAY_STALE_LIMIT_MS
+    ) {
+      throw new RangeError(
+        "relay heartbeat requires 0 < interval <= stale <= 60000 ms",
+      );
+    }
+    this.#heartbeatIntervalMs = intervalMs;
+    this.#staleAfterMs = staleMs;
   }
 
   attach(server: Server, pathname = "/device"): void {
@@ -58,6 +98,7 @@ export class DeviceWebSocketGateway {
       return;
     }
     this.#live.delete(deviceId);
+    stopHeartbeat(live.heartbeat);
     live.connection.disconnect();
     live.socket.close(4001, "device revoked or disconnected by relay");
   }
@@ -132,6 +173,7 @@ export class DeviceWebSocketGateway {
     const previous = this.#live.get(input.deviceId);
     if (previous) {
       this.#live.delete(input.deviceId);
+      stopHeartbeat(previous.heartbeat);
       previous.connection.disconnect();
       previous.socket.close(4000, "superseded by newer device connection");
     }
@@ -146,9 +188,15 @@ export class DeviceWebSocketGateway {
         await sendJson(input.socket, message);
       },
     });
+    const heartbeat: HeartbeatState = {
+      timer: null,
+      lastNonce: null,
+      lastPongAt: Date.now(),
+    };
     this.#live.set(input.deviceId, {
       socket: input.socket,
       connection,
+      heartbeat,
     });
 
     input.socket.on("message", (raw: RawData) => {
@@ -156,10 +204,21 @@ export class DeviceWebSocketGateway {
       if (message) connection.receive(message);
     });
 
+    input.socket.on("pong", (data: RawData) => {
+      const current = this.#live.get(input.deviceId);
+      if (current?.socket !== input.socket) return;
+      if (data.toString() !== current.heartbeat.lastNonce) {
+        this.#retireStaleSocket(input.deviceId, input.socket);
+        return;
+      }
+      current.heartbeat.lastPongAt = Date.now();
+    });
+
     input.socket.once("close", () => {
       const current = this.#live.get(input.deviceId);
       if (current?.socket !== input.socket) return;
       this.#live.delete(input.deviceId);
+      stopHeartbeat(current.heartbeat);
       connection.disconnect();
     });
 
@@ -167,8 +226,78 @@ export class DeviceWebSocketGateway {
       const current = this.#live.get(input.deviceId);
       if (current?.socket !== input.socket) return;
       this.#live.delete(input.deviceId);
+      stopHeartbeat(current.heartbeat);
       connection.disconnect();
     });
+
+    this.#scheduleHeartbeat(input.deviceId, input.socket, heartbeat);
+  }
+
+  #scheduleHeartbeat(
+    deviceId: string,
+    socket: WebSocket,
+    heartbeat: HeartbeatState,
+  ): void {
+    heartbeat.timer = setTimeout(() => {
+      heartbeat.timer = null;
+      this.#heartbeatTick(deviceId, socket, heartbeat);
+    }, this.#heartbeatIntervalMs);
+  }
+
+  #heartbeatTick(
+    deviceId: string,
+    socket: WebSocket,
+    heartbeat: HeartbeatState,
+  ): void {
+    const current = this.#live.get(deviceId);
+    if (current?.socket !== socket || current.heartbeat !== heartbeat) return;
+    if (Date.now() - heartbeat.lastPongAt >= this.#staleAfterMs) {
+      this.#retireStaleSocket(deviceId, socket);
+      return;
+    }
+    if (socket.readyState !== WebSocket.OPEN) {
+      this.#retireStaleSocket(deviceId, socket);
+      return;
+    }
+    const nonce = randomUUID();
+    heartbeat.lastNonce = nonce;
+    this.#scheduleHeartbeat(deviceId, socket, heartbeat);
+    try {
+      socket.ping(nonce, undefined, (error) => {
+        if (error) {
+          this.#retireStaleSocket(deviceId, socket);
+        }
+      });
+    } catch {
+      this.#retireStaleSocket(deviceId, socket);
+    }
+  }
+
+  /**
+   * Retire a stale socket: generation-guarded terminate. Only the current
+   * socket for the device is ever touched, so a superseded socket's timers
+   * and handlers can never retire the live replacement. In-flight work of
+   * the retired generation settles as `disconnected` via the router; the
+   * peer reconnects as a new generation and nothing is replayed.
+   */
+  #retireStaleSocket(deviceId: string, socket: WebSocket): void {
+    const current = this.#live.get(deviceId);
+    if (current?.socket !== socket) return;
+    this.#live.delete(deviceId);
+    stopHeartbeat(current.heartbeat);
+    current.connection.disconnect();
+    try {
+      socket.terminate();
+    } catch {
+      // Already dead; presence and pending work are settled above.
+    }
+  }
+}
+
+function stopHeartbeat(heartbeat: HeartbeatState): void {
+  if (heartbeat.timer) {
+    clearTimeout(heartbeat.timer);
+    heartbeat.timer = null;
   }
 }
 
