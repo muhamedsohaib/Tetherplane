@@ -177,6 +177,13 @@ fn concurrent_requests_remain_correlated_and_jsonl_framed() {
     assert!(status.success());
 }
 
+fn find_provider<'a>(providers: &'a [Value], namespace: &str) -> &'a Value {
+    providers
+        .iter()
+        .find(|provider| provider["namespace"].as_str() == Some(namespace))
+        .unwrap()
+}
+
 #[test]
 fn device_status_and_capabilities_are_minimal_and_truthful() {
     const STATUS_ID: &str = "00000000-0000-4000-8000-000000000095";
@@ -233,25 +240,29 @@ fn device_status_and_capabilities_are_minimal_and_truthful() {
 
     let providers = responses[CAPS_ID]["data"]["providers"].as_array().unwrap();
     for namespace in ["filesystem", "search", "process", "device", "batch"] {
-        let provider = providers
-            .iter()
-            .find(|provider| provider["namespace"].as_str() == Some(namespace))
-            .unwrap();
-        assert_eq!(provider["available"].as_bool(), Some(true));
+        let provider = find_provider(providers, namespace);
+        assert_eq!(provider["state"].as_str(), Some("ready"));
+        assert!(provider["observed_at"].as_u64().unwrap_or(0) > 0);
+        assert!(provider["reason"].is_null());
+        assert!(
+            provider.get("available").is_none(),
+            "startup snapshot boolean must be replaced by state"
+        );
     }
-    let browser = providers
-        .iter()
-        .find(|provider| provider["namespace"].as_str() == Some("browser"))
-        .unwrap();
-    assert_eq!(browser["available"].as_bool(), Some(false));
+    let browser = find_provider(providers, "browser");
+    assert_eq!(browser["state"].as_str(), Some("disconnected"));
+    assert!(
+        browser["reason"]
+            .as_str()
+            .unwrap_or("")
+            .contains("not configured")
+    );
 
-    let desktop = providers
-        .iter()
-        .find(|provider| provider["namespace"].as_str() == Some("desktop"))
-        .unwrap();
+    let desktop = find_provider(providers, "desktop");
     #[cfg(windows)]
     {
-        assert_eq!(desktop["available"].as_bool(), Some(true));
+        // Present but never verified on a fresh runtime: recovering, not ready.
+        assert_eq!(desktop["state"].as_str(), Some("recovering"));
         let operations = desktop["operations"].as_array().unwrap();
         let operations = operations
             .iter()
@@ -272,7 +283,7 @@ fn device_status_and_capabilities_are_minimal_and_truthful() {
         );
     }
     #[cfg(not(windows))]
-    assert_eq!(desktop["available"].as_bool(), Some(false));
+    assert_eq!(desktop["state"].as_str(), Some("disconnected"));
 
     let exit = child.wait().unwrap();
     assert!(exit.success());
@@ -424,7 +435,10 @@ fn successful_browser_handshake_registers_real_provider_and_capabilities() {
     let listener = TcpListener::bind("127.0.0.1:0").unwrap();
     let address = listener.local_addr().unwrap().to_string();
     let bridge = thread::spawn(move || {
-        for index in 0..2 {
+        // Startup handshake, then one status RPC per consumer: the
+        // capabilities() live probe and the explicit browser.status call.
+        // Both status RPCs share the same shape; serve either in any order.
+        for index in 0..3 {
             let (mut stream, _) = listener.accept().unwrap();
             let mut line = String::new();
             BufReader::new(stream.try_clone().unwrap())
@@ -442,6 +456,7 @@ fn successful_browser_handshake_registers_real_provider_and_capabilities() {
                     "verification": "not_applicable"
                 })
             } else {
+                assert_eq!(request["type"], "invoke");
                 assert_eq!(request["capability"], "browser.status");
                 json!({
                     "request_id": request["request_id"],
@@ -487,7 +502,8 @@ fn successful_browser_handshake_registers_real_provider_and_capabilities() {
         .iter()
         .find(|provider| provider["namespace"] == "browser")
         .unwrap();
-    assert_eq!(browser_provider["available"], true);
+    assert_eq!(browser_provider["state"], "ready");
+    assert!(browser_provider["observed_at"].as_u64().unwrap_or(0) > 0);
     assert_eq!(
         browser_provider["operations"],
         json!(["status", "pages", "snapshot"])

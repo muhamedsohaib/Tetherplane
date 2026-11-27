@@ -142,7 +142,9 @@ test(
       );
       const providers = capabilities.providers as Array<Record<string, unknown>>;
       const desktop = providers.find((provider) => provider.namespace === "desktop");
-      assert.equal(desktop?.available, true);
+      // Fresh runtime, desktop never verified: recovering (S3 truthful
+      // readiness replaces the startup available snapshot).
+      assert.equal(desktop?.state, "recovering");
 
       const owned = structured(
         await call(local.client, "process", {

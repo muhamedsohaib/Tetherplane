@@ -62,7 +62,22 @@ test("relay exposes minimal unauthenticated liveness and readiness probes", asyn
     });
     assert.equal(ready.status, 200);
     assert.equal(ready.headers.get("content-type"), "application/json");
-    assert.deepEqual(await ready.json(), { status: "ready" });
+    const readyBody = (await ready.json()) as Record<string, unknown>;
+    assert.equal(readyBody.status, "ready");
+    // Freshness, not a static string: every reading carries when it was
+    // taken and since when the relay has been serving.
+    const observedAt = Date.parse(String(readyBody.observed_at));
+    const readySince = Date.parse(String(readyBody.ready_since));
+    assert.ok(
+      Number.isFinite(observedAt) && Date.now() - observedAt < 5_000,
+      `observed_at must be recent: ${String(readyBody.observed_at)}`,
+    );
+    assert.ok(
+      Number.isFinite(readySince) && readySince <= observedAt,
+      `ready_since must precede the reading: ${String(readyBody.ready_since)}`,
+    );
+    assert.equal(typeof readyBody.uptime_ms, "number");
+    assert.ok((readyBody.uptime_ms as number) >= 0);
   } finally {
     await relay.close();
     await rm(dir, { recursive: true, force: true });

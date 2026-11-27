@@ -304,3 +304,122 @@ async fn startup_retry_attaches_when_loopback_bridge_becomes_ready_shortly_after
     assert!(provider.operations().contains(&"pages".to_owned()));
     delayed.await.unwrap();
 }
+
+async fn connected_provider_with(
+    replies: Vec<serde_json::Value>,
+) -> (
+    BrowserProvider,
+    tokio::task::JoinHandle<Vec<serde_json::Value>>,
+) {
+    let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
+    let address = listener.local_addr().unwrap().to_string();
+    let task = tokio::spawn(async move {
+        let mut requests = Vec::new();
+        let total = replies.len() + 1;
+        for index in 0..total {
+            let (stream, _) = listener.accept().await.unwrap();
+            let (read, mut write) = stream.into_split();
+            let mut lines = BufReader::new(read).lines();
+            let request: serde_json::Value =
+                serde_json::from_str(&lines.next_line().await.unwrap().unwrap()).unwrap();
+            requests.push(request);
+            let response = if index == 0 {
+                json!({
+                    "request_id": "handshake",
+                    "status": "success",
+                    "data": {"protocol_version": "1.0", "operations": ["status", "pages"]}
+                })
+            } else {
+                replies[index - 1].clone()
+            };
+            write
+                .write_all(format!("{response}\n").as_bytes())
+                .await
+                .unwrap();
+        }
+        requests
+    });
+    let provider = BrowserProvider::connect(BrowserBridgeConfig {
+        address,
+        token: None,
+        timeout_ms: 2_000,
+    })
+    .await
+    .unwrap();
+    (provider, task)
+}
+
+#[tokio::test]
+async fn probe_reports_ready_when_bridge_status_succeeds() {
+    let (provider, received) = connected_provider_with(vec![json!({
+        "request_id": "probe",
+        "status": "success",
+        "data": {"available": true},
+        "verification": "not_applicable"
+    })])
+    .await;
+    let report = provider.probe().await.unwrap();
+    assert!(report.degraded_reason.is_none());
+    let requests = received.await.unwrap();
+    assert_eq!(requests[1]["type"], "invoke");
+    assert_eq!(requests[1]["capability"], "browser.status");
+}
+
+#[tokio::test]
+async fn probe_reports_degraded_when_bridge_reports_unavailable() {
+    let (provider, received) = connected_provider_with(vec![json!({
+        "request_id": "probe",
+        "status": "success",
+        "data": {"available": false},
+        "verification": "not_applicable"
+    })])
+    .await;
+    let report = provider.probe().await.unwrap();
+    assert!(report.degraded_reason.is_some());
+    received.await.unwrap();
+}
+
+#[tokio::test]
+async fn probe_maps_killed_bridge_to_disconnected() {
+    let (address, handshake) = fake_bridge(json!({
+        "request_id": "handshake",
+        "status": "success",
+        "data": {"protocol_version": "1.0", "operations": ["status"]}
+    }))
+    .await;
+    let provider = BrowserProvider::connect(BrowserBridgeConfig {
+        address,
+        token: None,
+        timeout_ms: 500,
+    })
+    .await
+    .unwrap();
+    handshake.await.unwrap();
+    // Fake is gone: the loopback port now refuses connections.
+    let error = provider.probe().await.unwrap_err();
+    assert!(
+        matches!(
+            format!("{:?}", error.code).as_str(),
+            "Disconnected" | "Timeout"
+        ),
+        "killed bridge must probe disconnected, got {:?}",
+        error.code
+    );
+}
+
+#[tokio::test]
+async fn probe_sends_readonly_status_without_arguments() {
+    let (provider, received) = connected_provider_with(vec![json!({
+        "request_id": "probe",
+        "status": "success",
+        "data": {"available": true},
+        "verification": "not_applicable"
+    })])
+    .await;
+    provider.probe().await.unwrap();
+    let requests = received.await.unwrap();
+    let probe_request = &requests[1];
+    assert_eq!(probe_request["type"], "invoke");
+    assert_eq!(probe_request["capability"], "browser.status");
+    assert_eq!(probe_request["arguments"], json!({}));
+}

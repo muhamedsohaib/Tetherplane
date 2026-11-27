@@ -25,7 +25,7 @@ export function sleep(milliseconds) {
 
 export async function until(predicate, { timeoutMs = 10_000, intervalMs = 25, what = "condition" } = {}) {
   const deadline = Date.now() + timeoutMs;
-  while (!predicate()) {
+  while (!(await predicate())) {
     if (Date.now() >= deadline) {
       throw new Error(`timed out waiting for ${what} after ${timeoutMs} ms`);
     }

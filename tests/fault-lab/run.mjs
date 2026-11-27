@@ -12,9 +12,10 @@
 // Row 2 (half-open blackhole) executes REAL tetherd + REAL relay behind a
 // scriptable proxy (row2-blackhole.mjs, N seeds), plus a production-scale
 // anchor, a production-scale relay-retire proof, and a stability oracle.
-// Row 9 stays known-fail until S3 lands. Rows 3,4,7,11,12 have no lab
-// oracle yet (unit-covered); row 11 is partially measured via the
-// stability oracle's RSS bounds.
+// Row 9 (truthful readiness) executes REAL tetherd over stdio against a
+// scriptable fake bridge (row9-readiness.mjs, N seeds). Rows 3,4,7,11,12
+// have no lab oracle yet (unit-covered); row 11 is partially measured
+// via the stability oracle's RSS bounds.
 import { spawn, spawnSync } from "node:child_process";
 import { appendFileSync, existsSync, readFileSync, writeFileSync } from "node:fs";
 import path from "node:path";
@@ -143,19 +144,105 @@ async function runOracle(file, oracleArgs, timeoutMs) {
   return run("node", [`tests/fault-lab/${file}`, ...oracleArgs], ROOT, { timeoutMs, stream: true });
 }
 
+async function runRow9(seeds, seedOffset, append) {
+  return runOracle(
+    "row9-readiness.mjs",
+    ["--seeds", String(seeds), "--seed-offset", String(seedOffset), ...(append ? ["--append", append] : [])],
+    seeds * 30_000 + 60_000,
+  );
+}
+
 function publish(partialPath, { seeds, full }) {
   const lines = existsSync(partialPath) ? readFileSync(partialPath, "utf8").split("\n").filter(Boolean) : [];
   const records = lines.map((line) => JSON.parse(line));
+  // Carry over measurement sections this run did not execute (e.g. S6
+  // row-2 evidence when publishing an S3 row-9 run): re-running whole
+  // suites to republish is wasteful, and dropping evidence is worse.
+  // Carried sections keep their original head stamp.
+  let carried = {};
+  let carriedFrom = null;
+  const resultsPath = path.join(HERE, "results.json");
+  if (existsSync(resultsPath)) {
+    try {
+      const previous = JSON.parse(readFileSync(resultsPath, "utf8"));
+      carriedFrom = previous?.revisions?.head ?? null;
+      carried = previous?.measurements ?? {};
+    } catch {
+      carried = {};
+    }
+  }
+  const currentHead = revisions().head;
   const labRows = records.filter((r) => r.kind === "lab-row");
   const blackhole = records.filter((r) => r.oracle === "row2-blackhole" && r.mode === "scaled");
   const anchors = records.filter((r) => r.oracle === "row2-blackhole" && r.mode === "production");
   const prodRetire = records.filter((r) => r.oracle === "row2-production-retire");
   const stability = records.filter((r) => r.oracle === "row2-stability");
+  const readiness = records.filter((r) => r.oracle === "row9-readiness");
 
   const summarize = (list) => ({
     seeds: list.length,
     passed: list.filter((r) => r.pass).length,
+    head: currentHead,
   });
+  const carriedSection = (name) => {
+    const section = carried[name];
+    if (!section) return null;
+    return { ...section, carried_from: carriedFrom };
+  };
+  const fresh = (name, list, extra = {}) => {
+    if (list.length === 0) return carriedSection(name);
+    return { ...summarize(list), ...extra };
+  };
+  let previousResults = [];
+  try {
+    previousResults = JSON.parse(readFileSync(resultsPath, "utf8"))?.results ?? [];
+  } catch {
+    previousResults = [];
+  }
+  // Oracle-row summaries: fresh records win; otherwise carry the previous
+  // summary so partial merges never regress an executed row to
+  // "not-executed". Carried rows can never mask a fresh failure.
+  const rowSummary = (row, name, list) => {
+    if (list.length > 0) {
+      return {
+        row,
+        name,
+        status: list.every((r) => r.pass) ? "pass" : "fail",
+        ...summarize(list),
+      };
+    }
+    const old = previousResults.find(
+      (entry) => entry.row === row && entry.seeds !== undefined,
+    );
+    if (old) return { ...old, carried_from: carriedFrom };
+    return { row, name, status: "not-executed", ...summarize(list) };
+  };
+  const freshResults = [
+    ...labRows.map((r) => ({ seed: r.seed, row: r.row, name: r.name, status: r.status, ms: r.ms })),
+    { row: 6, name: "stale generation dropped (router oracle)", status: "covered-by-row-1" },
+    { row: 8, name: "delayed ack / timeout no double-resolve (router oracle)", status: "covered-by-row-1" },
+    rowSummary(2, "half-open blackhole bounded detection (real agent+relay)", blackhole),
+    rowSummary(9, "provider kill -> truthful per-capability state", readiness),
+    ...[3, 4, 7, 12].map((row) => ({
+      row,
+      name: { 3: "partition then heal, no duplicate mutations", 4: "agent SIGKILL, no stale handles", 7: "duplicate/ambiguous requests", 12: "unauthorized recovery abuse" }[row],
+      status: "no-oracle",
+      reason: "no fault-lab oracle yet; covered by unit suites only",
+    })),
+    {
+      row: 11,
+      name: "resource pressure",
+      status: "partial",
+      reason: "RSS boundedness measured via row2-stability; CPU/disk-full pressure not oracled",
+    },
+  ];
+  const freshRows = new Set(freshResults.map((entry) => entry.row));
+  const results = [
+    ...freshResults,
+    ...previousResults
+      .filter((entry) => !freshRows.has(entry.row))
+      .map((entry) => ({ ...entry, carried_from: carriedFrom })),
+  ];
   const summary = {
     at: new Date().toISOString(),
     mode: full ? "s6-full" : "quick-proof",
@@ -163,65 +250,46 @@ function publish(partialPath, { seeds, full }) {
     platform: process.platform,
     revisions: revisions(),
     note: "Linux simulation only; Windows lock/sleep/foreground NOT certified (see docs/WINDOWS_ACCEPTANCE_PLAN.md)",
-    results: [
-      ...labRows.map((r) => ({ seed: r.seed, row: r.row, name: r.name, status: r.status, ms: r.ms })),
-      { row: 6, name: "stale generation dropped (router oracle)", status: "covered-by-row-1" },
-      { row: 8, name: "delayed ack / timeout no double-resolve (router oracle)", status: "covered-by-row-1" },
-      {
-        row: 2,
-        name: "half-open blackhole bounded detection (real agent+relay)",
-        status: blackhole.length > 0 && blackhole.every((r) => r.pass) ? "pass" : blackhole.length > 0 ? "fail" : "not-executed",
-        ...summarize(blackhole),
-      },
-      {
-        row: 9,
-        name: "provider kill -> truthful per-capability state",
-        status: "known-fail-pending-s3",
-        reason: "capability available is a startup snapshot (RC-3); fixed by Spark S3",
-      },
-      ...[3, 4, 7, 12].map((row) => ({
-        row,
-        name: { 3: "partition then heal, no duplicate mutations", 4: "agent SIGKILL, no stale handles", 7: "duplicate/ambiguous requests", 12: "unauthorized recovery abuse" }[row],
-        status: "no-oracle",
-        reason: "no fault-lab oracle yet; covered by unit suites only",
-      })),
-      {
-        row: 11,
-        name: "resource pressure",
-        status: "partial",
-        reason: "RSS boundedness measured via row2-stability; CPU/disk-full pressure not oracled",
-      },
-    ],
-    measurements: {
-      "row2-blackhole": {
-        ...summarize(blackhole),
-        retireMs: statsOf(blackhole.filter((r) => r.pass), "retireMs"),
-        detectMs: statsOf(blackhole.filter((r) => r.pass), "detectMs"),
-        restoreMs: statsOf(blackhole.filter((r) => r.pass), "restoreMs"),
-        records: blackhole,
-      },
-      "row2-anchor": {
-        ...summarize(anchors),
-        records: anchors,
-      },
-      "row2-production-retire": {
-        ...summarize(prodRetire),
-        records: prodRetire,
-      },
-      "row2-stability": {
-        ...summarize(stability),
-        records: stability,
-      },
-    },
+    results,
+    measurements: Object.fromEntries(
+      Object.entries({
+        "row2-blackhole": fresh("row2-blackhole", blackhole, {
+          retireMs: statsOf(
+            blackhole.filter((r) => r.pass),
+            "retireMs",
+          ),
+          detectMs: statsOf(
+            blackhole.filter((r) => r.pass),
+            "detectMs",
+          ),
+          restoreMs: statsOf(
+            blackhole.filter((r) => r.pass),
+            "restoreMs",
+          ),
+          records: blackhole,
+        }),
+        "row2-anchor": fresh("row2-anchor", anchors, { records: anchors }),
+        "row2-production-retire": fresh("row2-production-retire", prodRetire, {
+          records: prodRetire,
+        }),
+        "row2-stability": fresh("row2-stability", stability, { records: stability }),
+        "row9-readiness": fresh("row9-readiness", readiness, { records: readiness }),
+      }).filter(([, section]) => section !== null),
+    ),
   };
   writeFileSync(path.join(HERE, "results.json"), `${JSON.stringify(summary, null, 2)}\n`);
   const failed =
     summary.results.filter((r) => r.status === "fail").length +
-    [blackhole, anchors, prodRetire, stability].flat().filter((r) => !r.pass).length;
+    [blackhole, anchors, prodRetire, stability, readiness]
+      .flat()
+      .filter((r) => !r.pass).length +
+    Object.values(summary.measurements).filter(
+      (section) => section.passed < section.seeds,
+    ).length;
   console.log(
     failed > 0
       ? `FAULT-LAB: ${failed} unexpected failure(s)`
-      : "FAULT-LAB: all executed oracles pass; row 9 known-fail pending S3; rows 3,4,7,12 have no oracle",
+      : "FAULT-LAB: all executed oracles pass; rows 3,4,7,12 have no oracle",
   );
   return failed;
 }
@@ -243,6 +311,10 @@ async function main() {
   }
   if (want("all") || want("2")) {
     const r = await runBlackhole(options.seeds, options.seedOffset, append);
+    if (r.code !== 0) failed += 1;
+  }
+  if (want("all") || want("9") || want("row9")) {
+    const r = await runRow9(options.seeds, options.seedOffset, append);
     if (r.code !== 0) failed += 1;
   }
   const fullRun = options.seeds >= 20 || ["stability", "anchor", "prodretire"].includes(options.row);

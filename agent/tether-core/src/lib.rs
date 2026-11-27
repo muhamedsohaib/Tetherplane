@@ -16,7 +16,7 @@ pub use envelope::{
     Actor, ActorKind, InvocationEnvelope, ResponseMode, ResultEnvelope, ResultStatus, Timing,
     VerificationStatus,
 };
-pub use error::{CapabilityError, ErrorCode};
+pub use error::{CapabilityError, CapabilityState, ErrorCode};
 pub use handles::HandleRegistry;
 pub use ownership::{ResourceKey, ResourceOrigin, TrustedOwnershipRegistry};
 pub use policy::{

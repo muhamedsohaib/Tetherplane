@@ -61,7 +61,7 @@ For OAuth/OIDC, the mounted auth config contains provider metadata and explicit 
 The relay exposes unauthenticated operational probes containing no device, account, session, or credential data:
 
 - `GET /healthz` -> `{"status":"ok"}`
-- `GET /readyz` -> `{"status":"ready"}`
+- `GET /readyz` -> `{"status":"ready","observed_at":"<iso>","ready_since":"<iso>","uptime_ms":<n>}` (every reading carries its own freshness; per-device capability freshness lives behind authentication and is never exposed here)
 
 These endpoints are intended for container/orchestrator liveness and readiness checks. They do not grant MCP or device authority.
 

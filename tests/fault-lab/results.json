@@ -1,296 +1,16 @@
 {
-  "at": "2026-11-27T12:01:50.443Z",
+  "at": "2026-11-27T12:54:31.402Z",
   "mode": "s6-full",
   "seeds": 20,
   "platform": "linux",
   "revisions": {
-    "head": "77e3d07d03a6a384830233397ef45bbc889b87f0",
-    "status": "M tests/fault-lab/results.json\n M tests/fault-lab/run.mjs\n?? package-lock.json\n?? tests/fault-lab/UPGRADE_SEQUENCE.md\n?? tests/fault-lab/harness.mjs\n?? tests/fault-lab/row2-blackhole.mjs\n?? tests/fault-lab/row2-production-retire.mjs\n?? tests/fault-lab/row2-stability.mjs",
+    "head": "fb911baaa8b2b3e23a4121c629d1c4e7302959e0",
+    "status": "M agent/providers/browser/src/lib.rs\n M agent/providers/browser/tests/browser.rs\n M agent/tether-core/src/error.rs\n M agent/tether-core/src/lib.rs\n M agent/tetherd/src/runtime.rs\n M agent/tetherd/tests/stdio_rpc.rs\n M docs/remote/self-host.md\n M relay/src/health-http.ts\n M relay/test/server.test.ts\n M tests/e2e/desktop-coexistence.test.ts\n M tests/fault-lab/harness.mjs\n M tests/fault-lab/run.mjs\n?? package-lock.json\n?? tests/fault-lab/row9-readiness.mjs",
     "node": "v24.22.2",
     "rustc": "rustc 1.100.0 (0ef1bc386 2026-11-09)"
   },
   "note": "Linux simulation only; Windows lock/sleep/foreground NOT certified (see docs/WINDOWS_ACCEPTANCE_PLAN.md)",
   "results": [
-    {
-      "seed": 0,
-      "row": 1,
-      "name": "relay kill/restart + no replay (router oracle)",
-      "status": "pass",
-      "ms": 238
-    },
-    {
-      "seed": 0,
-      "row": 5,
-      "name": "revoked/expired auth denied (device-ws oracle)",
-      "status": "pass",
-      "ms": 2773
-    },
-    {
-      "seed": 1,
-      "row": 1,
-      "name": "relay kill/restart + no replay (router oracle)",
-      "status": "pass",
-      "ms": 295
-    },
-    {
-      "seed": 1,
-      "row": 5,
-      "name": "revoked/expired auth denied (device-ws oracle)",
-      "status": "pass",
-      "ms": 3044
-    },
-    {
-      "seed": 2,
-      "row": 1,
-      "name": "relay kill/restart + no replay (router oracle)",
-      "status": "pass",
-      "ms": 227
-    },
-    {
-      "seed": 2,
-      "row": 5,
-      "name": "revoked/expired auth denied (device-ws oracle)",
-      "status": "pass",
-      "ms": 2764
-    },
-    {
-      "seed": 3,
-      "row": 1,
-      "name": "relay kill/restart + no replay (router oracle)",
-      "status": "pass",
-      "ms": 256
-    },
-    {
-      "seed": 3,
-      "row": 5,
-      "name": "revoked/expired auth denied (device-ws oracle)",
-      "status": "pass",
-      "ms": 2783
-    },
-    {
-      "seed": 4,
-      "row": 1,
-      "name": "relay kill/restart + no replay (router oracle)",
-      "status": "pass",
-      "ms": 234
-    },
-    {
-      "seed": 4,
-      "row": 5,
-      "name": "revoked/expired auth denied (device-ws oracle)",
-      "status": "pass",
-      "ms": 2774
-    },
-    {
-      "seed": 5,
-      "row": 1,
-      "name": "relay kill/restart + no replay (router oracle)",
-      "status": "pass",
-      "ms": 247
-    },
-    {
-      "seed": 5,
-      "row": 5,
-      "name": "revoked/expired auth denied (device-ws oracle)",
-      "status": "pass",
-      "ms": 2785
-    },
-    {
-      "seed": 6,
-      "row": 1,
-      "name": "relay kill/restart + no replay (router oracle)",
-      "status": "pass",
-      "ms": 245
-    },
-    {
-      "seed": 6,
-      "row": 5,
-      "name": "revoked/expired auth denied (device-ws oracle)",
-      "status": "pass",
-      "ms": 2803
-    },
-    {
-      "seed": 7,
-      "row": 1,
-      "name": "relay kill/restart + no replay (router oracle)",
-      "status": "pass",
-      "ms": 234
-    },
-    {
-      "seed": 7,
-      "row": 5,
-      "name": "revoked/expired auth denied (device-ws oracle)",
-      "status": "pass",
-      "ms": 2766
-    },
-    {
-      "seed": 8,
-      "row": 1,
-      "name": "relay kill/restart + no replay (router oracle)",
-      "status": "pass",
-      "ms": 251
-    },
-    {
-      "seed": 8,
-      "row": 5,
-      "name": "revoked/expired auth denied (device-ws oracle)",
-      "status": "pass",
-      "ms": 2771
-    },
-    {
-      "seed": 9,
-      "row": 1,
-      "name": "relay kill/restart + no replay (router oracle)",
-      "status": "pass",
-      "ms": 318
-    },
-    {
-      "seed": 9,
-      "row": 5,
-      "name": "revoked/expired auth denied (device-ws oracle)",
-      "status": "pass",
-      "ms": 2818
-    },
-    {
-      "seed": 10,
-      "row": 1,
-      "name": "relay kill/restart + no replay (router oracle)",
-      "status": "pass",
-      "ms": 285
-    },
-    {
-      "seed": 10,
-      "row": 5,
-      "name": "revoked/expired auth denied (device-ws oracle)",
-      "status": "pass",
-      "ms": 2805
-    },
-    {
-      "seed": 11,
-      "row": 1,
-      "name": "relay kill/restart + no replay (router oracle)",
-      "status": "pass",
-      "ms": 237
-    },
-    {
-      "seed": 11,
-      "row": 5,
-      "name": "revoked/expired auth denied (device-ws oracle)",
-      "status": "pass",
-      "ms": 2770
-    },
-    {
-      "seed": 12,
-      "row": 1,
-      "name": "relay kill/restart + no replay (router oracle)",
-      "status": "pass",
-      "ms": 233
-    },
-    {
-      "seed": 12,
-      "row": 5,
-      "name": "revoked/expired auth denied (device-ws oracle)",
-      "status": "pass",
-      "ms": 2842
-    },
-    {
-      "seed": 13,
-      "row": 1,
-      "name": "relay kill/restart + no replay (router oracle)",
-      "status": "pass",
-      "ms": 222
-    },
-    {
-      "seed": 13,
-      "row": 5,
-      "name": "revoked/expired auth denied (device-ws oracle)",
-      "status": "pass",
-      "ms": 2765
-    },
-    {
-      "seed": 14,
-      "row": 1,
-      "name": "relay kill/restart + no replay (router oracle)",
-      "status": "pass",
-      "ms": 232
-    },
-    {
-      "seed": 14,
-      "row": 5,
-      "name": "revoked/expired auth denied (device-ws oracle)",
-      "status": "pass",
-      "ms": 2788
-    },
-    {
-      "seed": 15,
-      "row": 1,
-      "name": "relay kill/restart + no replay (router oracle)",
-      "status": "pass",
-      "ms": 242
-    },
-    {
-      "seed": 15,
-      "row": 5,
-      "name": "revoked/expired auth denied (device-ws oracle)",
-      "status": "pass",
-      "ms": 2783
-    },
-    {
-      "seed": 16,
-      "row": 1,
-      "name": "relay kill/restart + no replay (router oracle)",
-      "status": "pass",
-      "ms": 230
-    },
-    {
-      "seed": 16,
-      "row": 5,
-      "name": "revoked/expired auth denied (device-ws oracle)",
-      "status": "pass",
-      "ms": 2753
-    },
-    {
-      "seed": 17,
-      "row": 1,
-      "name": "relay kill/restart + no replay (router oracle)",
-      "status": "pass",
-      "ms": 246
-    },
-    {
-      "seed": 17,
-      "row": 5,
-      "name": "revoked/expired auth denied (device-ws oracle)",
-      "status": "pass",
-      "ms": 2776
-    },
-    {
-      "seed": 18,
-      "row": 1,
-      "name": "relay kill/restart + no replay (router oracle)",
-      "status": "pass",
-      "ms": 226
-    },
-    {
-      "seed": 18,
-      "row": 5,
-      "name": "revoked/expired auth denied (device-ws oracle)",
-      "status": "pass",
-      "ms": 2747
-    },
-    {
-      "seed": 19,
-      "row": 1,
-      "name": "relay kill/restart + no replay (router oracle)",
-      "status": "pass",
-      "ms": 227
-    },
-    {
-      "seed": 19,
-      "row": 5,
-      "name": "revoked/expired auth denied (device-ws oracle)",
-      "status": "pass",
-      "ms": 2869
-    },
     {
       "row": 6,
       "name": "stale generation dropped (router oracle)",
@@ -306,13 +26,16 @@
       "name": "half-open blackhole bounded detection (real agent+relay)",
       "status": "pass",
       "seeds": 20,
-      "passed": 20
+      "passed": 20,
+      "carried_from": "77e3d07d03a6a384830233397ef45bbc889b87f0"
     },
     {
       "row": 9,
       "name": "provider kill -> truthful per-capability state",
-      "status": "known-fail-pending-s3",
-      "reason": "capability available is a startup snapshot (RC-3); fixed by Spark S3"
+      "status": "pass",
+      "seeds": 20,
+      "passed": 20,
+      "head": "fb911baaa8b2b3e23a4121c629d1c4e7302959e0"
     },
     {
       "row": 3,
@@ -343,6 +66,326 @@
       "name": "resource pressure",
       "status": "partial",
       "reason": "RSS boundedness measured via row2-stability; CPU/disk-full pressure not oracled"
+    },
+    {
+      "seed": 0,
+      "row": 1,
+      "name": "relay kill/restart + no replay (router oracle)",
+      "status": "pass",
+      "ms": 238,
+      "carried_from": "77e3d07d03a6a384830233397ef45bbc889b87f0"
+    },
+    {
+      "seed": 0,
+      "row": 5,
+      "name": "revoked/expired auth denied (device-ws oracle)",
+      "status": "pass",
+      "ms": 2773,
+      "carried_from": "77e3d07d03a6a384830233397ef45bbc889b87f0"
+    },
+    {
+      "seed": 1,
+      "row": 1,
+      "name": "relay kill/restart + no replay (router oracle)",
+      "status": "pass",
+      "ms": 295,
+      "carried_from": "77e3d07d03a6a384830233397ef45bbc889b87f0"
+    },
+    {
+      "seed": 1,
+      "row": 5,
+      "name": "revoked/expired auth denied (device-ws oracle)",
+      "status": "pass",
+      "ms": 3044,
+      "carried_from": "77e3d07d03a6a384830233397ef45bbc889b87f0"
+    },
+    {
+      "seed": 2,
+      "row": 1,
+      "name": "relay kill/restart + no replay (router oracle)",
+      "status": "pass",
+      "ms": 227,
+      "carried_from": "77e3d07d03a6a384830233397ef45bbc889b87f0"
+    },
+    {
+      "seed": 2,
+      "row": 5,
+      "name": "revoked/expired auth denied (device-ws oracle)",
+      "status": "pass",
+      "ms": 2764,
+      "carried_from": "77e3d07d03a6a384830233397ef45bbc889b87f0"
+    },
+    {
+      "seed": 3,
+      "row": 1,
+      "name": "relay kill/restart + no replay (router oracle)",
+      "status": "pass",
+      "ms": 256,
+      "carried_from": "77e3d07d03a6a384830233397ef45bbc889b87f0"
+    },
+    {
+      "seed": 3,
+      "row": 5,
+      "name": "revoked/expired auth denied (device-ws oracle)",
+      "status": "pass",
+      "ms": 2783,
+      "carried_from": "77e3d07d03a6a384830233397ef45bbc889b87f0"
+    },
+    {
+      "seed": 4,
+      "row": 1,
+      "name": "relay kill/restart + no replay (router oracle)",
+      "status": "pass",
+      "ms": 234,
+      "carried_from": "77e3d07d03a6a384830233397ef45bbc889b87f0"
+    },
+    {
+      "seed": 4,
+      "row": 5,
+      "name": "revoked/expired auth denied (device-ws oracle)",
+      "status": "pass",
+      "ms": 2774,
+      "carried_from": "77e3d07d03a6a384830233397ef45bbc889b87f0"
+    },
+    {
+      "seed": 5,
+      "row": 1,
+      "name": "relay kill/restart + no replay (router oracle)",
+      "status": "pass",
+      "ms": 247,
+      "carried_from": "77e3d07d03a6a384830233397ef45bbc889b87f0"
+    },
+    {
+      "seed": 5,
+      "row": 5,
+      "name": "revoked/expired auth denied (device-ws oracle)",
+      "status": "pass",
+      "ms": 2785,
+      "carried_from": "77e3d07d03a6a384830233397ef45bbc889b87f0"
+    },
+    {
+      "seed": 6,
+      "row": 1,
+      "name": "relay kill/restart + no replay (router oracle)",
+      "status": "pass",
+      "ms": 245,
+      "carried_from": "77e3d07d03a6a384830233397ef45bbc889b87f0"
+    },
+    {
+      "seed": 6,
+      "row": 5,
+      "name": "revoked/expired auth denied (device-ws oracle)",
+      "status": "pass",
+      "ms": 2803,
+      "carried_from": "77e3d07d03a6a384830233397ef45bbc889b87f0"
+    },
+    {
+      "seed": 7,
+      "row": 1,
+      "name": "relay kill/restart + no replay (router oracle)",
+      "status": "pass",
+      "ms": 234,
+      "carried_from": "77e3d07d03a6a384830233397ef45bbc889b87f0"
+    },
+    {
+      "seed": 7,
+      "row": 5,
+      "name": "revoked/expired auth denied (device-ws oracle)",
+      "status": "pass",
+      "ms": 2766,
+      "carried_from": "77e3d07d03a6a384830233397ef45bbc889b87f0"
+    },
+    {
+      "seed": 8,
+      "row": 1,
+      "name": "relay kill/restart + no replay (router oracle)",
+      "status": "pass",
+      "ms": 251,
+      "carried_from": "77e3d07d03a6a384830233397ef45bbc889b87f0"
+    },
+    {
+      "seed": 8,
+      "row": 5,
+      "name": "revoked/expired auth denied (device-ws oracle)",
+      "status": "pass",
+      "ms": 2771,
+      "carried_from": "77e3d07d03a6a384830233397ef45bbc889b87f0"
+    },
+    {
+      "seed": 9,
+      "row": 1,
+      "name": "relay kill/restart + no replay (router oracle)",
+      "status": "pass",
+      "ms": 318,
+      "carried_from": "77e3d07d03a6a384830233397ef45bbc889b87f0"
+    },
+    {
+      "seed": 9,
+      "row": 5,
+      "name": "revoked/expired auth denied (device-ws oracle)",
+      "status": "pass",
+      "ms": 2818,
+      "carried_from": "77e3d07d03a6a384830233397ef45bbc889b87f0"
+    },
+    {
+      "seed": 10,
+      "row": 1,
+      "name": "relay kill/restart + no replay (router oracle)",
+      "status": "pass",
+      "ms": 285,
+      "carried_from": "77e3d07d03a6a384830233397ef45bbc889b87f0"
+    },
+    {
+      "seed": 10,
+      "row": 5,
+      "name": "revoked/expired auth denied (device-ws oracle)",
+      "status": "pass",
+      "ms": 2805,
+      "carried_from": "77e3d07d03a6a384830233397ef45bbc889b87f0"
+    },
+    {
+      "seed": 11,
+      "row": 1,
+      "name": "relay kill/restart + no replay (router oracle)",
+      "status": "pass",
+      "ms": 237,
+      "carried_from": "77e3d07d03a6a384830233397ef45bbc889b87f0"
+    },
+    {
+      "seed": 11,
+      "row": 5,
+      "name": "revoked/expired auth denied (device-ws oracle)",
+      "status": "pass",
+      "ms": 2770,
+      "carried_from": "77e3d07d03a6a384830233397ef45bbc889b87f0"
+    },
+    {
+      "seed": 12,
+      "row": 1,
+      "name": "relay kill/restart + no replay (router oracle)",
+      "status": "pass",
+      "ms": 233,
+      "carried_from": "77e3d07d03a6a384830233397ef45bbc889b87f0"
+    },
+    {
+      "seed": 12,
+      "row": 5,
+      "name": "revoked/expired auth denied (device-ws oracle)",
+      "status": "pass",
+      "ms": 2842,
+      "carried_from": "77e3d07d03a6a384830233397ef45bbc889b87f0"
+    },
+    {
+      "seed": 13,
+      "row": 1,
+      "name": "relay kill/restart + no replay (router oracle)",
+      "status": "pass",
+      "ms": 222,
+      "carried_from": "77e3d07d03a6a384830233397ef45bbc889b87f0"
+    },
+    {
+      "seed": 13,
+      "row": 5,
+      "name": "revoked/expired auth denied (device-ws oracle)",
+      "status": "pass",
+      "ms": 2765,
+      "carried_from": "77e3d07d03a6a384830233397ef45bbc889b87f0"
+    },
+    {
+      "seed": 14,
+      "row": 1,
+      "name": "relay kill/restart + no replay (router oracle)",
+      "status": "pass",
+      "ms": 232,
+      "carried_from": "77e3d07d03a6a384830233397ef45bbc889b87f0"
+    },
+    {
+      "seed": 14,
+      "row": 5,
+      "name": "revoked/expired auth denied (device-ws oracle)",
+      "status": "pass",
+      "ms": 2788,
+      "carried_from": "77e3d07d03a6a384830233397ef45bbc889b87f0"
+    },
+    {
+      "seed": 15,
+      "row": 1,
+      "name": "relay kill/restart + no replay (router oracle)",
+      "status": "pass",
+      "ms": 242,
+      "carried_from": "77e3d07d03a6a384830233397ef45bbc889b87f0"
+    },
+    {
+      "seed": 15,
+      "row": 5,
+      "name": "revoked/expired auth denied (device-ws oracle)",
+      "status": "pass",
+      "ms": 2783,
+      "carried_from": "77e3d07d03a6a384830233397ef45bbc889b87f0"
+    },
+    {
+      "seed": 16,
+      "row": 1,
+      "name": "relay kill/restart + no replay (router oracle)",
+      "status": "pass",
+      "ms": 230,
+      "carried_from": "77e3d07d03a6a384830233397ef45bbc889b87f0"
+    },
+    {
+      "seed": 16,
+      "row": 5,
+      "name": "revoked/expired auth denied (device-ws oracle)",
+      "status": "pass",
+      "ms": 2753,
+      "carried_from": "77e3d07d03a6a384830233397ef45bbc889b87f0"
+    },
+    {
+      "seed": 17,
+      "row": 1,
+      "name": "relay kill/restart + no replay (router oracle)",
+      "status": "pass",
+      "ms": 246,
+      "carried_from": "77e3d07d03a6a384830233397ef45bbc889b87f0"
+    },
+    {
+      "seed": 17,
+      "row": 5,
+      "name": "revoked/expired auth denied (device-ws oracle)",
+      "status": "pass",
+      "ms": 2776,
+      "carried_from": "77e3d07d03a6a384830233397ef45bbc889b87f0"
+    },
+    {
+      "seed": 18,
+      "row": 1,
+      "name": "relay kill/restart + no replay (router oracle)",
+      "status": "pass",
+      "ms": 226,
+      "carried_from": "77e3d07d03a6a384830233397ef45bbc889b87f0"
+    },
+    {
+      "seed": 18,
+      "row": 5,
+      "name": "revoked/expired auth denied (device-ws oracle)",
+      "status": "pass",
+      "ms": 2747,
+      "carried_from": "77e3d07d03a6a384830233397ef45bbc889b87f0"
+    },
+    {
+      "seed": 19,
+      "row": 1,
+      "name": "relay kill/restart + no replay (router oracle)",
+      "status": "pass",
+      "ms": 227,
+      "carried_from": "77e3d07d03a6a384830233397ef45bbc889b87f0"
+    },
+    {
+      "seed": 19,
+      "row": 5,
+      "name": "revoked/expired auth denied (device-ws oracle)",
+      "status": "pass",
+      "ms": 2869,
+      "carried_from": "77e3d07d03a6a384830233397ef45bbc889b87f0"
     }
   ],
   "measurements": {
@@ -1237,7 +1280,8 @@
           "rssRelayAfterKb": 98496,
           "rssAgentAfterKb": 12452
         }
-      ]
+      ],
+      "carried_from": "77e3d07d03a6a384830233397ef45bbc889b87f0"
     },
     "row2-anchor": {
       "seeds": 1,
@@ -1285,7 +1329,8 @@
           "rssRelayAfterKb": 93896,
           "rssAgentAfterKb": 12496
         }
-      ]
+      ],
+      "carried_from": "77e3d07d03a6a384830233397ef45bbc889b87f0"
     },
     "row2-production-retire": {
       "seeds": 1,
@@ -1302,7 +1347,8 @@
           "victimCode": "disconnected",
           "victimRequestId": "3558bedd-a2bd-45ac-9c7b-012a07738bab"
         }
-      ]
+      ],
+      "carried_from": "77e3d07d03a6a384830233397ef45bbc889b87f0"
     },
     "row2-stability": {
       "seeds": 3,
@@ -1352,6 +1398,274 @@
           "agentReconnects": 0,
           "rssRelayAfterKb": 98904,
           "rssAgentAfterKb": 12360
+        }
+      ],
+      "carried_from": "77e3d07d03a6a384830233397ef45bbc889b87f0"
+    },
+    "row9-readiness": {
+      "seeds": 20,
+      "passed": 20,
+      "head": "fb911baaa8b2b3e23a4121c629d1c4e7302959e0",
+      "records": [
+        {
+          "oracle": "row9-readiness",
+          "seed": 0,
+          "pass": true,
+          "phases": {
+            "healthyBrowser": "ready",
+            "desktopAbsent": "disconnected",
+            "killedBrowser": "disconnected",
+            "revivedBrowser": "ready",
+            "degradedBrowser": "degraded",
+            "subServiceBrowser": "degraded"
+          }
+        },
+        {
+          "oracle": "row9-readiness",
+          "seed": 1,
+          "pass": true,
+          "phases": {
+            "healthyBrowser": "ready",
+            "desktopAbsent": "disconnected",
+            "killedBrowser": "disconnected",
+            "revivedBrowser": "ready",
+            "degradedBrowser": "degraded",
+            "subServiceBrowser": "degraded"
+          }
+        },
+        {
+          "oracle": "row9-readiness",
+          "seed": 2,
+          "pass": true,
+          "phases": {
+            "healthyBrowser": "ready",
+            "desktopAbsent": "disconnected",
+            "killedBrowser": "disconnected",
+            "revivedBrowser": "ready",
+            "degradedBrowser": "degraded",
+            "subServiceBrowser": "degraded"
+          }
+        },
+        {
+          "oracle": "row9-readiness",
+          "seed": 3,
+          "pass": true,
+          "phases": {
+            "healthyBrowser": "ready",
+            "desktopAbsent": "disconnected",
+            "killedBrowser": "disconnected",
+            "revivedBrowser": "ready",
+            "degradedBrowser": "degraded",
+            "subServiceBrowser": "degraded"
+          }
+        },
+        {
+          "oracle": "row9-readiness",
+          "seed": 4,
+          "pass": true,
+          "phases": {
+            "healthyBrowser": "ready",
+            "desktopAbsent": "disconnected",
+            "killedBrowser": "disconnected",
+            "revivedBrowser": "ready",
+            "degradedBrowser": "degraded",
+            "subServiceBrowser": "degraded"
+          }
+        },
+        {
+          "oracle": "row9-readiness",
+          "seed": 5,
+          "pass": true,
+          "phases": {
+            "healthyBrowser": "ready",
+            "desktopAbsent": "disconnected",
+            "killedBrowser": "disconnected",
+            "revivedBrowser": "ready",
+            "degradedBrowser": "degraded",
+            "subServiceBrowser": "degraded"
+          }
+        },
+        {
+          "oracle": "row9-readiness",
+          "seed": 6,
+          "pass": true,
+          "phases": {
+            "healthyBrowser": "ready",
+            "desktopAbsent": "disconnected",
+            "killedBrowser": "disconnected",
+            "revivedBrowser": "ready",
+            "degradedBrowser": "degraded",
+            "subServiceBrowser": "degraded"
+          }
+        },
+        {
+          "oracle": "row9-readiness",
+          "seed": 7,
+          "pass": true,
+          "phases": {
+            "healthyBrowser": "ready",
+            "desktopAbsent": "disconnected",
+            "killedBrowser": "disconnected",
+            "revivedBrowser": "ready",
+            "degradedBrowser": "degraded",
+            "subServiceBrowser": "degraded"
+          }
+        },
+        {
+          "oracle": "row9-readiness",
+          "seed": 8,
+          "pass": true,
+          "phases": {
+            "healthyBrowser": "ready",
+            "desktopAbsent": "disconnected",
+            "killedBrowser": "disconnected",
+            "revivedBrowser": "ready",
+            "degradedBrowser": "degraded",
+            "subServiceBrowser": "degraded"
+          }
+        },
+        {
+          "oracle": "row9-readiness",
+          "seed": 9,
+          "pass": true,
+          "phases": {
+            "healthyBrowser": "ready",
+            "desktopAbsent": "disconnected",
+            "killedBrowser": "disconnected",
+            "revivedBrowser": "ready",
+            "degradedBrowser": "degraded",
+            "subServiceBrowser": "degraded"
+          }
+        },
+        {
+          "oracle": "row9-readiness",
+          "seed": 10,
+          "pass": true,
+          "phases": {
+            "healthyBrowser": "ready",
+            "desktopAbsent": "disconnected",
+            "killedBrowser": "disconnected",
+            "revivedBrowser": "ready",
+            "degradedBrowser": "degraded",
+            "subServiceBrowser": "degraded"
+          }
+        },
+        {
+          "oracle": "row9-readiness",
+          "seed": 11,
+          "pass": true,
+          "phases": {
+            "healthyBrowser": "ready",
+            "desktopAbsent": "disconnected",
+            "killedBrowser": "disconnected",
+            "revivedBrowser": "ready",
+            "degradedBrowser": "degraded",
+            "subServiceBrowser": "degraded"
+          }
+        },
+        {
+          "oracle": "row9-readiness",
+          "seed": 12,
+          "pass": true,
+          "phases": {
+            "healthyBrowser": "ready",
+            "desktopAbsent": "disconnected",
+            "killedBrowser": "disconnected",
+            "revivedBrowser": "ready",
+            "degradedBrowser": "degraded",
+            "subServiceBrowser": "degraded"
+          }
+        },
+        {
+          "oracle": "row9-readiness",
+          "seed": 13,
+          "pass": true,
+          "phases": {
+            "healthyBrowser": "ready",
+            "desktopAbsent": "disconnected",
+            "killedBrowser": "disconnected",
+            "revivedBrowser": "ready",
+            "degradedBrowser": "degraded",
+            "subServiceBrowser": "degraded"
+          }
+        },
+        {
+          "oracle": "row9-readiness",
+          "seed": 14,
+          "pass": true,
+          "phases": {
+            "healthyBrowser": "ready",
+            "desktopAbsent": "disconnected",
+            "killedBrowser": "disconnected",
+            "revivedBrowser": "ready",
+            "degradedBrowser": "degraded",
+            "subServiceBrowser": "degraded"
+          }
+        },
+        {
+          "oracle": "row9-readiness",
+          "seed": 15,
+          "pass": true,
+          "phases": {
+            "healthyBrowser": "ready",
+            "desktopAbsent": "disconnected",
+            "killedBrowser": "disconnected",
+            "revivedBrowser": "ready",
+            "degradedBrowser": "degraded",
+            "subServiceBrowser": "degraded"
+          }
+        },
+        {
+          "oracle": "row9-readiness",
+          "seed": 16,
+          "pass": true,
+          "phases": {
+            "healthyBrowser": "ready",
+            "desktopAbsent": "disconnected",
+            "killedBrowser": "disconnected",
+            "revivedBrowser": "ready",
+            "degradedBrowser": "degraded",
+            "subServiceBrowser": "degraded"
+          }
+        },
+        {
+          "oracle": "row9-readiness",
+          "seed": 17,
+          "pass": true,
+          "phases": {
+            "healthyBrowser": "ready",
+            "desktopAbsent": "disconnected",
+            "killedBrowser": "disconnected",
+            "revivedBrowser": "ready",
+            "degradedBrowser": "degraded",
+            "subServiceBrowser": "degraded"
+          }
+        },
+        {
+          "oracle": "row9-readiness",
+          "seed": 18,
+          "pass": true,
+          "phases": {
+            "healthyBrowser": "ready",
+            "desktopAbsent": "disconnected",
+            "killedBrowser": "disconnected",
+            "revivedBrowser": "ready",
+            "degradedBrowser": "degraded",
+            "subServiceBrowser": "degraded"
+          }
+        },
+        {
+          "oracle": "row9-readiness",
+          "seed": 19,
+          "pass": true,
+          "phases": {
+            "healthyBrowser": "ready",
+            "desktopAbsent": "disconnected",
+            "killedBrowser": "disconnected",
+            "revivedBrowser": "ready",
+            "degradedBrowser": "degraded",
+            "subServiceBrowser": "degraded"
+          }
         }
       ]
     }

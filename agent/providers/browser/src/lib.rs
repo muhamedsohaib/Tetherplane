@@ -112,6 +112,47 @@ impl BrowserProvider {
     pub fn operations(&self) -> &[String] {
         &self.operations
     }
+
+    /// Live-readiness probe: a side-effect-free `browser.status` RPC.
+    ///
+    /// Used by runtime capability reporting to re-verify the bridge at
+    /// read time instead of trusting the startup handshake. A reachable
+    /// bridge that reports itself unavailable yields a degraded report;
+    /// transport failures reuse the standard error mapping so callers can
+    /// distinguish unreachable (`Disconnected`) from impaired.
+    ///
+    /// # Errors
+    ///
+    /// Returns the bridge RPC error when the probe cannot complete.
+    pub async fn probe(&self) -> Result<ProbeReport, CapabilityError> {
+        let response = rpc_call(
+            &self.config,
+            json!({
+                "type": "invoke",
+                "request_id": "probe",
+                "token": self.config.token,
+                "capability": "browser.status",
+                "arguments": {},
+            }),
+        )
+        .await?;
+        if response["status"] != "success" {
+            return Err(response_error(&response));
+        }
+        let degraded_reason = if response.pointer("/data/available") == Some(&Value::Bool(false)) {
+            Some("browser bridge reports unavailable".to_owned())
+        } else {
+            None
+        };
+        Ok(ProbeReport { degraded_reason })
+    }
+}
+
+/// Outcome of a [`BrowserProvider::probe`]: reachable-and-healthy when
+/// `degraded_reason` is `None`, reachable-but-impaired otherwise.
+#[derive(Clone, Debug)]
+pub struct ProbeReport {
+    pub degraded_reason: Option<String>,
 }
 
 #[async_trait]
