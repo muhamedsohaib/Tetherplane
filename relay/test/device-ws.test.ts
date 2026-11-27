@@ -734,6 +734,104 @@ test("production heartbeat retires within the 60 s normative bound", () => {
   assert.ok(RELAY_STALE_AFTER_MS <= 60_000);
 });
 
+test(
+  "delayed pong echoing the previous nonce does not retire",
+  { timeout: 15_000 },
+  async () => {
+    const secret = "device-secret-s2-delayed-pong";
+    const registry = await pairedRegistry(secret);
+    const router = new DeviceRouter({ registry, timeoutMs: 10_000 });
+    const gateway = new DeviceWebSocketGateway({
+      registry,
+      router,
+      heartbeat: { intervalMs: 25, staleMs: 500 },
+    });
+    const server = createServer();
+    gateway.attach(server, "/device");
+    await listen(server);
+    const address = server.address();
+    assert.ok(address && typeof address === "object");
+    const raw = await rawDevice(address.port, {
+      authorization: `Device ${secret}`,
+      "x-tetherplane-device-id": "Leno",
+    });
+
+    try {
+      await until(() => router.isOnline("Leno"));
+      const first = await raw.readFrame();
+      assert.equal(first.opcode, OPCODE_PING);
+      const firstNonce = first.payload.toString("utf8");
+      // Let the first challenge go unanswered until the relay issues
+      // the next one, then answer the previous nonce late.
+      const second = await raw.readFrame();
+      assert.equal(second.opcode, OPCODE_PING);
+      const secondNonce = second.payload.toString("utf8");
+      assert.notEqual(secondNonce, firstNonce);
+      raw.sendFrame(OPCODE_PONG, Buffer.from(firstNonce));
+      raw.sendFrame(OPCODE_PONG, Buffer.from(secondNonce));
+      await sleep(300);
+      assert.equal(router.isOnline("Leno"), true);
+    } finally {
+      raw.close();
+      await gateway.close();
+      await closeServer(server);
+    }
+  },
+);
+
+test(
+  "unsolicited pong with nothing outstanding is ignored",
+  { timeout: 15_000 },
+  async () => {
+    const secret = "device-secret-s2-unsolicited-pong";
+    const registry = await pairedRegistry(secret);
+    const router = new DeviceRouter({ registry, timeoutMs: 10_000 });
+    const gateway = new DeviceWebSocketGateway({
+      registry,
+      router,
+      heartbeat: { intervalMs: 250, staleMs: 2_000 },
+    });
+    const server = createServer();
+    gateway.attach(server, "/device");
+    await listen(server);
+    const address = server.address();
+    assert.ok(address && typeof address === "object");
+    const raw = await rawDevice(address.port, {
+      authorization: `Device ${secret}`,
+      "x-tetherplane-device-id": "Leno",
+    });
+
+    try {
+      await until(() => router.isOnline("Leno"));
+      const first = await raw.readFrame();
+      assert.equal(first.opcode, OPCODE_PING);
+      // Answer the live challenge, then send stray pongs while
+      // nothing is outstanding: duplicates and never-issued echoes
+      // must not retire a healthy socket. The wide tick gap keeps
+      // this deterministic: back-to-back test writes can arrive
+      // split across event-loop turns (ws defers each pong frame),
+      // so the strays must land far from the next challenge.
+      raw.sendFrame(OPCODE_PONG, first.payload);
+      await sleep(50);
+      raw.sendFrame(OPCODE_PONG, first.payload);
+      raw.sendFrame(OPCODE_PONG, Buffer.from("never-issued-nonce"));
+      // Keep answering subsequent challenges correctly.
+      const deadline = Date.now() + 300;
+      while (Date.now() < deadline) {
+        const frame = await raw.readFrame();
+        if (frame.opcode === OPCODE_PING) {
+          raw.sendFrame(OPCODE_PONG, frame.payload);
+        }
+      }
+      assert.equal(router.isOnline("Leno"), true);
+    } finally {
+      raw.close();
+      await gateway.close();
+      await closeServer(server);
+    }
+  },
+);
+
 async function sleep(milliseconds: number): Promise<void> {
   await new Promise((resolve) => setTimeout(resolve, milliseconds));
 }

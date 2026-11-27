@@ -31,7 +31,8 @@ export type RelayHeartbeatOptions = {
 
 type HeartbeatState = {
   timer: NodeJS.Timeout | null;
-  lastNonce: string | null;
+  outstanding: string | null;
+  previous: string | null;
   lastPongAt: number;
 };
 
@@ -190,7 +191,8 @@ export class DeviceWebSocketGateway {
     });
     const heartbeat: HeartbeatState = {
       timer: null,
-      lastNonce: null,
+      outstanding: null,
+      previous: null,
       lastPongAt: Date.now(),
     };
     this.#live.set(input.deviceId, {
@@ -207,11 +209,26 @@ export class DeviceWebSocketGateway {
     input.socket.on("pong", (data: RawData) => {
       const current = this.#live.get(input.deviceId);
       if (current?.socket !== input.socket) return;
-      if (data.toString() !== current.heartbeat.lastNonce) {
+      // A Pong answering the live challenge, or the previous one late,
+      // proves liveness. A stray Pong with no live challenge is
+      // ignored — never a retire. Only a wrong echo to a live
+      // challenge retires, and rotation expires old nonces so a peer
+      // stuck replaying one still retires at the next challenge.
+      const echo = data.toString();
+      const heartbeat = current.heartbeat;
+      if (heartbeat.outstanding !== null && echo === heartbeat.outstanding) {
+        heartbeat.outstanding = null;
+        heartbeat.lastPongAt = Date.now();
+      } else if (
+        heartbeat.previous !== null &&
+        echo === heartbeat.previous
+      ) {
+        heartbeat.lastPongAt = Date.now();
+      } else if (heartbeat.outstanding === null) {
+        // Nothing challenged: duplicate or unsolicited frame, ignore.
+      } else {
         this.#retireStaleSocket(input.deviceId, input.socket);
-        return;
       }
-      current.heartbeat.lastPongAt = Date.now();
     });
 
     input.socket.once("close", () => {
@@ -260,7 +277,8 @@ export class DeviceWebSocketGateway {
       return;
     }
     const nonce = randomUUID();
-    heartbeat.lastNonce = nonce;
+    heartbeat.previous = heartbeat.outstanding;
+    heartbeat.outstanding = nonce;
     this.#scheduleHeartbeat(deviceId, socket, heartbeat);
     try {
       socket.ping(nonce, undefined, (error) => {
